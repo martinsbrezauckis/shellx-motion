@@ -1,0 +1,26 @@
+{
+  "asset": { "version": "2.0", "generator": "ShellX Motion glTF fixture" },
+  "buffers": [{
+    "byteLength": 42,
+    "uri": "data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAAAAAAD8AAAAAAAABAAIA"
+  }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ],
+  "materials": [{
+    "pbrMetallicRoughness": { "baseColorFactor": [0.1, 0.8, 0.95, 1] },
+    "emissiveFactor": [0.08, 0.12, 0.16]
+  }],
+  "meshes": [{
+    "name": "Cyan Triangle",
+    "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }]
+  }],
+  "nodes": [{ "name": "Cyan Triangle", "mesh": 0, "rotation": [0, 0, 0, 1] }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}

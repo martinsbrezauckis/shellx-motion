@@ -1,0 +1,49 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_batch_card",
+  "name": "Batch Card {{name}}",
+  "durationMs": 2000,
+  "fps": 12,
+  "width": 640,
+  "height": 360,
+  "background": "{{background}}",
+  "layers": [
+    {
+      "id": "panel",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 0, "y": 0, "scale": 1 },
+      "width": 640,
+      "height": 360,
+      "style": { "fill": "{{background}}" }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Hello {{name}}",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 64, "y": 132, "scale": 1 },
+      "style": { "color": "{{accent}}", "fontSize": 56, "fontWeight": 800, "width": 520 }
+    },
+    {
+      "id": "accent",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 1000,
+      "durationMs": 1000,
+      "transform": { "x": 64, "y": 220, "scale": 1 },
+      "width": 220,
+      "height": 14,
+      "style": { "fill": "{{accent}}", "radius": 7 }
+    }
+  ],
+  "assets": [],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "fixture",
+    "workflow": "batch-render"
+  }
+}

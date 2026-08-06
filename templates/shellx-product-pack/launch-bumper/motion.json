@@ -1,0 +1,153 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_launch_bumper",
+  "name": "ShellX Launch Bumper",
+  "durationMs": 5000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#071014",
+  "safeAreas": {
+    "title": { "top": 96, "right": 132, "bottom": 96, "left": 132 }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#071014",
+      "startMs": 0,
+      "durationMs": 5000,
+      "width": 1920,
+      "height": 1080,
+      "transform": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "accent-slab",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#24d6ff",
+      "startMs": 0,
+      "durationMs": 5000,
+      "width": 520,
+      "height": 1080,
+      "transform": { "x": 1400, "y": 0 },
+      "keyframes": {
+        "transform.x": [
+          { "atMs": 0, "value": 1540, "easing": "ease-out" },
+          { "atMs": 760, "value": 1400, "easing": "ease-out" }
+        ],
+        "opacity": [
+          { "atMs": 0, "value": 0.22, "easing": "ease-out" },
+          { "atMs": 760, "value": 0.7, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "signal-line",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#f2b84b",
+      "startMs": 160,
+      "durationMs": 4400,
+      "width": 980,
+      "height": 8,
+      "transform": { "x": 132, "y": 812 },
+      "transitions": {
+        "in": { "type": "wipe", "direction": "left", "durationMs": 720, "easing": "ease-out" }
+      }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "SHELLX MOTION",
+      "startMs": 160,
+      "durationMs": 4300,
+      "transform": { "x": 132, "y": 214 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 30,
+        "fontWeight": 850,
+        "letterSpacing": 2,
+        "color": "#24d6ff"
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Scripted videos without surrendering the project file",
+      "startMs": 260,
+      "durationMs": 4200,
+      "transform": { "x": 132, "y": 292 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 86,
+        "fontWeight": 860,
+        "lineHeight": 1.02,
+        "width": 940,
+        "color": "#f8fafc"
+      },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 260, "value": 0, "easing": "ease-out" },
+          { "atMs": 860, "value": 1, "easing": "ease-out" }
+        ],
+        "transform.y": [
+          { "atMs": 260, "value": 330, "easing": "ease-out" },
+          { "atMs": 860, "value": 292, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "Packages, receipts, previews, and final renders stay local-first.",
+      "startMs": 980,
+      "durationMs": 3400,
+      "transform": { "x": 140, "y": 642 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 36,
+        "fontWeight": 620,
+        "lineHeight": 1.18,
+        "width": 760,
+        "color": "#dce6f3"
+      }
+    },
+    {
+      "id": "cta-panel",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#24d6ff",
+      "startMs": 1360,
+      "durationMs": 3000,
+      "width": 332,
+      "height": 72,
+      "transform": { "x": 140, "y": 720 },
+      "style": { "radius": 16 }
+    },
+    {
+      "id": "cta",
+      "type": "text",
+      "text": "Render the plan",
+      "startMs": 1440,
+      "durationMs": 2920,
+      "transform": { "x": 178, "y": 738 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 30,
+        "fontWeight": 820,
+        "color": "#071014"
+      }
+    }
+  ],
+  "assets": [
+    { "id": "font_inter_700", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-700-normal.woff2", "mimeType": "font/woff2" }, "weight": 700, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "shellx-motion-template-pack",
+    "workflow": "template-pack-launch-bumper"
+  }
+}

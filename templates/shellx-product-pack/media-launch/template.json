@@ -1,0 +1,131 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_media_launch",
+  "name": "ShellX Media Launch",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "heroMedia"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 64 },
+        "subtitle": { "type": "string", "maxLength": 110 },
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "cta": { "type": "string", "maxLength": 24 },
+        "accentColor": { "type": "string", "format": "color" },
+        "heroMedia": { "type": "string" }
+      }
+    },
+    "inputExamples": [
+      {
+        "title": "Motion turns product ideas into video",
+        "subtitle": "Generated assets stay package-local. Renders stay deterministic.",
+        "eyebrow": "SHELLX PRODUCT FAMILY",
+        "cta": "Render locally",
+        "heroMedia": "assets/generated/shellx-media-launch-hero-1080p.jpg"
+      },
+      {
+        "title": "One package. Real generated media.",
+        "subtitle": "Swap the hero for the editorial alternate and re-render offline.",
+        "eyebrow": "SHELLX PRODUCT FAMILY",
+        "cta": "Render locally",
+        "heroMedia": "assets/generated/shellx-media-launch-hero-alt.jpg"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 3000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1"]
+    },
+    "suitability": {
+      "bestFor": ["product launch bumpers", "media-rich announcements", "AI asset provenance demos"],
+      "notFor": ["long-form narration", "dense tutorials", "native-only preview packs"]
+    },
+    "license": {
+      "id": "shellx-generated-sample",
+      "label": "ShellX Generated Sample",
+      "attribution": "ShellX Motion generated starter-pack asset",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "Generated sample asset is package-local and intended for ShellX Motion starter-pack testing."
+    },
+    "assetsAttribution": [
+      {
+        "name": "ShellX Media Launch Hero",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/generated/shellx-media-launch-hero-1080p.jpg"
+      },
+      {
+        "name": "ShellX Media Launch Hero (editorial alternate)",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/generated/shellx-media-launch-hero-alt.jpg"
+      },
+      { "name": "Inter SemiBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-600-normal.woff2" },
+      { "name": "Inter ExtraBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-800-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "preview": {
+      "poster": "preview/poster.png",
+      "thumbnail": "preview/poster.png"
+    },
+    "provenance": {
+      "source": "shellx-product-pack-media-launch",
+      "sourceHash": "6b8340f423ce425d999496519c4e0b4dd1774e05962f06cbf2084303c32650c8"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "medium",
+      "previewFps": 30,
+      "notes": ["Uses one generated SVG media asset plus text and shape overlays."]
+    },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1700, 3500, 5100],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Media", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Motion turns product ideas into video", "group": "content", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Generated assets stay package-local. Renders stay deterministic.", "group": "content", "order": 2 },
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "SHELLX PRODUCT FAMILY", "group": "content", "order": 3 },
+    { "id": "cta", "label": "CTA", "type": "text", "defaultValue": "Render locally", "group": "content", "order": 4 },
+    { "id": "heroMedia", "label": "Hero Media", "type": "media", "defaultValue": "assets/generated/shellx-media-launch-hero-1080p.jpg", "group": "media", "order": 1 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#f2b84b", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "cta", "widget": "text", "label": "CTA" },
+    { "paramId": "heroMedia", "widget": "media", "label": "Hero Media" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "subtitle" } },
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/2/text", "layerId": "eyebrow" } },
+    { "paramId": "cta", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "cta" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "generated-hero" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "generated-hero" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/5/fill", "layerId": "cta-panel" } }
+  ]
+}

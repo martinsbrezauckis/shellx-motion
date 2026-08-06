@@ -1,0 +1,9 @@
+{
+  "schema": "shellx-motion/expected-preview@1",
+  "renderer": "@shellx-motion/renderer-native",
+  "fixture": "lower-third",
+  "atMs": 0,
+  "width": 1920,
+  "height": 1080,
+  "sha256": "6f7376be48e7228bf25e1ee84864d376434e429d6158a295bdebd4207bc6efec"
+}

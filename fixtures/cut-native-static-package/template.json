@@ -1,0 +1,63 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_cut_native_static",
+  "name": "Cut Native Static",
+  "motion": "motion.json",
+  "compatibleLanes": ["native", "browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "accentColor"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 80 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "outputBounds": {
+      "minWidth": 320,
+      "maxWidth": 3840,
+      "minHeight": 180,
+      "maxHeight": 2160,
+      "minDurationMs": 500,
+      "maxDurationMs": 8000,
+      "aspectRatios": ["16:9"]
+    },
+    "suitability": {
+      "bestFor": ["native Cut titles", "editable lower thirds"],
+      "notFor": ["animated typography", "media montages"]
+    },
+    "license": {
+      "id": "shellx-sample",
+      "label": "ShellX Sample Assets",
+      "attribution": "ShellX Motion fixture"
+    },
+    "provenance": {
+      "source": "shellx-motion-fixture",
+      "sourceHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "generatedBy": "test"
+    },
+    "performance": {
+      "recommendedLane": "native",
+      "renderCost": "low",
+      "previewFps": 30,
+      "notes": ["Restricted to the exact ShellX Cut native receiver subset."]
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "style", "label": "Style", "order": 2 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Native in Cut", "group": "content", "order": 1 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#13d3ff", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "text", "label": "Title" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/1/text", "layerId": "title" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/0/fill", "layerId": "accent" } }
+  ]
+}

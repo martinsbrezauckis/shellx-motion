@@ -1,0 +1,19 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_audio_launch",
+  "name": "ShellX Audio Launch",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/audio/shellx-launch-tone.wav",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-800-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion"]
+  },
+  "workflow": "template-pack-audio-launch"
+}

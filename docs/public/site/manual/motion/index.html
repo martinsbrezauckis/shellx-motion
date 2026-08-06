@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <title>ShellX Motion Manual</title>
+    <meta name="description" content="ShellX Motion manual: install, local rendering, Engine Room, receipts, agents, and product integrations." />
+    <meta name="robots" content="index,follow" />
+    <meta name="theme-color" content="#070b0d" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <link rel="stylesheet" href="./motion.css?v=1" />
+    <script src="./motion.js?v=1" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="suite-brand" href="../../" aria-label="ShellX Docs home">
+        <span class="suite-mark">X</span>
+        <span>ShellX Docs</span>
+      </a>
+      <nav aria-label="Product manuals">
+        <a href="../cut/">Cut</a>
+        <a href="../canvas/">Design Studio</a>
+        <a href="./" aria-current="page">Motion</a>
+      </nav>
+    </header>
+
+    <div class="manual-shell">
+      <aside class="manual-rail" aria-label="Motion manual sections">
+        <div class="product-lockup">
+          <img src="./icon.png" alt="" width="56" height="56" />
+          <div>
+            <strong>ShellX Motion</strong>
+            <span data-app-version="0.1.0">v0.1.0</span>
+          </div>
+        </div>
+        <label class="search-field">
+          <span>Find in this manual</span>
+          <input type="search" placeholder="Packages, receipts, agents…" autocomplete="off" data-manual-search />
+        </label>
+        <nav class="section-nav" aria-label="On this page" data-section-nav>
+          <button type="button" data-section-target="overview">What Motion does</button>
+          <button type="button" data-section-target="install">Install and verify</button>
+          <button type="button" data-section-target="workbench">Engine Room</button>
+          <button type="button" data-section-target="rendering">Rendering</button>
+          <button type="button" data-section-target="integrations">Cut, Design Studio, agents</button>
+          <button type="button" data-section-target="receipts">Receipts and History</button>
+          <button type="button" data-section-target="security">Local-first security</button>
+          <button type="button" data-section-target="updates">Updates</button>
+          <button type="button" data-section-target="troubleshooting">Troubleshooting</button>
+        </nav>
+        <p class="rail-note">Source release · local rendering · no account required</p>
+      </aside>
+
+      <main>
+        <section class="hero manual-section" id="overview" data-search="motion engine packages local first canvas cut video graphics">
+          <div class="hero-copy">
+            <p class="eyebrow">Local motion engine</p>
+            <h1>Build reusable motion packages. Render them on your machine.</h1>
+            <p class="hero-lead">
+              ShellX Motion is the rendering engine shared by ShellX Cut and Design Studio. It turns
+              data-only packages into preview frames, final video, image sequences, and durable receipts.
+              It can also run by itself through the Engine Room or its command line.
+            </p>
+            <div class="hero-actions">
+              <button type="button" data-section-target="install">Start from source</button>
+              <button type="button" data-section-target="workbench">Open Engine Room</button>
+            </div>
+          </div>
+          <div class="pipeline" aria-label="Motion workflow">
+            <span><b>01</b> Package</span><i></i><span><b>02</b> Preview</span><i></i><span><b>03</b> Render</span><i></i><span><b>04</b> Receipt</span>
+          </div>
+        </section>
+
+        <section class="manual-section" id="install" data-search="install node pnpm ffmpeg ffprobe build doctor verify source release command line cli">
+          <p class="eyebrow">Start here</p>
+          <h2>Install and verify the source release</h2>
+          <p>
+            Motion v0.1.0 ships as source. Use Node.js 24, pnpm 10.6 or newer, and install FFmpeg plus
+            FFprobe for final video. Validation and native still previews work without the codec tools.
+          </p>
+          <div class="command-block" aria-label="Install and verify commands">
+            <code>pnpm install --frozen-lockfile</code>
+            <code>pnpm build</code>
+            <code>pnpm --filter @shellx-motion/cli run cli -- doctor</code>
+            <code>pnpm --filter @shellx-motion/cli run cli -- validate fixtures/packages/lower-third</code>
+          </div>
+          <div class="info-grid">
+            <article><span>Node.js</span><strong>24.x</strong><p>The tested runtime for this source release.</p></article>
+            <article><span>pnpm</span><strong>10.6+</strong><p>Reads the workspace build-script declaration.</p></article>
+            <article><span>FFmpeg</span><strong>Final media</strong><p>Required for MP4, WebM, GIF, and media inspection.</p></article>
+          </div>
+          <aside class="callout"><strong>Use the workspace command in this checkout.</strong><span>The short <code>shellx-motion</code> command exists only inside a separately installed package build.</span></aside>
+        </section>
+
+        <section class="manual-section" id="workbench" data-search="engine room workbench connect access key timeline history docs about browse user interface ui">
+          <p class="eyebrow">Human workspace</p>
+          <h2>Use Engine Room without typing paths</h2>
+          <p>
+            Engine Room is Motion's local workbench. Start Motion and it opens already unlocked with
+            local create, edit, and render access. Package, output, quality-manifest, and receipt
+            locations use the operating system's Browse picker.
+          </p>
+          <div class="command-block"><code>pnpm start</code></div>
+          <div class="feature-grid">
+            <article><span class="feature-index">A</span><h3>Inspector</h3><p>Open a package, inspect layers and assets, scrub the timeline, preview frames, and render a final file.</p></article>
+            <article><span class="feature-index">B</span><h3>History</h3><p>Review receipts, quality results, the app or agent that triggered work, and where each output was saved.</p></article>
+            <article><span class="feature-index">C</span><h3>Connections</h3><p>Add Motion to a supported agent, copy a generic MCP command, or reveal the local API address and key.</p></article>
+            <article><span class="feature-index">D</span><h3>Docs and About</h3><p>Read current guidance, engine version, renderer readiness, and the same update status available to connected agents.</p></article>
+          </div>
+        </section>
+
+        <section class="manual-section" id="rendering" data-search="render browser native ffmpeg mp4 webm h264 hevc vp9 av1 gif png jpeg frames audio hardware encoder gpu">
+          <p class="eyebrow">Local render pipeline</p>
+          <h2>Choose the simplest renderer that preserves the design</h2>
+          <div class="render-table" role="table" aria-label="Motion render options">
+            <div role="row"><strong role="cell">Native frames</strong><span role="cell">Fast deterministic stills for supported shapes, text, gradients, images, and effects. No browser required.</span></div>
+            <div role="row"><strong role="cell">Browser frames</strong><span role="cell">Chromium draws richer HTML and CSS scenes, fonts, video, and browser-backed effects.</span></div>
+            <div role="row"><strong role="cell">FFmpeg output</strong><span role="cell">Encodes browser or native frames into MP4, WebM, GIF, stills, or image sequences and records the actual encoder used.</span></div>
+          </div>
+          <p>
+            H.264 MP4 and VP9 WebM are the broad compatibility defaults. HEVC and AV1 depend on the
+            local FFmpeg build and available hardware. Motion probes hardware encoders before using them
+            and records any software fallback in the render receipt.
+          </p>
+          <div class="command-block"><code>pnpm --filter @shellx-motion/cli run cli -- render fixtures/packages/lower-third --out .scratch/first-render.mp4</code></div>
+        </section>
+
+        <section class="manual-section" id="integrations" data-search="shellx cut design studio agents mcp debug api connector automation permissions">
+          <p class="eyebrow">One engine, several callers</p>
+          <h2>Cut, Design Studio, and agents use the same contracts</h2>
+          <div class="feature-grid three">
+            <article><h3>ShellX Cut</h3><p>Links or imports a Motion package, requests previews and renders, then keeps the resulting media and receipts with the edit.</p></article>
+            <article><h3>Design Studio</h3><p>Creates package-bound Motion sessions and hands selected visual work to the same local renderer.</p></article>
+            <article><h3>Agents</h3><p>Discover current actions through MCP, loopback HTTP, WebSocket, or the CLI. Every call is capped by the permission granted when Motion started.</p></article>
+          </div>
+          <aside class="callout"><strong>Remote publishing is never automatic.</strong><span>The reserved publish permission is not granted by ordinary workbench or agent sessions.</span></aside>
+        </section>
+
+        <section class="manual-section" id="receipts" data-search="receipts history evidence hashes output path quality warnings encoder agent review">
+          <p class="eyebrow">Verify the result</p>
+          <h2>Every delivered render has a receipt beside it</h2>
+          <p>
+            A render receipt records the package identity, input and output hashes, renderer, encoder,
+            dimensions, duration, quality checks, warnings, and actor evidence. Engine Room History turns
+            that record into a readable timeline and can open the output's containing folder.
+          </p>
+          <ol class="proof-steps">
+            <li><b>Match the package.</b><span>Confirm the package id and inputs are the ones you intended.</span></li>
+            <li><b>Read the result.</b><span>A warning is not a pass; inspect the named gate and fallback.</span></li>
+            <li><b>Match the output.</b><span>Confirm the file path and SHA-256 hash before delivery.</span></li>
+          </ol>
+          <p class="fine-print">Validation returns its result directly and does not create a receipt file. Package-producing batch operations keep their own receipts inside the package they create.</p>
+        </section>
+
+        <section class="manual-section" id="security" data-search="security local first loopback token network sandbox path privacy telemetry data packages">
+          <p class="eyebrow">Security model</p>
+          <h2>Local by default, bounded by capability</h2>
+          <div class="feature-grid three">
+            <article><h3>Loopback only</h3><p>The workbench and agent server listen on this computer and use one private per-user key for non-public routes.</p></article>
+            <article><h3>Declarative layers are data; web layers run code</h3><p>Shapes, text, keyframes, environments, particles and fixed 3D scenes declare what to draw and cannot execute anything or raise resource limits. A <code>web</code>, <code>html</code> or <code>canvas</code> layer is the deliberate exception: it loads package-local HTML in Chromium with JavaScript enabled. Treat a package from an untrusted source the way you would treat any downloaded script.</p></article>
+            <article><h3>No project telemetry</h3><p>Update checks request only the configured release channel. Project files, prompts, and render content are not sent.</p></article>
+          </div>
+          <p>Chromium and FFmpeg still parse complex media. Treat untrusted packages as untrusted input, keep the tools patched, and use the lowest permission tier that can finish the job.</p>
+        </section>
+
+        <section class="manual-section" id="updates" data-search="updates automatic check release channel startup every 30 minutes check now no telemetry">
+          <p class="eyebrow">Shared release status</p>
+          <h2>Motion checks for updates automatically</h2>
+          <p>
+            When a release channel is configured, Motion checks at startup and every 30 minutes. The
+            About page and connected agents read the same cached status. <strong>Check now</strong> refreshes
+            it immediately. A source checkout is updated through the same source workflow used to install it;
+            Motion does not silently replace source files.
+          </p>
+        </section>
+
+        <section class="manual-section" id="troubleshooting" data-search="troubleshooting missing ffmpeg ffprobe chromium disconnected access key browse render failed doctor update unavailable">
+          <p class="eyebrow">Troubleshooting</p>
+          <h2>Start with the machine readiness report</h2>
+          <div class="faq-list">
+            <details><summary>Final video is unavailable</summary><p>Run <code>doctor</code>. Install both FFmpeg and FFprobe, or configure their executable paths, then restart Motion.</p></details>
+            <details><summary>Browser preview cannot start</summary><p>Install the Chromium build required by Playwright. Native previews remain available for supported scenes.</p></details>
+            <details><summary>Workbench is disconnected</summary><p>Open Motion through <code>pnpm start</code> for an automatic local connection. Advanced Debug API clients can copy the local key from Connections after Motion starts.</p></details>
+            <details><summary>A Browse button does nothing</summary><p>Native pickers require a desktop session. On Linux, install Zenity or KDialog; on Windows and macOS the operating-system picker is used.</p></details>
+            <details><summary>A render completed with warnings</summary><p>Open History, inspect the quality and encoder details, and resolve the warning before treating the artifact as approved.</p></details>
+          </div>
+        </section>
+
+        <section class="empty-search" data-empty-search hidden>
+          <strong>No manual section matches that search.</strong>
+          <span>Try a product word such as packages, receipts, render, or updates.</span>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

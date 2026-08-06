@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/platform-verification-aggregate@1",
+  "type": "object",
+  "required": ["schema", "status", "dryRun", "repoRoot", "startedAt", "requiredHosts", "requiredCommands", "summary", "receipts"],
+  "properties": {
+    "schema": { "const": "shellx-motion/platform-verification-aggregate@1" },
+    "status": { "enum": ["passed", "failed"] },
+    "dryRun": { "type": "boolean" },
+    "repoRoot": { "type": "string", "minLength": 1 },
+    "startedAt": { "type": "string", "minLength": 1 },
+    "finishedAt": { "type": "string", "minLength": 1 },
+    "requiredHosts": { "type": "array", "items": { "type": "string" } },
+    "requiredCommands": { "type": "array", "items": { "type": "string" } },
+    "summary": {
+      "type": "object",
+      "required": ["requiredHostCount", "satisfiedHostCount", "missingHosts", "failedHosts", "invalidReceiptCount"],
+      "properties": {
+        "requiredHostCount": { "type": "integer", "minimum": 0 },
+        "satisfiedHostCount": { "type": "integer", "minimum": 0 },
+        "missingHosts": { "type": "array", "items": { "type": "string" } },
+        "failedHosts": { "type": "array", "items": { "type": "string" } },
+        "invalidReceiptCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "hostId", "schemaOk", "status", "dryRun", "ok", "failures", "requiredCommands"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "hostId": { "type": ["string", "null"] },
+          "schemaOk": { "type": "boolean" },
+          "status": { "type": "string", "minLength": 1 },
+          "dryRun": { "type": "boolean" },
+          "ok": { "type": "boolean" },
+          "failures": { "type": "array", "items": { "type": "string" } },
+          "requiredCommands": {
+            "type": "object",
+            "required": ["total", "passed", "missing", "failed"],
+            "properties": {
+              "total": { "type": "integer", "minimum": 0 },
+              "passed": { "type": "integer", "minimum": 0 },
+              "missing": { "type": "array", "items": { "type": "string" } },
+              "failed": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

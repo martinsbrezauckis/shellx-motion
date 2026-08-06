@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Atmospheric alpine dawn sample">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#080b1c"/><stop offset=".55" stop-color="#312e81"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+    <radialGradient id="light"><stop stop-color="#fef3c7" stop-opacity=".9"/><stop offset=".26" stop-color="#f59e0b" stop-opacity=".54"/><stop offset="1" stop-color="#f59e0b" stop-opacity="0"/></radialGradient>
+    <linearGradient id="mist" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#c7d2fe" stop-opacity=".05"/><stop offset=".52" stop-color="#e0e7ff" stop-opacity=".42"/><stop offset="1" stop-color="#c7d2fe" stop-opacity=".08"/></linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="28"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="1320" cy="390" r="360" fill="url(#light)" filter="url(#blur)"/>
+  <path d="M0 760L330 410L560 664L800 330L1080 690L1325 430L1600 670L1920 370V1080H0Z" fill="#111827"/>
+  <path d="M0 840L250 620L520 790L760 560L1050 820L1320 600L1590 820L1920 590V1080H0Z" fill="#1e293b" fill-opacity=".92"/>
+  <path d="M0 900C300 810 570 950 860 850C1180 740 1450 910 1920 790V1080H0Z" fill="#050816"/>
+  <path d="M0 700C420 610 700 790 1010 680C1290 580 1540 720 1920 620V820C1530 880 1280 730 970 840C650 950 360 780 0 890Z" fill="url(#mist)" filter="url(#blur)"/>
+  <g fill="#fde68a" fill-opacity=".52"><circle cx="1460" cy="744" r="4"/><circle cx="1515" cy="760" r="3"/><circle cx="1410" cy="780" r="2"/></g>
+</svg>

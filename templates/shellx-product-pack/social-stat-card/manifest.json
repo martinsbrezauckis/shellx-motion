@@ -1,0 +1,17 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_social_stat_card",
+  "name": "ShellX Social Stat Card",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/fonts/inter-latin-800-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion"]
+  },
+  "workflow": "template-pack-social-stat-card"
+}

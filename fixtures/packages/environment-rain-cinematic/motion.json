@@ -1,0 +1,97 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_environment_rain_cinematic",
+  "name": "Cinematic Rain Ground",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#050A12",
+  "layers": [
+    {
+      "id": "rain-ground-stage",
+      "name": "Rain, mist, wet ground and lens",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "rain",
+        "seed": 20260713,
+        "quality": "cinematic",
+        "mode": "scene",
+        "intensity": 0.82,
+        "wind": 0.16,
+        "dropSpeed": 1.5,
+        "dropLength": 1.2,
+        "depthLayers": 4,
+        "color": "#D6F5FF",
+        "backgroundColor": "#040911",
+        "lightColor": "#5EE7F7",
+        "accentColor": "#FF5C8A",
+        "ground": {
+          "horizon": 0.43,
+          "wetness": 0.94,
+          "roughness": 0.2,
+          "rippleAmount": 0.8,
+          "splashAmount": 0.66,
+          "reflectionStrength": 0.92
+        },
+        "atmosphere": { "mist": 0.46, "lensDroplets": 0.3 }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 150 } },
+      "keyframes": {
+        "environment.intensity": [
+          { "atMs": 0, "value": 0.42, "easing": "ease-out" },
+          { "atMs": 1600, "value": 0.88, "easing": "ease-in-out" },
+          { "atMs": 4400, "value": 0.96, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.74, "easing": "ease-out" }
+        ],
+        "environment.wind": [
+          { "atMs": 0, "value": 0.04, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.28, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.12, "easing": "ease-out" }
+        ],
+        "environment.ground.wetness": [
+          { "atMs": 0, "value": 0.68, "easing": "ease-out" },
+          { "atMs": 2800, "value": 0.96, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.9, "easing": "ease-out" }
+        ],
+        "environment.ground.rippleAmount": [
+          { "atMs": 0, "value": 0.24, "easing": "ease-out" },
+          { "atMs": 3600, "value": 0.86, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.68, "easing": "ease-out" }
+        ],
+        "environment.ground.reflectionStrength": [
+          { "atMs": 0, "value": 0.58, "easing": "ease-out" },
+          { "atMs": 2200, "value": 0.95, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.84, "easing": "ease-out" }
+        ],
+        "environment.atmosphere.mist": [
+          { "atMs": 0, "value": 0.6, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.38, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.5, "easing": "ease-out" }
+        ],
+        "environment.atmosphere.lensDroplets": [
+          { "atMs": 0, "value": 0.12, "easing": "ease-out" },
+          { "atMs": 4200, "value": 0.42, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.34, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "rain-finish",
+      "name": "Restrained lens finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.24, "softness": 0.82, "color": "#000000" },
+        "filmGrain": { "amount": 0.025, "size": 1, "seed": 20260713 }
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

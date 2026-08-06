@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion · Connections</title>
+    <link rel="stylesheet" href="/engine-room.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ShellX</span><strong>Motion</strong>
+          <span class="brand-sub">Connections</span>
+        </div>
+        <div class="command-spacer"></div>
+        <div class="command-actions">
+          <span class="session-state" id="sessionState"><i></i>Disconnected</span>
+          <span class="tier-chip" id="tierChip" hidden></span>
+          <button class="quiet-button" id="sessionButton" type="button">Connect</button>
+        </div>
+      </header>
+
+      <main class="er-main">
+        <div class="er-page connections-page">
+          <div class="er-page-head">
+            <h1>Connect Motion</h1>
+          </div>
+          <p class="er-page-lead">Add Motion to your agent once, or copy the local connection details for another tool.</p>
+
+          <div class="connections-stack">
+            <section class="panel" aria-labelledby="agentConnectionsTitle">
+              <div class="panel-head">
+                <h2 id="agentConnectionsTitle">Add Motion to an agent</h2>
+                <span class="tone-badge" id="connectionBadge" data-tone="neutral"><span class="dot"></span><span id="connectionBadgeLabel">Waiting for access</span></span>
+              </div>
+              <div class="panel-body">
+                <p class="connection-intro">Choose the agent you use. <strong>Configure</strong> adds Motion for you. The setup command stays visible so you can review or copy it.</p>
+                <div class="provider-list" id="providerList">
+                  <article class="provider-row" data-provider="codex">
+                    <div class="provider-identity"><strong>Codex</strong><span>OpenAI Codex CLI</span></div>
+                    <code class="setup-command" id="codexCommand">Start Motion to load setup.</code>
+                    <div class="provider-actions">
+                      <button class="quiet-button compact" type="button" data-copy-provider="codex" disabled>Copy command</button>
+                      <button class="primary-button" type="button" data-configure-provider="codex" disabled>Configure</button>
+                    </div>
+                  </article>
+                  <article class="provider-row" data-provider="claude">
+                    <div class="provider-identity"><strong>Claude Code</strong><span>Anthropic Claude Code CLI</span></div>
+                    <code class="setup-command" id="claudeCommand">Start Motion to load setup.</code>
+                    <div class="provider-actions">
+                      <button class="quiet-button compact" type="button" data-copy-provider="claude" disabled>Copy command</button>
+                      <button class="primary-button" type="button" data-configure-provider="claude" disabled>Configure</button>
+                    </div>
+                  </article>
+                  <article class="provider-row" data-provider="grok">
+                    <div class="provider-identity"><strong>Grok</strong><span>Grok CLI</span></div>
+                    <code class="setup-command" id="grokCommand">Start Motion to load setup.</code>
+                    <div class="provider-actions">
+                      <button class="quiet-button compact" type="button" data-copy-provider="grok" disabled>Copy command</button>
+                      <button class="primary-button" type="button" data-configure-provider="grok" disabled>Configure</button>
+                    </div>
+                  </article>
+                  <article class="provider-row" data-provider="generic">
+                    <div class="provider-identity"><strong>Other MCP client</strong><span>Local stdio configuration</span></div>
+                    <code class="setup-command" id="genericCommand">Start Motion to load setup.</code>
+                    <div class="provider-actions">
+                      <button class="quiet-button compact" type="button" data-copy-provider="generic" disabled>Copy command</button>
+                    </div>
+                  </article>
+                </div>
+                <p class="connection-note">Open a new agent session after configuration. Motion must be running while the agent uses its tools.</p>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="connectionDetailsTitle">
+              <div class="panel-head"><h2 id="connectionDetailsTitle">Connection details</h2></div>
+              <div class="panel-body">
+                <div class="connection-details-grid">
+                  <div class="connection-detail">
+                    <span class="connection-label">MCP address</span>
+                    <code id="mcpUrl">—</code>
+                    <button class="quiet-button compact" id="copyMcpUrl" type="button" disabled>Copy</button>
+                  </div>
+                  <div class="connection-detail">
+                    <span class="connection-label">Debug API address</span>
+                    <code id="debugApiUrl">—</code>
+                    <button class="quiet-button compact" id="copyDebugApiUrl" type="button" disabled>Copy</button>
+                  </div>
+                  <div class="connection-detail access-detail">
+                    <span class="connection-label">Local access key</span>
+                    <code id="accessKey" aria-live="polite">••••••••••••••••••••••••••••••••</code>
+                    <div class="detail-actions">
+                      <button class="quiet-button compact" id="revealAccessKey" type="button" disabled>Reveal</button>
+                      <button class="quiet-button compact" id="copyAccessKey" type="button" disabled>Copy</button>
+                    </div>
+                  </div>
+                </div>
+                <p class="connection-note">The same private key protects the Workbench, MCP, and Debug API. Agent setup uses Motion’s local bridge, so the key is not written into agent configuration.</p>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <div class="status-bar" role="status" aria-live="polite">
+        <span id="statusMessage">Connections</span>
+        <span id="statusDetail">Start Motion to continue</span>
+      </div>
+    </div>
+
+    <dialog id="connectDialog" class="dialog">
+      <form method="dialog" id="connectForm">
+        <div class="dialog-head"><strong>Connect to ShellX Motion</strong></div>
+        <div class="dialog-scroll">
+          <label class="stacked-field" for="capabilityToken">Local access key
+            <input id="capabilityToken" type="password" autocomplete="off" required minlength="32" placeholder="Paste your Motion local access key">
+          </label>
+          <div class="fallback-note" id="connectError" hidden></div>
+        </div>
+        <div class="dialog-actions">
+          <span class="muted">Your access key stays in this browser tab.</span>
+          <span>
+            <button class="quiet-button" value="cancel" type="button" data-close-dialog="connectDialog">Cancel</button>
+            <button class="primary-button" value="connect" type="submit">Connect</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" hidden></div>
+    <script type="module" src="/connections.js"></script>
+    <script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

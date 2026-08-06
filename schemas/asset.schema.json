@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/asset@1",
+  "type": "object",
+  "required": ["schema", "id", "kind", "source", "hash"],
+  "properties": {
+    "schema": { "const": "shellx-motion/asset@1" },
+    "id": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "hash": { "type": "string", "minLength": 1 }
+  }
+}

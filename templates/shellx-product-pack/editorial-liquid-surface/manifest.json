@@ -1,0 +1,14 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_editorial_liquid_surface",
+  "name": "ShellX Editorial Liquid Surface",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": ["assets/samples/coastal-editorial.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
+  },
+  "workflow": "template-pack-editorial-liquid-surface"
+}

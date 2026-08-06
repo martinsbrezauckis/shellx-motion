@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/timeline-state@1",
+  "type": "object",
+  "required": ["schema", "packageId", "motionId", "durationMs", "playheadMs", "updatedAt"],
+  "properties": {
+    "schema": { "const": "shellx-motion/timeline-state@1" },
+    "packageId": { "type": "string", "minLength": 1 },
+    "motionId": { "type": "string", "minLength": 1 },
+    "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+    "playheadMs": { "type": "number", "minimum": 0 },
+    "selectedRange": { "$ref": "#/$defs/range" },
+    "viewport": { "$ref": "#/$defs/viewport" },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": ["startMs", "endMs"],
+      "properties": {
+        "startMs": { "type": "number", "minimum": 0 },
+        "endMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "viewport": {
+      "type": "object",
+      "required": ["startMs", "endMs"],
+      "properties": {
+        "startMs": { "type": "number", "minimum": 0 },
+        "endMs": { "type": "number", "minimum": 0 },
+        "zoom": { "type": "number", "exclusiveMinimum": 0 },
+        "pixelsPerSecond": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}

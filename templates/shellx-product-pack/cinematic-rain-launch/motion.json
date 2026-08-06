@@ -1,0 +1,204 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_cinematic_rain_launch",
+  "name": "ShellX Cinematic Rain Launch",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#030711",
+  "safeAreas": {
+    "title": { "top": 96, "right": 112, "bottom": 96, "left": 112 },
+    "action": { "top": 84, "right": 112, "bottom": 84, "left": 112 }
+  },
+  "layers": [
+    {
+      "id": "hero-scene",
+      "name": "Replaceable night scene",
+      "type": "image",
+      "source": "assets/samples/night-street.svg",
+      "assetRef": "assets/samples/night-street.svg",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "rain-mask",
+      "name": "Hidden rain occlusion mask",
+      "type": "image",
+      "source": "assets/masks/rain-occlusion.svg",
+      "assetRef": "assets/masks/rain-occlusion.svg",
+      "fit": "fill",
+      "opacity": 0,
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "rain-stage",
+      "name": "Scene-aware cinematic rain",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "rotation": 0 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "rain",
+        "seed": 20260713,
+        "quality": "cinematic",
+        "mode": "scene",
+        "sceneSourceLayerId": "hero-scene",
+        "effectMaskLayerId": "rain-mask",
+        "intensity": 0.84,
+        "wind": 0.2,
+        "dropSpeed": 1.5,
+        "dropLength": 1.18,
+        "depthLayers": 4,
+        "color": "#D6F5FF",
+        "backgroundColor": "#030711",
+        "lightColor": "#67e8f9",
+        "accentColor": "#fb7185",
+        "ground": {
+          "horizon": 0.43,
+          "wetness": 0.94,
+          "roughness": 0.22,
+          "rippleAmount": 0.8,
+          "splashAmount": 0.66,
+          "reflectionStrength": 0.92
+        },
+        "atmosphere": { "mist": 0.46, "lensDroplets": 0.3 }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 150 } },
+      "keyframes": {
+        "environment.intensity": [
+          { "atMs": 0, "value": 0.48, "easing": "ease-out" },
+          { "atMs": 1800, "value": 0.92, "easing": "ease-in-out" },
+          { "atMs": 4200, "value": 0.78, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.56, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "copy-scrim",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "rgba(2, 6, 23, 0.68)",
+      "startMs": 0,
+      "durationMs": 6000,
+      "width": 1060,
+      "height": 1080,
+      "transform": { "x": 0, "y": 0 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0.4, "easing": "ease-out" },
+          { "atMs": 900, "value": 0.76, "easing": "ease-out" },
+          { "atMs": 5400, "value": 0.64, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "atmosphere-particles",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 6000,
+      "opacity": 0.42,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "emitter": { "seed": 7142026, "count": 90, "lifetimeMs": 1800, "shape": "circle", "color": "#d6f5ff", "secondaryColor": "#67e8f9", "minSize": 1, "maxSize": 5, "minSpeed": 8, "maxSpeed": 34, "direction": -96, "spread": 120, "gravity": 8, "fadeOut": true },
+      "effects": { "glow": { "radius": 5, "color": "#67e8f9" } }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "LOCAL-FIRST CINEMA",
+      "startMs": 180,
+      "durationMs": 5400,
+      "transform": { "x": 136, "y": 184, "width": 760, "height": 56 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 27, "fontWeight": 850, "letterSpacing": 3.4, "color": "#67e8f9" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 18 },
+      "keyframes": {
+        "opacity": [{ "atMs": 180, "value": 0 }, { "atMs": 620, "value": 1, "easing": "ease-out" }],
+        "style.letterSpacing": [{ "atMs": 180, "value": 6 }, { "atMs": 720, "value": 3.4, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Turn one frame into a living night",
+      "startMs": 300,
+      "durationMs": 5200,
+      "transform": { "x": 128, "y": 266, "width": 860, "height": 330 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 88, "fontWeight": 880, "lineHeight": 1.01, "color": "#f8fafc", "textShadow": { "x": 0, "y": 12, "blur": 30, "color": "rgba(0, 0, 0, 0.55)" } },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 54 },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 180 } },
+      "keyframes": {
+        "opacity": [{ "atMs": 300, "value": 0 }, { "atMs": 980, "value": 1, "easing": "ease-out" }],
+        "transform.x": [{ "atMs": 300, "value": 72, "easing": "back-out" }, { "atMs": 980, "value": 128 }]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "Scene-aware rain, wet reflections and lens atmosphere render deterministically on your own machine.",
+      "startMs": 940,
+      "durationMs": 4400,
+      "transform": { "x": 136, "y": 626, "width": 760, "height": 154 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 34, "fontWeight": 620, "lineHeight": 1.18, "color": "#dcecf3" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 24 },
+      "keyframes": {
+        "opacity": [{ "atMs": 940, "value": 0 }, { "atMs": 1380, "value": 1, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 940, "value": 654, "easing": "ease-out" }, { "atMs": 1380, "value": 626 }]
+      }
+    },
+    {
+      "id": "cta-panel",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#67e8f9",
+      "startMs": 3900,
+      "durationMs": 1800,
+      "width": 356,
+      "height": 76,
+      "transform": { "x": 136, "y": 826 },
+      "style": { "radius": 18, "shadow": { "x": 0, "y": 14, "blur": 28, "color": "rgba(0, 0, 0, 0.38)" } },
+      "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 460, "easing": "ease-out" } }
+    },
+    {
+      "id": "cta",
+      "type": "text",
+      "text": "Build the scene",
+      "startMs": 3980,
+      "durationMs": 1650,
+      "transform": { "x": 174, "y": 843, "width": 292, "height": 44 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 31, "fontWeight": 850, "color": "#07111f" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "action", "minFontSize": 22 }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.24, "softness": 0.82, "color": "#020617" },
+        "filmGrain": { "amount": 0.014, "size": 1, "seed": 314159 }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "night-street-sample",
+      "kind": "image",
+      "source": { "path": "assets/samples/night-street.svg", "mimeType": "image/svg+xml" },
+      "size": { "width": 1920, "height": 1080 }
+    },
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "rain-occlusion-mask",
+      "kind": "image",
+      "source": { "path": "assets/masks/rain-occlusion.svg", "mimeType": "image/svg+xml" },
+      "size": { "width": 1920, "height": 1080 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-cinematic-rain-launch" }
+}

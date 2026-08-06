@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <mask id="revealMask">
+      <rect x="0" y="0" width="1280" height="720" fill="#ffffff" />
+    </mask>
+  </defs>
+  <path
+    id="hero-streak"
+    d="M 120 480 C 260 300 420 260 620 360 S 980 520 1160 260"
+    fill="none"
+    stroke="#00d4ff"
+    stroke-width="18"
+    stroke-linecap="round"
+    filter="url(#softGlow)"
+    mask="url(#revealMask)">
+    <animate
+      attributeName="d"
+      dur="1800ms"
+      repeatCount="indefinite"
+      values="M 120 480 C 260 300 420 260 620 360 S 980 520 1160 260;M 120 420 C 280 260 520 300 690 410 S 960 460 1160 220" />
+  </path>
+  <script>window.motionProbe = true;</script>
+</svg>

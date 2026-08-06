@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.webp -text
+*.ico -text
+*.mp3 -text
+*.wav -text
+*.mp4 -text
+*.mov -text
+*.webm -text
+*.woff -text
+*.woff2 -text
+*.ttf -text
+*.otf -text
+*.zip -text
+*.lottie -text
+*.shellxmotion -text

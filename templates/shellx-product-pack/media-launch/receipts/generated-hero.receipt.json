@@ -1,0 +1,29 @@
+{
+  "schema": "shellx-motion/generated-asset-receipt@1",
+  "id": "generated_asset_pkg_shellx_media_launch_assets_generated_shellx_media_launch_hero_1080p_jpg",
+  "packageId": "pkg_shellx_media_launch",
+  "generatorRoute": "bundled-sample",
+  "assetRef": "assets/generated/shellx-media-launch-hero-1080p.jpg",
+  "mediaType": "image/jpeg",
+  "promptSummary": "Slot-exact 1920x1080 variant of the media-launch hero (abstract amber-seam titanium wedge on charcoal), Lanczos-upscaled 1.5x to match the hero slot. No text, no logos.",
+  "toolLabel": "bundled sample asset",
+  "provenanceNote": "Bundled AI-generated sample image used under the generator's applicable terms. The source image was resized without cropping to the 1920x1080 media-launch hero slot.",
+  "contentSha256": "6b8340f423ce425d999496519c4e0b4dd1774e05962f06cbf2084303c32650c8",
+  "width": 1920,
+  "height": 1080,
+  "createdAt": "2026-07-22T10:52:58.352Z",
+  "status": "available",
+  "sampleDetails": {
+    "licenseNote": "ai-generated sample used under the generator's applicable terms",
+    "intendedSlot": "media-launch template heroMedia slot, pre-sized to the 1920x1080 canvas",
+    "processing": "Lanczos resize from 1280x720 to 1920x1080 with no crop.",
+    "verification": {
+      "measuredWith": "file / imagemagick identify / ffprobe (real outputs)",
+      "fileType": "JPEG image data, JFIF standard 1.02, aspect ratio, density 1x1, segment length 16, comment: \"Lavc60.31.102\", baseline, precision 8, 1920x1080, components 3",
+      "measuredWidth": 1920,
+      "measuredHeight": 1080,
+      "sha256Verified": "6b8340f423ce425d999496519c4e0b4dd1774e05962f06cbf2084303c32650c8",
+      "verdict": "PASS"
+    }
+  }
+}

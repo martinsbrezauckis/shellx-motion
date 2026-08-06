@@ -1,0 +1,49 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_holographic_lab_promo",
+  "name": "Holographic Lab Promo",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 80 },
+        "subtitle": { "type": "string", "maxLength": 100 }
+      }
+    },
+    "outputBounds": {
+      "minWidth": 320,
+      "maxWidth": 3840,
+      "minHeight": 180,
+      "maxHeight": 2160,
+      "minDurationMs": 1000,
+      "maxDurationMs": 8000,
+      "aspectRatios": ["16:9"]
+    },
+    "suitability": {
+      "bestFor": ["technology promos", "product launches", "cinematic title cards"],
+      "notFor": ["native-only preview", "editable Cut geometry"]
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "high",
+      "previewFps": 24,
+      "notes": ["Uses restricted WebGL shader, depth planes, temporal sampling, and particles."]
+    }
+  },
+  "groups": [{ "id": "copy", "label": "Copy", "order": 1 }],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "ORBITAL SIGNAL", "group": "copy", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "LOCAL RENDER // LIVE DEPTH", "group": "copy", "order": 2 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "text", "label": "Title" },
+    { "paramId": "subtitle", "widget": "text", "label": "Subtitle" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "subtitle" } }
+  ]
+}

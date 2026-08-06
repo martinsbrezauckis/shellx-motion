@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_environment_rain_footage",
+  "name": "Footage-Aware Cinematic Rain",
+  "motion": "motion.json",
+  "assets": ["assets/night-street.svg", "assets/effect-mask.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_social_stat_card",
+  "name": "ShellX Social Stat Card",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["headline", "metricValue", "metricLabel", "delta"],
+      "properties": {
+        "eyebrow": { "type": "string", "maxLength": 24 },
+        "headline": { "type": "string", "maxLength": 58 },
+        "metricValue": { "type": "string", "maxLength": 16 },
+        "metricLabel": { "type": "string", "maxLength": 52 },
+        "delta": { "type": "string", "maxLength": 40 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      { "eyebrow": "SHELLX FAMILY", "headline": "Renderer work is now measurable", "metricValue": "38/38", "metricLabel": "platform receipt gates passed", "delta": "+ Windows + macOS verified", "accentColor": "#2ee6a6" }
+    ],
+    "outputBounds": { "minWidth": 1080, "maxWidth": 3840, "minHeight": 1080, "maxHeight": 2160, "minDurationMs": 3000, "maxDurationMs": 9000, "aspectRatios": ["1:1", "16:9", "9:16"] },
+    "suitability": {
+      "bestFor": ["social stat card", "square social metric", "product status promo"],
+      "notFor": ["speaker captions", "long tutorials", "audio-led bumpers"]
+    },
+    "license": { "id": "shellx-product-sample-data", "label": "ShellX Product Sample Data", "attributionRequired": false, "redistributionAllowed": true, "commercialUse": true },
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "assetsAttribution": [
+      { "name": "Inter ExtraBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-800-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "provenance": { "source": "shellx-product-pack-social-stat-card", "sourceHash": "acc58165290b8b12b5914d4311db0734f01b6f9b2f13f1cb36ff28328532bd2c" },
+    "performance": { "recommendedLane": "browser", "renderCost": "low", "previewFps": 30, "notes": ["Square-first stat card with FHD and vertical output bounds."] },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1800, 3000, 4400],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "metric", "label": "Metric", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "SHELLX FAMILY", "group": "content", "order": 1 },
+    { "id": "headline", "label": "Headline", "type": "text", "defaultValue": "Renderer work is now measurable", "group": "content", "order": 2 },
+    { "id": "metricValue", "label": "Metric Value", "type": "text", "defaultValue": "38/38", "group": "metric", "order": 1 },
+    { "id": "metricLabel", "label": "Metric Label", "type": "text", "defaultValue": "platform receipt gates passed", "group": "metric", "order": 2 },
+    { "id": "delta", "label": "Delta", "type": "text", "defaultValue": "+ Windows + macOS verified", "group": "metric", "order": 3 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#2ee6a6", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "headline", "widget": "textarea", "label": "Headline" },
+    { "paramId": "metricValue", "widget": "text", "label": "Metric Value" },
+    { "paramId": "metricLabel", "widget": "text", "label": "Metric Label" },
+    { "paramId": "delta", "widget": "text", "label": "Delta" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "eyebrow" } },
+    { "paramId": "headline", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "headline" } },
+    { "paramId": "metricValue", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "metric-value" } },
+    { "paramId": "metricLabel", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "metric-label" } },
+    { "paramId": "delta", "target": { "kind": "motion_path", "path": "/layers/8/text", "layerId": "delta" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/7/fill", "layerId": "delta-pill" } }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_restricted_shader",
+  "name": "Restricted Shader Signal Bloom",
+  "durationMs": 1200,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "signal-bloom",
+      "type": "shader",
+      "startMs": 0,
+      "durationMs": 1200,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "shader": {
+        "schema": "shellx-motion/shader-plugin@1",
+        "language": "glsl-es-100-expression",
+        "fragmentAssetId": "shader_signal_bloom",
+        "seed": 8675309,
+        "uniforms": { "u_speed": 0.35 },
+        "fallbackColor": "#111827"
+      },
+      "keyframes": {
+        "shader.uniforms.u_speed": [
+          { "atMs": 0, "value": 0.35, "easing": "ease-in-out" },
+          { "atMs": 1200, "value": 1.4 }
+        ]
+      }
+    },
+    {
+      "id": "orb",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#fef08a",
+      "startMs": 0,
+      "durationMs": 1200,
+      "opacity": 0.8,
+      "blendMode": "screen",
+      "transform": { "x": 45, "y": 48, "width": 72, "height": 72 },
+      "effects": { "glow": { "radius": 28, "color": "#fef08a" } },
+      "keyframes": {
+        "transform.x": [
+          { "atMs": 0, "value": 45, "easing": "ease-in-out" },
+          { "atMs": 1200, "value": 205 }
+        ],
+        "transform.scale": [
+          { "atMs": 0, "value": 0.75, "easing": "ease-in-out" },
+          { "atMs": 600, "value": 1.2, "easing": "ease-in-out" },
+          { "atMs": 1200, "value": 0.85 }
+        ]
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "SIGNAL BLOOM",
+      "startMs": 0,
+      "durationMs": 1200,
+      "transform": { "x": 28, "y": 67, "width": 265, "height": 48 },
+      "style": {
+        "color": "#ffffff",
+        "fontFamily": "sans-serif",
+        "fontSize": 29,
+        "fontWeight": 900,
+        "letterSpacing": 2.4,
+        "textAlign": "center"
+      },
+      "effects": { "glow": { "radius": 9, "color": "#22d3ee" } },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0 },
+          { "atMs": 260, "value": 1, "easing": "ease-out" }
+        ],
+        "transform.scale": [
+          { "atMs": 0, "value": 0.88, "easing": "back-out" },
+          { "atMs": 420, "value": 1 }
+        ]
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 1200,
+      "effects": {
+        "vignette": { "amount": 0.7, "softness": 0.65, "color": "#020617" },
+        "filmGrain": { "amount": 0.2, "size": 2, "seed": 20260713 }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "shader_signal_bloom",
+      "type": "shader",
+      "source": {
+        "path": "assets/signal-bloom.glsl",
+        "mimeType": "text/x-shellx-motion-glsl"
+      }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

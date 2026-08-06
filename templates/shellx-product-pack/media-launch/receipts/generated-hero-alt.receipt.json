@@ -1,0 +1,28 @@
+{
+  "schema": "shellx-motion/generated-asset-receipt@1",
+  "id": "generated_asset_pkg_shellx_media_launch_assets_generated_shellx_media_launch_hero_alt_jpg",
+  "packageId": "pkg_shellx_media_launch",
+  "generatorRoute": "bundled-sample",
+  "assetRef": "assets/generated/shellx-media-launch-hero-alt.jpg",
+  "mediaType": "image/jpeg",
+  "promptSummary": "Editorial organic alternate hero: teal-cyan ink-in-water plumes and translucent silk folds on near-black, macro shallow depth of field, right-third copy space. No text, no logos, no people.",
+  "toolLabel": "bundled sample asset",
+  "provenanceNote": "Bundled AI-generated sample image used under the generator's applicable terms. This 1280x720 alternate visual is stored without resizing or cropping.",
+  "contentSha256": "ac9b304a9a4ddc82ff2a229488062964e09c93ba3bbcae7228e01cdfc6ab4987",
+  "width": 1280,
+  "height": 720,
+  "createdAt": "2026-07-22T10:53:26.347Z",
+  "status": "available",
+  "sampleDetails": {
+    "licenseNote": "ai-generated sample used under the generator's applicable terms",
+    "intendedSlot": "media-launch template heroMedia slot (alternate visual family / variety evidence)",
+    "verification": {
+      "measuredWith": "file / imagemagick identify / ffprobe (real outputs)",
+      "fileType": "JPEG image data, JFIF standard 1.01, aspect ratio, density 1x1, segment length 16, baseline, precision 8, 1280x720, components 3",
+      "measuredWidth": 1280,
+      "measuredHeight": 720,
+      "sha256Verified": "ac9b304a9a4ddc82ff2a229488062964e09c93ba3bbcae7228e01cdfc6ab4987",
+      "verdict": "PASS"
+    }
+  }
+}

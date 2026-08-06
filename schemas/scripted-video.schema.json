@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/scripted-video@1",
+  "type": "object",
+  "required": ["schema", "id", "name", "sourceApp", "workflow", "width", "height", "fps", "frames"],
+  "properties": {
+    "schema": { "const": "shellx-motion/scripted-video@1" },
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "sourceApp": { "type": "string", "minLength": 1 },
+    "workflow": { "type": "string", "minLength": 1 },
+    "intent": { "type": "string" },
+    "synopsis": { "type": "string" },
+    "review": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" }
+      }
+    },
+    "width": { "type": "integer", "minimum": 16, "maximum": 7680 },
+    "height": { "type": "integer", "minimum": 16, "maximum": 4320 },
+    "fps": { "type": "integer", "minimum": 1, "maximum": 120 },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 120,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "durationMs"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "body": { "type": "string" },
+          "caption": { "type": "string" },
+          "durationMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+          "background": { "type": "string" },
+          "accent": { "type": "string" },
+          "reviewStatus": { "type": "string" },
+          "agentNote": { "type": "string" },
+          "assetRefs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "sourceRefs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "type": "string", "minLength": 1 },
+                "title": { "type": "string" },
+                "url": { "type": "string" },
+                "path": { "type": "string" }
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": { "const": "rain" },
+                    "intensity": { "type": "integer", "minimum": 1, "maximum": 48 },
+                    "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "angle": { "type": "number", "minimum": -45, "maximum": 45 },
+                    "color": { "type": "string" },
+                    "seed": { "type": "string" },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 1.2 },
+                    "x": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "y": { "type": "number", "minimum": -1000, "maximum": 1000 }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": { "const": "signalPulse" },
+                    "intensity": { "type": "number", "minimum": 0.1, "maximum": 1 },
+                    "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "angle": { "type": "number", "minimum": -45, "maximum": 45 },
+                    "color": { "type": "string" },
+                    "seed": { "type": "string" },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 1.2 },
+                    "x": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "y": { "type": "number", "minimum": -1000, "maximum": 1000 }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": { "const": "cameraPush" },
+                    "intensity": { "type": "number", "minimum": 0.1, "maximum": 1 },
+                    "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "angle": { "type": "number", "minimum": -45, "maximum": 45 },
+                    "color": { "type": "string" },
+                    "seed": { "type": "string" },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 1.2 },
+                    "x": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "y": { "type": "number", "minimum": -1000, "maximum": 1000 }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": { "const": "particleField" },
+                    "intensity": { "type": "integer", "minimum": 1, "maximum": 48 },
+                    "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "angle": { "type": "number", "minimum": -45, "maximum": 45 },
+                    "color": { "type": "string" },
+                    "seed": { "type": "string" },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 1.2 },
+                    "x": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "y": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "shape": { "type": "string", "enum": ["rect", "ellipse", "star"] }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": { "const": "scanSweep" },
+                    "intensity": { "type": "number", "minimum": 0.1, "maximum": 1 },
+                    "speed": { "type": "number", "minimum": 0.1, "maximum": 8 },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "angle": { "type": "number", "minimum": -45, "maximum": 45 },
+                    "color": { "type": "string" },
+                    "seed": { "type": "string" },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 1.2 },
+                    "x": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                    "y": { "type": "number", "minimum": -1000, "maximum": 1000 }
+                  }
+                }
+              ]
+            }
+          },
+          "template": {
+            "type": "object",
+            "required": ["id", "engine"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "engine": { "type": "string", "minLength": 1 },
+              "variables": { "type": "object" }
+            }
+          },
+          "engine": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "mode": { "type": "string" },
+              "capability": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

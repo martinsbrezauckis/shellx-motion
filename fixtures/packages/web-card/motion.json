@@ -1,0 +1,22 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_web_card",
+  "name": "Web Card",
+  "durationMs": 2000,
+  "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "background": "#ffffff",
+  "layers": [
+    {
+      "id": "web-card",
+      "type": "web",
+      "source": "card.html",
+      "startMs": 0,
+      "durationMs": 2000,
+      "allowedOrigins": []
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "test" }
+}

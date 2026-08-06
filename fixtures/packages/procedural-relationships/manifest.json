@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_procedural_relationships",
+  "name": "Procedural Relationships Fixture",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "native"],
+    "hosts": ["canvas", "cut", "motion"]
+  }
+}

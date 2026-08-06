@@ -1,0 +1,94 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_environment_rain_footage",
+  "name": "Footage-Aware Cinematic Rain",
+  "durationMs": 4000,
+  "fps": 30,
+  "width": 640,
+  "height": 360,
+  "background": "#050A12",
+  "layers": [
+    {
+      "id": "footage",
+      "name": "Package-local night street",
+      "type": "image",
+      "assetId": "night-street",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 4000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "effect-mask",
+      "name": "Hidden rain occlusion mask",
+      "type": "image",
+      "assetId": "effect-mask",
+      "fit": "fill",
+      "opacity": 0,
+      "startMs": 0,
+      "durationMs": 4000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "rain-stage",
+      "name": "Rain sampled over footage",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 4000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360, "scale": 1, "rotation": 0 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "rain",
+        "seed": 20260713,
+        "quality": "cinematic",
+        "mode": "scene",
+        "sceneSourceLayerId": "footage",
+        "effectMaskLayerId": "effect-mask",
+        "intensity": 0.84,
+        "wind": 0.2,
+        "dropSpeed": 1.5,
+        "dropLength": 1.18,
+        "depthLayers": 4,
+        "color": "#D6F5FF",
+        "backgroundColor": "#040911",
+        "lightColor": "#5EE7F7",
+        "accentColor": "#FF5C8A",
+        "ground": {
+          "horizon": 0.43,
+          "wetness": 0.94,
+          "roughness": 0.22,
+          "rippleAmount": 0.8,
+          "splashAmount": 0.66,
+          "reflectionStrength": 0.92
+        },
+        "atmosphere": { "mist": 0.46, "lensDroplets": 0.3 }
+      },
+      "keyframes": {
+        "environment.intensity": [
+          { "atMs": 0, "value": 0.58, "easing": "ease-out" },
+          { "atMs": 1800, "value": 0.9, "easing": "ease-in-out" },
+          { "atMs": 4000, "value": 0.72, "easing": "ease-out" }
+        ]
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "night-street",
+      "kind": "image",
+      "source": { "path": "assets/night-street.svg", "mimeType": "image/svg+xml" },
+      "hash": { "sha256": "fixture-night-street" },
+      "size": { "width": 640, "height": 360 }
+    },
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "effect-mask",
+      "kind": "image",
+      "source": { "path": "assets/effect-mask.svg", "mimeType": "image/svg+xml" },
+      "hash": { "sha256": "fixture-effect-mask" },
+      "size": { "width": 640, "height": 360 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

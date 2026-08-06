@@ -1,0 +1,22 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_hyperframes_card",
+  "name": "HyperFrames Style Card",
+  "durationMs": 3000,
+  "fps": 30,
+  "width": 1080,
+  "height": 1080,
+  "background": "#141414",
+  "layers": [
+    {
+      "id": "html-composition",
+      "type": "web",
+      "source": "index.html",
+      "startMs": 0,
+      "durationMs": 3000,
+      "allowedOrigins": []
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "test" }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/browser-workflow-trace@1",
+  "type": "object",
+  "required": ["schema", "workflowHash", "stepCount", "steps"],
+  "properties": {
+    "schema": { "const": "shellx-motion/browser-workflow-trace@1" },
+    "workflowHash": { "type": "string", "minLength": 1 },
+    "stepCount": { "type": "integer", "minimum": 0 },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "action", "status"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "action": {
+            "type": "object",
+            "not": { "required": ["text"] }
+          },
+          "status": { "enum": ["passed", "failed"] },
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "enum": ["action_failed", "text_mismatch"] },
+              "message": { "type": "string", "minLength": 1 },
+              "selector": { "type": "string", "minLength": 1 },
+              "expectedTextLength": { "type": "integer", "minimum": 0 },
+              "actualTextLength": { "type": "integer", "minimum": 0 },
+              "actualTextSha256": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "properties": {
+        "visible": { "type": "boolean" },
+        "pointCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "captureReadiness": {
+      "type": "object",
+      "required": ["schema", "page", "stylesheets", "fonts", "animationPolicy", "media", "waitMs", "diagnostics"],
+      "properties": {
+        "schema": { "const": "shellx-motion/browser-capture-readiness@1" },
+        "page": { "const": "loaded" },
+        "stylesheets": { "const": "settled" },
+        "fonts": { "enum": ["ready", "unsupported", "timeout", "error"] },
+        "animationPolicy": { "const": "screenshot-disabled" },
+        "media": { "const": "settled-after-time-seek" },
+        "waitMs": { "type": "number", "minimum": 0 },
+        "diagnostics": {
+          "type": "object",
+          "properties": {
+            "stylesheetLinkCount": { "type": "integer", "minimum": 0 },
+            "fontFaceCount": { "type": "integer", "minimum": 0 },
+            "fontFaceLoadAttemptCount": { "type": "integer", "minimum": 0 },
+            "fontFaceLoadedCount": { "type": "integer", "minimum": 0 },
+            "finiteAnimationCount": { "type": "integer", "minimum": 0 },
+            "finiteAnimationMaxMs": { "type": "number", "minimum": 0 },
+            "finiteTransitionCount": { "type": "integer", "minimum": 0 },
+            "finiteTransitionMaxMs": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

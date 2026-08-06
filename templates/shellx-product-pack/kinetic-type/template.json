@@ -1,0 +1,76 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_kinetic_type",
+  "name": "ShellX Kinetic Type",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["wordOne", "wordTwo", "wordThree", "subtitle"],
+      "properties": {
+        "tag": { "type": "string", "maxLength": 28 },
+        "wordOne": { "type": "string", "maxLength": 14 },
+        "wordTwo": { "type": "string", "maxLength": 14 },
+        "wordThree": { "type": "string", "maxLength": 14 },
+        "subtitle": { "type": "string", "maxLength": 84 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      { "tag": "KINETIC TYPOGRAPHY", "wordOne": "Plan", "wordTwo": "Render", "wordThree": "Revise", "subtitle": "Agent authoring loops need visible receipts, not magic.", "accentColor": "#24d6ff" }
+    ],
+    "outputBounds": { "minWidth": 1080, "maxWidth": 3840, "minHeight": 1080, "maxHeight": 2160, "minDurationMs": 3000, "maxDurationMs": 9000, "aspectRatios": ["16:9", "1:1"] },
+    "suitability": {
+      "bestFor": ["kinetic typography card", "type-led explainer", "agent loop callout"],
+      "notFor": ["photographic media stories", "dense report briefs"]
+    },
+    "license": { "id": "shellx-product-copy", "label": "ShellX Product Copy", "attributionRequired": false, "redistributionAllowed": true, "commercialUse": true },
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "assetsAttribution": [
+      { "name": "Inter Bold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-700-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "provenance": { "source": "shellx-product-pack-kinetic-type", "sourceHash": "755b57b1ef5ad6a1668275a57e046226c3482d494482f3a363717ae11e53d615" },
+    "performance": { "recommendedLane": "browser", "renderCost": "low", "previewFps": 30, "notes": ["Uses deterministic text keyframes for word-level motion."] },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 2000, 3200, 4400],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "type", "label": "Type", "order": 1 },
+    { "id": "style", "label": "Style", "order": 2 }
+  ],
+  "params": [
+    { "id": "tag", "label": "Tag", "type": "text", "defaultValue": "KINETIC TYPOGRAPHY", "group": "type", "order": 1 },
+    { "id": "wordOne", "label": "Word One", "type": "text", "defaultValue": "Plan", "group": "type", "order": 2 },
+    { "id": "wordTwo", "label": "Word Two", "type": "text", "defaultValue": "Render", "group": "type", "order": 3 },
+    { "id": "wordThree", "label": "Word Three", "type": "text", "defaultValue": "Revise", "group": "type", "order": 4 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Agent authoring loops need visible receipts, not magic.", "group": "type", "order": 5 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#24d6ff", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "tag", "widget": "text", "label": "Tag" },
+    { "paramId": "wordOne", "widget": "text", "label": "Word One" },
+    { "paramId": "wordTwo", "widget": "text", "label": "Word Two" },
+    { "paramId": "wordThree", "widget": "text", "label": "Word Three" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "tag", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "tag" } },
+    { "paramId": "wordOne", "target": { "kind": "motion_path", "path": "/layers/2/text", "layerId": "word-one" } },
+    { "paramId": "wordTwo", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "word-two" } },
+    { "paramId": "wordThree", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "word-three" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "subtitle" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/3/style/color", "layerId": "word-two" } }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@shellx-motion/sdk",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./local": "./src/local.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./local": {
+        "types": "./dist/local.d.ts",
+        "default": "./dist/local.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build.mjs --package @shellx-motion/sdk",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --testTimeout=45000"
+  },
+  "dependencies": {
+    "@shellx-motion/adapters-cut": "workspace:*",
+    "@shellx-motion/adapters-script": "workspace:*",
+    "@shellx-motion/core": "workspace:*",
+    "@shellx-motion/debug-api": "workspace:*",
+    "@shellx-motion/renderer-ffmpeg": "workspace:*"
+  }
+}

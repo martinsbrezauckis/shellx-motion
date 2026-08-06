@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/tracking-lifecycle@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "state", "attempt", "requestedSource", "updatedAt"],
+  "properties": {
+    "schema": { "const": "shellx-motion/tracking-lifecycle@1" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "state": { "enum": ["queued", "running", "succeeded", "partial", "failed", "cancelled", "stale"] },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "requestedSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "sha256", "byteLength", "width", "height", "durationMs"],
+      "properties": {
+        "assetId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "byteLength": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 7680 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 7680 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400000 }
+      }
+    },
+    "lastGood": { "$ref": "tracking-analysis.schema.json" },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "updatedAt": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion Workbench</title>
+    <link rel="stylesheet" href="/workbench.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ShellX</span><strong>Motion</strong>
+        </div>
+        <div class="document-identity">
+          <span id="documentName">No package open</span>
+          <span class="muted" id="documentMeta">Local workbench</span>
+        </div>
+        <div class="command-actions">
+          <button class="icon-button" id="refreshButton" type="button" title="Refresh package state" aria-label="Refresh package state" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>
+          </button>
+          <span class="session-state" id="sessionState"><i></i>Disconnected</span>
+          <button class="quiet-button" id="sessionButton" type="button">Connect</button>
+          <button class="primary-button" id="renderButton" type="button" disabled>Render…</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="package-rail" aria-label="Package browser">
+          <form id="packageForm" class="package-form">
+            <label for="packageRoot">Motion package</label>
+            <div class="path-entry">
+              <output id="packageRoot" class="path-display" data-path="" data-empty="true" aria-live="polite">No package selected</output>
+              <button class="quiet-button compact" type="button" id="packageBrowse" disabled>Browse…</button>
+            </div>
+          </form>
+          <div class="rail-heading"><span>Packages</span><span id="packageCount">0</span></div>
+          <div class="package-list" id="packageList" role="list">
+            <div class="empty-copy">Start Motion, then choose a Motion package.</div>
+          </div>
+          <div class="rail-footer">
+            <span>Local engine</span>
+            <span id="accessSummary">Secure workspace</span>
+          </div>
+        </aside>
+
+        <section class="edit-stage" aria-label="Motion workspace">
+          <section class="preview-region" aria-label="Preview monitor">
+            <div class="preview-toolbar">
+              <div class="view-switch" role="group" aria-label="Preview background">
+                <button type="button" class="selected" data-stage="black">Black</button>
+                <button type="button" data-stage="neutral">Neutral</button>
+              </div>
+              <span id="previewSize">— × —</span>
+              <button class="quiet-button compact" id="previewButton" type="button" disabled>Refresh frame</button>
+            </div>
+            <div class="preview-stage" id="previewStage" data-background="black">
+              <img id="previewImage" alt="Rendered Motion preview" hidden>
+              <div class="stage-empty" id="stageEmpty">
+                <span class="stage-glyph" aria-hidden="true"></span>
+                <strong>Open a Motion package</strong>
+                <span>Preview frames render on this machine.</span>
+              </div>
+              <div class="stage-progress" id="stageProgress" hidden><i></i><span>Rendering preview</span></div>
+            </div>
+            <div class="transport">
+              <button class="transport-button" id="playButton" type="button" aria-label="Play" disabled>
+                <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+                <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+              </button>
+              <span class="timecode" id="timecode">00:00:00:00</span>
+              <input class="scrubber" id="scrubber" type="range" min="0" max="1000" value="0" aria-label="Timeline playhead" disabled>
+              <span class="timecode muted" id="durationCode">00:00:00:00</span>
+            </div>
+          </section>
+
+          <section class="timeline-region" aria-label="Timeline">
+            <div class="timeline-toolbar">
+              <div><strong>Timeline</strong><span id="timelineSummary">No layers</span></div>
+              <div class="zoom-controls" role="group" aria-label="Timeline zoom">
+                <button class="icon-button" id="zoomOut" type="button" aria-label="Zoom out" disabled>−</button>
+                <span id="zoomValue">100%</span>
+                <button class="icon-button" id="zoomIn" type="button" aria-label="Zoom in" disabled>+</button>
+              </div>
+            </div>
+            <div class="timeline-scroll" id="timelineScroll">
+              <div class="timeline-ruler" id="timelineRuler"><span>0s</span></div>
+              <div class="timeline-rows" id="timelineRows">
+                <div class="empty-copy">Layer timing appears here after a package is loaded.</div>
+              </div>
+              <div class="playhead" id="playhead" hidden><i></i></div>
+            </div>
+          </section>
+        </section>
+
+        <aside class="inspector" aria-label="Inspector and diagnostics">
+          <div class="tab-list" role="tablist" aria-label="Inspector panels">
+            <button type="button" role="tab" aria-selected="true" data-panel="inspectorPanel">Inspector</button>
+            <button type="button" role="tab" aria-selected="false" data-panel="queuePanel">Queue</button>
+            <button type="button" role="tab" aria-selected="false" data-panel="receiptsPanel">Receipts</button>
+          </div>
+          <section class="tab-panel active" id="inspectorPanel" role="tabpanel">
+            <div class="inspector-heading">
+              <span>Selection</span>
+              <strong id="selectionName">Nothing selected</strong>
+            </div>
+            <dl class="property-list" id="propertyList">
+              <div><dt>Status</dt><dd>Waiting for a package</dd></div>
+            </dl>
+            <div class="inspector-section">
+              <div class="section-label">Diagnostics</div>
+              <div id="diagnostics" class="diagnostics"><span class="diagnostic neutral">No diagnostics yet</span></div>
+            </div>
+          </section>
+          <section class="tab-panel" id="queuePanel" role="tabpanel" hidden>
+            <div class="panel-toolbar"><strong>Render queue</strong><button class="quiet-button compact" type="button" data-refresh-panel="queue">Refresh</button></div>
+            <div class="operation-list" id="queueList"><div class="empty-copy">No receipt-backed render jobs loaded.</div></div>
+          </section>
+          <section class="tab-panel" id="receiptsPanel" role="tabpanel" hidden>
+            <div class="panel-toolbar"><strong>Receipts</strong><button class="quiet-button compact" type="button" data-refresh-panel="receipts">Refresh</button></div>
+            <label class="stacked-field" for="receiptsRoot">Receipt location
+              <span class="path-entry"><output id="receiptsRoot" class="path-display" data-path="" data-empty="true" aria-live="polite">No receipt location selected</output><button class="quiet-button compact" id="receiptsBrowse" type="button">Browse…</button></span>
+            </label>
+            <div class="panel-summary" id="receiptsSummary"></div>
+            <div class="operation-list" id="receiptList"><div class="empty-copy">Choose a receipt location and refresh.</div></div>
+          </section>
+        </aside>
+      </main>
+
+      <div class="status-bar" role="status" aria-live="polite">
+        <span id="statusMessage">Start Motion to begin.</span>
+        <span id="statusDetail">Project content stays on this machine</span>
+      </div>
+    </div>
+
+    <dialog id="connectDialog" class="dialog">
+      <form method="dialog" id="connectForm">
+        <div class="dialog-heading"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><div><strong>Connect to ShellX Motion</strong><span>Start Motion connects automatically. Manual Debug API sessions can use the same local access key.</span></div></div>
+        <label class="stacked-field" for="capabilityToken">Local access key<input id="capabilityToken" type="password" autocomplete="off" required minlength="32" placeholder="Paste your Motion local access key"></label>
+        <div class="dialog-error" id="connectError" hidden></div>
+        <div class="dialog-actions"><button class="quiet-button" value="cancel" type="button" data-close-dialog="connectDialog">Cancel</button><button class="primary-button" value="connect" type="submit">Connect</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="renderDialog" class="dialog wide">
+      <form method="dialog" id="renderForm">
+        <div class="dialog-heading"><div><strong>Render final media</strong><span id="renderPackageName">Current package</span></div></div>
+        <label class="stacked-field" for="renderOutputPath">Save render to
+          <span class="path-entry"><output id="renderOutputPath" class="path-display" data-path="" data-empty="true" aria-live="polite">Choose a destination</output><button class="quiet-button compact" id="renderOutputBrowse" type="button">Browse…</button></span>
+        </label>
+        <label class="stacked-field" for="renderPreset">Preset<select id="renderPreset"><option value="mp4-h264">MP4 · H.264</option><option value="webm-vp9">WebM · VP9</option><option value="gif">Animated GIF</option><option value="png-frame">PNG still frame</option></select></label>
+        <label class="stacked-field" for="qualityManifestPath">Quality manifest <span class="optional">optional</span>
+          <span class="path-entry"><output id="qualityManifestPath" class="path-display" data-path="" data-empty="true" aria-live="polite">None selected</output><button class="quiet-button compact" id="qualityManifestBrowse" type="button">Browse…</button></span>
+        </label>
+        <div class="gate-field">
+          <label class="checkbox-field" for="motionGate"><input id="motionGate" type="checkbox"><span>Require frame-to-frame motion</span></label>
+          <span class="gate-note" id="motionGateNote">Open a package to derive this from its timeline.</span>
+        </div>
+        <!-- Readiness BEFORE submitting, not an FFmpeg error after (the readiness-parity invariant). Filled from
+             motion.platform.requirements — the same answer `motion doctor` gives. -->
+        <div class="gate-field" id="renderReadiness" hidden>
+          <span class="gate-note" id="renderReadinessLabel">Checking what this machine can render…</span>
+          <span class="gate-note" id="renderReadinessDetail"></span>
+        </div>
+        <div class="dialog-error" id="renderError" hidden></div>
+        <div class="render-job" id="renderJob" hidden>
+          <span class="gate-note">Background render reference:</span>
+          <code id="renderJobId"></code>
+          <span class="gate-note">Closing this progress view does not cancel the render; it continues in the background.</span>
+        </div>
+        <div class="render-progress" id="renderProgress" hidden><i></i><span><strong id="renderProgressLabel">Submitting</strong><span id="renderProgressDetail">Waiting for the engine to register the job.</span></span></div>
+        <div class="dialog-actions"><button class="quiet-button" id="renderCancelButton" value="cancel" type="button">Cancel</button><button class="primary-button" id="renderSubmitButton" value="render" type="submit">Start render</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/workbench.js"></script>
+    <script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

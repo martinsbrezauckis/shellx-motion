@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/motion@1",
+  "$comment": "Published structural contract for a Motion document. The AUTHORITY is the hand-written validator in packages/core/src/validate.ts (schema family 'motion'); this file encodes the document-level structural rules that validator enforces so external consumers get the same accept/reject at the structural level. It is verified against the validator by packages/core/src/motion-schema-contract.test.ts and scripts/generate-public-contracts.ts --check (required lists and the easing enum are pinned to core constants). Full-fidelity validation of every field is out of scope and remains in validate.ts; this schema is intentionally permissive (additionalProperties allowed) beyond the structural rules below.",
+  "type": "object",
+  "required": ["schema", "id", "name", "durationMs", "fps", "width", "height", "layers", "assets", "provenance"],
+  "properties": {
+    "schema": { "const": "shellx-motion/motion@1" },
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+    "fps": { "type": "number", "exclusiveMinimum": 0 },
+    "width": { "type": "integer", "exclusiveMinimum": 0 },
+    "height": { "type": "integer", "exclusiveMinimum": 0 },
+    "provenance": { "type": "object" },
+    "safeAreas": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "top": { "type": "number", "minimum": 0 },
+          "right": { "type": "number", "minimum": 0 },
+          "bottom": { "type": "number", "minimum": 0 },
+          "left": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layer" }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "if": {
+          "type": "object",
+          "required": ["type"],
+          "properties": { "type": { "const": "font" } }
+        },
+        "then": {
+          "type": "object",
+          "required": ["id", "type", "family", "source"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+            "type": { "const": "font" },
+            "family": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$" },
+            "source": {
+              "type": "object",
+              "required": ["path", "mimeType"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "mimeType": { "enum": ["font/woff2", "font/woff", "font/ttf", "font/otf"] }
+              }
+            },
+            "weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "style": { "enum": ["normal", "italic", "oblique"] }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "layer": {
+      "$comment": "Structural layer rules enforced by validateMotionLayers in packages/core/src/validate.ts. Additional layer-shape fields (transform, style, shape, effects, mask, transitions, source, etc.) are validated by validate.ts and intentionally allowed here (additionalProperties defaults to permitted).",
+      "type": "object",
+      "required": ["id", "type", "startMs", "durationMs"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "Renderable layer types (MotionLayerType, and the union of the renderer capability cards in packages/core/src/capability-cards.ts): adjustment, audio, camera, caption, environment, image, particles, scene3d, shader, shape, text, video, web. Every one of them is drawn by at least one lane; packages/core/src/layer-type-source-of-truth.test.ts fails if that stops being true, so this list is the menu of what actually works. Deliberately NOT an enum: validate.ts accepts any non-empty string type so a host can carry its own types through a document. A type outside this list is not rendered by anything — motion.package.validate refuses such a package with package_unrenderable rather than letting the first render discover it (host-produced 'html'/'canvas' layers included: the browser lane's capability gate refuses both)."
+        },
+        "name": { "type": "string" },
+        "startMs": { "type": "number", "minimum": 0 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "keyframes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/keyframe" }
+          }
+        }
+      }
+    },
+    "keyframe": {
+      "$comment": "A single keyframe entry as enforced by validateKeyframe in validate.ts. `value` type depends on the keyframe target and is validated there, so it is left unconstrained here.",
+      "type": "object",
+      "required": ["atMs"],
+      "properties": {
+        "atMs": { "type": "number" },
+        "easing": { "$ref": "#/$defs/easing" }
+      }
+    },
+    "easing": {
+      "$comment": "Accepted easing forms per isSupportedEasing in packages/core/src/timeline.ts. The named enum is pinned to NAMED_EASINGS_LIST by the schema drift test; cubic-bezier(...) / steps(...) are the parametric forms.",
+      "type": "string",
+      "anyOf": [
+        { "enum": ["linear", "hold", "ease-in", "ease-out", "ease-in-out", "back-out", "bounce-out", "step-start", "step-end"] },
+        { "pattern": "^cubic-bezier\\(" },
+        { "pattern": "^steps\\(" }
+      ]
+    }
+  }
+}

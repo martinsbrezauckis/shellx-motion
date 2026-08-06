@@ -1,0 +1,179 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_tracked_callout_overlay",
+  "name": "ShellX Tracked Callout Overlay",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#020817",
+  "safeAreas": {
+    "headline": { "top": 78, "right": 92, "bottom": 78, "left": 92 },
+    "callout": { "top": 72, "right": 72, "bottom": 72, "left": 72 }
+  },
+  "layers": [
+    {
+      "id": "hero-scene",
+      "name": "Replaceable tracked product scene",
+      "type": "image",
+      "source": "assets/samples/device-inspection.svg",
+      "assetRef": "assets/samples/device-inspection.svg",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.03, "rotation": 0 },
+      "keyframes": {
+        "transform.scale": [{ "atMs": 0, "value": 1.03 }, { "atMs": 3000, "value": 1.08, "easing": "ease-in-out" }, { "atMs": 6000, "value": 1.045, "easing": "ease-out" }],
+        "transform.x": [{ "atMs": 0, "value": -18 }, { "atMs": 3000, "value": 22, "easing": "ease-in-out" }, { "atMs": 6000, "value": 4, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "scene-grade",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "rgba(2, 8, 23, 0.24)",
+      "startMs": 0,
+      "durationMs": 6000,
+      "width": 1920,
+      "height": 1080,
+      "transform": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "callout-ring",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#22d3ee",
+      "opacity": 0.26,
+      "startMs": 280,
+      "durationMs": 5400,
+      "width": 92,
+      "height": 92,
+      "transform": { "x": 1190, "y": 602, "scale": 1 },
+      "effects": { "glow": { "radius": 18, "color": "#22d3ee" } },
+      "keyframes": {
+        "transform.x": [{ "atMs": 280, "value": 1132 }, { "atMs": 1700, "value": 1190, "easing": "ease-in-out" }, { "atMs": 3600, "value": 1260, "easing": "ease-in-out" }, { "atMs": 5680, "value": 1215, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 280, "value": 638 }, { "atMs": 1700, "value": 602, "easing": "ease-in-out" }, { "atMs": 3600, "value": 564, "easing": "ease-in-out" }, { "atMs": 5680, "value": 590, "easing": "ease-out" }],
+        "transform.scale": [{ "atMs": 280, "value": 0.2 }, { "atMs": 760, "value": 1.18, "easing": "back-out" }, { "atMs": 1700, "value": 0.9, "easing": "ease-out" }, { "atMs": 3600, "value": 1.12, "easing": "ease-in-out" }, { "atMs": 5680, "value": 0.94, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 280, "value": 0 }, { "atMs": 620, "value": 0.32, "easing": "ease-out" }, { "atMs": 5680, "value": 0.22, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "callout-core",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#22d3ee",
+      "startMs": 360,
+      "durationMs": 5300,
+      "width": 22,
+      "height": 22,
+      "transform": { "x": 1225, "y": 637 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 360, "value": 1167 }, { "atMs": 1700, "value": 1225, "easing": "ease-in-out" }, { "atMs": 3600, "value": 1295, "easing": "ease-in-out" }, { "atMs": 5660, "value": 1250, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 360, "value": 673 }, { "atMs": 1700, "value": 637, "easing": "ease-in-out" }, { "atMs": 3600, "value": 599, "easing": "ease-in-out" }, { "atMs": 5660, "value": 625, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 360, "value": 0 }, { "atMs": 660, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "callout-leader",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#22d3ee",
+      "startMs": 620,
+      "durationMs": 4940,
+      "width": 332,
+      "height": 4,
+      "transform": { "x": 906, "y": 647, "rotation": -4, "originX": 1, "originY": 0.5 },
+      "style": { "radius": 2 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 620, "value": 930 }, { "atMs": 1700, "value": 906, "easing": "ease-in-out" }, { "atMs": 3600, "value": 970, "easing": "ease-in-out" }, { "atMs": 5560, "value": 925, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 620, "value": 686 }, { "atMs": 1700, "value": 647, "easing": "ease-in-out" }, { "atMs": 3600, "value": 611, "easing": "ease-in-out" }, { "atMs": 5560, "value": 638, "easing": "ease-out" }],
+        "transform.width": [{ "atMs": 620, "value": 220 }, { "atMs": 1180, "value": 332, "easing": "ease-out" }, { "atMs": 3600, "value": 338, "easing": "ease-in-out" }, { "atMs": 5560, "value": 332, "easing": "ease-out" }],
+        "transform.rotation": [{ "atMs": 620, "value": -3 }, { "atMs": 1700, "value": -4, "easing": "ease-in-out" }, { "atMs": 3600, "value": -2, "easing": "ease-in-out" }, { "atMs": 5560, "value": -3.5, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 620, "value": 0 }, { "atMs": 1040, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "callout-panel",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "rgba(3, 12, 30, 0.88)",
+      "startMs": 760,
+      "durationMs": 4800,
+      "width": 520,
+      "height": 178,
+      "transform": { "x": 410, "y": 568 },
+      "style": { "radius": 22, "borderWidth": 2, "borderColor": "rgba(34, 211, 238, 0.62)", "shadow": { "x": 0, "y": 18, "blur": 42, "color": "rgba(0, 0, 0, 0.55)" } },
+      "keyframes": {
+        "transform.x": [{ "atMs": 760, "value": 350 }, { "atMs": 1200, "value": 410, "easing": "back-out" }, { "atMs": 3600, "value": 474, "easing": "ease-in-out" }, { "atMs": 5560, "value": 429, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 760, "value": 606 }, { "atMs": 1700, "value": 568, "easing": "ease-in-out" }, { "atMs": 3600, "value": 532, "easing": "ease-in-out" }, { "atMs": 5560, "value": 559, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 760, "value": 0 }, { "atMs": 1200, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "callout-title",
+      "type": "text",
+      "text": "Adaptive cooling core",
+      "startMs": 900,
+      "durationMs": 4550,
+      "transform": { "x": 452, "y": 600, "width": 430, "height": 44 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 28, "fontWeight": 850, "color": "#ecfeff" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "callout", "minFontSize": 18 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 900, "value": 392 }, { "atMs": 1200, "value": 452, "easing": "back-out" }, { "atMs": 3600, "value": 516, "easing": "ease-in-out" }, { "atMs": 5450, "value": 471, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 900, "value": 638 }, { "atMs": 1700, "value": 600, "easing": "ease-in-out" }, { "atMs": 3600, "value": 564, "easing": "ease-in-out" }, { "atMs": 5450, "value": 591, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 900, "value": 0 }, { "atMs": 1320, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "callout-detail",
+      "type": "text",
+      "text": "Thermal load drops 18% under sustained local rendering.",
+      "startMs": 1080,
+      "durationMs": 4300,
+      "transform": { "x": 452, "y": 660, "width": 420, "height": 64 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 22, "fontWeight": 560, "lineHeight": 1.18, "color": "#a5f3fc" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "callout", "minFontSize": 15 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 1080, "value": 392 }, { "atMs": 1380, "value": 452, "easing": "back-out" }, { "atMs": 3600, "value": 516, "easing": "ease-in-out" }, { "atMs": 5380, "value": 471, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 1080, "value": 698 }, { "atMs": 1700, "value": 660, "easing": "ease-in-out" }, { "atMs": 3600, "value": 624, "easing": "ease-in-out" }, { "atMs": 5380, "value": 651, "easing": "ease-out" }],
+        "opacity": [{ "atMs": 1080, "value": 0 }, { "atMs": 1500, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "See the system think",
+      "startMs": 300,
+      "durationMs": 5300,
+      "transform": { "x": 108, "y": 106, "width": 910, "height": 118 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 64, "fontWeight": 880, "lineHeight": 1, "color": "#f8fafc", "textShadow": { "x": 0, "y": 10, "blur": 28, "color": "rgba(0, 0, 0, 0.58)" } },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "headline", "minFontSize": 38 },
+      "keyframes": { "opacity": [{ "atMs": 300, "value": 0 }, { "atMs": 900, "value": 1, "easing": "ease-out" }] }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "A baked tracking path keeps the annotation connected while the product frame moves.",
+      "startMs": 820,
+      "durationMs": 4500,
+      "transform": { "x": 112, "y": 232, "width": 780, "height": 74 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 27, "fontWeight": 560, "lineHeight": 1.2, "color": "#cffafe" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "headline", "minFontSize": 19 },
+      "keyframes": { "opacity": [{ "atMs": 820, "value": 0 }, { "atMs": 1260, "value": 1, "easing": "ease-out" }] }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.2, "softness": 0.86, "color": "#020617" },
+        "filmGrain": { "amount": 0.008, "size": 1, "seed": 42731 }
+      }
+    }
+  ],
+  "assets": [
+    { "schema": "shellx-motion/asset@1", "id": "device-inspection-sample", "kind": "image", "source": { "path": "assets/samples/device-inspection.svg", "mimeType": "image/svg+xml" }, "size": { "width": 1920, "height": 1080 } }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-tracked-callout-overlay" }
+}

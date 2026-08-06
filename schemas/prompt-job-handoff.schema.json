@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/prompt-job-handoff@1",
+  "title": "ShellX Motion prompt job handoff",
+  "type": "object",
+  "required": ["schema", "jobId", "receiptId", "receiptPath", "operation", "packageId", "lane", "state", "createdAt", "inputHashes", "request"],
+  "properties": {
+    "schema": { "const": "shellx-motion/prompt-job-handoff@1" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "receiptId": { "type": "string", "minLength": 1 },
+    "receiptPath": { "type": "string", "minLength": 1 },
+    "operation": { "type": "string", "minLength": 1 },
+    "packageId": { "type": "string", "minLength": 1 },
+    "lane": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["queued", "running"] },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "inputHashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "request": { "type": "string", "minLength": 1 },
+    "agentId": { "type": "string", "minLength": 1 },
+    "sourceReceiptId": { "type": "string", "minLength": 1 },
+    "sourceReceiptPath": { "type": "string", "minLength": 1 },
+    "eventReplay": {
+      "type": "object",
+      "required": ["schema", "eventCount", "lastSeq", "reconnectCursor"],
+      "properties": {
+        "schema": { "const": "shellx-motion/job-event-replay@1" },
+        "eventLogPath": { "type": "string", "minLength": 1 },
+        "eventCount": { "type": "integer", "minimum": 0 },
+        "lastSeq": { "type": "integer", "minimum": 0 },
+        "lastEventAt": { "type": "string", "minLength": 1 },
+        "reconnectCursor": {
+          "type": "object",
+          "required": ["receiptId", "sinceSeq"],
+          "properties": {
+            "receiptId": { "type": "string", "minLength": 1 },
+            "sinceSeq": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "retryAttempt": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": true
+}

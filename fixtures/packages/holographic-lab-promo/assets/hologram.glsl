@@ -1,0 +1,1 @@
+vec4 motionMain(vec2 uv) { return vec4(0.15 + 0.65 * abs(sin((uv.y * 36.0 + u_time * u_speed) * 3.14159)), 0.35 + 0.55 * abs(cos((uv.x * 8.0 - u_time * 0.3) * 3.14159)), 0.65 + 0.3 * sin((uv.x + uv.y + u_seed + u_time * 0.2) * 9.0), 1.0); }

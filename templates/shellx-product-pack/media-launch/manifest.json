@@ -1,0 +1,20 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_media_launch",
+  "name": "ShellX Media Launch",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/generated/shellx-media-launch-hero-1080p.jpg",
+    "assets/generated/shellx-media-launch-hero-alt.jpg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-800-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion"]
+  },
+  "workflow": "template-pack-media-launch"
+}

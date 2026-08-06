@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_rich_depth_promo",
+  "name": "Rich Depth Promo",
+  "motion": "motion.json",
+  "assets": ["assets/neon-city.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

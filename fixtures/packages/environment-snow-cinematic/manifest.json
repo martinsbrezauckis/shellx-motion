@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_environment_snow_cinematic",
+  "name": "Cinematic Snowfall",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_kinetic_type",
+  "name": "ShellX Kinetic Type",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/fonts/inter-latin-700-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion"]
+  },
+  "workflow": "template-pack-kinetic-type"
+}

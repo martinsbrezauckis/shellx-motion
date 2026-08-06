@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion · Receipts History</title>
+    <link rel="stylesheet" href="/engine-room.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ShellX</span><strong>Motion</strong>
+          <span class="brand-sub">History</span>
+        </div>
+        <div class="command-spacer"></div>
+        <div class="command-actions">
+          <span class="session-state" id="sessionState"><i></i>Disconnected</span>
+          <span class="tier-chip" id="tierChip" hidden></span>
+          <button class="quiet-button" id="sessionButton" type="button">Connect</button>
+        </div>
+      </header>
+
+      <main class="er-main">
+        <div class="er-page">
+          <div class="er-page-head">
+            <h1>Receipts history</h1>
+          </div>
+          <p class="er-page-lead">
+            Every Motion operation writes a durable receipt whose inputs and outputs are recorded as
+            SHA-256 hashes. Receipts are not cryptographically signed — the hashes prove an artifact
+            still matches what the operation recorded, not who wrote the file. This is the regression
+            trail: what ran, when, who or what triggered it, whether the quality gates passed, and —
+            critically — where the output artifacts landed on disk. When an agent drives Motion,
+            this is where you confirm what it actually did.
+          </p>
+
+          <div class="er-toolbar" id="toolbar">
+            <div class="er-toolbar-row">
+              <label class="er-field grow" for="receiptsRoot">Receipt location
+                <output id="receiptsRoot" class="path-display" data-path="" data-empty="true" aria-live="polite">No receipt location selected</output>
+              </label>
+              <button class="quiet-button" id="receiptsBrowse" type="button" disabled>Browse…</button>
+              <button class="primary-button" id="reloadButton" type="button" disabled>Load receipts</button>
+            </div>
+            <div class="er-toolbar-row" id="filterRow" hidden>
+              <label class="er-field" for="packageFilter">Package
+                <select id="packageFilter"><option value="">All packages</option></select>
+              </label>
+              <label class="er-field" for="operationFilter">Operation
+                <select id="operationFilter"><option value="">All operations</option></select>
+              </label>
+              <label class="er-field" for="statusFilter">Result
+                <select id="statusFilter">
+                  <option value="">Any result</option>
+                  <option value="passed">Passed</option>
+                  <option value="warning">Warning</option>
+                  <option value="failed">Failed</option>
+                  <option value="not_run">Not run</option>
+                </select>
+              </label>
+              <div class="er-toolbar-meta">
+                <span><strong id="shownCount">0</strong> shown</span>
+                <span>of <strong id="totalCount">0</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Content is owned by history.js's single timeline state model
+               (disconnected | idle | loading | empty | error | results); the markup
+               below is only the pre-script state, replaced on boot. -->
+          <div class="er-timeline" id="timeline" role="list">
+            <div class="empty-state">
+              <strong>Starting</strong>
+              <span>Preparing your local history…</span>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <div class="status-bar" role="status" aria-live="polite">
+        <span id="statusMessage">Start Motion to view history.</span>
+        <span id="statusDetail">History is read-only</span>
+      </div>
+    </div>
+
+    <dialog id="connectDialog" class="dialog">
+      <form method="dialog" id="connectForm">
+        <div class="dialog-head"><strong>Connect to ShellX Motion</strong></div>
+        <div class="dialog-scroll">
+          <label class="stacked-field" for="capabilityToken">Local access key
+            <input id="capabilityToken" type="password" autocomplete="off" required minlength="32" placeholder="Paste your Motion local access key">
+          </label>
+          <div class="fallback-note" id="connectError" hidden></div>
+        </div>
+        <div class="dialog-actions">
+          <span class="muted">Your access key stays in this browser tab.</span>
+          <span>
+            <button class="quiet-button" value="cancel" type="button" data-close-dialog="connectDialog">Cancel</button>
+            <button class="primary-button" value="connect" type="submit">Connect</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="detailDialog" class="dialog">
+      <div class="dialog-body">
+        <div class="dialog-head">
+          <div>
+            <strong id="detailOperation">Receipt</strong>
+            <span class="op-id" id="detailId"></span>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="detailDialog" aria-label="Close detail">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="dialog-scroll" id="detailScroll"></div>
+        <div class="dialog-actions">
+          <button class="quiet-button" type="button" id="rawToggle">Show raw JSON</button>
+          <button class="quiet-button" type="button" data-close-dialog="detailDialog">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/history.js"></script>
+    <script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" aria-label="Static SVG Path">
+  <g id="art" opacity="0.9">
+    <path id="accent-curve" d="M 80 250 C 180 80 380 80 560 220" fill="none" stroke="#00d4ff" stroke-width="14" stroke-linecap="round" />
+    <path id="underline" d="M 140 290 L 500 290" fill="none" stroke="#ffffff" stroke-width="4" />
+  </g>
+</svg>

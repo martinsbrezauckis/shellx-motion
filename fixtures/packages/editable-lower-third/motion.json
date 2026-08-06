@@ -1,0 +1,72 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_editable_lower_third",
+  "name": "Editable Lower Third",
+  "durationMs": 3000,
+  "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "background": "#0b1220",
+  "layers": [
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Anna Valdez",
+      "startMs": 0,
+      "durationMs": 3000,
+      "transform": { "x": 120, "y": 520, "scale": 1, "rotation": 0 },
+      "style": { "fontFamily": "Inter", "fontSize": 58, "color": "#ffffff", "fontWeight": 700 },
+      "transitions": { "in": { "type": "slide", "direction": "left", "distance": 80, "durationMs": 500, "easing": "ease-out" } }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "Product Lead",
+      "startMs": 0,
+      "durationMs": 3000,
+      "transform": { "x": 124, "y": 594, "scale": 1, "rotation": 0 },
+      "style": { "fontFamily": "Inter", "fontSize": 30, "color": "#b8f3ff" }
+    },
+    {
+      "id": "accent",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#13d3ff",
+      "startMs": 0,
+      "durationMs": 3000,
+      "width": 10,
+      "height": 112,
+      "transform": { "x": 90, "y": 516, "scale": 1, "rotation": 0 },
+      "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 350, "easing": "ease-out" } }
+    }
+  ],
+  "assets": [
+    {
+      "id": "font_inter_400",
+      "type": "font",
+      "family": "Inter",
+      "source": {
+        "path": "assets/fonts/inter-latin-400-normal.woff2",
+        "mimeType": "font/woff2"
+      },
+      "weight": 400,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_700",
+      "type": "font",
+      "family": "Inter",
+      "source": {
+        "path": "assets/fonts/inter-latin-700-normal.woff2",
+        "mimeType": "font/woff2"
+      },
+      "weight": 700,
+      "style": "normal"
+    }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "fixture",
+    "workflow": "template-controls"
+  }
+}

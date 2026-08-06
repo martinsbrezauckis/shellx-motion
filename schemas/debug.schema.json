@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/debug@1",
+  "type": "object",
+  "required": ["command", "domain", "permission", "mutates"],
+  "properties": {
+    "command": { "type": "string", "minLength": 1 },
+    "domain": { "enum": ["surface", "agent", "render", "timeline", "authoring", "integration", "workspace"] },
+    "permission": { "enum": ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"] },
+    "mutates": { "type": "boolean" },
+    "argsSchema": {
+      "type": "object",
+      "required": ["type", "properties"],
+      "properties": {
+        "type": { "const": "object" },
+        "required": { "type": "array", "items": { "type": "string" } },
+        "properties": { "type": "object" },
+        "additionalProperties": { "type": "boolean" }
+      }
+    },
+    "expectedReceipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["operation", "mode", "required"],
+        "properties": {
+          "operation": { "type": "string", "minLength": 1 },
+          "mode": { "enum": ["emits", "reads"] },
+          "required": { "type": "boolean" },
+          "artifactRoles": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

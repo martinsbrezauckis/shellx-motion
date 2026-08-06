@@ -1,0 +1,57 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_compositing_parity",
+  "name": "Compositing Render Parity",
+  "durationMs": 1000,
+  "fps": 30,
+  "width": 320,
+  "height": 180,
+  "background": "#08111f",
+  "layers": [
+    {
+      "id": "direct-background",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#12304a",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 320,
+      "height": 180
+    },
+    {
+      "id": "direct-matte",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#ffffff",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 140,
+      "height": 130,
+      "transform": { "x": 90, "y": 25, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "direct-content",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#ff477e",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 200,
+      "height": 120,
+      "transform": { "x": 68, "y": 32, "scale": 1, "rotation": 0 },
+      "style": { "radius": 18 },
+      "effects": { "brightness": 1.2, "contrast": 1.1, "saturate": 0.85, "blur": 3 },
+      "matte": { "type": "alpha", "sourceLayerId": "direct-matte" },
+      "blendMode": "screen",
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0.5, "easing": "ease-out" },
+          { "atMs": 500, "value": 1 },
+          { "atMs": 1000, "value": 0.7, "easing": "ease-in" }
+        ]
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "render-parity-fixture" }
+}

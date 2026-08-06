@@ -1,0 +1,70 @@
+{
+  "schema": "shellx-motion/browser-render-matrix@1",
+  "workloads": [
+    {
+      "id": "cold-still",
+      "kind": "cold-still",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "frameCount": 1,
+      "maxElapsedMs": 5000
+    },
+    {
+      "id": "warm-still",
+      "kind": "warm-still",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "frameCount": 2,
+      "maxElapsedMs": 5000,
+      "minCacheHits": 1
+    },
+    {
+      "id": "generated-10s-1080p30",
+      "kind": "generated",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "maxElapsedMs": 60000,
+      "minFramesPerSecond": 5
+    },
+    {
+      "id": "generated-60s-1080p30",
+      "kind": "generated",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 60000,
+      "fps": 30,
+      "frameCount": 1800,
+      "maxElapsedMs": 360000,
+      "minFramesPerSecond": 5,
+      "extended": true
+    },
+    {
+      "id": "alpha-1080p30",
+      "kind": "alpha",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "media-heavy-1080p30",
+      "kind": "media-heavy",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "browser-composition-1080p30",
+      "kind": "browser",
+      "fixture": "fixtures/packages/web-card",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    }
+  ]
+}

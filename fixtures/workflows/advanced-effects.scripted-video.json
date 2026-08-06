@@ -1,0 +1,60 @@
+{
+  "schema": "shellx-motion/scripted-video@1",
+  "id": "advanced-effects-showcase",
+  "name": "Advanced Effects Showcase",
+  "sourceApp": "shellx-motion",
+  "workflow": "advanced-effects-real-render",
+  "width": 1920,
+  "height": 1080,
+  "fps": 24,
+  "frames": [
+    {
+      "id": "weather",
+      "title": "Motion handles atmosphere",
+      "body": "Procedural effects stay deterministic for repeatable renders.",
+      "caption": "Renderer-native effects",
+      "durationMs": 3500,
+      "background": "#08131b",
+      "accent": "#00d4ff",
+      "effects": [
+        { "type": "rain", "intensity": 18, "speed": 1.25, "opacity": 0.26, "angle": -12, "color": "#bfdbfe", "seed": "weather-a" },
+        { "type": "particleField", "intensity": 12, "speed": 1.15, "opacity": 0.3, "color": "#e0f2fe", "seed": "weather-particles", "scale": 1.08, "x": 18, "y": -12, "shape": "ellipse" },
+        { "type": "scanSweep", "intensity": 0.34, "speed": 1.1, "opacity": 0.18, "angle": -16, "color": "#ffffff" },
+        { "type": "signalPulse", "intensity": 0.5 },
+        { "type": "cameraPush", "scale": 1.025, "x": -14, "y": -10 }
+      ]
+    },
+    {
+      "id": "evidence",
+      "title": "Every render keeps evidence",
+      "body": "Generated layers, keyframes, and final media remain inspectable.",
+      "caption": "Debuggable by default",
+      "durationMs": 3500,
+      "background": "#101820",
+      "accent": "#38f2b3",
+      "effects": [
+        { "type": "rain", "intensity": 10, "speed": 0.9, "opacity": 0.18, "angle": -8, "color": "#d1fae5", "seed": "evidence-b" },
+        { "type": "particleField", "intensity": 10, "speed": 1.05, "opacity": 0.34, "color": "#a7f3d0", "seed": "evidence-particles", "scale": 1.12, "x": -16, "y": -10, "shape": "star" },
+        { "type": "scanSweep", "intensity": 0.42, "speed": 1.25, "opacity": 0.2, "angle": -12, "color": "#eafff6" },
+        { "type": "signalPulse", "intensity": 0.62 },
+        { "type": "cameraPush", "scale": 1.03, "x": -18, "y": -8 }
+      ]
+    },
+    {
+      "id": "handoff",
+      "title": "Author and edit with clear ownership",
+      "body": "Motion renders the composition and hands linked media to editorial tools.",
+      "caption": "One renderer, separate strengths",
+      "durationMs": 3500,
+      "background": "#0c1222",
+      "accent": "#f5c542",
+      "effects": [
+        { "type": "rain", "intensity": 14, "speed": 1.05, "opacity": 0.2, "angle": -10, "color": "#fef3c7", "seed": "handoff-c" },
+        { "type": "particleField", "intensity": 11, "speed": 1.08, "opacity": 0.32, "color": "#fde68a", "seed": "handoff-particles", "scale": 1.1, "x": 14, "y": -14, "shape": "rect" },
+        { "type": "scanSweep", "intensity": 0.38, "speed": 1.18, "opacity": 0.2, "angle": -18, "color": "#fff7d6" },
+        { "type": "signalPulse", "intensity": 0.58 },
+        { "type": "cameraPush", "scale": 1.028, "x": -16, "y": -12 }
+      ]
+    }
+  ]
+}

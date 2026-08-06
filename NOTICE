@@ -1,0 +1,272 @@
+ShellX Motion third-party notices
+=================================
+
+ShellX Motion itself is licensed under the MIT License in LICENSE. This file
+records third-party material distributed inside the ShellX Motion repository and
+its published packages. The licenses below apply only to their named assets.
+
+Every tracked binary and vendored asset in the tree was reviewed for this file.
+Apart from the Inter font files recorded below, all bundled media is
+first-party: hand-authored ShellX Motion vector art and shaders, locally
+synthesized audio, renders produced by ShellX Motion itself, and generated
+imagery whose provenance is recorded in package-local `receipts/*.receipt.json`.
+The remaining sections state that provenance so a downstream redistributor does
+not have to re-derive it.
+
+
+Inter (Latin subset, weights 400, 600, 700, 800, and 900)
+---------------------------------------------------------
+
+Every distributed template package that names `Inter` in a `fontFamily` ships the
+exact weights it renders with, so it produces the same typeface and the same text
+metrics on a machine that has no Inter installed. (Two render-test fixtures still
+name Inter without shipping it; they are listed under "Font family names
+referenced without bundling a font" below.) Packages carry their own copies
+because a motion package may only reference assets inside its own root — there is
+no shared package-level asset store to point at.
+
+Bundled files (WOFF2 copies of five distinct binaries — weights 400, 600, 700,
+800, and 900; the list below is the authoritative set for THIS tree):
+
+  fixtures/packages/editable-lower-third/assets/fonts/
+    inter-latin-400-normal.woff2
+    inter-latin-700-normal.woff2
+
+  templates/shellx-product-pack/audio-launch/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+  templates/shellx-product-pack/feature-announcement/assets/fonts/
+    inter-latin-700-normal.woff2
+    inter-latin-900-normal.woff2
+
+  templates/shellx-product-pack/kinetic-type/assets/fonts/
+    inter-latin-700-normal.woff2
+    inter-latin-900-normal.woff2
+
+  templates/shellx-product-pack/launch-bumper/assets/fonts/
+    inter-latin-700-normal.woff2
+    inter-latin-900-normal.woff2
+  templates/shellx-product-pack/media-launch/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+
+  templates/shellx-product-pack/product-metric-card/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-700-normal.woff2
+    inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+
+  templates/shellx-product-pack/social-stat-card/assets/fonts/
+    inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+Upstream project:
+  Inter, by Rasmus Andersson and The Inter Project Authors
+  https://github.com/rsms/inter
+
+Distribution the bundled bytes come from:
+  @fontsource/inter 5.3.0 (npm), files/inter-latin-<weight>-normal.woff2
+  https://www.npmjs.com/package/@fontsource/inter
+
+SHA-256 (every copy of a given filename is byte-identical to the others and to
+the corresponding file in that npm distribution):
+  8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc
+    inter-latin-400-normal.woff2
+  f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a
+    inter-latin-600-normal.woff2
+  6f56409fd3d64bb85f7d070bce20749db2d66b6d63cec586cc22d1c761be2491
+    inter-latin-700-normal.woff2
+  a7d0a50f15d389cad679238466bdb5fc9787aa0715719064ce25abaff042820d
+    inter-latin-800-normal.woff2
+  d5c0ed7b8b5dde97d48b97947d740bbd8ad3ba9f2c5cc6b8280f16acba2d828e
+    inter-latin-900-normal.woff2
+
+The same license text is also preserved beside the assets as
+`LICENSE-Inter.txt` in every `assets/fonts/` directory listed
+above (every copy SHA-256
+3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345, byte-identical
+to the LICENSE file in that npm distribution), and each package declares the
+attribution in its template metadata under `metadata.assetsAttribution`.
+
+License: SIL Open Font License, Version 1.1. Clause 2 of the OFL requires the
+copyright notice and this license to accompany every copy of the font files,
+which is why they are reproduced here as well as beside the assets. The text
+below is the license exactly as published with the font; its OFL body is
+byte-identical to SIL's official text at
+https://openfontlicense.org/documents/OFL.txt (the only differences are the
+copyright header block and the FAQ URL, which the official text leaves as
+placeholders for the font author to fill in).
+
+Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+
+AI-generated sample media
+-------------------------
+
+Bundled files:
+  templates/shellx-product-pack/keyed-subject-promo/assets/generated/atmosphere-fog-rays.mp4
+  templates/shellx-product-pack/media-launch/assets/generated/shellx-media-launch-hero-1080p.jpg
+  templates/shellx-product-pack/media-launch/assets/generated/shellx-media-launch-hero-alt.jpg
+
+These are AI-generated sample assets commissioned for ShellX Motion, not
+third-party media. Each carries a public-safe receipt beside it recording its
+licence basis, dimensions, relevant post-processing, and verified content
+SHA-256:
+
+  templates/shellx-product-pack/keyed-subject-promo/receipts/generated-background.receipt.json
+  templates/shellx-product-pack/media-launch/receipts/generated-hero.receipt.json
+  templates/shellx-product-pack/media-launch/receipts/generated-hero-alt.receipt.json
+
+They are used under the generator's applicable terms for generated content. No
+third-party stock media, scraped imagery, or licensed footage is bundled.
+
+
+Synthetic audio fixture
+-----------------------
+
+Bundled file:
+  templates/shellx-product-pack/audio-launch/assets/audio/shellx-launch-tone.wav
+
+A deterministic synthetic sine tone generated locally with FFmpeg `lavfi`
+(48 kHz, 16-bit, mono) and committed so offline audio-render tests need no
+network or hosted generator. It contains no recorded or third-party audio. The
+template declares this under `metadata.license` as `shellx-synthetic-audio`.
+
+
+ShellX Motion vector art, shaders, and preview renders
+------------------------------------------------------
+
+All bundled SVG placeholder and fixture art, both `.glsl` shader fixtures, the
+glTF and Lottie import fixtures, the sample CSV/JSON data rows, and every
+`templates/shellx-product-pack/*/preview/poster.png` are original ShellX Motion
+work. The posters are real renders of their own templates produced by the ShellX
+Motion renderer and gated by scripts/template-product-pack-proof.ts, not
+imported artwork. None of it carries a third-party license obligation.
+
+
+Font family names referenced without bundling a font
+----------------------------------------------------
+
+Five product-pack families (`cinematic-fog-title`, `cinematic-rain-launch`,
+`editorial-liquid-surface`, `keyed-subject-promo`, `tracked-callout-overlay`)
+and several fixture packages name only the CSS generic `sans-serif` or
+`monospace`, which the renderer resolves against whatever the host installs. Two
+fixture packages (`fixtures/packages/lower-third`,
+`fixtures/packages/keyframed-lower-third`) and two non-package fixture documents
+(`fixtures/canvas/frame-selection.json`, `fixtures/cut/import-plan.expected.json`)
+still name `Inter` without shipping a font file; they are render/import test
+inputs, not distributed template content. Naming a font family is not
+redistribution of Font Software and creates no OFL obligation. The font files
+this repository actually distributes are exactly the WOFF2 files recorded above.
+
+
+Runtime dependency boundary
+---------------------------
+
+ShellX Motion does not vendor any third-party source code, and no `node_modules`
+content is tracked in this repository. Runtime components stay outside the tree:
+
+  - `playwright-core` (Apache-2.0) is a declared npm dependency of
+    `@shellx-motion/renderer-browser`. It is resolved from the npm registry at
+    install time and is never copied into this repository, so it is not
+    redistributed here and needs no notice entry. Consumers who redistribute an
+    installed tree, a bundle, or an installer that embeds it must carry
+    Apache-2.0's own notice requirements for that copy.
+  - Chromium is located as an existing host executable at launch time; no
+    browser binary ships in this repository.
+  - FFmpeg and FFprobe are invoked as separate host processes. No FFmpeg binary
+    ships in this repository, and any installation a user provides remains under
+    its own license. See https://ffmpeg.org/legal.html.

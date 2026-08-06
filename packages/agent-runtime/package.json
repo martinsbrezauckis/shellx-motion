@@ -1,0 +1,31 @@
+{
+  "name": "@shellx-motion/agent-runtime",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build.mjs --package @shellx-motion/agent-runtime",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --testTimeout=45000"
+  },
+  "dependencies": {
+    "@shellx-motion/actions": "workspace:*",
+    "@shellx-motion/core": "workspace:*"
+  }
+}

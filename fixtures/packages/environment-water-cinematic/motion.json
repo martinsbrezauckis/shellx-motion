@@ -1,0 +1,96 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_environment_water_cinematic",
+  "name": "Cinematic Water Surface",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#07111F",
+  "layers": [
+    {
+      "id": "water-surface-stage",
+      "name": "Ocean surface, optics and caustics",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "water",
+        "seed": 20260714,
+        "quality": "cinematic",
+        "mode": "scene",
+        "backgroundColor": "#07111F",
+        "shallowColor": "#16B8C8",
+        "deepColor": "#03294A",
+        "reflectionColor": "#C8F1FF",
+        "foamColor": "#ECFEFF",
+        "surface": {
+          "horizon": 0.6,
+          "waveScale": 4.4,
+          "waveHeight": 0.46,
+          "waveSpeed": 0.66,
+          "direction": 16,
+          "choppiness": 0.38,
+          "waveOctaves": 4
+        },
+        "optics": {
+          "reflectionStrength": 0.8,
+          "refractionStrength": 0.72,
+          "fresnel": 0.74,
+          "caustics": 0.56,
+          "clarity": 0.74,
+          "foam": 0.22
+        }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 120 } },
+      "keyframes": {
+        "environment.surface.waveHeight": [
+          { "atMs": 0, "value": 0.24, "easing": "ease-out" },
+          { "atMs": 2200, "value": 0.5, "easing": "ease-in-out" },
+          { "atMs": 4300, "value": 0.66, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.4, "easing": "ease-out" }
+        ],
+        "environment.surface.direction": [
+          { "atMs": 0, "value": 8, "easing": "ease-out" },
+          { "atMs": 3000, "value": 24, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 14, "easing": "ease-out" }
+        ],
+        "environment.surface.choppiness": [
+          { "atMs": 0, "value": 0.18, "easing": "ease-out" },
+          { "atMs": 3900, "value": 0.56, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.32, "easing": "ease-out" }
+        ],
+        "environment.optics.reflectionStrength": [
+          { "atMs": 0, "value": 0.64, "easing": "ease-out" },
+          { "atMs": 2800, "value": 0.9, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.78, "easing": "ease-out" }
+        ],
+        "environment.optics.caustics": [
+          { "atMs": 0, "value": 0.3, "easing": "ease-out" },
+          { "atMs": 3300, "value": 0.7, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.48, "easing": "ease-out" }
+        ],
+        "environment.optics.foam": [
+          { "atMs": 0, "value": 0.08, "easing": "ease-out" },
+          { "atMs": 4400, "value": 0.38, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.18, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "water-finish",
+      "name": "Restrained surface finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.18, "softness": 0.86, "color": "#000000" },
+        "filmGrain": { "amount": 0.018, "size": 1, "seed": 20260714 }
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

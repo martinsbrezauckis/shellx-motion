@@ -1,0 +1,65 @@
+{
+  "schema": "shellx-canvas/frame-selection@1",
+  "selectedFrameId": "frame_intro",
+  "project": {
+    "id": "canvas_motion_export",
+    "name": "Motion Export"
+  },
+  "brand": {
+    "tokens": {
+      "color": {
+        "accent": "#2563eb",
+        "ink": "#101828"
+      }
+    }
+  },
+  "frames": [
+    {
+      "id": "frame_intro",
+      "name": "Intro",
+      "durationMs": 1000,
+      "fps": 2,
+      "width": 640,
+      "height": 360,
+      "background": "#f8fafc",
+      "layers": [
+        {
+          "id": "panel",
+          "kind": "shape",
+          "shape": "rectangle",
+          "startMs": 0,
+          "durationMs": 1000,
+          "transform": {
+            "x": 48,
+            "y": 44,
+            "width": 250,
+            "height": 150,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#2563eb"
+          }
+        },
+        {
+          "id": "title",
+          "kind": "text",
+          "text": "Canvas export",
+          "startMs": 0,
+          "durationMs": 1000,
+          "transform": {
+            "x": 64,
+            "y": 240,
+            "width": 420,
+            "height": 60,
+            "opacity": 1
+          },
+          "style": {
+            "fontSize": 36,
+            "color": "#101828"
+          }
+        }
+      ]
+    }
+  ],
+  "imageEditorOutputs": []
+}

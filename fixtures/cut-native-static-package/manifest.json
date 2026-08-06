@@ -1,0 +1,14 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_cut_native_static",
+  "name": "Cut Native Static",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["native", "browser", "ffmpeg", "cut"],
+    "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
+  },
+  "workflow": "template-controls"
+}

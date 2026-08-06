@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion · About</title>
+    <link rel="stylesheet" href="/engine-room.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ShellX</span><strong>Motion</strong>
+          <span class="brand-sub">About</span>
+        </div>
+        <div class="command-spacer"></div>
+        <div class="command-actions">
+          <span class="session-state" id="sessionState"><i></i>Disconnected</span>
+          <span class="tier-chip" id="tierChip" hidden></span>
+          <button class="quiet-button" id="sessionButton" type="button">Connect</button>
+        </div>
+      </header>
+
+      <main class="er-main">
+        <div class="er-page">
+          <div class="er-page-head">
+            <h1>About this engine</h1>
+          </div>
+          <p class="er-page-lead">
+            ShellX Motion is a local-first authoring and rendering engine for Motion packages. It
+            opens packages and timelines, previews animation, renders final media, and records
+            receipt-backed results for this workbench, the CLI, and connected agents.
+          </p>
+
+          <div class="about-grid">
+            <section class="panel">
+              <div class="panel-head"><h2>Engine identity</h2></div>
+              <div class="panel-body">
+                <div class="identity-grid" id="identityGrid">
+                  <div class="identity-item"><span class="k">Version</span><span class="v" id="engineVersion">—</span></div>
+                  <div class="identity-item"><span class="k">Access</span><span class="v" id="connectionTier">disconnected</span></div>
+                  <div class="identity-item"><span class="k">Processing</span><span class="v">On this machine</span></div>
+                  <div class="identity-item"><span class="k">Results</span><span class="v">Receipt-backed</span></div>
+                </div>
+                <p class="muted identity-note-copy" id="identityNote">
+                  Start Motion to verify what this installation can render.
+                </p>
+                <!-- Engine health beyond identity: what this machine can actually DO. Read from
+                     motion.platform.requirements — the same answer `motion doctor` and every host
+                     get (the readiness-parity invariant). -->
+                <div class="identity-grid" id="toolGrid" hidden></div>
+                <p class="muted identity-note-copy" id="toolNote" hidden></p>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Software update</h2>
+                <span class="tone-badge" id="updateBadge" data-tone="neutral" hidden><span class="dot"></span><span id="updateBadgeLabel"></span></span>
+              </div>
+              <div class="panel-body">
+                <div class="update-status">
+                  <div class="title" id="updateTitle">Update status unknown</div>
+                  <div class="message" id="updateMessage"></div>
+                  <a class="notes-link" id="updateNotes" target="_blank" rel="noopener noreferrer" hidden>View release notes ↗</a>
+                </div>
+                <div class="update-actions">
+                  <button class="primary-button" id="checkButton" type="button">Check now</button>
+                  <button class="quiet-button" id="applyButton" type="button" hidden>Update options</button>
+                </div>
+                <div class="update-note">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 8v4l3 2"/></svg>
+                  <span>Motion checks the official release channel at startup and every 30 minutes. No project content or telemetry is sent.</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+
+      <div class="status-bar" role="status" aria-live="polite">
+        <span id="statusMessage">About ShellX Motion</span>
+        <span id="statusDetail">Local-first motion engine</span>
+      </div>
+    </div>
+
+    <dialog id="connectDialog" class="dialog">
+      <form method="dialog" id="connectForm">
+        <div class="dialog-head"><strong>Connect to ShellX Motion</strong></div>
+        <div class="dialog-scroll">
+          <label class="stacked-field" for="capabilityToken">Local access key
+            <input id="capabilityToken" type="password" autocomplete="off" required minlength="32" placeholder="Paste your Motion local access key">
+          </label>
+          <div class="fallback-note" id="connectError" hidden></div>
+        </div>
+        <div class="dialog-actions">
+          <span class="muted">Your access key stays in this browser tab.</span>
+          <span>
+            <button class="quiet-button" value="cancel" type="button" data-close-dialog="connectDialog">Cancel</button>
+            <button class="primary-button" value="connect" type="submit">Connect</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/about.js"></script>
+    <script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

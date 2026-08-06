@@ -1,0 +1,25 @@
+packages:
+  - "packages/*"
+
+# Dependency build scripts must be declared, or a clean install refuses to run them.
+#
+# pnpm 11 made `strictDepBuilds: true` the default: a dependency carrying a postinstall script is
+# treated as unreviewed, and `pnpm install` exits non-zero with ERR_PNPM_IGNORED_BUILDS. esbuild is
+# the one dependency here that needs its postinstall — it places the platform binary that `tsx` and
+# `vitest` both load — so without this declaration a fresh clone cannot install, and `pnpm build`
+# fails as well, because its dependency-status check re-runs the install.
+#
+# This does not reproduce on a machine that installed before pnpm 11, which is why it survived until
+# someone ran the published tree on a clean host. verified on a clean Windows box with
+# pnpm 11.1.3: `pnpm install && pnpm build` failed, then succeeded with this present (19 packages
+# built in 78s).
+#
+# The two majors spell the setting differently and each ignores the other's key, so both are listed:
+#   pnpm 11+   -> allowBuilds            (onlyBuiltDependencies was REMOVED, not deprecated)
+#   pnpm 10.6+ -> onlyBuiltDependencies
+# Keep both until the release pins one pnpm version via a `packageManager` field.
+allowBuilds:
+  esbuild: true
+
+onlyBuiltDependencies:
+  - esbuild

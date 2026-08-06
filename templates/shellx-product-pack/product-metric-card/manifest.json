@@ -1,0 +1,22 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_product_metric_card",
+  "name": "ShellX Product Metric Card",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-700-normal.woff2",
+    "assets/fonts/inter-latin-800-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion"]
+  },
+  "workflow": "template-pack-product-metric-card",
+  "data": {
+    "rows": "data/product-metrics.batch.json"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_editable_lower_third",
+  "name": "Editable Lower Third",
+  "motion": "motion.json",
+  "compatibleLanes": ["native", "browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 80 },
+        "subtitle": { "type": "string", "maxLength": 120 },
+        "accentColor": { "type": "string", "format": "color" },
+        "titleScale": { "type": "number", "minimum": 0.75, "maximum": 1.5 }
+      }
+    },
+    "outputBounds": {
+      "minWidth": 720,
+      "maxWidth": 3840,
+      "minHeight": 405,
+      "maxHeight": 2160,
+      "minDurationMs": 1200,
+      "maxDurationMs": 8000,
+      "aspectRatios": ["16:9"]
+    },
+    "suitability": {
+      "bestFor": ["speaker IDs", "product demos", "Cut Generate intros"],
+      "notFor": ["full-screen scene replacements", "long-form end cards"]
+    },
+    "license": {
+      "id": "shellx-sample",
+      "label": "ShellX Sample Assets",
+      "attribution": "ShellX Motion fixture"
+    },
+    "assetsAttribution": [
+      {
+        "name": "Inter font",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-400-normal.woff2"
+      },
+      {
+        "name": "Inter font bold",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-700-normal.woff2"
+      }
+    ],
+    "provenance": {
+      "source": "shellx-motion-fixture",
+      "sourceUrl": "https://example.com/templates/lower-third",
+      "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "generatedBy": "test"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "medium",
+      "previewFps": 30,
+      "notes": ["Uses text and shape layers only."]
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "style", "label": "Style", "order": 2 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Anna Valdez", "group": "content", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Product Lead", "group": "content", "order": 2 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#13d3ff", "group": "style", "order": 1 },
+    { "id": "titleScale", "label": "Title Scale", "type": "number", "defaultValue": 1, "min": 0.75, "max": 1.5, "step": 0.05, "group": "style", "order": 2 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "text", "label": "Title" },
+    { "paramId": "subtitle", "widget": "text", "label": "Subtitle" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" },
+    { "paramId": "titleScale", "widget": "slider", "label": "Title Scale" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/0/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/1/text", "layerId": "subtitle" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/2/fill", "layerId": "accent" } },
+    { "paramId": "titleScale", "target": { "kind": "motion_path", "path": "/layers/0/transform/scale", "layerId": "title" } }
+  ]
+}

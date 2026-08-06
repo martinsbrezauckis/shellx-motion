@@ -1,0 +1,49 @@
+{
+  "schema": "shellx-motion/tracking-analysis@1",
+  "id": "track_homography_known",
+  "source": {
+    "assetId": "footage_homography",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "byteLength": 8192,
+    "width": 640,
+    "height": 360,
+    "durationMs": 200
+  },
+  "mode": "planar",
+  "model": "homography",
+  "status": "succeeded",
+  "reference": {
+    "atMs": 0,
+    "bounds": { "x": 200, "y": 100, "width": 240, "height": 160 },
+    "points": [
+      { "x": 200, "y": 100 },
+      { "x": 440, "y": 100 },
+      { "x": 440, "y": 260 },
+      { "x": 200, "y": 260 }
+    ]
+  },
+  "settings": {
+    "startMs": 0,
+    "endMs": 200,
+    "stepMs": 100,
+    "direction": "both",
+    "searchRadiusPx": 48,
+    "pyramidLevels": 4,
+    "maxIterations": 60,
+    "confidenceFloor": 0.7,
+    "deterministicSeed": 7
+  },
+  "settingsSha256": "ffaf73dcc8037fef7b58c1e189df0ba01d42f4b564696be34520806ef98c7e16",
+  "solver": {
+    "id": "shellx-fixed-planar-tracker",
+    "version": "1.0.0",
+    "implementationSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "samples": [
+    { "atMs": 0, "state": "tracked", "confidence": 0.99, "residualErrorPx": 0, "matrix": [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+    { "atMs": 100, "state": "tracked", "confidence": 0.93, "residualErrorPx": 0.6, "matrix": [1.01, 0.02, 5, -0.01, 0.99, 3, 0.0001, -0.00008, 1] },
+    { "atMs": 200, "state": "tracked", "confidence": 0.9, "residualErrorPx": 0.9, "matrix": [0.99, -0.015, 11, 0.02, 1.02, -4, 0.00015, -0.00005, 1] }
+  ],
+  "spans": [],
+  "createdAt": "2026-07-13T21:01:00.000Z"
+}

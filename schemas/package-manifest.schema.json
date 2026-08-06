@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/package-manifest@1",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "motion",
+    "assets",
+    "sourceApp",
+    "compatibility"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shellx-motion/package-manifest@1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Package identifier. Used as a single path component when building frame, receipt and scratch directories, so it must not contain path separators or '..'."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "motion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sourceApp": {
+      "type": "string",
+      "minLength": 1
+    },
+    "compatibility": {
+      "type": "object",
+      "required": [
+        "lanes",
+        "hosts"
+      ],
+      "properties": {
+        "lanes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "maxFontFallbacks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "workflow": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data": {},
+    "selectedFrameId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

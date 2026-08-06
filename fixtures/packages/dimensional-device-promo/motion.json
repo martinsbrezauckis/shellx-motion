@@ -1,0 +1,100 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_dimensional_device_promo",
+  "name": "Dimensional Device Promo",
+  "durationMs": 1600,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "camera-main",
+      "type": "camera",
+      "startMs": 0,
+      "durationMs": 1600,
+      "transform": { "x": 0, "y": 0, "scale": 1, "rotation": 0, "originX": 160, "originY": 90 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 0, "value": -8 }, { "atMs": 1600, "value": 16, "easing": "ease-in-out" }],
+        "transform.y": [{ "atMs": 0, "value": 3 }, { "atMs": 1600, "value": -5, "easing": "ease-in-out" }],
+        "transform.scale": [{ "atMs": 0, "value": 1 }, { "atMs": 1600, "value": 1.12, "easing": "ease-in-out" }],
+        "transform.rotation": [{ "atMs": 0, "value": -1 }, { "atMs": 1600, "value": 1.4, "easing": "ease-in-out" }]
+      }
+    },
+    {
+      "id": "grid-environment",
+      "type": "image",
+      "assetId": "asset_device_grid",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": -0.82,
+      "transform": { "x": -40, "y": -22, "width": 400, "height": 225 }
+    },
+    {
+      "id": "device-stage",
+      "type": "scene3d",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.28,
+      "transform": { "x": 133, "y": 13, "width": 174, "height": 146 },
+      "style": { "borderRadius": 16, "borderWidth": 1, "borderColor": "#67e8f9" },
+      "scene3d": {
+        "schema": "shellx-motion/scene3d@1",
+        "camera": { "position": [4.6, 3.1, 6.2], "target": [0, -0.1, 0], "fovDeg": 42, "near": 0.1, "far": 100, "orbitDegPerSecond": 34 },
+        "lighting": { "ambient": 0.3, "direction": [-0.45, -0.9, -0.4], "intensity": 1.5, "color": "#dbeafe" },
+        "backgroundColor": "#071426",
+        "objects": [
+          { "id": "floor", "primitive": "plane", "position": [0, -1.2, 0], "rotationDeg": [0, 0, 0], "scale": 5.5, "color": "#172554", "emissive": 0.1 },
+          { "id": "device", "primitive": "box", "position": [-0.65, 0, 0], "rotationDeg": [15, 24, -5], "scale": 1.25, "spinDegPerSecond": [8, 48, 0], "color": "#22d3ee", "emissive": 0.18 },
+          { "id": "signal", "primitive": "pyramid", "position": [1.05, -0.05, 0.1], "rotationDeg": [0, -15, 0], "scale": 1.4, "spinDegPerSecond": [0, -38, 0], "color": "#f472b6", "emissive": 0.22 },
+          { "id": "node", "primitive": "box", "position": [0.25, 1.15, -0.65], "rotationDeg": [30, 18, 26], "scale": 0.38, "spinDegPerSecond": [90, 100, 40], "color": "#fef08a", "emissive": 0.4 }
+        ]
+      }
+    },
+    {
+      "id": "particles",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.5,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "emitter": { "seed": 1618033, "count": 52, "lifetimeMs": 1000, "shape": "square", "color": "#ffffff", "secondaryColor": "#f472b6", "minSize": 1, "maxSize": 3, "minSpeed": 8, "maxSpeed": 40, "direction": -90, "spread": 145, "gravity": 8, "fadeOut": true },
+      "effects": { "glow": { "radius": 3, "color": "#f472b6" } }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "SHAPE THE SIGNAL",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.58,
+      "transform": { "x": 44, "y": 49, "width": 108, "height": 72 },
+      "style": { "color": "#ffffff", "fontFamily": "sans-serif", "fontSize": 21, "fontWeight": 900, "letterSpacing": 1, "lineHeight": 1.02 },
+      "effects": { "glow": { "radius": 7, "color": "#a855f7" }, "motionBlur": { "samples": 4, "shutterAngle": 210 } },
+      "keyframes": {
+        "opacity": [{ "atMs": 0, "value": 0 }, { "atMs": 300, "value": 1, "easing": "ease-out" }],
+        "transform.scale": [{ "atMs": 0, "value": 0.78, "easing": "back-out" }, { "atMs": 460, "value": 1 }]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "FIXED 3D // LOCAL FRAMES",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.5,
+      "transform": { "x": 44, "y": 124, "width": 126, "height": 22 },
+      "style": { "color": "#f9a8d4", "fontFamily": "monospace", "fontSize": 8.5, "fontWeight": 700, "letterSpacing": 0.45 },
+      "keyframes": { "opacity": [{ "atMs": 0, "value": 0 }, { "atMs": 560, "value": 1, "easing": "ease-out" }] }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 1600,
+      "effects": { "vignette": { "amount": 0.76, "softness": 0.64, "color": "#020617" }, "filmGrain": { "amount": 0.17, "size": 2, "seed": 141421 } }
+    }
+  ],
+  "assets": [{ "id": "asset_device_grid", "type": "image", "source": { "path": "assets/device-grid.svg", "mimeType": "image/svg+xml" } }],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

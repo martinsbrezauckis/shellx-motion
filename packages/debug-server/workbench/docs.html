@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion · Docs</title>
+    <link rel="stylesheet" href="/engine-room.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>ShellX</span><strong>Motion</strong>
+          <span class="brand-sub">Docs</span>
+        </div>
+        <div class="command-spacer"></div>
+        <div class="command-actions">
+          <span class="session-state" id="sessionState"><i></i>Disconnected</span>
+          <span class="tier-chip" id="tierChip" hidden></span>
+          <button class="quiet-button" id="sessionButton" type="button">Connect</button>
+        </div>
+      </header>
+
+      <main class="docs-main">
+        <aside class="docs-nav" id="docsNav" aria-label="Documentation navigation">
+          <div class="empty-copy">Loading documentation…</div>
+        </aside>
+        <section class="docs-content" id="docsContent" aria-label="Documentation page">
+          <div class="docs-article">
+            <div class="empty-copy">Loading…</div>
+          </div>
+        </section>
+      </main>
+
+      <div class="status-bar" role="status" aria-live="polite">
+        <span id="statusMessage">Documentation reader</span>
+        <span id="statusDetail">Motion guides and references</span>
+      </div>
+    </div>
+
+    <dialog id="connectDialog" class="dialog">
+      <form method="dialog" id="connectForm">
+        <div class="dialog-head"><strong>Connect to ShellX Motion</strong></div>
+        <div class="dialog-scroll">
+          <label class="stacked-field" for="capabilityToken">Local access key
+            <input id="capabilityToken" type="password" autocomplete="off" required minlength="32" placeholder="Paste your Motion local access key">
+          </label>
+          <div class="fallback-note" id="connectError" hidden></div>
+        </div>
+        <div class="dialog-actions">
+          <span class="muted">Your access key stays in this browser tab.</span>
+          <span>
+            <button class="quiet-button" value="cancel" type="button" data-close-dialog="connectDialog">Cancel</button>
+            <button class="primary-button" value="connect" type="submit">Connect</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/docs.js"></script>
+    <script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

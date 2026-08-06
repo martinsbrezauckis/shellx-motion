@@ -1,0 +1,22 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_batch_card",
+  "name": "Batch Card {{name}}",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "native",
+      "browser",
+      "ffmpeg"
+    ],
+    "hosts": [
+      "shellx-motion"
+    ]
+  },
+  "workflow": "batch-render",
+  "data": {
+    "rows": "data/rows.json"
+  }
+}

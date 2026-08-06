@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 640 360" role="img" aria-label="Rain occlusion mask">
+  <rect width="640" height="360" fill="#fff"/>
+  <path d="M0 156L92 112L178 151L250 90L334 149L425 106L510 151L640 118V228H0Z" fill="#151515"/>
+  <rect x="40" y="124" width="86" height="104" fill="#050505"/><rect x="502" y="98" width="98" height="130" fill="#050505"/>
+  <path d="M292 220H348L408 360H222Z" fill="#d6d6d6"/>
+</svg>

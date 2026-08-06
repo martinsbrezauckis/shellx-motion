@@ -1,0 +1,14 @@
+{
+  "schema": "shellx-motion/browser-render-baseline@1",
+  "fixture": "fixtures/packages/keyframed-lower-third",
+  "width": 1920,
+  "height": 1080,
+  "frameCount": 6,
+  "maxElapsedMs": 12000,
+  "minFramesPerSecond": 0.5,
+  "maxBrowserLaunches": 1,
+  "maxContextsCreated": 2,
+  "minUniqueFrames": 2,
+  "minFrameCacheHits": 1,
+  "maxProcessTreePeakRssBytes": 2684354560
+}

@@ -1,0 +1,20 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_lower_third",
+  "name": "Lower Third Fixture",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "native",
+      "browser",
+      "ffmpeg"
+    ],
+    "hosts": [
+      "canvas",
+      "cut",
+      "motion"
+    ]
+  }
+}

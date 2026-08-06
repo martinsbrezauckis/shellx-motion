@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_keyframed_lower_third",
+  "name": "Keyframed Lower Third Fixture",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "native", "ffmpeg"],
+    "hosts": ["canvas", "cut", "motion"]
+  }
+}

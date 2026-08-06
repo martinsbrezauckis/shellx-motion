@@ -1,0 +1,49 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_cut_native_static",
+  "name": "Cut Native Static",
+  "durationMs": 1500,
+  "fps": 30,
+  "width": 640,
+  "height": 360,
+  "background": "#0b1220",
+  "layers": [
+    {
+      "id": "accent",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#13d3ff",
+      "startMs": 0,
+      "durationMs": 1500,
+      "transform": { "x": 40, "y": 238, "width": 12, "height": 72, "scale": 1, "rotation": 0 },
+      "style": { "radius": 4 },
+      "transitions": {
+        "in": { "type": "fade", "durationMs": 200, "easing": "ease-out" },
+        "out": { "type": "fade", "durationMs": 200, "easing": "ease-out" }
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Native in Cut",
+      "opacity": 0.9,
+      "startMs": 0,
+      "durationMs": 1500,
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0, "easing": "ease-out" },
+          { "atMs": 300, "value": 0.9, "easing": "ease-out" },
+          { "atMs": 1500, "value": 0.9 }
+        ]
+      },
+      "transform": { "x": 70, "y": 250, "scale": 1, "rotation": 0 },
+      "style": { "fontSize": 36, "color": "#ffffff" }
+    }
+  ],
+  "assets": [],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "fixture",
+    "workflow": "cut-native-contract"
+  }
+}

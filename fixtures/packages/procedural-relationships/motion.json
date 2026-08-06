@@ -1,0 +1,55 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_procedural_relationships",
+  "name": "Procedural Relationships",
+  "durationMs": 2000,
+  "fps": 30,
+  "width": 320,
+  "height": 180,
+  "background": "#05070a",
+  "relationships": {
+    "schema": "shellx-motion/procedural-relationships@1",
+    "relationships": [
+      {
+        "id": "time-to-x",
+        "enabled": true,
+        "target": { "layerId": "tile", "property": "transform.x" },
+        "nodes": [
+          { "id": "time", "type": "time", "unit": "seconds" },
+          { "id": "speed", "type": "constant", "value": 100 },
+          { "id": "offset", "type": "constant", "value": 20 },
+          { "id": "travel", "type": "multiply", "left": "time", "right": "speed" },
+          { "id": "out", "type": "add", "left": "travel", "right": "offset" }
+        ],
+        "outputNodeId": "out"
+      },
+      {
+        "id": "x-to-rotation",
+        "enabled": true,
+        "target": { "layerId": "tile", "property": "transform.rotation" },
+        "nodes": [
+          { "id": "x", "type": "property", "ref": { "layerId": "tile", "property": "transform.x" } },
+          { "id": "factor", "type": "constant", "value": 0.25 },
+          { "id": "out", "type": "multiply", "left": "x", "right": "factor" }
+        ],
+        "outputNodeId": "out"
+      }
+    ]
+  },
+  "layers": [
+    {
+      "id": "tile",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#18c8ff",
+      "startMs": 0,
+      "durationMs": 2000,
+      "width": 40,
+      "height": 40,
+      "transform": { "x": 20, "y": 70, "scale": 1, "rotation": 0 },
+      "style": { "radius": 8 }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

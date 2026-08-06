@@ -1,0 +1,174 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_cinematic_rain_launch",
+  "name": "ShellX Cinematic Rain Launch",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "heroMedia"],
+      "properties": {
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "title": { "type": "string", "maxLength": 68 },
+        "subtitle": { "type": "string", "maxLength": 120 },
+        "cta": { "type": "string", "maxLength": 24 },
+        "heroMedia": { "type": "string" },
+        "accentColor": { "type": "string", "format": "color" },
+        "rainIntensity": { "type": "number", "minimum": 0.2, "maximum": 1 }
+      }
+    },
+    "inputExamples": [
+      {
+        "eyebrow": "LOCAL-FIRST CINEMA",
+        "title": "Turn one frame into a living night",
+        "subtitle": "Scene-aware rain, wet reflections and lens atmosphere render deterministically on your own machine.",
+        "cta": "Build the scene",
+        "heroMedia": "assets/samples/night-street.svg",
+        "accentColor": "#67e8f9",
+        "rainIntensity": 0.84
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 4000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1", "9:16"]
+    },
+    "suitability": {
+      "bestFor": ["cinematic product launch", "rainy night promo", "media-rich announcement", "real video effects"],
+      "notFor": ["native-only preview", "dry flat slide", "long-form narration"]
+    },
+    "license": {
+      "id": "shellx-generated-sample",
+      "label": "ShellX Generated Sample",
+      "attribution": "ShellX Motion cinematic template assets",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "Package-local sample art may be replaced with licensed user media before export."
+    },
+    "assetsAttribution": [
+      {
+        "name": "Cinematic Night Street Sample",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/samples/night-street.svg"
+      },
+      {
+        "name": "Rain Occlusion Mask",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/masks/rain-occlusion.svg"
+      }
+    ],
+    "preview": {
+      "poster": "preview/poster.png",
+      "thumbnail": "preview/poster.png"
+    },
+    "provenance": {
+      "source": "shellx-product-pack-cinematic-rain-launch",
+      "sourceHash": "28e15ddc24c0cb314323f7c0ccbab62b483fe12db59fdb9d7cc613289bfa0b20"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "high",
+      "previewFps": 24,
+      "notes": ["Uses scene-sampled rain, wet-ground reflections, an occlusion mask, particles, motion blur and a restrained finishing pass."]
+    },
+    "story": {
+      "kind": "cinematic-product-promo",
+      "beats": [
+        {
+          "id": "establish",
+          "label": "Establish the world",
+          "intent": "Reveal a recognizable night scene before copy takes priority.",
+          "startMs": 0,
+          "durationMs": 1700,
+          "layerIds": ["hero-scene", "rain-stage", "atmosphere-particles"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Slow optical push suggested by rain depth and foreground particles."
+        },
+        {
+          "id": "promise",
+          "label": "State the promise",
+          "intent": "Bring the product claim into a safe readable region without hiding the weather motion.",
+          "startMs": 900,
+          "durationMs": 3300,
+          "layerIds": ["eyebrow", "title", "subtitle", "rain-stage"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Hold the scene while rain intensity peaks behind the title."
+        },
+        {
+          "id": "resolve",
+          "label": "Resolve to action",
+          "intent": "Land the call to action as the storm and reflected light settle.",
+          "startMs": 3900,
+          "durationMs": 2100,
+          "layerIds": ["cta-panel", "cta", "rain-stage", "finish"],
+          "cameraIntent": "Ease out on a stable branded end frame."
+        }
+      ]
+    },
+    "mediaSlots": [
+      {
+        "paramId": "heroMedia",
+        "role": "hero-background-scene",
+        "description": "Full-frame night exterior or dark product environment sampled by the deterministic rain renderer.",
+        "acceptedKinds": ["image"],
+        "fit": "fill",
+        "minWidth": 1920,
+        "minHeight": 1080,
+        "rightsRequired": true
+      }
+    ],
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [300, 1500, 3200, 5200],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 1200,
+      "minLumaRange": 42,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Scene", "order": 2 },
+    { "id": "weather", "label": "Weather", "order": 3 },
+    { "id": "style", "label": "Style", "order": 4 }
+  ],
+  "params": [
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "LOCAL-FIRST CINEMA", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Turn one frame into a living night", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Scene-aware rain, wet reflections and lens atmosphere render deterministically on your own machine.", "group": "content", "order": 3 },
+    { "id": "cta", "label": "Call to action", "type": "text", "defaultValue": "Build the scene", "group": "content", "order": 4 },
+    { "id": "heroMedia", "label": "Hero scene", "description": "Use a licensed 16:9 night image with a visible ground plane.", "type": "media", "defaultValue": "assets/samples/night-street.svg", "group": "media", "order": 1 },
+    { "id": "rainIntensity", "label": "Rain intensity", "type": "number", "defaultValue": 0.84, "group": "weather", "order": 1, "min": 0.2, "max": 1, "step": 0.02 },
+    { "id": "accentColor", "label": "Accent color", "type": "color", "defaultValue": "#67e8f9", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "cta", "widget": "text", "label": "Call to action" },
+    { "paramId": "heroMedia", "widget": "media", "label": "Hero scene" },
+    { "paramId": "rainIntensity", "widget": "slider", "label": "Rain intensity" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent color" }
+  ],
+  "bindings": [
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/7/text", "layerId": "subtitle" } },
+    { "paramId": "cta", "target": { "kind": "motion_path", "path": "/layers/9/text", "layerId": "cta" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "hero-scene" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "hero-scene" } },
+    { "paramId": "rainIntensity", "target": { "kind": "motion_path", "path": "/layers/2/environment/intensity", "layerId": "rain-stage" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/8/fill", "layerId": "cta-panel" } }
+  ]
+}

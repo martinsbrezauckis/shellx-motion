@@ -1,0 +1,32 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_kinetic_type",
+  "name": "ShellX Kinetic Type",
+  "durationMs": 5200,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#f3f1e8",
+  "safeAreas": {
+    "title": { "top": 96, "right": 132, "bottom": 96, "left": 132 }
+  },
+  "layers": [
+    { "id": "background", "type": "shape", "shape": "rectangle", "fill": "#f3f1e8", "startMs": 0, "durationMs": 5200, "width": 1920, "height": 1080, "transform": { "x": 0, "y": 0 } },
+    { "id": "accent-block", "type": "shape", "shape": "rounded-rect", "fill": "#111719", "startMs": 0, "durationMs": 5200, "width": 1500, "height": 760, "transform": { "x": 210, "y": 160 }, "style": { "radius": 38 } },
+    { "id": "word-one", "type": "text", "text": "Plan", "startMs": 320, "durationMs": 4200, "transform": { "x": 292, "y": 260 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 156, "fontWeight": 900, "letterSpacing": 0, "color": "#f8fafc" }, "keyframes": { "transform.y": [ { "atMs": 320, "value": 340, "easing": "ease-out" }, { "atMs": 860, "value": 260, "easing": "ease-out" } ], "opacity": [ { "atMs": 320, "value": 0, "easing": "ease-out" }, { "atMs": 860, "value": 1, "easing": "ease-out" } ] } },
+    { "id": "word-two", "type": "text", "text": "Render", "startMs": 760, "durationMs": 3900, "transform": { "x": 292, "y": 426 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 156, "fontWeight": 900, "letterSpacing": 0, "color": "#24d6ff" }, "keyframes": { "transform.x": [ { "atMs": 760, "value": 210, "easing": "ease-out" }, { "atMs": 1320, "value": 292, "easing": "ease-out" } ], "opacity": [ { "atMs": 760, "value": 0, "easing": "ease-out" }, { "atMs": 1320, "value": 1, "easing": "ease-out" } ] } },
+    { "id": "word-three", "type": "text", "text": "Revise", "startMs": 1200, "durationMs": 3500, "transform": { "x": 292, "y": 592 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 156, "fontWeight": 900, "letterSpacing": 0, "color": "#f2b84b" }, "keyframes": { "style.letterSpacing": [ { "atMs": 1200, "value": 8, "easing": "ease-out" }, { "atMs": 1780, "value": 0, "easing": "ease-out" } ], "opacity": [ { "atMs": 1200, "value": 0, "easing": "ease-out" }, { "atMs": 1780, "value": 1, "easing": "ease-out" } ] } },
+    { "id": "subtitle", "type": "text", "text": "Agent authoring loops need visible receipts, not magic.",
+      "startMs": 1880,
+      "durationMs": 2600,
+      "transform": { "x": 960, "y": 776 },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 34, "fontWeight": 700, "lineHeight": 1.14, "width": 560, "color": "#f8fafc" }
+    },
+    { "id": "tag", "type": "text", "text": "KINETIC TYPOGRAPHY", "startMs": 220, "durationMs": 4400, "transform": { "x": 1014, "y": 246 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 30, "fontWeight": 850, "letterSpacing": 2, "color": "#2ee6a6" } }
+  ],
+  "assets": [
+    { "id": "font_inter_700", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-700-normal.woff2", "mimeType": "font/woff2" }, "weight": 700, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-kinetic-type" }
+}
