@@ -2,25 +2,28 @@
 
 # ShellX Motion
 
-**A motion graphics and video rendering engine that an AI agent can actually drive — running
-entirely on your own machine.**
+**Render video from HTML, JSON, or Lottie — locally, driven by an AI agent.**
 
-Motion is built for the thing most video tooling is bad at: being operated by something that is not
-a human with a mouse. Every capability is a typed, discoverable command with a declared permission
-tier and a receipt for what it did. There is no cloud service, no account, and no upload — the engine
-runs on your hardware and the files stay there.
+Motion converts **HTML to video**, **JSON to MP4**, and **Lottie to MP4**. Give it a design, a data
+file, or an animation, and it renders finished video: MP4, WebM, GIF, or a PNG sequence.
 
-<table>
-<tr>
-<td width="33%"><img src="templates/shellx-product-pack/cinematic-rain-launch/preview/poster.png" alt="Cinematic rain launch template: a night street scene with volumetric rain, wet reflections and lens atmosphere"></td>
-<td width="33%"><img src="templates/shellx-product-pack/editorial-liquid-surface/preview/poster.png" alt="Editorial liquid surface template: a sunlit ocean horizon with refracted light and liquid motion"></td>
-<td width="33%"><img src="templates/shellx-product-pack/product-metric-card/preview/poster.png" alt="Product metric card template: a dark dashboard with animated bar charts and progress meters"></td>
-</tr>
-</table>
+It is built to be operated by an AI agent rather than by a person clicking a timeline. Every
+capability is a typed command an agent can discover and call, over MCP, HTTP, or the CLI. It runs
+on your own machine — your files never leave it.
 
-<sup>Frames rendered by this repository from the templates in
-<a href="templates/shellx-product-pack/"><code>templates/shellx-product-pack/</code></a>. Not mockups —
-run <code>pnpm run template-pack:proof</code> to regenerate them yourself.</sup>
+### What goes in, what comes out
+
+| in | out |
+|---|---|
+| A **Motion package** — JSON describing layers, keyframes, text, shapes, gradients, masks, particles, environments, shaders | **MP4** (H.264/HEVC) · **WebM** (VP9/AV1) |
+| **HTML + CSS** you already have — a design, a card, a chart (`html-snippet-import`) | **Alpha video** (VP9-alpha WebM, ProRes 4444) |
+| **Lottie / dotLottie** from After Effects or a design tool (`lottie.import`) | **GIF**, **PNG/JPEG stills**, **PNG sequences** |
+| **glTF / GLB** 3D scenes, **images**, **video footage**, **audio**, **captions** (SRT/VTT) | **OTIO timelines** and **HTML snippets** back out |
+| **Data rows** — CSV/JSON driving a template, one render per row (`render-batch`) | A **receipt** beside every artifact: input hashes, lane, output hash, quality result |
+
+FFmpeg encodes the frames; Motion decides what those frames contain — what is drawn, when, and how
+it moves. That composition step is the part Motion adds.
+
 
 ## Watch it move
 
@@ -87,6 +90,20 @@ fallback or lossiness, never silently downgraded.
 | **Real video output** | H.264/HEVC MP4 and VP9/AV1 WebM where your FFmpeg supports them, plus audio and captions |
 | **A human Workbench** | A local browser UI over the same Debug API contracts the agents use — not a second, drifting project model |
 | **Host connectors** | First-party integration with ShellX Cut and Design Studio, with plan/receipt provenance across the boundary |
+
+### The template pack
+
+<table>
+<tr>
+<td width="33%"><img src="templates/shellx-product-pack/cinematic-rain-launch/preview/poster.png" alt="Cinematic rain launch template: a night street scene with volumetric rain, wet reflections and lens atmosphere"></td>
+<td width="33%"><img src="templates/shellx-product-pack/editorial-liquid-surface/preview/poster.png" alt="Editorial liquid surface template: a sunlit ocean horizon with refracted light and liquid motion"></td>
+<td width="33%"><img src="templates/shellx-product-pack/product-metric-card/preview/poster.png" alt="Product metric card template: a dark dashboard with animated bar charts and progress meters"></td>
+</tr>
+</table>
+
+<sup>Frames rendered by this repository from the templates in
+<a href="templates/shellx-product-pack/"><code>templates/shellx-product-pack/</code></a>. Not mockups —
+run <code>pnpm run template-pack:proof</code> to regenerate them yourself.</sup>
 
 New here? [`docs/public/quickstart.md`](docs/public/quickstart.md) is the shortest real path.
 **Handing this repository to an AI agent? Point it at [`AGENTS.md`](AGENTS.md)** — the start path,
