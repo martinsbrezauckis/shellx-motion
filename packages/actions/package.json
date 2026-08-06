@@ -1,0 +1,28 @@
+{
+  "name": "@shellx-motion/actions",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/catalog.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "main": "./dist/catalog.js",
+    "types": "./dist/catalog.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/catalog.d.ts",
+        "default": "./dist/catalog.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build.mjs --package @shellx-motion/actions",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --testTimeout=45000",
+    "coverage": "tsx ../../scripts/actions-coverage.ts"
+  }
+}

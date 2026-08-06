@@ -1,0 +1,71 @@
+{
+  "schema": "shellx-motion/cut-import-plan@1",
+  "ok": true,
+  "packageId": "pkg_lower_third",
+  "motionId": "motion_lower_third",
+  "targetId": "cut-fixture",
+  "mode": "editable_lowering",
+  "document": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "durationMs": 4000,
+    "background": "#101820"
+  },
+  "operations": [
+    {
+      "verb": "cut.title.create",
+      "sourceLayerId": "title",
+      "startMs": 0,
+      "durationMs": 4000,
+      "payload": {
+        "text": "Anna",
+        "transform": { "x": 120, "y": 820, "scale": 1, "rotation": 0 },
+        "style": { "fontFamily": "Inter", "fontSize": 64, "color": "#ffffff" }
+      }
+    },
+    {
+      "verb": "cut.shape.create",
+      "sourceLayerId": "bar",
+      "startMs": 0,
+      "durationMs": 4000,
+      "payload": {
+        "shape": "rect",
+        "transform": { "x": 96, "y": 792, "scale": 1, "rotation": 0 },
+        "style": { "fill": "#0f6fff", "opacity": 0.92, "radius": 12 }
+      }
+    },
+    {
+      "verb": "cut.caption.create",
+      "sourceLayerId": "subtitle",
+      "startMs": 350,
+      "durationMs": 3200,
+      "payload": {
+        "text": "Senior editor",
+        "transform": { "x": 120, "y": 900, "scale": 1, "rotation": 0 },
+        "style": { "fontFamily": "Inter", "fontSize": 34, "color": "#dce7ff" }
+      }
+    }
+  ],
+  "unsupported": [],
+  "receipt": {
+    "operation": "cut.import.plan",
+    "status": "passed",
+    "packageId": "pkg_lower_third",
+    "lane": "cut",
+    "output": {
+      "mode": "editable_lowering",
+      "targetId": "cut-fixture",
+      "operationCount": 3,
+      "unsupportedCount": 0,
+      "document": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "durationMs": 4000,
+        "background": "#101820"
+      }
+    },
+    "warnings": []
+  }
+}

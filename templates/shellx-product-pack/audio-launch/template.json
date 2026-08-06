@@ -1,0 +1,113 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_audio_launch",
+  "name": "ShellX Audio Launch",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "musicVolume"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 56 },
+        "subtitle": { "type": "string", "maxLength": 112 },
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "musicVolume": { "type": "number", "minimum": 0, "maximum": 1 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "title": "Make renders heard, not just seen",
+        "subtitle": "A package audio layer is muxed into final MP4 with receipt evidence.",
+        "eyebrow": "AUDIO PROOF TEMPLATE",
+        "musicVolume": 0.72,
+        "accentColor": "#2ee6a6"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 3000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1"]
+    },
+    "suitability": {
+      "bestFor": ["release bumpers", "audio proof clips", "render quality demos"],
+      "notFor": ["silent social loops", "native-only preview packs"]
+    },
+    "license": {
+      "id": "shellx-synthetic-audio",
+      "label": "ShellX Synthetic Audio Fixture",
+      "attribution": "Synthetic sine tone generated locally with FFmpeg",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "The bundled WAV is a local synthetic fixture for audio render proof."
+    },
+    "assetsAttribution": [
+      {
+        "name": "ShellX Launch Tone",
+        "license": "shellx-synthetic-audio",
+        "author": "ShellX Motion / FFmpeg lavfi sine",
+        "path": "assets/audio/shellx-launch-tone.wav"
+      },
+      { "name": "Inter SemiBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-600-normal.woff2" },
+      { "name": "Inter ExtraBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-800-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "preview": {
+      "poster": "preview/poster.png",
+      "thumbnail": "preview/poster.png"
+    },
+    "provenance": {
+      "source": "shellx-product-pack-audio-launch",
+      "sourceHash": "9eececabf1a20146b75a196fc884d9f77eaf7dab341f330c15cba98b61018afb"
+    },
+    "performance": {
+      "recommendedLane": "ffmpeg",
+      "renderCost": "medium",
+      "previewFps": 30,
+      "notes": ["Uses browser frame capture plus FFmpeg audio muxing."]
+    },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1700, 3500, 5100],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "audio", "label": "Audio", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Make renders heard, not just seen", "group": "content", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "A package audio layer is muxed into final MP4 with receipt evidence.", "group": "content", "order": 2 },
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "AUDIO PROOF TEMPLATE", "group": "content", "order": 3 },
+    { "id": "musicVolume", "label": "Music Volume", "type": "number", "defaultValue": 0.72, "min": 0, "max": 1, "step": 0.01, "group": "audio", "order": 1 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#2ee6a6", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "musicVolume", "widget": "slider", "label": "Music Volume" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/7/text", "layerId": "subtitle" } },
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "eyebrow" } },
+    { "paramId": "musicVolume", "target": { "kind": "motion_path", "path": "/layers/8/volume", "layerId": "music-bed" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/2/fill", "layerId": "wave-one" } }
+  ]
+}

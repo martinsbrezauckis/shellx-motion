@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="225" viewBox="0 0 400 225">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="0.55" stop-color="#172554"/>
+      <stop offset="1" stop-color="#701a75"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="225" fill="url(#sky)"/>
+  <g fill="#071426" stroke="#22d3ee" stroke-width="1">
+    <path d="M0 128h35V82h30v46h20V60h42v68h28V91h37v37h25V70h49v58h31V98h35v30h58v40H0z"/>
+  </g>
+  <g fill="#fef08a">
+    <path d="M15 98h5v5h-5zm12 0h5v5h-5zm67-22h6v6h-6zm15 0h6v6h-6zm58 30h5v5h-5zm63-22h6v6h-6zm15 0h6v6h-6zm76 27h5v5h-5z"/>
+  </g>
+  <path d="M0 160h400v65H0z" fill="url(#road)"/>
+  <g stroke="#22d3ee" stroke-width="1" opacity=".7">
+    <path d="M200 160L80 225m120-65l-55 65m55-65l55 65m-55-65l120 65M0 174h400M0 191h400M0 211h400"/>
+  </g>
+</svg>

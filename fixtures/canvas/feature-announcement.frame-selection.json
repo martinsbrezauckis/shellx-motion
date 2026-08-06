@@ -1,0 +1,353 @@
+{
+  "schema": "shellx-canvas/frame-selection@1",
+  "selectedFrameId": "frame_feature_announcement",
+  "project": {
+    "id": "motion_canvas_feature_announcement",
+    "name": "Canvas to Motion Feature Announcement"
+  },
+  "brand": {
+    "tokens": {
+      "color": {
+        "accent": "#00d4ff",
+        "proof": "#38f2b3",
+        "ink": "#f8fafc",
+        "muted": "#9fb2c7",
+        "surface": "#07111f",
+        "panel": "#0f1c2e",
+        "paper": "#f7fbff"
+      },
+      "font": {
+        "display": "Arial, sans-serif",
+        "body": "Arial, sans-serif"
+      }
+    }
+  },
+  "frames": [
+    {
+      "id": "frame_feature_announcement",
+      "name": "Canvas drafts, Motion renders",
+      "durationMs": 12000,
+      "fps": 24,
+      "width": 1920,
+      "height": 1080,
+      "background": "#07111f",
+      "safeAreas": {
+        "title": {
+          "top": 108,
+          "right": 120,
+          "bottom": 702,
+          "left": 120
+        },
+        "caption": {
+          "top": 900,
+          "right": 120,
+          "bottom": 72,
+          "left": 120
+        }
+      },
+      "layers": [
+        {
+          "id": "bg_base",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 0,
+          "durationMs": 12000,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#07111f"
+          }
+        },
+        {
+          "id": "rail_accent",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 0,
+          "durationMs": 12000,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "width": 27,
+            "height": 1080,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#00d4ff"
+          }
+        },
+        {
+          "id": "signal_bar",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 0,
+          "durationMs": 12000,
+          "transform": {
+            "x": 120,
+            "y": 129,
+            "width": 330,
+            "height": 12,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#38f2b3",
+            "radius": 6
+          }
+        },
+        {
+          "id": "title_intro",
+          "kind": "text",
+          "text": "Canvas drafts.\nMotion renders.",
+          "startMs": 0,
+          "durationMs": 4200,
+          "transform": {
+            "x": 120,
+            "y": 186,
+            "width": 1140,
+            "height": 285,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 108,
+            "fontWeight": 900,
+            "lineHeight": 1.02,
+            "color": "#f8fafc"
+          }
+        },
+        {
+          "id": "intro_caption",
+          "kind": "caption",
+          "text": "Export a board to MP4, then continue in a timeline only when editing starts.",
+          "startMs": 0,
+          "durationMs": 4200,
+          "transform": {
+            "x": 123,
+            "y": 888,
+            "width": 1515,
+            "height": 105,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 45,
+            "fontWeight": 700,
+            "lineHeight": 1.15,
+            "color": "#00d4ff"
+          }
+        },
+        {
+          "id": "card_plan",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 3800,
+          "durationMs": 4200,
+          "transform": {
+            "x": 120,
+            "y": 495,
+            "width": 488,
+            "height": 285,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#0f1c2e",
+            "stroke": "#00d4ff",
+            "strokeWidth": 5,
+            "radius": 27
+          }
+        },
+        {
+          "id": "card_render",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 4300,
+          "durationMs": 4200,
+          "transform": {
+            "x": 716,
+            "y": 450,
+            "width": 488,
+            "height": 330,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#f7fbff",
+            "stroke": "#38f2b3",
+            "strokeWidth": 5,
+            "radius": 27
+          }
+        },
+        {
+          "id": "card_publish",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 4800,
+          "durationMs": 4200,
+          "transform": {
+            "x": 1313,
+            "y": 495,
+            "width": 488,
+            "height": 285,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#0f1c2e",
+            "stroke": "#00d4ff",
+            "strokeWidth": 5,
+            "radius": 27
+          }
+        },
+        {
+          "id": "label_plan",
+          "kind": "text",
+          "text": "Plan\nstructured layers",
+          "startMs": 3800,
+          "durationMs": 4200,
+          "transform": {
+            "x": 168,
+            "y": 558,
+            "width": 390,
+            "height": 174,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 57,
+            "fontWeight": 900,
+            "lineHeight": 1.12,
+            "color": "#f8fafc"
+          }
+        },
+        {
+          "id": "label_render",
+          "kind": "text",
+          "text": "Render\nwith receipts",
+          "startMs": 4300,
+          "durationMs": 4200,
+          "transform": {
+            "x": 765,
+            "y": 534,
+            "width": 390,
+            "height": 189,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 57,
+            "fontWeight": 900,
+            "lineHeight": 1.12,
+            "color": "#07111f"
+          }
+        },
+        {
+          "id": "label_publish",
+          "kind": "text",
+          "text": "Deliver\nportable media",
+          "startMs": 4800,
+          "durationMs": 4200,
+          "transform": {
+            "x": 1361,
+            "y": 558,
+            "width": 390,
+            "height": 174,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 57,
+            "fontWeight": 900,
+            "lineHeight": 1.12,
+            "color": "#f8fafc"
+          }
+        },
+        {
+          "id": "flow_caption",
+          "kind": "caption",
+          "text": "One rendering contract, with evidence at every handoff.",
+          "startMs": 4200,
+          "durationMs": 4400,
+          "transform": {
+            "x": 120,
+            "y": 888,
+            "width": 1575,
+            "height": 105,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 48,
+            "fontWeight": 800,
+            "lineHeight": 1.15,
+            "color": "#38f2b3"
+          }
+        },
+        {
+          "id": "final_panel",
+          "kind": "shape",
+          "shape": "rect",
+          "startMs": 8400,
+          "durationMs": 3600,
+          "transform": {
+            "x": 120,
+            "y": 177,
+            "width": 1680,
+            "height": 645,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "#f7fbff",
+            "stroke": "#38f2b3",
+            "strokeWidth": 6,
+            "radius": 36
+          }
+        },
+        {
+          "id": "final_title",
+          "kind": "text",
+          "text": "From board to verified motion.",
+          "startMs": 8600,
+          "durationMs": 3400,
+          "transform": {
+            "x": 240,
+            "y": 324,
+            "width": 1440,
+            "height": 168,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 84,
+            "fontWeight": 900,
+            "lineHeight": 1.05,
+            "color": "#07111f"
+          }
+        },
+        {
+          "id": "final_caption",
+          "kind": "caption",
+          "text": "Public fixtures, reproducible rendering, and receipts that say what actually happened.",
+          "startMs": 8600,
+          "durationMs": 3400,
+          "transform": {
+            "x": 240,
+            "y": 552,
+            "width": 1320,
+            "height": 120,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Arial, sans-serif",
+            "fontSize": 48,
+            "fontWeight": 700,
+            "lineHeight": 1.2,
+            "color": "#0f1c2e"
+          }
+        }
+      ]
+    }
+  ],
+  "imageEditorOutputs": []
+}

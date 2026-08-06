@@ -1,0 +1,9 @@
+{
+  "schema": "shellx-motion/quality-manifest@1",
+  "samples": [
+    { "id": "immerse", "atMs": 500, "minBrightPixels": 0, "minEdgePixels": 1000, "minLumaRange": 38, "minChromaPixels": 180000, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "headline-enter", "atMs": 1500, "minBrightPixels": 0, "minEdgePixels": 1000, "minLumaRange": 38, "minChromaPixels": 180000, "minChangedPixelsFromPrevious": 250000, "minMeanDiffFromPrevious": 1, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "surface-peak", "atMs": 3500, "minBrightPixels": 0, "minEdgePixels": 1000, "minLumaRange": 38, "minChromaPixels": 180000, "minChangedPixelsFromPrevious": 250000, "minMeanDiffFromPrevious": 1, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "linger", "atMs": 5000, "minBrightPixels": 0, "minEdgePixels": 1000, "minLumaRange": 38, "minChromaPixels": 180000, "minChangedPixelsFromPrevious": 250000, "minMeanDiffFromPrevious": 1, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 }
+  ]
+}

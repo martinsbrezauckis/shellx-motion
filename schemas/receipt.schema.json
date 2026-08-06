@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/receipt@1",
+  "type": "object",
+  "required": ["schema", "id", "operation", "status", "packageId", "inputHashes", "createdAt", "lane", "warnings"],
+  "properties": {
+    "schema": { "const": "shellx-motion/receipt@1" },
+    "id": { "type": "string", "minLength": 1 },
+    "operation": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["passed", "failed", "warning", "not_run"] },
+    "packageId": { "type": "string", "minLength": 1 },
+    "inputHashes": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "lane": { "type": "string", "minLength": 1 },
+    "output": {},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "path", "status"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["available", "planned", "not_required", "failed"] },
+          "label": { "type": "string" },
+          "mediaType": { "type": "string" },
+          "primary": { "type": "boolean" }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "actor": {
+      "type": "object",
+      "required": ["kind", "label"],
+      "properties": {
+        "kind": { "enum": ["agent", "human", "host", "unknown"] },
+        "label": { "type": "string", "minLength": 1 },
+        "transport": { "enum": ["cli", "http", "ws", "mcp", "sdk", "connector"] },
+        "clientInfo": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "grantedTier": { "type": "string" }
+      }
+    }
+  }
+}

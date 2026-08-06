@@ -1,0 +1,166 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_cinematic_fog_title",
+  "name": "ShellX Cinematic Fog Title",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#060914",
+  "safeAreas": {
+    "cinematic": { "top": 100, "right": 132, "bottom": 100, "left": 132 }
+  },
+  "layers": [
+    {
+      "id": "hero-scene",
+      "name": "Replaceable depth scene",
+      "type": "image",
+      "source": "assets/samples/alpine-dawn.svg",
+      "assetRef": "assets/samples/alpine-dawn.svg",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "fog-stage",
+      "name": "Layered scene-aware fog",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "fog",
+        "seed": 202607142,
+        "quality": "cinematic",
+        "mode": "scene",
+        "sceneSourceLayerId": "hero-scene",
+        "backgroundColor": "#060914",
+        "fogColor": "#c7d2fe",
+        "lightColor": "#fbbf24",
+        "fog": {
+          "density": 0.66,
+          "speed": 0.34,
+          "scale": 5.4,
+          "turbulence": 0.62,
+          "height": 0.84,
+          "depthLayers": 4,
+          "lightStrength": 0.58
+        }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 140 } },
+      "keyframes": {
+        "environment.fog.density": [
+          { "atMs": 0, "value": 0.34, "easing": "ease-out" },
+          { "atMs": 2100, "value": 0.78, "easing": "ease-in-out" },
+          { "atMs": 4200, "value": 0.62, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.4, "easing": "ease-out" }
+        ],
+        "environment.fog.lightStrength": [
+          { "atMs": 0, "value": 0.2, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.72, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.38, "easing": "ease-out" }
+        ],
+        "environment.fog.turbulence": [
+          { "atMs": 0, "value": 0.3, "easing": "ease-out" },
+          { "atMs": 3600, "value": 0.72, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.48, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "title-scrim",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "rgba(4, 7, 18, 0.34)",
+      "startMs": 0,
+      "durationMs": 6000,
+      "width": 1920,
+      "height": 1080,
+      "transform": { "x": 0, "y": 0 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0.18 },
+          { "atMs": 1100, "value": 0.52, "easing": "ease-out" },
+          { "atMs": 5300, "value": 0.36, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "A SHELLX ORIGINAL",
+      "startMs": 300,
+      "durationMs": 5200,
+      "transform": { "x": 560, "y": 310, "width": 800, "height": 48 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 24, "fontWeight": 820, "letterSpacing": 5.2, "textAlign": "center", "color": "#fde68a" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 16 },
+      "keyframes": {
+        "opacity": [{ "atMs": 300, "value": 0 }, { "atMs": 900, "value": 1, "easing": "ease-out" }],
+        "style.letterSpacing": [{ "atMs": 300, "value": 9 }, { "atMs": 1100, "value": 5.2, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Beyond the visible",
+      "startMs": 520,
+      "durationMs": 4900,
+      "transform": { "x": 360, "y": 400, "width": 1200, "height": 180 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 104, "fontWeight": 780, "lineHeight": 1, "textAlign": "center", "color": "#f8fafc", "textShadow": { "x": 0, "y": 14, "blur": 40, "color": "rgba(0, 0, 0, 0.68)" } },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 56 },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 160 } },
+      "keyframes": {
+        "opacity": [{ "atMs": 520, "value": 0 }, { "atMs": 1260, "value": 1, "easing": "ease-out" }],
+        "transform.scale": [{ "atMs": 520, "value": 0.94, "easing": "ease-out" }, { "atMs": 1260, "value": 1 }]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "Layered atmosphere, source-aware depth and cinematic light from one replaceable frame.",
+      "startMs": 1150,
+      "durationMs": 3900,
+      "transform": { "x": 560, "y": 626, "width": 800, "height": 104 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 30, "fontWeight": 540, "lineHeight": 1.25, "textAlign": "center", "color": "#e0e7ff" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 22 },
+      "keyframes": {
+        "opacity": [{ "atMs": 1150, "value": 0 }, { "atMs": 1720, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "accent-line",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#fbbf24",
+      "startMs": 920,
+      "durationMs": 4300,
+      "width": 120,
+      "height": 6,
+      "transform": { "x": 900, "y": 770 },
+      "style": { "radius": 3 },
+      "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 680, "easing": "ease-out" } }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.22, "softness": 0.84, "color": "#03050d" },
+        "filmGrain": { "amount": 0.009, "size": 1, "seed": 93421 }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "alpine-dawn-sample",
+      "kind": "image",
+      "source": { "path": "assets/samples/alpine-dawn.svg", "mimeType": "image/svg+xml" },
+      "size": { "width": 1920, "height": 1080 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-cinematic-fog-title" }
+}

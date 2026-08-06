@@ -1,0 +1,32 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_feature_announcement",
+  "name": "ShellX Feature Announcement",
+  "durationMs": 6200,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#111719",
+  "safeAreas": {
+    "title": { "top": 96, "right": 112, "bottom": 96, "left": 112 }
+  },
+  "layers": [
+    { "id": "background", "type": "shape", "shape": "rectangle", "fill": "#111719", "startMs": 0, "durationMs": 6200, "width": 1920, "height": 1080, "transform": { "x": 0, "y": 0 } },
+    { "id": "device-panel", "type": "shape", "shape": "rounded-rect", "fill": "#e8f0e8", "startMs": 0, "durationMs": 6200, "width": 760, "height": 560, "transform": { "x": 1032, "y": 250 }, "style": { "radius": 30, "shadow": { "x": 0, "y": 28, "blur": 48, "color": "rgba(0,0,0,0.34)" } }, "transitions": { "in": { "type": "slide", "direction": "up", "durationMs": 560, "distance": 42, "easing": "ease-out" } } },
+    { "id": "device-header", "type": "shape", "shape": "rounded-rect", "fill": "#1e2d2e", "startMs": 260, "durationMs": 5400, "width": 650, "height": 96, "transform": { "x": 1088, "y": 316 }, "style": { "radius": 22 } },
+    { "id": "feature-chip-one", "type": "shape", "shape": "rounded-rect", "fill": "#24d6ff", "startMs": 760, "durationMs": 4700, "width": 500, "height": 74, "transform": { "x": 1120, "y": 468 }, "style": { "radius": 18 }, "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 480, "easing": "ease-out" } } },
+    { "id": "feature-chip-two", "type": "shape", "shape": "rounded-rect", "fill": "#f2b84b", "startMs": 1060, "durationMs": 4400, "width": 420, "height": 74, "transform": { "x": 1120, "y": 576 }, "style": { "radius": 18 }, "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 480, "easing": "ease-out" } } },
+    { "id": "feature-chip-three", "type": "shape", "shape": "rounded-rect", "fill": "#2ee6a6", "startMs": 1360, "durationMs": 4100, "width": 560, "height": 74, "transform": { "x": 1120, "y": 684 }, "style": { "radius": 18 }, "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 480, "easing": "ease-out" } } },
+    { "id": "eyebrow", "type": "text", "text": "FEATURE ANNOUNCEMENT", "startMs": 180, "durationMs": 5600, "transform": { "x": 132, "y": 214 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 28, "fontWeight": 850, "letterSpacing": 2, "color": "#2ee6a6" } },
+    { "id": "title", "type": "text", "text": "Cut Generate can now hand scripted frames to Motion", "startMs": 280, "durationMs": 5400, "transform": { "x": 132, "y": 294 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 78, "fontWeight": 850, "lineHeight": 1.04, "width": 850, "color": "#f8fafc" } },
+    { "id": "subtitle", "type": "text", "text": "The result is still editable JSON, still local, and still timeline-ready.", "startMs": 940, "durationMs": 4700, "transform": { "x": 136, "y": 610 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 36, "fontWeight": 620, "lineHeight": 1.18, "width": 760, "color": "#dce6f3" } },
+    { "id": "feature-one", "type": "text", "text": "Script to package", "startMs": 820, "durationMs": 4500, "transform": { "x": 1158, "y": 486 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 30, "fontWeight": 820, "color": "#071014" } },
+    { "id": "feature-two", "type": "text", "text": "Render receipts", "startMs": 1120, "durationMs": 4200, "transform": { "x": 1158, "y": 594 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 30, "fontWeight": 820, "color": "#071014" } },
+    { "id": "feature-three", "type": "text", "text": "Cut timeline handoff", "startMs": 1420, "durationMs": 3900, "transform": { "x": 1158, "y": 702 }, "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 30, "fontWeight": 820, "color": "#071014" } }
+  ],
+  "assets": [
+    { "id": "font_inter_700", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-700-normal.woff2", "mimeType": "font/woff2" }, "weight": 700, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-feature-announcement" }
+}

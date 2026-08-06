@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/actions@1",
+  "type": "object",
+  "required": ["schema", "actionSchema", "generatedBy", "actionCount", "permissions", "surfaces", "actions"],
+  "properties": {
+    "schema": { "const": "shellx-motion/actions@1" },
+    "actionSchema": { "const": "shellx-motion/action@1" },
+    "generatedBy": { "type": "string", "minLength": 1 },
+    "actionCount": { "type": "integer", "minimum": 0 },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "enum": ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"]
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "actions": {
+      "type": "array",
+      "items": { "$ref": "shellx-motion/action@1" }
+    }
+  }
+}

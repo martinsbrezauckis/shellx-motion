@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/duration-policy@1",
+  "type": "object",
+  "required": ["schema", "protectedRegions"],
+  "properties": {
+    "schema": { "const": "shellx-motion/duration-policy@1" },
+    "minDurationMs": { "type": "number", "minimum": 0 },
+    "maxDurationMs": { "type": "number", "minimum": 0 },
+    "resizeMode": { "enum": ["stretch-middle", "ripple", "fixed"] },
+    "protectedRegions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "startMs", "durationMs"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string" },
+          "role": { "type": "string" },
+          "startMs": { "type": "number", "minimum": 0 },
+          "durationMs": { "type": "number", "exclusiveMinimum": 0 }
+        }
+      }
+    }
+  }
+}

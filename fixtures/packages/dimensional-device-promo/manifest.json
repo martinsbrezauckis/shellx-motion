@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_dimensional_device_promo",
+  "name": "Dimensional Device Promo",
+  "motion": "motion.json",
+  "assets": ["assets/device-grid.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

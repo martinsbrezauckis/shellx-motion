@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_restricted_shader",
+  "name": "Restricted Shader Signal Bloom",
+  "motion": "motion.json",
+  "assets": ["assets/signal-bloom.glsl"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

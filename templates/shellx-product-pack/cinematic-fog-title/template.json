@@ -1,0 +1,161 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_cinematic_fog_title",
+  "name": "ShellX Cinematic Fog Title",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "heroMedia"],
+      "properties": {
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "title": { "type": "string", "maxLength": 54 },
+        "subtitle": { "type": "string", "maxLength": 108 },
+        "heroMedia": { "type": "string" },
+        "fogDensity": { "type": "number", "minimum": 0.2, "maximum": 0.9 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "eyebrow": "A SHELLX ORIGINAL",
+        "title": "Beyond the visible",
+        "subtitle": "Layered atmosphere, source-aware depth and cinematic light from one replaceable frame.",
+        "heroMedia": "assets/samples/alpine-dawn.svg",
+        "fogDensity": 0.66,
+        "accentColor": "#fbbf24"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 4000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1", "9:16"]
+    },
+    "suitability": {
+      "bestFor": ["cinematic title", "atmospheric trailer opener", "documentary chapter", "premium product film"],
+      "notFor": ["native-only preview", "dense data display", "flat slide transition"]
+    },
+    "license": {
+      "id": "shellx-generated-sample",
+      "label": "ShellX Generated Sample",
+      "attribution": "ShellX Motion cinematic template assets",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "The package-local sample may be replaced with licensed media. Typography uses the host sans-serif stack."
+    },
+    "assetsAttribution": [
+      {
+        "name": "Alpine Dawn Sample",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/samples/alpine-dawn.svg"
+      }
+    ],
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "provenance": {
+      "source": "shellx-product-pack-cinematic-fog-title",
+      "sourceHash": "73f86d1b8832b11b7f44ef6511eebf30c27c6be20ce5dc00558f697b583e687e"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "high",
+      "previewFps": 24,
+      "notes": ["Uses four deterministic fog depth layers, scene sampling, animated light strength and motion blur."]
+    },
+    "story": {
+      "kind": "cinematic-atmosphere-title",
+      "beats": [
+        {
+          "id": "emerge",
+          "label": "Emerge",
+          "intent": "Reveal the source environment through moving depth rather than a simple fade.",
+          "startMs": 0,
+          "durationMs": 1900,
+          "layerIds": ["hero-scene", "fog-stage"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "A slow push through layered atmosphere."
+        },
+        {
+          "id": "name",
+          "label": "Name",
+          "intent": "Land the cinematic title while light volumes travel behind it.",
+          "startMs": 850,
+          "durationMs": 3400,
+          "layerIds": ["eyebrow", "title", "subtitle", "fog-stage"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Hold typography centrally while atmospheric depth remains active."
+        },
+        {
+          "id": "clear",
+          "label": "Clear",
+          "intent": "Reduce density into a memorable resolved frame.",
+          "startMs": 4200,
+          "durationMs": 1800,
+          "layerIds": ["accent-line", "title", "fog-stage", "finish"],
+          "cameraIntent": "Let fog recede around the centered title."
+        }
+      ]
+    },
+    "mediaSlots": [
+      {
+        "paramId": "heroMedia",
+        "role": "cinematic-depth-scene",
+        "description": "Wide licensed landscape, architecture or product scene with clear depth separation.",
+        "acceptedKinds": ["image"],
+        "fit": "fill",
+        "minWidth": 1920,
+        "minHeight": 1080,
+        "rightsRequired": true
+      }
+    ],
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1500, 3500, 5000],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Scene", "order": 2 },
+    { "id": "atmosphere", "label": "Atmosphere", "order": 3 },
+    { "id": "style", "label": "Style", "order": 4 }
+  ],
+  "params": [
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "A SHELLX ORIGINAL", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Beyond the visible", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Layered atmosphere, source-aware depth and cinematic light from one replaceable frame.", "group": "content", "order": 3 },
+    { "id": "heroMedia", "label": "Cinematic scene", "type": "media", "defaultValue": "assets/samples/alpine-dawn.svg", "group": "media", "order": 1 },
+    { "id": "fogDensity", "label": "Fog density", "type": "number", "defaultValue": 0.66, "group": "atmosphere", "order": 1, "min": 0.2, "max": 0.9, "step": 0.02 },
+    { "id": "accentColor", "label": "Accent color", "type": "color", "defaultValue": "#fbbf24", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "heroMedia", "widget": "media", "label": "Cinematic scene" },
+    { "paramId": "fogDensity", "widget": "slider", "label": "Fog density" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent color" }
+  ],
+  "bindings": [
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "subtitle" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "hero-scene" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "hero-scene" } },
+    { "paramId": "fogDensity", "target": { "kind": "motion_path", "path": "/layers/1/environment/fog/density", "layerId": "fog-stage" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/1/environment/lightColor", "layerId": "fog-stage" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/6/fill", "layerId": "accent-line" } }
+  ]
+}

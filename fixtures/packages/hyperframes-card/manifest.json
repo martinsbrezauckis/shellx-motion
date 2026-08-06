@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_hyperframes_card",
+  "name": "HyperFrames Style Card Fixture",
+  "motion": "motion.json",
+  "assets": ["index.html"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser"],
+    "hosts": ["motion"]
+  }
+}

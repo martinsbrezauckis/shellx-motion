@@ -1,0 +1,14 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_tracked_callout_overlay",
+  "name": "ShellX Tracked Callout Overlay",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": ["assets/samples/device-inspection.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
+  },
+  "workflow": "template-pack-tracked-callout-overlay"
+}

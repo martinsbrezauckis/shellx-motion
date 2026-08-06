@@ -1,0 +1,140 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_product_metric_card",
+  "name": "ShellX Product Metric Card",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "metricLabel", "metricValue", "metricDelta"],
+      "properties": {
+        "surfaceLabel": { "type": "string", "maxLength": 24 },
+        "title": { "type": "string", "maxLength": 68 },
+        "subtitle": { "type": "string", "maxLength": 120 },
+        "metricLabel": { "type": "string", "maxLength": 32 },
+        "metricValue": { "type": "string", "maxLength": 10 },
+        "metricDelta": { "type": "string", "maxLength": 28 },
+        "ctaLabel": { "type": "string", "maxLength": 18 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "surfaceLabel": "PRODUCT METRICS",
+        "title": "Creative output is up across every channel",
+        "subtitle": "One shared motion system now covers brand, product, and social from a single source file.",
+        "metricLabel": "Verified assets delivered",
+        "metricValue": "1,200",
+        "metricDelta": "+31% vs. last quarter",
+        "ctaLabel": "View full report",
+        "accentColor": "#3fd8ff"
+      },
+      {
+        "surfaceLabel": "SOCIAL SNAPSHOT",
+        "title": "Social posts leave design in one click",
+        "subtitle": "Designers publish square and vertical cuts straight from the board without opening an editor.",
+        "metricLabel": "Square posts published",
+        "metricValue": "553",
+        "metricDelta": "+18% vs. last month",
+        "ctaLabel": "Export post",
+        "accentColor": "#5fe0a4"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 3000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1"]
+    },
+    "suitability": {
+      "bestFor": ["SaaS metric promos", "product-family status cards", "data-driven release visuals", "batch/localization campaigns"],
+      "notFor": ["long-form narration", "photographic stories", "audio-led spots"]
+    },
+    "license": {
+      "id": "shellx-product-sample-data",
+      "label": "ShellX Product Sample Data",
+      "attribution": "ShellX Motion product-family sample campaign",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "Shipped data rows are synthetic sample metrics meant to be replaced with your own campaign data."
+    },
+    "preview": {
+      "poster": "preview/poster.png",
+      "thumbnail": "preview/poster.png"
+    },
+    "assetsAttribution": [
+      { "name": "Inter SemiBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-600-normal.woff2" },
+      { "name": "Inter Bold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-700-normal.woff2" },
+      { "name": "Inter ExtraBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-800-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "provenance": {
+      "source": "shellx-product-pack-product-metrics",
+      "sourceHash": "50364a0b50ba42fb5663fa5498e168d152076ddbcaac9a499f37bcef50a42317"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "medium",
+      "previewFps": 30,
+      "notes": [
+        "motion.json is a literal, fully-instantiated 1920x1080 card: `render <package>` produces the finished design with no data file.",
+        "data/product-metrics.batch.json layers three row diffs on top of it (copy, palette, chart geometry, and a 1080x1080 square re-layout) for render-batch."
+      ]
+    },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [900, 2200, 3800, 5200],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "data", "label": "Data", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "surfaceLabel", "label": "Surface Label", "type": "text", "defaultValue": "PRODUCT METRICS", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Creative output is up across every channel", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "One shared motion system now covers brand, product, and social from a single source file.", "group": "content", "order": 3 },
+    { "id": "ctaLabel", "label": "Call To Action", "type": "text", "defaultValue": "View full report", "group": "content", "order": 4 },
+    { "id": "metricLabel", "label": "Metric Label", "type": "text", "defaultValue": "Verified assets delivered", "group": "data", "order": 1 },
+    { "id": "metricValue", "label": "Metric Value", "type": "text", "defaultValue": "1,200", "group": "data", "order": 2 },
+    { "id": "metricDelta", "label": "Metric Delta", "type": "text", "defaultValue": "+31% vs. last quarter", "group": "data", "order": 3 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#3fd8ff", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "surfaceLabel", "widget": "text", "label": "Surface Label" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "ctaLabel", "widget": "text", "label": "Call To Action" },
+    { "paramId": "metricLabel", "widget": "text", "label": "Metric Label" },
+    { "paramId": "metricValue", "widget": "text", "label": "Metric Value" },
+    { "paramId": "metricDelta", "widget": "text", "label": "Metric Delta" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "surfaceLabel", "target": { "kind": "motion_path", "path": "/layers/41/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/42/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/43/text", "layerId": "subtitle" } },
+    { "paramId": "ctaLabel", "target": { "kind": "motion_path", "path": "/layers/60/text", "layerId": "cta" } },
+    { "paramId": "metricLabel", "target": { "kind": "motion_path", "path": "/layers/47/text", "layerId": "metric-label" } },
+    { "paramId": "metricValue", "target": { "kind": "motion_path", "path": "/layers/48/text", "layerId": "metric-value" } },
+    { "paramId": "metricDelta", "target": { "kind": "motion_path", "path": "/layers/49/text", "layerId": "metric-delta" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/40/fill", "layerId": "eyebrow-tick" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/24/fill", "layerId": "channel-1-fill" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/37/fill", "layerId": "timeline-progress" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/58/fill", "layerId": "progress-fill" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/59/fill", "layerId": "cta-panel" } }
+  ]
+}

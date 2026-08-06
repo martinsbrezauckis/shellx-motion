@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/integration-envelope@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "producer", "binding"],
+  "properties": {
+    "schema": { "const": "shellx-motion/integration-envelope@1" },
+    "producer": { "$ref": "integration-capabilities.schema.json" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "protocol", "producer", "consumer", "mode", "payloadSchema", "requiredFeatures"],
+      "properties": {
+        "schema": { "const": "shellx-motion/integration-binding@1" },
+        "protocol": { "type": "integer", "minimum": 1 },
+        "producer": { "enum": ["shellx-motion", "shellx-cut", "shellx-canvas"] },
+        "consumer": { "enum": ["shellx-motion", "shellx-cut", "shellx-canvas"] },
+        "mode": { "type": "string", "minLength": 1 },
+        "payloadSchema": { "type": "string", "minLength": 1 },
+        "requiredFeatures": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    }
+  }
+}

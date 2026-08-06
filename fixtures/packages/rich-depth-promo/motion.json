@@ -1,0 +1,124 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_rich_depth_promo",
+  "name": "Rich Depth Promo",
+  "durationMs": 1600,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "camera-main",
+      "type": "camera",
+      "startMs": 0,
+      "durationMs": 1600,
+      "transform": { "x": 0, "y": 0, "scale": 1, "rotation": 0, "originX": 160, "originY": 90 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 28, "easing": "ease-in-out" }],
+        "transform.y": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 8, "easing": "ease-in-out" }],
+        "transform.scale": [{ "atMs": 0, "value": 1 }, { "atMs": 1600, "value": 1.18, "easing": "ease-in-out" }],
+        "transform.rotation": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 2, "easing": "ease-in-out" }]
+      }
+    },
+    {
+      "id": "city",
+      "type": "image",
+      "assetId": "asset_neon_city",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": -0.75,
+      "transform": { "x": -40, "y": -22, "width": 400, "height": 225 }
+    },
+    {
+      "id": "sun",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#fb7185",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": -0.4,
+      "transform": { "x": 208, "y": 30, "width": 74, "height": 74 },
+      "effects": { "glow": { "radius": 24, "color": "#fb7185" } }
+    },
+    {
+      "id": "spark-field",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.45,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "emitter": {
+        "seed": 20260712,
+        "count": 90,
+        "lifetimeMs": 1100,
+        "shape": "circle",
+        "color": "#ffffff",
+        "secondaryColor": "#22d3ee",
+        "minSize": 1,
+        "maxSize": 4,
+        "minSpeed": 12,
+        "maxSpeed": 70,
+        "direction": -90,
+        "spread": 150,
+        "gravity": 20,
+        "fadeOut": true
+      },
+      "effects": { "glow": { "radius": 4, "color": "#22d3ee" } }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "BEYOND FLAT",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.9,
+      "transform": { "x": 38, "y": 64, "width": 250, "height": 48 },
+      "style": { "color": "#ffffff", "fontFamily": "sans-serif", "fontSize": 31, "fontWeight": 900, "letterSpacing": 2 },
+      "effects": {
+        "glow": { "radius": 8, "color": "#22d3ee" },
+        "motionBlur": { "samples": 6, "shutterAngle": 240 }
+      },
+      "keyframes": {
+        "transform.x": [{ "atMs": 0, "value": 20 }, { "atMs": 500, "value": 38, "easing": "ease-out" }, { "atMs": 1600, "value": 48, "easing": "ease-in-out" }],
+        "transform.rotation": [{ "atMs": 0, "value": -2 }, { "atMs": 1600, "value": 1, "easing": "ease-in-out" }]
+      }
+    },
+    {
+      "id": "foreground-rail",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 2.2,
+      "transform": { "x": -30, "y": 146, "width": 390, "height": 22, "rotation": -3 },
+      "gradient": {
+        "type": "linear",
+        "angle": 90,
+        "stops": [{ "offset": 0, "color": "#0f172a" }, { "offset": 0.5, "color": "#22d3ee" }, { "offset": 1, "color": "#0f172a" }]
+      },
+      "effects": { "glow": { "radius": 10, "color": "#22d3ee" } }
+    },
+    {
+      "id": "film-look",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 1600,
+      "effects": {
+        "vignette": { "amount": 0.72, "softness": 0.68, "color": "#000000" },
+        "filmGrain": { "amount": 0.42, "size": 2, "seed": 424242 }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "asset_neon_city",
+      "kind": "image",
+      "source": { "path": "assets/neon-city.svg", "mimeType": "image/svg+xml" },
+      "hash": { "sha256": "fixture" },
+      "size": { "width": 400, "height": 225 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "rich-output-fixture" }
+}

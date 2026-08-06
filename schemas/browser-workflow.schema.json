@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/browser-workflow@1",
+  "type": "object",
+  "required": ["schema", "steps"],
+  "properties": {
+    "schema": { "const": "shellx-motion/browser-workflow@1" },
+    "viewport": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "deviceScaleFactor": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "networkPolicy": { "enum": ["blocked-unless-declared", "allow"] },
+    "steps": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["action", "ms"],
+            "properties": {
+              "action": { "const": "wait" },
+              "ms": { "type": "number", "minimum": 0, "maximum": 30000 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["action", "selector"],
+            "properties": {
+              "action": { "const": "click" },
+              "selector": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["action", "selector", "text"],
+            "properties": {
+              "action": { "const": "type" },
+              "selector": { "type": "string", "minLength": 1 },
+              "text": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["action", "selector", "key"],
+            "properties": {
+              "action": { "const": "press" },
+              "selector": { "type": "string", "minLength": 1 },
+              "key": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "const": "scroll" },
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["action", "selector"],
+            "properties": {
+              "action": { "const": "verify" },
+              "selector": { "type": "string", "minLength": 1 },
+              "text": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "properties": {
+        "visible": { "type": "boolean" },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x", "y", "atMs"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "atMs": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

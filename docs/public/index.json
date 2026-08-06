@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "productVersion": "0.1.0",
+  "sections": [
+    {
+      "id": "start-here",
+      "title": "Start here",
+      "pages": [
+        {
+          "id": "quickstart",
+          "title": "Quickstart",
+          "file": "quickstart.md"
+        },
+        {
+          "id": "connections",
+          "title": "Connect an agent",
+          "file": "connections.md"
+        }
+      ]
+    },
+    {
+      "id": "using-motion",
+      "title": "Using ShellX Motion",
+      "pages": [
+        {
+          "id": "agent-integration",
+          "title": "Agent integration",
+          "file": "agent-integration.md"
+        },
+        {
+          "id": "templates",
+          "title": "Agent template reference",
+          "file": "templates.md",
+          "audience": "agent"
+        },
+        {
+          "id": "rendering",
+          "title": "Rendering lanes",
+          "file": "rendering.md"
+        },
+        {
+          "id": "cut-and-design-studio",
+          "title": "Cut and Design Studio",
+          "file": "cut-and-design-studio.md"
+        },
+        {
+          "id": "host-integration",
+          "title": "Host integration",
+          "file": "host-integration.md"
+        }
+      ]
+    },
+    {
+      "id": "trust",
+      "title": "Trust and security",
+      "pages": [
+        {
+          "id": "receipts-and-trust",
+          "title": "Receipts and trust",
+          "file": "receipts-and-trust.md"
+        },
+        {
+          "id": "security-model",
+          "title": "Security model",
+          "file": "security-model.md"
+        },
+        {
+          "id": "binary-assets",
+          "title": "Binary asset provenance",
+          "file": "BINARY_ASSETS.md"
+        }
+      ]
+    }
+  ]
+}

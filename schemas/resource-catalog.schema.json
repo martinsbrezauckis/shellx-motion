@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/resource-catalog@1",
+  "type": "object",
+  "required": ["schema", "packageId", "sourceApp", "resources"],
+  "properties": {
+    "schema": { "const": "shellx-motion/resource-catalog@1" },
+    "packageId": { "type": "string", "minLength": 1 },
+    "sourceApp": { "type": "string", "minLength": 1 },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "ref", "kind", "source"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "ref": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "mimeType": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "source": {
+            "type": "object",
+            "required": ["app"],
+            "properties": {
+              "app": { "type": "string", "minLength": 1 },
+              "sourceFrameId": { "type": "string", "minLength": 1 },
+              "receiptId": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

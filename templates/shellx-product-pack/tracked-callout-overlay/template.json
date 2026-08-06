@@ -1,0 +1,156 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_tracked_callout_overlay",
+  "name": "ShellX Tracked Callout Overlay",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "calloutTitle", "calloutDetail", "heroMedia"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 58 },
+        "subtitle": { "type": "string", "maxLength": 94 },
+        "calloutTitle": { "type": "string", "maxLength": 34 },
+        "calloutDetail": { "type": "string", "maxLength": 76 },
+        "heroMedia": { "type": "string" },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "title": "See the system think",
+        "subtitle": "A baked tracking path keeps the annotation connected while the product frame moves.",
+        "calloutTitle": "Adaptive cooling core",
+        "calloutDetail": "Thermal load drops 18% under sustained local rendering.",
+        "heroMedia": "assets/samples/device-inspection.svg",
+        "accentColor": "#22d3ee"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 4000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1", "9:16"]
+    },
+    "suitability": {
+      "bestFor": ["tracked callout", "product feature close-up", "technical explainer", "device showcase"],
+      "notFor": ["untracked handheld source without analysis", "native-only preview", "static presentation slide"]
+    },
+    "license": {
+      "id": "shellx-generated-sample",
+      "label": "ShellX Generated Sample",
+      "attribution": "ShellX Motion tracked callout template assets",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "The package-local device image is a generated sample. User replacements require appropriate rights. Typography uses the host sans-serif stack."
+    },
+    "assetsAttribution": [
+      { "name": "Device Inspection Sample", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/samples/device-inspection.svg" }
+    ],
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "provenance": {
+      "source": "shellx-product-pack-tracked-callout-overlay",
+      "sourceHash": "97370ab88c6ff99c862f69d6fa9ff71ddbc53725dcf9d5346191b5e074ed21d1"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "medium",
+      "previewFps": 24,
+      "notes": ["Callout dot, leader, panel and copy share synchronized baked keyframes suitable for replacement with point or planar tracking output."]
+    },
+    "story": {
+      "kind": "tracked-product-explainer",
+      "beats": [
+        {
+          "id": "scan",
+          "label": "Scan",
+          "intent": "Establish a media-rich device frame and locate the feature before adding copy.",
+          "startMs": 0,
+          "durationMs": 1500,
+          "layerIds": ["hero-scene", "callout-ring", "callout-core"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "A subtle media push moves beneath the tracked anchor."
+        },
+        {
+          "id": "follow",
+          "label": "Follow",
+          "intent": "Keep the leader and annotation synchronized as the feature travels through frame.",
+          "startMs": 900,
+          "durationMs": 3500,
+          "layerIds": ["callout-ring", "callout-core", "callout-leader", "callout-panel", "callout-title", "callout-detail"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Baked tracking coordinates preserve the visual connection."
+        },
+        {
+          "id": "resolve",
+          "label": "Resolve",
+          "intent": "Settle the annotation beside the product promise for a useful handoff frame.",
+          "startMs": 4100,
+          "durationMs": 1900,
+          "layerIds": ["title", "subtitle", "callout-panel", "finish"],
+          "cameraIntent": "Ease the media and callout to a stable product end frame."
+        }
+      ]
+    },
+    "mediaSlots": [
+      {
+        "paramId": "heroMedia",
+        "role": "tracked-feature-scene",
+        "description": "Licensed wide product or technical frame. Re-run Motion tracking when its target does not match the baked sample path.",
+        "acceptedKinds": ["image"],
+        "fit": "fill",
+        "minWidth": 1920,
+        "minHeight": 1080,
+        "rightsRequired": true
+      }
+    ],
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1500, 3500, 5000],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 1300,
+      "minLumaRange": 42,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Tracked scene", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "See the system think", "group": "content", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "A baked tracking path keeps the annotation connected while the product frame moves.", "group": "content", "order": 2 },
+    { "id": "calloutTitle", "label": "Callout title", "type": "text", "defaultValue": "Adaptive cooling core", "group": "content", "order": 3 },
+    { "id": "calloutDetail", "label": "Callout detail", "type": "text", "defaultValue": "Thermal load drops 18% under sustained local rendering.", "group": "content", "order": 4 },
+    { "id": "heroMedia", "label": "Product scene", "type": "media", "defaultValue": "assets/samples/device-inspection.svg", "group": "media", "order": 1 },
+    { "id": "accentColor", "label": "Callout color", "type": "color", "defaultValue": "#22d3ee", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "calloutTitle", "widget": "text", "label": "Callout title" },
+    { "paramId": "calloutDetail", "widget": "textarea", "label": "Callout detail" },
+    { "paramId": "heroMedia", "widget": "media", "label": "Product scene" },
+    { "paramId": "accentColor", "widget": "color", "label": "Callout color" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/8/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/9/text", "layerId": "subtitle" } },
+    { "paramId": "calloutTitle", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "callout-title" } },
+    { "paramId": "calloutDetail", "target": { "kind": "motion_path", "path": "/layers/7/text", "layerId": "callout-detail" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "hero-scene" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "hero-scene" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/2/fill", "layerId": "callout-ring" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/3/fill", "layerId": "callout-core" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/4/fill", "layerId": "callout-leader" } }
+  ]
+}

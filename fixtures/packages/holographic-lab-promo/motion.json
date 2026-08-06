@@ -1,0 +1,118 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_holographic_lab_promo",
+  "name": "Holographic Lab Promo",
+  "durationMs": 1600,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "camera-main",
+      "type": "camera",
+      "startMs": 0,
+      "durationMs": 1600,
+      "transform": { "x": 0, "y": 0, "scale": 1, "rotation": 0, "originX": 160, "originY": 90 },
+      "keyframes": {
+        "transform.x": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 18, "easing": "ease-in-out" }],
+        "transform.y": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 6, "easing": "ease-in-out" }],
+        "transform.scale": [{ "atMs": 0, "value": 1 }, { "atMs": 1600, "value": 1.14, "easing": "ease-in-out" }],
+        "transform.rotation": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 1.2, "easing": "ease-in-out" }]
+      }
+    },
+    {
+      "id": "lab-environment",
+      "type": "image",
+      "assetId": "asset_orbital_lab",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": -0.8,
+      "transform": { "x": -40, "y": -22, "width": 400, "height": 225 }
+    },
+    {
+      "id": "hologram-field",
+      "type": "shader",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": -0.3,
+      "opacity": 0.22,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "shader": {
+        "schema": "shellx-motion/shader-plugin@1",
+        "language": "glsl-es-100-expression",
+        "fragmentAssetId": "shader_hologram",
+        "seed": 424242,
+        "uniforms": { "u_speed": 0.45 },
+        "fallbackColor": "#0f172a"
+      },
+      "keyframes": {
+        "shader.uniforms.u_speed": [{ "atMs": 0, "value": 0.45, "easing": "ease-in-out" }, { "atMs": 1600, "value": 1.25 }]
+      }
+    },
+    {
+      "id": "target-ring",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#00000000",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.35,
+      "transform": { "x": 197, "y": 31, "width": 108, "height": 108 },
+      "style": { "stroke": "#67e8f9", "strokeWidth": 2 },
+      "effects": { "glow": { "radius": 10, "color": "#22d3ee" } },
+      "keyframes": {
+        "transform.rotation": [{ "atMs": 0, "value": 0 }, { "atMs": 1600, "value": 180, "easing": "linear" }],
+        "transform.scale": [{ "atMs": 0, "value": 0.8, "easing": "ease-out" }, { "atMs": 500, "value": 1 }]
+      }
+    },
+    {
+      "id": "particles",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.52,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "emitter": { "seed": 20260713, "count": 64, "lifetimeMs": 1000, "shape": "circle", "color": "#ffffff", "secondaryColor": "#22d3ee", "minSize": 1, "maxSize": 3, "minSpeed": 10, "maxSpeed": 48, "direction": -90, "spread": 150, "gravity": 8, "fadeOut": true },
+      "effects": { "glow": { "radius": 4, "color": "#22d3ee" } }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "ORBITAL SIGNAL",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.95,
+      "transform": { "x": 50, "y": 58, "width": 210, "height": 42 },
+      "style": { "color": "#ffffff", "fontFamily": "sans-serif", "fontSize": 25, "fontWeight": 900, "letterSpacing": 2.2 },
+      "effects": { "glow": { "radius": 8, "color": "#22d3ee" }, "motionBlur": { "samples": 4, "shutterAngle": 220 } },
+      "keyframes": {
+        "opacity": [{ "atMs": 0, "value": 0 }, { "atMs": 260, "value": 1, "easing": "ease-out" }],
+        "transform.x": [{ "atMs": 0, "value": 0, "easing": "back-out" }, { "atMs": 420, "value": 50 }]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "LOCAL RENDER // LIVE DEPTH",
+      "startMs": 0,
+      "durationMs": 1600,
+      "depth": 0.82,
+      "transform": { "x": 52, "y": 101, "width": 210, "height": 24 },
+      "style": { "color": "#a5f3fc", "fontFamily": "monospace", "fontSize": 11, "fontWeight": 700, "letterSpacing": 1.2 },
+      "keyframes": { "opacity": [{ "atMs": 0, "value": 0 }, { "atMs": 500, "value": 1, "easing": "ease-out" }] }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 1600,
+      "effects": { "vignette": { "amount": 0.72, "softness": 0.68, "color": "#020617" }, "filmGrain": { "amount": 0.18, "size": 2, "seed": 271828 } }
+    }
+  ],
+  "assets": [
+    { "id": "asset_orbital_lab", "type": "image", "source": { "path": "assets/orbital-lab.svg", "mimeType": "image/svg+xml" } },
+    { "id": "shader_hologram", "type": "shader", "source": { "path": "assets/hologram.glsl", "mimeType": "text/x-shellx-motion-glsl" } }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

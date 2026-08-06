@@ -1,0 +1,17 @@
+{
+  "schema": "shellx-motion/data-rows@1",
+  "rows": [
+    {
+      "id": "ada",
+      "name": "Ada",
+      "background": "#0f172a",
+      "accent": "#38bdf8"
+    },
+    {
+      "id": "grace",
+      "name": "Grace",
+      "background": "#111827",
+      "accent": "#22c55e"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Package tarballs from `pnpm pack` — build output, never tracked. The install
+# verifier writes its own into .scratch/, but a bare `pnpm pack` drops one in the
+# package directory.
+*.tgz
+
+# Untracked work artifacts. Everything this project produces lives inside this
+# repo (single-location rule) but is not tracked: scratch renders, smoke output,
+# audit/test evidence, and any git worktrees for in-flight branches.
+.scratch/
+.worktrees/
+artifacts/
+
+
+# Agent tooling scratch directories, recreated by the local runtime.
+.agents/
+.codex/

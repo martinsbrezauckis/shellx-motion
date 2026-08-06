@@ -1,0 +1,14 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_holographic_lab_promo",
+  "name": "Holographic Lab Promo",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": ["assets/orbital-lab.svg", "assets/hologram.glsl"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  },
+  "workflow": "template-controls"
+}

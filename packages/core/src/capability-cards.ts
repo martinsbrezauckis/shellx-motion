@@ -1,0 +1,396 @@
+/**
+ * Static renderer capability-card catalog for ShellX Motion.
+ *
+ * Role: the authoritative data table describing each renderer lane (native/browser/ffmpeg/host families)
+ * — its paradigms, supported layer types, features, outputs, audio handling, runtime requirements, and
+ * host compatibility. Extracted verbatim from `capabilities.ts` so the capability-matching logic no longer
+ * carries the large data literal to satisfy the module-size architecture gate. Data only, no runtime logic; the
+ * cross-lane consistency and feature-sync tests (capabilities.test.ts) continue to enforce its contents.
+ *
+ * Dependencies: the `RendererCapabilityCard` type from `./types`.
+ *
+ * Primary callers: `packages/core/src/capabilities.ts` (listRendererCapabilityCards,
+ * rendererCapabilityForLane, matchRendererCapabilityCards).
+ */
+import type { RendererCapabilityCard } from "./types";
+
+export const RENDERER_CAPABILITY_CARDS: RendererCapabilityCard[] = [
+  {
+    id: "renderer.native",
+    label: "Native Preview",
+    category: "preview",
+    lane: "native",
+    paradigms: ["motion-ir", "canvas-raster"],
+    layerTypes: ["text", "shape", "image", "caption"],
+    outputs: ["png-frame", "png"],
+    // This is the authoritative native-lane feature list: the native rasterizer gates renders
+    // against exactly these features (see NATIVE_CAPABILITY, re-exported by renderer-native and
+    // consumed by matchRendererCapability at render time). It deliberately enumerates specific
+    // features instead of using broad wildcards because the native lane genuinely does NOT support
+    // some features a wildcard would imply (e.g. shape.gradient, shape.path.curve, effect.glow) and
+    // DOES support others a coarse card would miss (e.g. transition.wipe). Keep this in exact sync
+    // with the runtime gate; the cross-lane consistency test (capabilities.test.ts) enforces it.
+    features: [
+      "background.fill",
+      "shape.rect",
+      "shape.rounded-rect",
+      "shape.ellipse",
+      "shape.triangle",
+      "shape.star",
+      "shape.path",
+      "shape.stroke",
+      "shape.radius",
+      "style.shadow",
+      "style.textShadow",
+      "image.crop",
+      "image.fit.none",
+      "image.fit.scale-down",
+      // Block glyphs cover an uppercase-folded ASCII subset only (26 letters, 10 digits, 20
+      // punctuation marks). `text.charset.non-ascii` is deliberately absent: the lane has no font
+      // rasterizer, so anything outside that subset is refused rather than drawn (the text-delivery invariant).
+      "text.block-glyphs",
+      "caption.block-glyphs",
+      "effect.blur",
+      "effect.brightness",
+      "effect.contrast",
+      "effect.saturate",
+      "effect.grayscale",
+      "blend.*",
+      "keyframe.transform.x",
+      "keyframe.transform.y",
+      "keyframe.transform.width",
+      "keyframe.transform.height",
+      "keyframe.transform.originX",
+      "keyframe.transform.originY",
+      "keyframe.transform.rotation",
+      "keyframe.transform.scale",
+      "keyframe.opacity",
+      "keyframe.blendMode",
+      "keyframe.fill",
+      "keyframe.style.fill",
+      "keyframe.style.color",
+      "keyframe.style.stroke",
+      "keyframe.style.borderColor",
+      "keyframe.style.backgroundColor",
+      "keyframe.style.background",
+      "keyframe.style.strokeWidth",
+      "keyframe.style.borderWidth",
+      "keyframe.style.fontSize",
+      "keyframe.style.fontWeight",
+      "keyframe.style.letterSpacing",
+      "keyframe.style.textAlign",
+      "keyframe.style.verticalAlign",
+      "keyframe.style.alignY",
+      "keyframe.style.lineHeight",
+      "keyframe.style.width",
+      "keyframe.style.height",
+      "keyframe.style.radius",
+      "keyframe.style.borderRadius",
+      "keyframe.style.padding",
+      "keyframe.style.paddingX",
+      "keyframe.style.paddingY",
+      "keyframe.style.paddingTop",
+      "keyframe.style.paddingRight",
+      "keyframe.style.paddingBottom",
+      "keyframe.style.paddingLeft",
+      "keyframe.mask.inset.top",
+      "keyframe.mask.inset.right",
+      "keyframe.mask.inset.bottom",
+      "keyframe.mask.inset.left",
+      "keyframe.crop.x",
+      "keyframe.crop.y",
+      "keyframe.crop.width",
+      "keyframe.crop.height",
+      "keyframe.style.shadow.x",
+      "keyframe.style.shadow.y",
+      "keyframe.style.shadow.offsetX",
+      "keyframe.style.shadow.offsetY",
+      "keyframe.style.shadow.blur",
+      "keyframe.style.shadow.spread",
+      "keyframe.style.shadow.blurRadius",
+      "keyframe.style.shadow.spreadRadius",
+      "keyframe.style.shadow.color",
+      "keyframe.style.textShadow.x",
+      "keyframe.style.textShadow.y",
+      "keyframe.style.textShadow.offsetX",
+      "keyframe.style.textShadow.offsetY",
+      "keyframe.style.textShadow.blur",
+      "keyframe.style.textShadow.blurRadius",
+      "keyframe.style.textShadow.color",
+      "keyframe.effects.blur",
+      "keyframe.effects.brightness",
+      "keyframe.effects.contrast",
+      "keyframe.effects.saturate",
+      "keyframe.effects.grayscale",
+      "mask.rect",
+      "mask.rounded-rect",
+      "transform.origin",
+      "transform.rotation",
+      "transition.fade",
+      "transition.slide",
+      "transition.wipe"
+    ],
+    alpha: true,
+    audio: "none",
+    subtitles: true,
+    renderTargets: ["preview", "still-frame", "fixture-smoke"],
+    license: "ShellX OSS",
+    speed: "fast",
+    stability: "degraded",
+    strengths: ["fast local preview", "transparent PNG overlays", "no browser dependency"],
+    weaknesses: ["text is drawn from a fixed uppercase-folded ASCII block-glyph set: lowercase is case-folded, requested font families are ignored, and non-ASCII text is refused outright; use browser for any real typography", "not a delivery lane for text: final and image-sequence renders refuse native frames whose text would be case-folded, font-substituted, or block-glyph substituted", "no web layers", "no audio muxing", "limited final delivery formats"],
+    runtime: {
+      availability: "bundled",
+      requirement: "ShellX native raster renderer",
+      cost: "local-cpu",
+      setupHint: "No external renderer binary is required for native preview frames."
+    }
+  },
+  {
+    id: "renderer.browser",
+    label: "Deterministic Browser Capture",
+    category: "preview",
+    lane: "browser",
+    paradigms: ["motion-ir", "html", "css", "browser-capture"],
+    layerTypes: ["text", "shape", "image", "video", "web", "caption", "camera", "particles", "adjustment", "shader", "scene3d", "environment"],
+    outputs: ["png-frame", "jpeg-frame", "png-sequence"],
+    features: [
+      "shape.*",
+      "image.*",
+      "video.crop",
+      "video.fit.*",
+      "video.trim",
+      "video.loop",
+      "video.playbackRate",
+      "transform.*",
+      "keyframe.*",
+      "transition.*",
+      "style.*",
+      "text.direction",
+      "text.shaping.complex",
+      // Chromium rasterizes the manifest-bound embedded fonts, so any codepoint outside printable
+      // ASCII renders correctly here. The native block-glyph lane deliberately omits this feature
+      // (the text-delivery invariant) so non-ASCII text is refused there instead of drawn as codepoint noise.
+      "text.charset.non-ascii",
+      "text.font.family",
+      "mask.rect",
+      "mask.rounded-rect",
+      "mask.path",
+      // Roto masks and chroma keying land through the keying/roto compositing modules; the
+      // browser lane renders both (see renderer-browser keying-render.test.ts, which pins these).
+      "mask.roto",
+      "mask.roto.tracked",
+      "keying.chroma",
+      "matte.alpha",
+      "matte.alpha-inverted",
+      "matte.luma",
+      "matte.luma-inverted",
+      "blend.*",
+      "effect.*",
+      "particles.seeded",
+      "camera.2d",
+      "camera.depth",
+      "shader.restricted-glsl",
+      "scene3d.fixed-primitives",
+      "scene3d.gltf-mesh",
+      "environment.rain.fixed-simulation",
+      "environment.water.fixed-simulation",
+      "environment.snow.fixed-simulation",
+      "environment.fog.fixed-simulation"
+    ],
+    alpha: true,
+    audio: "none",
+    subtitles: true,
+    renderTargets: ["preview", "frame-sequence", "deterministic-capture"],
+    license: "ShellX OSS",
+    speed: "medium",
+    stability: "stable",
+    strengths: ["HTML/CSS/web layer fidelity", "manifest-bound embedded fonts and Chromium text shaping", "deterministic replay traces", "visual parity baselines"],
+    // The last two entries are the honest cost of the WebGL features listed above (environment.*,
+    // particles.seeded, camera.depth). Listing a feature without its budget is how an agent plans a
+    // 15s 1080p piece around rain and snow and then loses the render to the job governor at frame
+    // ~300: `environment.*` renders correctly at every single frame it is asked for, so a
+    // per-frame preview proves nothing about a full-length delivery. Measured, not estimated —
+    // see docs/public/rendering.md, "The memory ceiling a rich browser render actually meets first".
+    weaknesses: [
+      "requires deterministic browser readiness gates",
+      "does not mux audio by itself",
+      "slower than native previews",
+      "one Chromium session is reused for a whole frame sequence, so peak resident memory grows with FRAME COUNT and is multiplied by effects.motionBlur.samples, not bounded by the cost of a single frame",
+      "the WebGL features on this card (environment.rain/water/snow/fog, particles.seeded, camera.depth) are budget-bound at delivery length: a job is aborted with job_rss_limit_exceeded above maxProcessTreeRssBytes (6 GiB default, SHELLX_MOTION_MAX_JOB_RSS_BYTES), and a measured 450-frame 1920x1080 render carrying two environment layers with 3-sample motion blur peaked at 5.07 GiB of that budget"
+    ],
+    runtime: {
+      // NOT "bundled". `playwright-core` is a driver library and downloads no browser, so this card
+      // claimed Motion ships something it does not. A host branching on "bundled" skips the install
+      // prompt and meets the failure at render time instead -- the same false-green that let `doctor`
+      // report a browser-less machine ready. The probe was wrong for the same reason: `playwright
+      // --version` prints the LIBRARY version and is satisfied on a machine with no browser at all.
+      availability: "external-binary",
+      requirement: "Chrome or Chromium browser binary (not shipped; see doctor)",
+      cost: "local-cpu",
+      probe: { executable: "chromium", args: ["--version"], shell: false },
+      setupHint: "Install a Chrome/Chromium browser, or set SHELLX_MOTION_BROWSER to one. Run `doctor` for what this machine is missing."
+    }
+  },
+  {
+    id: "renderer.ffmpeg",
+    label: "FFmpeg Final Encoder",
+    category: "final",
+    lane: "ffmpeg",
+    paradigms: ["image-sequence", "audio-mux", "final-encode"],
+    layerTypes: ["text", "shape", "image", "video", "web", "caption", "audio", "camera", "particles", "adjustment", "shader", "scene3d", "environment"],
+    outputs: ["mp4-h264", "mp4-hevc", "webm-av1", "webm-vp9", "webm-vp9-alpha", "gif", "mov-prores", "png-sequence", "png-frame", "jpeg-frame"],
+    features: ["*"],
+    alpha: true,
+    audio: "mix",
+    subtitles: true,
+    renderTargets: ["final", "batch", "delivery"],
+    license: "FFmpeg runtime required",
+    speed: "slow",
+    stability: "stable",
+    strengths: ["delivery MP4/WebM/GIF outputs", "package audio mixing", "batch/data render support"],
+    // `features: ["*"]` above is true of the ENCODER and says nothing about drawing the frames: this
+    // lane never rasterizes a visual layer, it consumes a frame sequence. So the browser card's
+    // memory budget is this card's budget too for every rich delivery, and a caller reading only
+    // this card would otherwise see an unqualified "*" for rain, particles and depth.
+    weaknesses: ["requires frame-lane capture for visual layers", "depends on FFmpeg availability", "slower than preview lanes", "final delivery of any visual layer inherits the frame lane's limits, including the browser lane's per-job resident-memory ceiling (maxProcessTreeRssBytes, 6 GiB default) that bounds long WebGL environment/particle/depth renders"],
+    runtime: {
+      availability: "external-binary",
+      requirement: "FFmpeg and FFprobe binaries",
+      cost: "local-cpu",
+      probe: { executable: "ffmpeg", args: ["-version"], shell: false },
+      setupHint: "Install FFmpeg with FFprobe available on PATH before final media renders."
+    },
+    requiresFrameLane: true
+  },
+  {
+    id: "renderer.connector",
+    label: "ShellX Product Connectors",
+    category: "connector",
+    lane: "connector",
+    paradigms: ["motion-package", "cut-import", "canvas-export", "scripted-video"],
+    layerTypes: ["text", "shape", "image", "video", "web", "caption", "audio"],
+    outputs: ["motion-package", "cut-plan", "canvas-package", "connector-receipt"],
+    features: ["*"],
+    alpha: true,
+    audio: "mix",
+    subtitles: true,
+    renderTargets: ["cut", "canvas", "handoff"],
+    license: "ShellX OSS",
+    speed: "medium",
+    stability: "stable",
+    strengths: ["Cut and Design Studio handoff receipts", "editable lowering where supported", "product workflow provenance"],
+    weaknesses: ["requires host connector context", "not a standalone final encoder", "may need Cut or Design Studio for apply steps"],
+    runtime: {
+      availability: "host-connector",
+      requirement: "ShellX Cut or Design Studio connector host",
+      cost: "host-dependent",
+      setupHint: "Run connector workflows from a trusted ShellX host checkout or debug API context."
+    }
+  },
+  {
+    id: "adapter.svg",
+    label: "SVG Path Adapter Diagnostics",
+    category: "adapter",
+    lane: "svg-adapter",
+    paradigms: ["svg", "path-animation", "adapter-diagnostics"],
+    layerTypes: ["shape", "image", "web"],
+    outputs: ["adapter-diagnostics", "motion-document", "motion-package", "browser-fallback"],
+    features: [
+      "svg.path.d",
+      "svg.path.stroke",
+      "svg.path.strokeWidth",
+      "svg.path.strokeLinecap",
+      "svg.viewBox"
+    ],
+    alpha: true,
+    audio: "none",
+    subtitles: false,
+    renderTargets: ["import", "diagnostics", "preview"],
+    license: "Source asset license required",
+    speed: "fast",
+    stability: "experimental",
+    strengths: ["strict static path/stroke lowering", "atomic source-preserving Motion package installation", "source/output hash and lossiness receipts", "full-input XML consumption with executable syntax refusal"],
+    weaknesses: ["does not lower transforms, filters, masks, scripts, path morphing, text, images, or SMIL/CSS animation"],
+    runtime: {
+      availability: "bundled",
+      requirement: "ShellX Motion SVG diagnostic parser",
+      cost: "local-cpu",
+      setupHint: "No external adapter binary is required for SVG diagnostics."
+    },
+    adapter: {
+      formats: ["svg"],
+      unsupportedFeatureClasses: ["filters", "masks", "scripts", "foreignObject", "complex SMIL/CSS animation"],
+      expectedLossiness: "medium-to-high for animated SVG; supported path geometry can lower to Motion shapes but filters, masks, scripts, and complex SMIL/CSS animation require browser fallback.",
+      previewLaneRequirement: "browser",
+      finalLaneRequirement: "ffmpeg",
+      hostCompatibility: ["ShellX Motion", "ShellX Cut via rendered media", "Design Studio via package preview"]
+    }
+  },
+  {
+    id: "adapter.lottie",
+    label: "Lottie / dotLottie Adapter Diagnostics",
+    category: "adapter",
+    lane: "lottie-adapter",
+    paradigms: ["lottie", "dotlottie", "vector-animation", "adapter-diagnostics"],
+    layerTypes: ["shape", "image", "text"],
+    outputs: ["adapter-diagnostics", "motion-document", "motion-package", "browser-fallback"],
+    features: ["lottie.composition", "lottie.shape.path.static", "lottie.shape.rectangle.static", "lottie.shape.ellipse.static", "lottie.shape.fill.static", "lottie.shape.gradient.linear.static", "lottie.shape.stroke.static", "lottie.transform.static", "lottie.text.basic.static", "lottie.blendMode.fixture-backed", "lottie.trackMatte.alpha", "lottie.trackMatte.alphaInverted", "lottie.trackMatte.luma", "lottie.trackMatte.lumaInverted", "lottie.effect.gaussianBlur", "lottie.effect.brightnessContrast", "dotlottie.container.v1", "dotlottie.container.v2", "dotlottie.animation-selection", "dotlottie.bundled-images"],
+    alpha: true,
+    audio: "none",
+    subtitles: false,
+    renderTargets: ["import", "diagnostics", "preview"],
+    license: "Source asset license required",
+    speed: "medium",
+    stability: "experimental",
+    strengths: ["fixture-backed static path/transform/text, linear-gradient, blend-mode, matte, effect, and bundled-image lowering", "bounded v1/v2 dotLottie selection with atomic archive-preserving package installation", "atomic source-preserving Motion package installation", "source/output hash and lossiness receipts", "expression refusal"],
+    weaknesses: ["dotLottie theme/state-machine lowering is not implemented", "editable lowering remains unavailable for Lottie masks, rounded rectangles, stars, merge paths, nested compositions, and animated paths"],
+    runtime: {
+      availability: "bundled",
+      requirement: "ShellX Motion Lottie diagnostic parser",
+      cost: "local-cpu",
+      setupHint: "Use JSON/dotLottie fixtures to collect unsupported features before package lowering."
+    },
+    adapter: {
+      formats: ["json", "lottie", "dotlottie"],
+      unsupportedFeatureClasses: ["expressions", "track mattes", "effects", "merge paths", "advanced text shaping"],
+      expectedLossiness: "medium until the Lottie fixture suite proves shape, timing, matte, and text coverage.",
+      previewLaneRequirement: "browser",
+      finalLaneRequirement: "ffmpeg",
+      hostCompatibility: ["ShellX Motion", "ShellX Cut via rendered media", "Design Studio via package preview"]
+    }
+  },
+  {
+    id: "adapter.rive",
+    label: "Rive-like State Adapter Diagnostics",
+    category: "adapter",
+    lane: "rive-adapter",
+    paradigms: ["rive", "state-machine", "vector-animation", "adapter-diagnostics"],
+    layerTypes: ["shape", "image", "text"],
+    outputs: ["adapter-diagnostics", "motion-package-plan", "browser-fallback"],
+    features: ["rive.artboard", "rive.shape.path", "rive.timeline", "rive.state.label"],
+    alpha: true,
+    audio: "none",
+    subtitles: false,
+    renderTargets: ["import", "diagnostics", "preview"],
+    license: "Source asset license required",
+    speed: "medium",
+    stability: "experimental",
+    strengths: ["state-machine inventory planned", "artboard/timeline diagnostics", "explicit fallback before lossy lowering"],
+    weaknesses: ["interactive inputs, constraints, meshes, and full runtime state machines are not lowered yet", "diagnostic card only until fixtures are added"],
+    runtime: {
+      availability: "bundled",
+      requirement: "ShellX Motion Rive diagnostic parser",
+      cost: "local-cpu",
+      setupHint: "Use Rive-like diagnostic fixtures to inventory state machines before choosing browser fallback or lowering."
+    },
+    adapter: {
+      formats: ["rive", "riv-json"],
+      unsupportedFeatureClasses: ["interactive state machines", "constraints", "meshes", "runtime inputs", "advanced text shaping"],
+      expectedLossiness: "high until Rive state/timeline fixtures prove deterministic lowering.",
+      previewLaneRequirement: "browser",
+      finalLaneRequirement: "ffmpeg",
+      hostCompatibility: ["ShellX Motion", "ShellX Cut via rendered media", "Design Studio via package preview"]
+    }
+  }
+];

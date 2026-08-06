@@ -1,0 +1,73 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_environment_fog_cinematic",
+  "name": "Cinematic Harbor Fog",
+  "durationMs": 5000,
+  "fps": 30,
+  "width": 640,
+  "height": 360,
+  "background": "#07111F",
+  "layers": [
+    {
+      "id": "footage",
+      "name": "Package-local night harbor",
+      "type": "image",
+      "assetId": "night-harbor",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 5000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "fog-stage",
+      "name": "Layered fog and light volumes",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 5000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360, "scale": 1, "rotation": 0 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "fog",
+        "seed": 20260717,
+        "quality": "cinematic",
+        "mode": "scene",
+        "sceneSourceLayerId": "footage",
+        "backgroundColor": "#07111F",
+        "fogColor": "#AFC8D4",
+        "lightColor": "#DDF7FF",
+        "fog": {
+          "density": 0.68,
+          "speed": 0.38,
+          "scale": 5.2,
+          "turbulence": 0.64,
+          "height": 0.82,
+          "depthLayers": 4,
+          "lightStrength": 0.54
+        }
+      },
+      "keyframes": {
+        "environment.fog.density": [
+          { "atMs": 0, "value": 0.38, "easing": "ease-out" },
+          { "atMs": 2400, "value": 0.76, "easing": "ease-in-out" },
+          { "atMs": 5000, "value": 0.54, "easing": "ease-out" }
+        ],
+        "environment.fog.lightStrength": [
+          { "atMs": 0, "value": 0.28, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.68, "easing": "ease-in-out" },
+          { "atMs": 5000, "value": 0.42, "easing": "ease-out" }
+        ]
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "night-harbor",
+      "kind": "image",
+      "source": { "path": "assets/night-harbor.svg", "mimeType": "image/svg+xml" },
+      "hash": { "sha256": "fixture-night-harbor" },
+      "size": { "width": 640, "height": 360 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

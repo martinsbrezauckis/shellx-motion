@@ -1,0 +1,40 @@
+{
+  "name": "@shellx-motion/debug-server",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "shellx-motion-debug-server": "./dist/cli.js",
+    "shellx-motion-workbench": "./dist/user-launcher.js",
+    "shellx-motion-mcp": "./bin/shellx-motion-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "workbench"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build.mjs --package @shellx-motion/debug-server",
+    "serve": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --testTimeout=45000"
+  },
+  "dependencies": {
+    "@shellx-motion/core": "workspace:*",
+    "@shellx-motion/debug-api": "workspace:*",
+    "@shellx-motion/sdk": "workspace:*"
+  }
+}

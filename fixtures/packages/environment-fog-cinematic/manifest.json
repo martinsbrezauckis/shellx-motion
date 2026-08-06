@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_environment_fog_cinematic",
+  "name": "Cinematic Harbor Fog",
+  "motion": "motion.json",
+  "assets": ["assets/night-harbor.svg"],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

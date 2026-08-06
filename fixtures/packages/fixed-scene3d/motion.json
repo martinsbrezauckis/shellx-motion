@@ -1,0 +1,141 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_fixed_scene3d",
+  "name": "Fixed Scene3D Product Stage",
+  "durationMs": 1200,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "product-stage",
+      "type": "scene3d",
+      "startMs": 0,
+      "durationMs": 1200,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "scene3d": {
+        "schema": "shellx-motion/scene3d@1",
+        "camera": {
+          "position": [4.8, 3.3, 6.8],
+          "target": [0, -0.1, 0],
+          "fovDeg": 40,
+          "near": 0.1,
+          "far": 100,
+          "orbitDegPerSecond": 28
+        },
+        "lighting": {
+          "ambient": 0.28,
+          "direction": [-0.45, -0.9, -0.35],
+          "intensity": 1.55,
+          "color": "#dbeafe"
+        },
+        "backgroundColor": "#020617",
+        "objects": [
+          {
+            "id": "floor",
+            "primitive": "plane",
+            "position": [0, -1.3, 0],
+            "rotationDeg": [0, 0, 0],
+            "scale": 6,
+            "color": "#172554",
+            "emissive": 0.08
+          },
+          {
+            "id": "hero-cube",
+            "primitive": "box",
+            "position": [-1.05, 0, 0],
+            "rotationDeg": [18, 25, -8],
+            "scale": 1.3,
+            "spinDegPerSecond": [14, 58, 0],
+            "color": "#22d3ee",
+            "emissive": 0.16
+          },
+          {
+            "id": "hero-pyramid",
+            "primitive": "pyramid",
+            "position": [1.25, -0.05, 0.15],
+            "rotationDeg": [0, -20, 0],
+            "scale": 1.55,
+            "spinDegPerSecond": [0, -42, 0],
+            "color": "#f472b6",
+            "emissive": 0.2
+          },
+          {
+            "id": "satellite",
+            "primitive": "box",
+            "position": [0.35, 1.25, -0.8],
+            "rotationDeg": [35, 0, 28],
+            "scale": 0.42,
+            "spinDegPerSecond": [80, 110, 35],
+            "color": "#fef08a",
+            "emissive": 0.35
+          }
+        ]
+      }
+    },
+    {
+      "id": "spark-field",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 1200,
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "emitter": {
+        "seed": 20260713,
+        "count": 48,
+        "lifetimeMs": 900,
+        "shape": "circle",
+        "color": "#ffffff",
+        "secondaryColor": "#67e8f9",
+        "minSize": 1,
+        "maxSize": 3,
+        "minSpeed": 8,
+        "maxSpeed": 34,
+        "direction": -90,
+        "spread": 160,
+        "gravity": 6,
+        "fadeOut": true
+      },
+      "effects": { "glow": { "radius": 3, "color": "#67e8f9" } }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "FORM IN MOTION",
+      "startMs": 0,
+      "durationMs": 1200,
+      "transform": { "x": 24, "y": 138, "width": 272, "height": 30 },
+      "style": {
+        "color": "#ffffff",
+        "fontFamily": "sans-serif",
+        "fontSize": 19,
+        "fontWeight": 900,
+        "letterSpacing": 2.6,
+        "textAlign": "center"
+      },
+      "effects": { "glow": { "radius": 7, "color": "#22d3ee" } },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0 },
+          { "atMs": 280, "value": 1, "easing": "ease-out" }
+        ],
+        "transform.y": [
+          { "atMs": 0, "value": 150, "easing": "ease-out" },
+          { "atMs": 420, "value": 138 }
+        ]
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 1200,
+      "effects": {
+        "vignette": { "amount": 0.72, "softness": 0.62, "color": "#020617" },
+        "filmGrain": { "amount": 0.16, "size": 2, "seed": 314159 }
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

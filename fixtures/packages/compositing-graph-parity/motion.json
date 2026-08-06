@@ -1,0 +1,78 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_compositing_parity",
+  "name": "Compositing Render Parity",
+  "durationMs": 1000,
+  "fps": 30,
+  "width": 320,
+  "height": 180,
+  "background": "#08111f",
+  "layers": [
+    {
+      "id": "background",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#12304a",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 320,
+      "height": 180
+    },
+    {
+      "id": "matte-source",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#ffffff",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 140,
+      "height": 130,
+      "transform": { "x": 90, "y": 25, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "content",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "#ff477e",
+      "startMs": 0,
+      "durationMs": 1000,
+      "width": 200,
+      "height": 120,
+      "style": { "radius": 18 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0.5, "easing": "ease-out" },
+          { "atMs": 500, "value": 1 },
+          { "atMs": 1000, "value": 0.7, "easing": "ease-in" }
+        ]
+      }
+    }
+  ],
+  "assets": [],
+  "compositing": {
+    "schema": "shellx-motion/compositing-graph@1",
+    "id": "parity",
+    "nodes": [
+      { "id": "background", "type": "source", "layerId": "background" },
+      { "id": "matte-source", "type": "source", "layerId": "matte-source" },
+      { "id": "content", "type": "source", "layerId": "content" },
+      { "id": "move", "type": "transform", "transform": { "x": 68, "y": 32, "scale": 1, "rotation": 0 } },
+      { "id": "grade", "type": "color", "brightness": 1.2, "contrast": 1.1, "saturate": 0.85 },
+      { "id": "soften", "type": "blur", "radius": 3 },
+      { "id": "matte", "type": "matte", "matteType": "alpha" },
+      { "id": "blend", "type": "blend", "mode": "screen" },
+      { "id": "output", "type": "output" }
+    ],
+    "edges": [
+      { "id": "content-move", "from": { "nodeId": "content", "port": "output" }, "to": { "nodeId": "move", "port": "input" } },
+      { "id": "move-grade", "from": { "nodeId": "move", "port": "output" }, "to": { "nodeId": "grade", "port": "input" } },
+      { "id": "grade-soften", "from": { "nodeId": "grade", "port": "output" }, "to": { "nodeId": "soften", "port": "input" } },
+      { "id": "soften-matte", "from": { "nodeId": "soften", "port": "output" }, "to": { "nodeId": "matte", "port": "input" } },
+      { "id": "source-matte", "from": { "nodeId": "matte-source", "port": "output" }, "to": { "nodeId": "matte", "port": "matte" } },
+      { "id": "background-blend", "from": { "nodeId": "background", "port": "output" }, "to": { "nodeId": "blend", "port": "background" } },
+      { "id": "matte-blend", "from": { "nodeId": "matte", "port": "output" }, "to": { "nodeId": "blend", "port": "foreground" } },
+      { "id": "blend-output", "from": { "nodeId": "blend", "port": "output" }, "to": { "nodeId": "output", "port": "input" } }
+    ]
+  },
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "render-parity-fixture" }
+}

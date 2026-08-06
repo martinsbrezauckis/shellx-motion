@@ -1,0 +1,161 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_editorial_liquid_surface",
+  "name": "ShellX Editorial Liquid Surface",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "heroMedia"],
+      "properties": {
+        "eyebrow": { "type": "string", "maxLength": 30 },
+        "title": { "type": "string", "maxLength": 62 },
+        "subtitle": { "type": "string", "maxLength": 116 },
+        "heroMedia": { "type": "string" },
+        "waveHeight": { "type": "number", "minimum": 0.1, "maximum": 0.8 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "eyebrow": "FIELD NOTES / 07",
+        "title": "Ideas move like water",
+        "subtitle": "A replaceable editorial frame refracted through deterministic light, depth and liquid motion.",
+        "heroMedia": "assets/samples/coastal-editorial.svg",
+        "waveHeight": 0.46,
+        "accentColor": "#5eead4"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 4000,
+      "maxDurationMs": 12000,
+      "aspectRatios": ["16:9", "1:1", "9:16"]
+    },
+    "suitability": {
+      "bestFor": ["editorial liquid surface", "premium brand film", "magazine opener", "media-rich announcement"],
+      "notFor": ["native-only preview", "dense product tutorial", "flat slide deck"]
+    },
+    "license": {
+      "id": "shellx-generated-sample",
+      "label": "ShellX Generated Sample",
+      "attribution": "ShellX Motion editorial template assets",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "Package-local sample art is replaceable. Typography uses the host sans-serif stack and adds no third-party font obligation."
+    },
+    "assetsAttribution": [
+      {
+        "name": "Coastal Editorial Sample",
+        "license": "shellx-generated-sample",
+        "author": "ShellX Motion",
+        "path": "assets/samples/coastal-editorial.svg"
+      }
+    ],
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "provenance": {
+      "source": "shellx-product-pack-editorial-liquid-surface",
+      "sourceHash": "73173cc166161ec504f9e98515899ca36c44a62cafc4ca4d149b505f03e7307c"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "high",
+      "previewFps": 24,
+      "notes": ["Uses scene-sampled water optics, animated surface parameters and a restrained finishing pass."]
+    },
+    "story": {
+      "kind": "editorial-liquid-film",
+      "beats": [
+        {
+          "id": "immerse",
+          "label": "Immerse",
+          "intent": "Let the source image establish before liquid refraction becomes dominant.",
+          "startMs": 0,
+          "durationMs": 1800,
+          "layerIds": ["hero-scene", "water-stage"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Slow refractive push across the source frame."
+        },
+        {
+          "id": "headline",
+          "label": "Headline",
+          "intent": "Resolve the editorial statement inside a quiet readable field.",
+          "startMs": 900,
+          "durationMs": 3300,
+          "layerIds": ["eyebrow", "title", "subtitle", "water-stage"],
+          "mediaParamIds": ["heroMedia"],
+          "cameraIntent": "Hold the copy while caustics and reflection continue underneath."
+        },
+        {
+          "id": "linger",
+          "label": "Linger",
+          "intent": "Leave a premium image-led end frame rather than a presentation card.",
+          "startMs": 4100,
+          "durationMs": 1900,
+          "layerIds": ["accent-line", "title", "water-stage", "finish"],
+          "cameraIntent": "Ease the surface to a composed reflective finish."
+        }
+      ]
+    },
+    "mediaSlots": [
+      {
+        "paramId": "heroMedia",
+        "role": "editorial-source-frame",
+        "description": "Full-frame licensed photograph or artwork sampled by the liquid surface renderer.",
+        "acceptedKinds": ["image"],
+        "fit": "fill",
+        "minWidth": 1920,
+        "minHeight": 1080,
+        "rightsRequired": true
+      }
+    ],
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1500, 3500, 5000],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 1000,
+      "minLumaRange": 38,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Editorial image", "order": 2 },
+    { "id": "surface", "label": "Liquid surface", "order": 3 },
+    { "id": "style", "label": "Style", "order": 4 }
+  ],
+  "params": [
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "FIELD NOTES / 07", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Ideas move like water", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "A replaceable editorial frame refracted through deterministic light, depth and liquid motion.", "group": "content", "order": 3 },
+    { "id": "heroMedia", "label": "Editorial image", "type": "media", "defaultValue": "assets/samples/coastal-editorial.svg", "group": "media", "order": 1 },
+    { "id": "waveHeight", "label": "Wave height", "type": "number", "defaultValue": 0.46, "group": "surface", "order": 1, "min": 0.1, "max": 0.8, "step": 0.02 },
+    { "id": "accentColor", "label": "Accent color", "type": "color", "defaultValue": "#5eead4", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "heroMedia", "widget": "media", "label": "Editorial image" },
+    { "paramId": "waveHeight", "widget": "slider", "label": "Wave height" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent color" }
+  ],
+  "bindings": [
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "subtitle" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "hero-scene" } },
+    { "paramId": "heroMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "hero-scene" } },
+    { "paramId": "waveHeight", "target": { "kind": "motion_path", "path": "/layers/1/environment/surface/waveHeight", "layerId": "water-stage" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/1/environment/shallowColor", "layerId": "water-stage" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/6/fill", "layerId": "accent-line" } }
+  ]
+}

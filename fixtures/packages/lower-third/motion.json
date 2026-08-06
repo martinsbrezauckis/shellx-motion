@@ -1,0 +1,23 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_lower_third",
+  "name": "Lower Third",
+  "durationMs": 4000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#101820",
+  "layers": [
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Anna",
+      "startMs": 0,
+      "durationMs": 4000,
+      "transform": { "x": 120, "y": 820, "scale": 1, "rotation": 0 },
+      "style": { "fontFamily": "Inter", "fontSize": 64, "color": "#ffffff" }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "test" }
+}

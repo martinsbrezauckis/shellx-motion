@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/integration-capabilities@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "host", "protocol", "schemas", "modes", "presets", "features", "limits"],
+  "properties": {
+    "schema": { "const": "shellx-motion/integration-capabilities@1" },
+    "host": { "enum": ["shellx-motion", "shellx-cut", "shellx-canvas"] },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "preferred"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 },
+        "preferred": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "schemas": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" }, "uniqueItems": true } },
+    "modes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "presets": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "features": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxPlanBytes", "maxArtifactBytes", "maxOperations"],
+      "properties": {
+        "maxPlanBytes": { "type": "integer", "minimum": 1 },
+        "maxArtifactBytes": { "type": "integer", "minimum": 1 },
+        "maxOperations": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

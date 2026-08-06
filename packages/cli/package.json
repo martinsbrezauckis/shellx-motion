@@ -1,0 +1,32 @@
+{
+  "name": "@shellx-motion/cli",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "shellx-motion": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build.mjs --package @shellx-motion/cli",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests --testTimeout=45000",
+    "cli": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@shellx-motion/actions": "workspace:*",
+    "@shellx-motion/adapters-cut": "workspace:*",
+    "@shellx-motion/adapters-html": "workspace:*",
+    "@shellx-motion/adapters-otio": "workspace:*",
+    "@shellx-motion/agent-runtime": "workspace:*",
+    "@shellx-motion/connectors": "workspace:*",
+    "@shellx-motion/core": "workspace:*",
+    "@shellx-motion/debug-api": "workspace:*",
+    "@shellx-motion/prompt": "workspace:*",
+    "@shellx-motion/renderer-browser": "workspace:*",
+    "@shellx-motion/renderer-ffmpeg": "workspace:*",
+    "@shellx-motion/renderer-native": "workspace:*"
+  }
+}

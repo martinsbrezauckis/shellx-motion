@@ -1,0 +1,105 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_launch_bumper",
+  "name": "ShellX Launch Bumper",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "eyebrow", "cta"],
+      "properties": {
+        "title": { "type": "string", "maxLength": 78 },
+        "subtitle": { "type": "string", "maxLength": 118 },
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "cta": { "type": "string", "maxLength": 24 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "title": "Scripted videos without surrendering the project file",
+        "subtitle": "Packages, receipts, previews, and final renders stay local-first.",
+        "eyebrow": "SHELLX MOTION",
+        "cta": "Render the plan",
+        "accentColor": "#24d6ff"
+      }
+    ],
+    "outputBounds": {
+      "minWidth": 1080,
+      "maxWidth": 3840,
+      "minHeight": 1080,
+      "maxHeight": 2160,
+      "minDurationMs": 3000,
+      "maxDurationMs": 9000,
+      "aspectRatios": ["16:9", "1:1"]
+    },
+    "suitability": {
+      "bestFor": ["SaaS launch bumper", "product release announcement", "short launch openers"],
+      "notFor": ["dense reports", "long tutorials", "audio-led narration"]
+    },
+    "license": {
+      "id": "shellx-product-copy",
+      "label": "ShellX Product Copy",
+      "attributionRequired": false,
+      "redistributionAllowed": true,
+      "commercialUse": true,
+      "notes": "Synthetic ShellX starter-pack copy and vector shapes."
+    },
+    "preview": {
+      "poster": "preview/poster.png",
+      "thumbnail": "preview/poster.png"
+    },
+    "assetsAttribution": [
+      { "name": "Inter Bold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-700-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "provenance": {
+      "source": "shellx-product-pack-launch-bumper",
+      "sourceHash": "7c20d8f12af552bb3e10bd24cda0d1f4b6ec2713e48f8f40f38d7442d5f77c51"
+    },
+    "performance": {
+      "recommendedLane": "browser",
+      "renderCost": "low",
+      "previewFps": 30,
+      "notes": ["Uses shape and text layers with wipe and slide keyframes."]
+    },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1600, 3000, 4300],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "style", "label": "Style", "order": 2 }
+  ],
+  "params": [
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Scripted videos without surrendering the project file", "group": "content", "order": 1 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "Packages, receipts, previews, and final renders stay local-first.", "group": "content", "order": 2 },
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "SHELLX MOTION", "group": "content", "order": 3 },
+    { "id": "cta", "label": "CTA", "type": "text", "defaultValue": "Render the plan", "group": "content", "order": 4 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#24d6ff", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "cta", "widget": "text", "label": "CTA" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "subtitle" } },
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/3/text", "layerId": "eyebrow" } },
+    { "paramId": "cta", "target": { "kind": "motion_path", "path": "/layers/7/text", "layerId": "cta" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/1/fill", "layerId": "accent-slab" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/6/fill", "layerId": "cta-panel" } }
+  ]
+}

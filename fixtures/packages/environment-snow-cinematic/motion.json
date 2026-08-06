@@ -1,0 +1,102 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_environment_snow_cinematic",
+  "name": "Cinematic Snowfall",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#07111F",
+  "layers": [
+    {
+      "id": "snowfall-stage",
+      "name": "Layered snowfall, lens depth and accumulating drifts",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "snow",
+        "seed": 20260715,
+        "quality": "cinematic",
+        "mode": "scene",
+        "backgroundColor": "#07111F",
+        "snowColor": "#F8FCFF",
+        "shadowColor": "#7892AC",
+        "lightColor": "#C7E7FF",
+        "fall": {
+          "intensity": 0.72,
+          "speed": 0.66,
+          "wind": 0.18,
+          "turbulence": 0.48,
+          "flakeSize": 1.14,
+          "depthLayers": 4,
+          "focusFalloff": 0.7
+        },
+        "ground": {
+          "horizon": 0.62,
+          "accumulation": 0.72,
+          "drift": 0.56,
+          "contactAmount": 0.5
+        },
+        "atmosphere": { "haze": 0.34, "depthFade": 0.62 }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 135 } },
+      "keyframes": {
+        "environment.fall.intensity": [
+          { "atMs": 0, "value": 0.28, "easing": "ease-out" },
+          { "atMs": 1800, "value": 0.68, "easing": "ease-in-out" },
+          { "atMs": 4200, "value": 0.92, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.7, "easing": "ease-out" }
+        ],
+        "environment.fall.wind": [
+          { "atMs": 0, "value": 0.05, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.34, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.14, "easing": "ease-out" }
+        ],
+        "environment.fall.turbulence": [
+          { "atMs": 0, "value": 0.24, "easing": "ease-out" },
+          { "atMs": 3700, "value": 0.7, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.44, "easing": "ease-out" }
+        ],
+        "environment.fall.flakeSize": [
+          { "atMs": 0, "value": 0.86, "easing": "ease-out" },
+          { "atMs": 3600, "value": 1.3, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 1.08, "easing": "ease-out" }
+        ],
+        "environment.ground.accumulation": [
+          { "atMs": 0, "value": 0.34, "easing": "ease-out" },
+          { "atMs": 6000, "value": 0.84, "easing": "ease-in-out" }
+        ],
+        "environment.ground.drift": [
+          { "atMs": 0, "value": 0.3, "easing": "ease-out" },
+          { "atMs": 6000, "value": 0.68, "easing": "ease-in-out" }
+        ],
+        "environment.ground.contactAmount": [
+          { "atMs": 0, "value": 0.12, "easing": "ease-out" },
+          { "atMs": 4300, "value": 0.64, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.48, "easing": "ease-out" }
+        ],
+        "environment.atmosphere.haze": [
+          { "atMs": 0, "value": 0.5, "easing": "ease-out" },
+          { "atMs": 3000, "value": 0.26, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.38, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "snow-finish",
+      "name": "Restrained winter finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.2, "softness": 0.86, "color": "#000000" },
+        "filmGrain": { "amount": 0.012, "size": 1, "seed": 20260715 }
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "fixture" }
+}

@@ -1,0 +1,78 @@
+/*
+ * workbench-nav.css — styling for the persistent engine-room navigation strip
+ * injected by workbench-nav.js.
+ *
+ * Relies on the graphite/cyan design tokens (--accent, --line, --surface-*, …)
+ * that every workbench page already defines in its base stylesheet, so this file
+ * carries no :root block of its own and layers cleanly onto both the existing
+ * Inspector page (workbench.css) and the engine-room pages
+ * (engine-room.css). The `:has()` rule adds the extra grid row for the injected
+ * nav, so no page needs to edit its own .app-shell layout.
+ */
+
+/* Add a nav row to any app-shell that has the injected subnav (existing + new pages). */
+.app-shell:has(> .wb-subnav) {
+  grid-template-rows: var(--bar-height) auto minmax(0, 1fr) 24px;
+}
+
+.wb-subnav {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+  scrollbar-width: thin;
+}
+
+.wb-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.wb-nav-link:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-3) 55%, transparent);
+}
+
+/* The current destination: cyan is reserved for selection across the product. */
+.wb-nav-link[aria-current="page"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.wb-nav-link:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.wb-nav-glyph {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.85;
+}
+
+.wb-nav-link[aria-current="page"] .wb-nav-glyph {
+  stroke: var(--accent);
+  opacity: 1;
+}

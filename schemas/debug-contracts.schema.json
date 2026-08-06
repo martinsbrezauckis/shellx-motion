@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/debug-contracts@1",
+  "type": "object",
+  "required": ["schema", "debugSchema", "generatedBy", "commandCount", "permissions", "commands", "contracts"],
+  "properties": {
+    "schema": { "const": "shellx-motion/debug-contracts@1" },
+    "debugSchema": { "const": "shellx-motion/debug@1" },
+    "generatedBy": { "type": "string", "minLength": 1 },
+    "commandCount": { "type": "integer", "minimum": 0 },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "enum": ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"]
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "contracts": {
+      "type": "array",
+      "items": { "$ref": "shellx-motion/debug@1" }
+    }
+  }
+}

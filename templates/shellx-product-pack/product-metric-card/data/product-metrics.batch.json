@@ -1,0 +1,188 @@
+{
+  "schema": "shellx-motion/data-rows@1",
+  "rows": [
+    {
+      "id": "motion_renderer_lane",
+      "motion": { "width": 1920, "height": 1080, "durationMs": 6000, "fps": 30, "background": "#050c16" },
+      "render": { "preset": "mp4-h264" }
+    },
+    {
+      "id": "cut_generate_lane",
+      "motion": { "width": 1920, "height": 1080, "durationMs": 6000, "fps": 30, "background": "#050c16" },
+      "layers": {
+        "eyebrow-tick": { "fill": "#f7b93f" },
+        "eyebrow": { "text": "CAMPAIGN METRICS", "style": { "color": "#f7b93f" } },
+        "title": { "text": "Campaign cuts ship the same week" },
+        "subtitle": { "text": "Editors pull approved templates straight onto the timeline instead of rebuilding every cut." },
+        "rail-title": { "text": "Broadcast and web coverage" },
+        "rail-subtitle": { "text": "Cuts delivered by surface, last 10 weeks" },
+        "trend-caption": { "text": "Weekly cuts delivered" },
+        "trend-peak": { "text": "Peak: week 10", "style": { "color": "#f7b93f" } },
+        "trend-bar-01": { "height": 62, "transform": { "y": 424 } },
+        "trend-bar-02": { "height": 54, "transform": { "y": 432 } },
+        "trend-bar-03": { "height": 78, "transform": { "y": 408 } },
+        "trend-bar-04": { "height": 70, "transform": { "y": 416 } },
+        "trend-bar-05": { "height": 96, "transform": { "y": 390 } },
+        "trend-bar-06": { "height": 108, "transform": { "y": 378 } },
+        "trend-bar-07": { "height": 102, "transform": { "y": 384 } },
+        "trend-bar-08": { "height": 126, "transform": { "y": 360 }, "fill": "#f7b93f" },
+        "trend-bar-09": { "height": 144, "transform": { "y": 342 }, "fill": "#f7b93f" },
+        "trend-bar-10": { "height": 158, "transform": { "y": 328 }, "fill": "#f7b93f" },
+        "channel-caption": { "text": "Share of launch plan" },
+        "channel-1-label": { "text": "Broadcast spots" },
+        "channel-1-value": { "text": "71%", "style": { "color": "#f7b93f" } },
+        "channel-1-fill": { "width": 497, "fill": "#f7b93f" },
+        "channel-2-label": { "text": "Web and email" },
+        "channel-2-value": { "text": "58%", "style": { "color": "#3fd8ff" } },
+        "channel-2-fill": { "width": 406, "fill": "#3fd8ff" },
+        "channel-3-label": { "text": "Retail screens" },
+        "channel-3-value": { "text": "39%" },
+        "channel-3-fill": { "width": 273 },
+        "timeline-label": { "text": "Launch window" },
+        "timeline-value": { "text": "Day 24 of 30" },
+        "timeline-progress": { "width": 560, "fill": "#f7b93f" },
+        "timeline-start": { "text": "Day 1" },
+        "timeline-end": { "text": "Day 30" },
+        "metric-rule": { "fill": "#f7b93f" },
+        "metric-label": { "text": "Days to first cut" },
+        "metric-value": { "text": "3.2" },
+        "metric-delta": { "text": "-64% vs. manual edits", "style": { "color": "#f7b93f" } },
+        "support-1-label": { "text": "Spots delivered" },
+        "support-1-value": { "text": "48" },
+        "support-2-label": { "text": "Revisions per spot" },
+        "support-2-value": { "text": "1.4" },
+        "progress-label": { "text": "Launch readiness" },
+        "progress-value": { "text": "6 of 8 spots" },
+        "progress-fill": { "width": 558, "fill": "#f7b93f" },
+        "cta-panel": { "fill": "#f7b93f" },
+        "cta": { "text": "See the timeline", "style": { "color": "#1a1204" } },
+        "cta-note": { "text": "Every cut in this launch came from one template." }
+      },
+      "render": { "preset": "mp4-h264" }
+    },
+    {
+      "id": "canvas_export_lane",
+      "motion": { "width": 1080, "height": 1080, "durationMs": 6000, "fps": 30, "background": "#050c16" },
+      "layers": {
+        "background": { "width": 1080, "height": 1080, "fill": "#050c16" },
+        "rail-panel": { "visible": false },
+        "rail-edge": { "visible": false },
+        "rail-title": { "visible": false },
+        "rail-subtitle": { "visible": false },
+        "rail-divider-a": { "visible": false },
+        "rail-divider-b": { "visible": false },
+        "eyebrow-tick": { "fill": "#5fe0a4", "transform": { "x": 72, "y": 80 } },
+        "eyebrow": {
+          "text": "SOCIAL SNAPSHOT",
+          "transform": { "x": 72, "y": 110 },
+          "style": { "fontSize": 24, "width": 600, "color": "#5fe0a4" }
+        },
+        "title": {
+          "text": "Social posts leave design in one click",
+          "transform": { "x": 72, "y": 152 },
+          "style": { "fontSize": 56, "width": 830 },
+          "keyframes": {
+            "opacity": [{ "atMs": 240, "value": 0, "easing": "ease-out" }, { "atMs": 860, "value": 1, "easing": "ease-out" }],
+            "transform.y": [{ "atMs": 240, "value": 190, "easing": "ease-out" }, { "atMs": 860, "value": 152, "easing": "ease-out" }]
+          }
+        },
+        "subtitle": {
+          "text": "Designers publish square and vertical cuts straight from the board without opening an editor.",
+          "transform": { "x": 74, "y": 296 },
+          "style": { "fontSize": 26, "width": 900 }
+        },
+        "trend-well": { "transform": { "x": 72, "y": 392 }, "width": 936, "height": 250 },
+        "trend-caption": { "text": "Weekly posts published", "transform": { "x": 100, "y": 414 }, "style": { "fontSize": 19 } },
+        "trend-peak": {
+          "text": "Peak: week 10",
+          "transform": { "x": 640, "y": 414 },
+          "style": { "fontSize": 19, "width": 340, "color": "#5fe0a4" }
+        },
+        "trend-bar-01": { "width": 62, "height": 44, "transform": { "x": 95, "y": 574 } },
+        "trend-bar-02": { "width": 62, "height": 56, "transform": { "x": 187, "y": 562 } },
+        "trend-bar-03": { "width": 62, "height": 50, "transform": { "x": 279, "y": 568 } },
+        "trend-bar-04": { "width": 62, "height": 68, "transform": { "x": 371, "y": 550 } },
+        "trend-bar-05": { "width": 62, "height": 80, "transform": { "x": 463, "y": 538 } },
+        "trend-bar-06": { "width": 62, "height": 74, "transform": { "x": 555, "y": 544 } },
+        "trend-bar-07": { "width": 62, "height": 100, "transform": { "x": 647, "y": 518 } },
+        "trend-bar-08": { "width": 62, "height": 118, "transform": { "x": 739, "y": 500 }, "fill": "#5fe0a4" },
+        "trend-bar-09": { "width": 62, "height": 136, "transform": { "x": 831, "y": 482 }, "fill": "#5fe0a4" },
+        "trend-bar-10": { "width": 62, "height": 150, "transform": { "x": 923, "y": 468 }, "fill": "#5fe0a4" },
+        "trend-baseline": { "transform": { "x": 95, "y": 618 }, "width": 890 },
+        "channel-caption": { "visible": false },
+        "channel-1-label": { "visible": false },
+        "channel-1-value": { "visible": false },
+        "channel-1-track": { "visible": false },
+        "channel-1-fill": { "visible": false },
+        "channel-2-label": { "visible": false },
+        "channel-2-value": { "visible": false },
+        "channel-2-track": { "visible": false },
+        "channel-2-fill": { "visible": false },
+        "channel-3-label": { "visible": false },
+        "channel-3-value": { "visible": false },
+        "channel-3-track": { "visible": false },
+        "channel-3-fill": { "visible": false },
+        "timeline-label": { "visible": false },
+        "timeline-value": { "visible": false },
+        "timeline-track": { "visible": false },
+        "timeline-progress": { "visible": false },
+        "timeline-start": { "visible": false },
+        "timeline-end": { "visible": false },
+        "metric-panel": { "transform": { "x": 72, "y": 676 }, "width": 936, "height": 250 },
+        "metric-edge": { "transform": { "x": 72, "y": 676 }, "width": 936 },
+        "metric-rule": { "transform": { "x": 112, "y": 708 }, "fill": "#5fe0a4" },
+        "metric-label": { "text": "Square posts published", "transform": { "x": 112, "y": 730 }, "style": { "fontSize": 21 } },
+        "metric-value": {
+          "text": "553",
+          "transform": { "x": 112, "y": 762 },
+          "style": { "fontSize": 68 },
+          "keyframes": {
+            "opacity": [{ "atMs": 1320, "value": 0, "easing": "ease-out" }, { "atMs": 1760, "value": 1, "easing": "ease-out" }],
+            "transform.y": [
+              { "atMs": 1320, "value": 786, "easing": "ease-out" },
+              { "atMs": 1760, "value": 762, "easing": "ease-out" }
+            ]
+          }
+        },
+        "metric-delta": {
+          "text": "+18% vs. last month",
+          "transform": { "x": 112, "y": 846 },
+          "style": { "fontSize": 21, "color": "#5fe0a4" }
+        },
+        "metric-divider": { "transform": { "x": 552, "y": 708 }, "height": 164 },
+        "support-1-label": {
+          "text": "Average time to publish",
+          "transform": { "x": 596, "y": 708 },
+          "style": { "fontSize": 18, "width": 372 }
+        },
+        "support-1-value": { "text": "9 min", "transform": { "x": 596, "y": 734 }, "style": { "fontSize": 30, "width": 372 } },
+        "support-2-label": { "text": "Boards exported", "transform": { "x": 596, "y": 796 }, "style": { "fontSize": 18, "width": 372 } },
+        "support-2-value": { "text": "76", "transform": { "x": 596, "y": 822 }, "style": { "fontSize": 30, "width": 372 } },
+        "progress-label": { "text": "Quarter target", "transform": { "x": 72, "y": 948 }, "style": { "fontSize": 18, "width": 300 } },
+        "progress-value": { "text": "553 of 1,000", "transform": { "x": 608, "y": 948 }, "style": { "fontSize": 18, "width": 400 } },
+        "progress-track": { "transform": { "x": 72, "y": 976 }, "width": 936, "height": 14, "style": { "radius": 7 } },
+        "progress-fill": {
+          "transform": { "x": 72, "y": 976 },
+          "width": 518,
+          "height": 14,
+          "style": { "radius": 7 },
+          "fill": "#5fe0a4"
+        },
+        "cta-panel": {
+          "transform": { "x": 764, "y": 72 },
+          "width": 244,
+          "height": 58,
+          "fill": "#5fe0a4",
+          "style": { "radius": 18 }
+        },
+        "cta": {
+          "text": "Export post",
+          "transform": { "x": 764, "y": 88 },
+          "style": { "fontSize": 23, "width": 244, "color": "#05170e" }
+        },
+        "cta-note": { "visible": false }
+      },
+      "render": { "preset": "mp4-h264" }
+    }
+  ]
+}

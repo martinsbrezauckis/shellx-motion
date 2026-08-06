@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_compositing_direct_parity",
+  "name": "Direct MotionIR Render Parity",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser"],
+    "hosts": ["motion", "canvas", "cut"]
+  }
+}

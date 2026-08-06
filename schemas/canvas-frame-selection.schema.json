@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/canvas-frame-selection@1",
+  "$comment": "Published contract for the Canvas -> Motion frame-selection payload. Authority on the Motion side is the parser in packages/adapters-canvas/src/fixture-parse.ts (parseCanvasFrameSelection + parseFrame/parseLayer/parseImageEditorOutput). This schema is kept in sync with that parser by the contracts drift test (packages/adapters-canvas/src/schema-contract.test.ts) and validated against fixtures/canvas/*.json. It intentionally models only the structural acceptance rules the parser enforces; extra fields on the root/frames/layers/outputs are passed through by the parser and are therefore permitted. The layer.kind enum is NOT hand-maintained: it must equal renderableLayerTypes() from @shellx-motion/core (the union of the renderer capability cards), and schema-contract.test.ts fails if it drifts.",
+  "type": "object",
+  "required": ["schema", "selectedFrameId", "project", "brand", "frames", "imageEditorOutputs"],
+  "properties": {
+    "schema": {
+      "enum": ["shellx-motion/canvas-frame-selection@1", "shellx-canvas/frame-selection@1"]
+    },
+    "selectedFrameId": { "type": "string", "minLength": 1 },
+    "integration": { "type": "object" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "project": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "brand": {
+      "type": "object",
+      "required": ["tokens"],
+      "properties": {
+        "tokens": { "type": "object" }
+      }
+    },
+    "frames": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/frame" }
+    },
+    "imageEditorOutputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/imageEditorOutput" }
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "The canonical shellx-motion schema requires a verified integration envelope and a package-identity block; the legacy shellx-canvas schema does not.",
+      "if": {
+        "required": ["schema"],
+        "properties": { "schema": { "const": "shellx-motion/canvas-frame-selection@1" } }
+      },
+      "then": { "required": ["integration", "identity"] }
+    }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "required": ["schema", "packageId", "motionId"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "shellx-motion/package-identity@1" },
+        "packageId": { "type": "string", "minLength": 1 },
+        "motionId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "frame": {
+      "type": "object",
+      "required": ["id", "name", "durationMs", "fps", "width", "height", "layers"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "durationMs": { "type": "number" },
+        "fps": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "background": { "type": "string" },
+        "safeAreas": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/safeArea" }
+        },
+        "layers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/layer" }
+        }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "required": ["id", "kind", "startMs", "durationMs"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "$comment": "Rectangles, ellipses and stars are kind \"shape\" with a shape field; there is no \"rect\" or \"ellipse\" layer kind.",
+          "enum": ["adjustment", "audio", "camera", "caption", "environment", "image", "particles", "scene3d", "shader", "shape", "text", "video", "web"]
+        },
+        "startMs": { "type": "number" },
+        "durationMs": { "type": "number" }
+      }
+    },
+    "safeArea": {
+      "type": "object",
+      "properties": {
+        "top": { "type": "number", "minimum": 0 },
+        "right": { "type": "number", "minimum": 0 },
+        "bottom": { "type": "number", "minimum": 0 },
+        "left": { "type": "number", "minimum": 0 }
+      }
+    },
+    "imageEditorOutput": {
+      "type": "object",
+      "required": ["id", "assetId", "kind", "path", "mimeType", "width", "height", "sha256", "editStack"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "assetId": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "sha256": { "type": "string", "minLength": 1 },
+        "receiptId": { "type": "string" },
+        "editStack": { "type": "array" }
+      }
+    }
+  }
+}

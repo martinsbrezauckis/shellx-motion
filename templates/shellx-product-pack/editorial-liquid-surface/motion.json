@@ -1,0 +1,176 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_shellx_editorial_liquid_surface",
+  "name": "ShellX Editorial Liquid Surface",
+  "durationMs": 6000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#04161c",
+  "safeAreas": {
+    "editorial": { "top": 96, "right": 112, "bottom": 96, "left": 112 }
+  },
+  "layers": [
+    {
+      "id": "hero-scene",
+      "name": "Replaceable editorial source",
+      "type": "image",
+      "source": "assets/samples/coastal-editorial.svg",
+      "assetRef": "assets/samples/coastal-editorial.svg",
+      "fit": "fill",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1, "rotation": 0 }
+    },
+    {
+      "id": "water-stage",
+      "name": "Scene-sampled liquid surface",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "water",
+        "seed": 202607141,
+        "quality": "cinematic",
+        "mode": "scene",
+        "sceneSourceLayerId": "hero-scene",
+        "backgroundColor": "#04161c",
+        "shallowColor": "#5eead4",
+        "deepColor": "#032b36",
+        "reflectionColor": "#ecfeff",
+        "foamColor": "#ccfbf1",
+        "surface": {
+          "horizon": 0.56,
+          "waveScale": 4.2,
+          "waveHeight": 0.46,
+          "waveSpeed": 0.58,
+          "direction": 14,
+          "choppiness": 0.34,
+          "waveOctaves": 4
+        },
+        "optics": {
+          "reflectionStrength": 0.74,
+          "refractionStrength": 0.68,
+          "fresnel": 0.7,
+          "caustics": 0.62,
+          "clarity": 0.78,
+          "foam": 0.1
+        }
+      },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 120 } },
+      "keyframes": {
+        "environment.surface.waveHeight": [
+          { "atMs": 0, "value": 0.22, "easing": "ease-out" },
+          { "atMs": 2600, "value": 0.54, "easing": "ease-in-out" },
+          { "atMs": 4700, "value": 0.42, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.3, "easing": "ease-out" }
+        ],
+        "environment.optics.caustics": [
+          { "atMs": 0, "value": 0.24, "easing": "ease-out" },
+          { "atMs": 3300, "value": 0.72, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.5, "easing": "ease-out" }
+        ],
+        "environment.optics.refractionStrength": [
+          { "atMs": 0, "value": 0.38, "easing": "ease-out" },
+          { "atMs": 2900, "value": 0.76, "easing": "ease-in-out" },
+          { "atMs": 6000, "value": 0.56, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "copy-scrim",
+      "type": "shape",
+      "shape": "rectangle",
+      "fill": "rgba(1, 15, 20, 0.66)",
+      "startMs": 0,
+      "durationMs": 6000,
+      "width": 1030,
+      "height": 1080,
+      "transform": { "x": 0, "y": 0 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 0, "value": 0.44 },
+          { "atMs": 850, "value": 0.82, "easing": "ease-out" },
+          { "atMs": 5200, "value": 0.68, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "FIELD NOTES / 07",
+      "startMs": 180,
+      "durationMs": 5400,
+      "transform": { "x": 136, "y": 190, "width": 760, "height": 52 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 25, "fontWeight": 820, "letterSpacing": 4, "color": "#99f6e4" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 17 },
+      "keyframes": {
+        "opacity": [{ "atMs": 180, "value": 0 }, { "atMs": 620, "value": 1, "easing": "ease-out" }],
+        "style.letterSpacing": [{ "atMs": 180, "value": 7 }, { "atMs": 760, "value": 4, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "Ideas move like water",
+      "startMs": 320,
+      "durationMs": 5200,
+      "transform": { "x": 128, "y": 280, "width": 820, "height": 310 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 96, "fontWeight": 860, "lineHeight": 0.98, "color": "#f0fdfa", "textShadow": { "x": 0, "y": 12, "blur": 32, "color": "rgba(0, 0, 0, 0.56)" } },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 54 },
+      "effects": { "motionBlur": { "samples": 3, "shutterAngle": 150 } },
+      "keyframes": {
+        "opacity": [{ "atMs": 320, "value": 0 }, { "atMs": 1040, "value": 1, "easing": "ease-out" }],
+        "transform.y": [{ "atMs": 320, "value": 326, "easing": "ease-out" }, { "atMs": 1040, "value": 280 }]
+      }
+    },
+    {
+      "id": "subtitle",
+      "type": "text",
+      "text": "A replaceable editorial frame refracted through deterministic light, depth and liquid motion.",
+      "startMs": 980,
+      "durationMs": 4300,
+      "transform": { "x": 136, "y": 628, "width": 710, "height": 144 },
+      "style": { "fontFamily": "sans-serif", "fontSize": 33, "fontWeight": 560, "lineHeight": 1.2, "color": "#ccfbf1" },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 23 },
+      "keyframes": {
+        "opacity": [{ "atMs": 980, "value": 0 }, { "atMs": 1460, "value": 1, "easing": "ease-out" }]
+      }
+    },
+    {
+      "id": "accent-line",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#5eead4",
+      "startMs": 780,
+      "durationMs": 4700,
+      "width": 168,
+      "height": 8,
+      "transform": { "x": 136, "y": 818 },
+      "style": { "radius": 4 },
+      "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 620, "easing": "ease-out" } }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6000,
+      "effects": {
+        "vignette": { "amount": 0.18, "softness": 0.88, "color": "#021014" },
+        "filmGrain": { "amount": 0.008, "size": 1, "seed": 81173 }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "coastal-editorial-sample",
+      "kind": "image",
+      "source": { "path": "assets/samples/coastal-editorial.svg", "mimeType": "image/svg+xml" },
+      "size": { "width": 1920, "height": 1080 }
+    }
+  ],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-editorial-liquid-surface" }
+}

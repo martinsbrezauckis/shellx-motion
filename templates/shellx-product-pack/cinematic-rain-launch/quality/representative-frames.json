@@ -1,0 +1,59 @@
+{
+  "schema": "shellx-motion/quality-manifest@1",
+  "samples": [
+    {
+      "id": "establish",
+      "atMs": 300,
+      "minBrightPixels": 1000,
+      "minEdgePixels": 1200,
+      "minLumaRange": 42,
+      "minChromaPixels": 300000,
+      "maxChangedPixels": 2073600,
+      "maxMeanDiff": 3,
+      "minPsnrDb": 35,
+      "minSsim": 0.95
+    },
+    {
+      "id": "promise-enter",
+      "atMs": 1500,
+      "minBrightPixels": 1000,
+      "minEdgePixels": 1200,
+      "minLumaRange": 42,
+      "minChromaPixels": 300000,
+      "minChangedPixelsFromPrevious": 1500000,
+      "minMeanDiffFromPrevious": 5,
+      "maxChangedPixels": 2073600,
+      "maxMeanDiff": 3,
+      "minPsnrDb": 35,
+      "minSsim": 0.95
+    },
+    {
+      "id": "promise-peak",
+      "atMs": 3200,
+      "minBrightPixels": 1000,
+      "minEdgePixels": 1200,
+      "minLumaRange": 42,
+      "minChromaPixels": 300000,
+      "minChangedPixelsFromPrevious": 1500000,
+      "minMeanDiffFromPrevious": 5,
+      "maxChangedPixels": 2073600,
+      "maxMeanDiff": 3,
+      "minPsnrDb": 35,
+      "minSsim": 0.95
+    },
+    {
+      "id": "resolve",
+      "atMs": 5200,
+      "minBrightPixels": 1000,
+      "minEdgePixels": 1200,
+      "minLumaRange": 42,
+      "minChromaPixels": 300000,
+      "minChangedPixelsFromPrevious": 1500000,
+      "minMeanDiffFromPrevious": 5,
+      "maxChangedPixels": 2073600,
+      "maxMeanDiff": 3,
+      "minPsnrDb": 35,
+      "minSsim": 0.95
+    }
+  ]
+}

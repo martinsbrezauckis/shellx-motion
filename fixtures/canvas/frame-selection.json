@@ -1,0 +1,179 @@
+{
+  "schema": "shellx-canvas/frame-selection@1",
+  "selectedFrameId": "frame_story_hero",
+  "project": {
+    "id": "canvas_launch_campaign",
+    "name": "Launch Campaign"
+  },
+  "brand": {
+    "tokens": {
+      "color": {
+        "brandPrimary": "#0f3d5e",
+        "accent": "#f97316",
+        "surface": "#f8fafc",
+        "ink": "#0f172a"
+      },
+      "typography": {
+        "heading": {
+          "fontFamily": "Inter",
+          "fontWeight": 800
+        },
+        "body": {
+          "fontFamily": "Inter",
+          "fontWeight": 500
+        }
+      },
+      "spacing": {
+        "framePadding": 64,
+        "badgeInset": 18
+      },
+      "radius": {
+        "badge": 28,
+        "image": 36
+      }
+    }
+  },
+  "frames": [
+    {
+      "id": "frame_story_hero",
+      "name": "Story Hero",
+      "durationMs": 5000,
+      "fps": 30,
+      "width": 1080,
+      "height": 1920,
+      "background": "#f8fafc",
+      "layers": [
+        {
+          "id": "hero_image",
+          "kind": "image",
+          "assetId": "asset_product_retouched",
+          "startMs": 0,
+          "durationMs": 5000,
+          "fit": "cover",
+          "transform": {
+            "x": 80,
+            "y": 220,
+            "width": 920,
+            "height": 1020,
+            "rotation": 0,
+            "opacity": 1
+          }
+        },
+        {
+          "id": "headline",
+          "kind": "text",
+          "text": "Launch faster with ShellX",
+          "startMs": 350,
+          "durationMs": 4200,
+          "transform": {
+            "x": 72,
+            "y": 1270,
+            "width": 936,
+            "height": 220,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Inter",
+            "fontSize": 76,
+            "fontWeight": 800,
+            "lineHeight": 0.96,
+            "color": "{color.brandPrimary}"
+          }
+        },
+        {
+          "id": "cta_badge",
+          "kind": "shape",
+          "shape": "rounded-rect",
+          "startMs": 900,
+          "durationMs": 3600,
+          "transform": {
+            "x": 72,
+            "y": 1530,
+            "width": 520,
+            "height": 92,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "style": {
+            "fill": "{color.accent}",
+            "radius": "{radius.badge}"
+          },
+          "label": {
+            "text": "Start the walkthrough",
+            "style": {
+              "fontFamily": "Inter",
+              "fontSize": 30,
+              "fontWeight": 700,
+              "color": "#ffffff"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "frame_unselected_square",
+      "name": "Square Cutdown",
+      "durationMs": 4000,
+      "fps": 30,
+      "width": 1080,
+      "height": 1080,
+      "background": "#0f172a",
+      "layers": [
+        {
+          "id": "square_title",
+          "kind": "text",
+          "text": "Not selected",
+          "startMs": 0,
+          "durationMs": 4000,
+          "transform": {
+            "x": 80,
+            "y": 80,
+            "width": 920,
+            "height": 120,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "style": {
+            "fontFamily": "Inter",
+            "fontSize": 64,
+            "color": "#ffffff"
+          }
+        }
+      ]
+    }
+  ],
+  "imageEditorOutputs": [
+    {
+      "id": "image_edit_product_1",
+      "assetId": "asset_product_retouched",
+      "kind": "image",
+      "path": "assets/product-retouched.png",
+      "mimeType": "image/png",
+      "width": 920,
+      "height": 1020,
+      "sha256": "0f6b7b32792c8f8217a78fd375d2f26d51e39bf25f21b8c07b9713f22b3c4f4a",
+      "receiptId": "receipt_canvas_image_editor_1",
+      "editStack": [
+        {
+          "op": "crop",
+          "rect": {
+            "x": 80,
+            "y": 0,
+            "width": 920,
+            "height": 1020
+          }
+        },
+        {
+          "op": "color-adjust",
+          "exposure": 0.15,
+          "saturation": 1.08
+        },
+        {
+          "op": "background-remove",
+          "model": "shellx-bg-cutout-v1"
+        }
+      ]
+    }
+  ]
+}

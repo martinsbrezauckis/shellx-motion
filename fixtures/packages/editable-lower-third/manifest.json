@@ -1,0 +1,17 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_editable_lower_third",
+  "name": "Editable Lower Third",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/fonts/inter-latin-400-normal.woff2",
+    "assets/fonts/inter-latin-700-normal.woff2"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["native", "browser", "ffmpeg"],
+    "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
+  },
+  "workflow": "template-controls"
+}

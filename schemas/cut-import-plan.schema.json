@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/cut-import-plan@1",
+  "type": "object",
+  "required": ["schema", "ok", "packageId", "motionId", "targetId", "mode", "operations", "unsupported", "document", "receipt"],
+  "properties": {
+    "schema": { "const": "shellx-motion/cut-import-plan@1" },
+    "integration": { "$ref": "integration-envelope.schema.json" },
+    "ok": { "type": "boolean" },
+    "packageId": { "type": "string", "minLength": 1 },
+    "motionId": { "type": "string", "minLength": 1 },
+    "targetId": { "type": "string", "minLength": 1 },
+    "mode": { "enum": ["rendered_media", "live_overlay", "editable_lowering", null] },
+    "operations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layerId", "feature", "reason"],
+        "properties": {
+          "layerId": { "type": "string", "minLength": 1 },
+          "feature": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": ["width", "height", "fps", "durationMs"],
+      "properties": {
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+        "background": { "type": "string" },
+        "safeAreas": { "type": "object" }
+      }
+    },
+    "timeline": { "type": "object" },
+    "receipt": { "$ref": "shellx-motion/receipt@1" }
+  },
+  "$defs": {
+    "payload": { "type": "object" },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "startMs": { "type": "number", "minimum": 0 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "media": {
+      "type": "object",
+      "required": ["width", "height", "fps"],
+      "properties": {
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "fps": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["packageId", "motionId"],
+      "properties": {
+        "packageId": { "type": "string", "minLength": 1 },
+        "motionId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "renderedSource": {
+      "allOf": [
+        { "$ref": "#/$defs/source" },
+        {
+          "type": "object",
+          "required": ["render"],
+          "properties": {
+            "render": { "enum": ["required", "dry_run", "artifact"] }
+          }
+        }
+      ]
+    },
+    "renderedMedia": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["dryRun", "plannedPath", "receiptPath"],
+          "properties": {
+            "dryRun": { "const": true },
+            "plannedPath": { "type": "string", "minLength": 1 },
+            "receiptPath": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["dryRun", "handle"],
+          "properties": {
+            "dryRun": { "const": false },
+            "handle": { "$ref": "#/$defs/artifactHandleReference" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "artifactHandleReference": {
+      "type": "object",
+      "required": ["schema", "id", "operationHash", "rootRelativePath", "sha256"],
+      "properties": {
+        "schema": { "const": "shellx-motion/artifact-handle-ref@1" },
+        "id": { "type": "string", "pattern": "^artifact-[a-f0-9]{24}$" },
+        "operationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "rootRelativePath": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "packageLineage": { "$ref": "#/$defs/packageRenderLineage" }
+      },
+      "additionalProperties": false
+    },
+    "packageRenderLineage": {
+      "type": "object",
+      "required": ["schema", "manifestSha256", "motionSha256"],
+      "properties": {
+        "schema": { "const": "shellx-motion/package-render-lineage@1" },
+        "manifestSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "motionSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "adapterId": { "const": "adapter.gltf" },
+        "sourceSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "normalizedSourceSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "loweringReceiptSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["adapterId"] },
+          "then": { "required": ["sourceSha256", "normalizedSourceSha256", "loweringReceiptSha256"] }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "required": ["sourceSha256"] },
+              { "required": ["normalizedSourceSha256"] },
+              { "required": ["loweringReceiptSha256"] }
+            ]
+          },
+          "then": { "required": ["adapterId"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "editableOperation": {
+      "allOf": [
+        { "$ref": "#/$defs/timing" },
+        {
+          "type": "object",
+          "required": ["verb", "sourceLayerId", "startMs", "durationMs", "payload"],
+          "properties": {
+            "verb": { "enum": ["cut.title.create", "cut.shape.create", "cut.media.create", "cut.audio.create"] },
+            "sourceLayerId": { "type": "string", "minLength": 1 },
+            "payload": { "$ref": "#/$defs/payload" }
+          }
+        }
+      ]
+    },
+    "trackOperation": {
+      "type": "object",
+      "required": ["verb", "sourceTrackId", "payload"],
+      "properties": {
+        "verb": { "const": "cut.timeline.track.create" },
+        "sourceTrackId": { "type": "string", "minLength": 1 },
+        "payload": { "$ref": "#/$defs/payload" }
+      }
+    },
+    "sceneOperation": {
+      "allOf": [
+        { "$ref": "#/$defs/timing" },
+        {
+          "type": "object",
+          "required": ["verb", "sourceSceneId", "startMs", "durationMs", "payload"],
+          "properties": {
+            "verb": { "const": "cut.timeline.scene.create" },
+            "sourceSceneId": { "type": "string", "minLength": 1 },
+            "payload": { "$ref": "#/$defs/payload" }
+          }
+        }
+      ]
+    },
+    "markerOperation": {
+      "type": "object",
+      "required": ["verb", "sourceMarkerId", "atMs", "payload"],
+      "properties": {
+        "verb": { "const": "cut.timeline.marker.create" },
+        "sourceMarkerId": { "type": "string", "minLength": 1 },
+        "atMs": { "type": "number", "minimum": 0 },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "payload": { "$ref": "#/$defs/payload" }
+      }
+    },
+    "renderedOperation": {
+      "allOf": [
+        { "$ref": "#/$defs/timing" },
+        {
+          "type": "object",
+          "required": ["verb", "source", "startMs", "durationMs", "media"],
+          "properties": {
+            "verb": { "const": "cut.media.import_rendered" },
+            "source": { "$ref": "#/$defs/renderedSource" },
+            "media": { "$ref": "#/$defs/media" },
+            "renderedMedia": { "$ref": "#/$defs/renderedMedia" }
+          }
+        }
+      ]
+    },
+    "overlayOperation": {
+      "allOf": [
+        { "$ref": "#/$defs/timing" },
+        {
+          "type": "object",
+          "required": ["verb", "source", "startMs", "durationMs", "overlay"],
+          "properties": {
+            "verb": { "const": "cut.motion_overlay.create" },
+            "source": { "$ref": "#/$defs/source" },
+            "overlay": { "$ref": "#/$defs/media" }
+          }
+        }
+      ]
+    },
+    "operation": {
+      "oneOf": [
+        { "$ref": "#/$defs/editableOperation" },
+        { "$ref": "#/$defs/trackOperation" },
+        { "$ref": "#/$defs/sceneOperation" },
+        { "$ref": "#/$defs/markerOperation" },
+        { "$ref": "#/$defs/renderedOperation" },
+        { "$ref": "#/$defs/overlayOperation" }
+      ]
+    }
+  }
+}

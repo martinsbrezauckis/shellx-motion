@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Abstract coastal editorial sample">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#061b2a"/><stop offset="0.52" stop-color="#0f766e"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0b6070"/><stop offset="1" stop-color="#021922"/></linearGradient>
+    <radialGradient id="sun"><stop stop-color="#fff7d6"/><stop offset="0.22" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316" stop-opacity="0"/></radialGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="30"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="1460" cy="320" r="260" fill="url(#sun)" filter="url(#soft)"/>
+  <path d="M0 590C290 520 520 610 790 548C1090 478 1370 538 1920 430V1080H0Z" fill="url(#sea)"/>
+  <path d="M0 660C350 600 590 720 900 634C1210 550 1510 650 1920 528" fill="none" stroke="#ccfbf1" stroke-opacity=".34" stroke-width="10"/>
+  <path d="M0 790C420 684 680 842 1060 744C1400 660 1640 746 1920 690" fill="none" stroke="#5eead4" stroke-opacity=".3" stroke-width="7"/>
+  <path d="M1270 1080L1450 520L1640 1080Z" fill="#03151d" fill-opacity=".86"/>
+  <path d="M1508 1080L1600 710L1785 1080Z" fill="#06212b" fill-opacity=".78"/>
+  <g fill="#ecfeff" fill-opacity=".34"><circle cx="1120" cy="692" r="7"/><circle cx="1190" cy="720" r="4"/><circle cx="1010" cy="756" r="5"/><circle cx="880" cy="678" r="3"/></g>
+</svg>

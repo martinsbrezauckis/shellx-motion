@@ -1,0 +1,89 @@
+{
+  "schema": "shellx-motion/template@1",
+  "id": "template_shellx_feature_announcement",
+  "name": "ShellX Feature Announcement",
+  "motion": "motion.json",
+  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleHosts": ["shellx-motion"],
+  "metadata": {
+    "inputSchema": {
+      "type": "object",
+      "required": ["title", "subtitle", "featureOne", "featureTwo", "featureThree"],
+      "properties": {
+        "eyebrow": { "type": "string", "maxLength": 32 },
+        "title": { "type": "string", "maxLength": 78 },
+        "subtitle": { "type": "string", "maxLength": 118 },
+        "featureOne": { "type": "string", "maxLength": 30 },
+        "featureTwo": { "type": "string", "maxLength": 30 },
+        "featureThree": { "type": "string", "maxLength": 34 },
+        "accentColor": { "type": "string", "format": "color" }
+      }
+    },
+    "inputExamples": [
+      {
+        "eyebrow": "FEATURE ANNOUNCEMENT",
+        "title": "Cut Generate can now hand scripted frames to Motion",
+        "subtitle": "The result is still editable JSON, still local, and still timeline-ready.",
+        "featureOne": "Script to package",
+        "featureTwo": "Render receipts",
+        "featureThree": "Cut timeline handoff",
+        "accentColor": "#2ee6a6"
+      }
+    ],
+    "outputBounds": { "minWidth": 1080, "maxWidth": 3840, "minHeight": 1080, "maxHeight": 2160, "minDurationMs": 3000, "maxDurationMs": 10000, "aspectRatios": ["16:9", "1:1"] },
+    "suitability": {
+      "bestFor": ["product feature announcement", "SaaS feature release", "feature checklist videos"],
+      "notFor": ["dense metric reports", "speaker lower thirds", "long screen recordings"]
+    },
+    "license": { "id": "shellx-product-copy", "label": "ShellX Product Copy", "attributionRequired": false, "redistributionAllowed": true, "commercialUse": true },
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
+    "assetsAttribution": [
+      { "name": "Inter Bold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-700-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
+    ],
+    "provenance": { "source": "shellx-product-pack-feature-announcement", "sourceHash": "9c23c69a15f2f38e9dfb8c686aa30e6b28474e7ee5c3d681b3c08f6e4782b721" },
+    "performance": { "recommendedLane": "browser", "renderCost": "low", "previewFps": 30, "notes": ["Checklist-style product announcement with staged wipes."] },
+    "qualityTargets": {
+      "manifest": "quality/representative-frames.json",
+      "representativeFramesMs": [500, 1700, 3600, 5300],
+      "minDistinctFrames": 4,
+      "maxBlankFrames": 0,
+      "minEdgePixels": 900,
+      "minLumaRange": 34,
+      "requireTextFit": true,
+      "requireSafeAreas": true
+    }
+  },
+  "groups": [
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "features", "label": "Features", "order": 2 },
+    { "id": "style", "label": "Style", "order": 3 }
+  ],
+  "params": [
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "FEATURE ANNOUNCEMENT", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Cut Generate can now hand scripted frames to Motion", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "The result is still editable JSON, still local, and still timeline-ready.", "group": "content", "order": 3 },
+    { "id": "featureOne", "label": "Feature One", "type": "text", "defaultValue": "Script to package", "group": "features", "order": 1 },
+    { "id": "featureTwo", "label": "Feature Two", "type": "text", "defaultValue": "Render receipts", "group": "features", "order": 2 },
+    { "id": "featureThree", "label": "Feature Three", "type": "text", "defaultValue": "Cut timeline handoff", "group": "features", "order": 3 },
+    { "id": "accentColor", "label": "Accent Color", "type": "color", "defaultValue": "#2ee6a6", "group": "style", "order": 1 }
+  ],
+  "controls": [
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "featureOne", "widget": "text", "label": "Feature One" },
+    { "paramId": "featureTwo", "widget": "text", "label": "Feature Two" },
+    { "paramId": "featureThree", "widget": "text", "label": "Feature Three" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent Color" }
+  ],
+  "bindings": [
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/7/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/8/text", "layerId": "subtitle" } },
+    { "paramId": "featureOne", "target": { "kind": "motion_path", "path": "/layers/9/text", "layerId": "feature-one" } },
+    { "paramId": "featureTwo", "target": { "kind": "motion_path", "path": "/layers/10/text", "layerId": "feature-two" } },
+    { "paramId": "featureThree", "target": { "kind": "motion_path", "path": "/layers/11/text", "layerId": "feature-three" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/5/fill", "layerId": "feature-chip-three" } }
+  ]
+}

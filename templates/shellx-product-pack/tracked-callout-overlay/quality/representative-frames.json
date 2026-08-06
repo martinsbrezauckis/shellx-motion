@@ -1,0 +1,9 @@
+{
+  "schema": "shellx-motion/quality-manifest@1",
+  "samples": [
+    { "id": "scan", "atMs": 500, "minBrightPixels": 0, "minEdgePixels": 1300, "minLumaRange": 42, "minChromaPixels": 150000, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "follow-enter", "atMs": 1500, "minBrightPixels": 0, "minEdgePixels": 1300, "minLumaRange": 42, "minChromaPixels": 150000, "minChangedPixelsFromPrevious": 100000, "minMeanDiffFromPrevious": 0.3, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "follow-peak", "atMs": 3500, "minBrightPixels": 0, "minEdgePixels": 1300, "minLumaRange": 42, "minChromaPixels": 150000, "minChangedPixelsFromPrevious": 100000, "minMeanDiffFromPrevious": 0.3, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "resolve", "atMs": 5000, "minBrightPixels": 0, "minEdgePixels": 1300, "minLumaRange": 42, "minChromaPixels": 150000, "minChangedPixelsFromPrevious": 100000, "minMeanDiffFromPrevious": 0.3, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 }
+  ]
+}

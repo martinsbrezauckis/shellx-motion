@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/support-bundle@1",
+  "type": "object",
+  "required": ["schema", "createdAt", "receipts", "debug", "runtime", "redactions"],
+  "properties": {
+    "schema": { "const": "shellx-motion/support-bundle@1" },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "package": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "motionId": { "type": "string", "minLength": 1 },
+        "sourceApp": { "type": "string", "minLength": 1 },
+        "compatibility": { "type": "object" },
+        "motion": {
+          "type": "object",
+          "properties": {
+            "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+            "fps": { "type": "number", "exclusiveMinimum": 0 },
+            "width": { "type": "number", "exclusiveMinimum": 0 },
+            "height": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "layerCount": { "type": "integer", "minimum": 0 },
+        "assetCount": { "type": "integer", "minimum": 0 },
+        "timeline": {
+          "type": "object",
+          "properties": {
+            "trackCount": { "type": "integer", "minimum": 0 },
+            "sceneCount": { "type": "integer", "minimum": 0 },
+            "markerCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "inputHashes": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "required": ["receiptCount", "receipts"],
+      "properties": {
+        "receiptsRoot": { "type": "string", "minLength": 1 },
+        "receiptCount": { "type": "integer", "minimum": 0 },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "operation", "status", "packageId", "lane", "createdAt", "path", "warnings"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "operation": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "minLength": 1 },
+              "packageId": { "type": "string", "minLength": 1 },
+              "lane": { "type": "string", "minLength": 1 },
+              "createdAt": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "minLength": 1 },
+              "outputPath": { "type": "string", "minLength": 1 },
+              "qualityManifest": { "type": "object" },
+              "warnings": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "platformVerification": {
+      "type": "object",
+      "properties": {
+        "receiptCount": { "type": "integer", "minimum": 0 },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schema": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "minLength": 1 },
+              "dryRun": { "type": "boolean" },
+              "commandCount": { "type": "integer", "minimum": 0 },
+              "failedCommandCount": { "type": "integer", "minimum": 0 },
+              "requiredFailedCommandCount": { "type": "integer", "minimum": 0 },
+              "receiptCount": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "debug": {
+      "type": "object",
+      "required": ["commandCount", "commands", "actionCount", "actions"],
+      "properties": {
+        "commandCount": { "type": "integer", "minimum": 0 },
+        "commands": { "type": "array", "items": { "type": "string" } },
+        "actionCount": { "type": "integer", "minimum": 0 },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "permission", "mutates", "calls", "surfaces"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "permission": { "type": "string", "minLength": 1 },
+              "mutates": { "type": "boolean" },
+              "calls": { "type": "array", "items": { "type": "string" } },
+              "surfaces": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["node", "platform", "arch"],
+      "properties": {
+        "node": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "redactions": {
+      "type": "object",
+      "required": ["envValues"],
+      "properties": {
+        "envValues": { "const": "omitted" }
+      }
+    }
+  }
+}

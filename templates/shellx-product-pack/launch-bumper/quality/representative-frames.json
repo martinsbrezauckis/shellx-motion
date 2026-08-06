@@ -1,0 +1,9 @@
+{
+  "schema": "shellx-motion/quality-manifest@1",
+  "samples": [
+    { "id": "establish", "atMs": 500, "minBrightPixels": 0, "minEdgePixels": 900, "minLumaRange": 34, "minChromaPixels": 0, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "build", "atMs": 1600, "minBrightPixels": 0, "minEdgePixels": 900, "minLumaRange": 34, "minChromaPixels": 0, "minChangedPixelsFromPrevious": 20736, "minMeanDiffFromPrevious": 0.1, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "peak", "atMs": 3000, "minBrightPixels": 0, "minEdgePixels": 900, "minLumaRange": 34, "minChromaPixels": 0, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 },
+    { "id": "resolve", "atMs": 4300, "minBrightPixels": 0, "minEdgePixels": 900, "minLumaRange": 34, "minChromaPixels": 0, "maxChangedPixels": 2073600, "maxMeanDiff": 8, "minPsnrDb": 28, "minSsim": 0.9 }
+  ]
+}

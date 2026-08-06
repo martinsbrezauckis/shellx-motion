@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/tracking-analysis@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "source", "mode", "model", "status", "reference", "settings", "settingsSha256", "solver", "samples", "spans", "createdAt"],
+  "properties": {
+    "schema": { "const": "shellx-motion/tracking-analysis@1" },
+    "id": { "$ref": "#/$defs/id" },
+    "source": { "$ref": "#/$defs/source" },
+    "mode": { "enum": ["point", "planar"] },
+    "model": { "enum": ["translation", "similarity", "homography"] },
+    "status": { "enum": ["succeeded", "partial"] },
+    "reference": { "$ref": "#/$defs/reference" },
+    "settings": { "$ref": "#/$defs/settings" },
+    "settingsSha256": { "$ref": "#/$defs/sha256" },
+    "solver": { "$ref": "#/$defs/solver" },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30000,
+      "items": { "$ref": "#/$defs/sample" }
+    },
+    "spans": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/span" }
+    },
+    "createdAt": { "type": "string", "minLength": 1, "maxLength": 128 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "point" } }, "required": ["mode"] },
+      "then": { "properties": { "model": { "const": "translation" } } }
+    },
+    {
+      "if": { "properties": { "mode": { "const": "planar" } }, "required": ["mode"] },
+      "then": { "properties": { "model": { "enum": ["similarity", "homography"] } } }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "sha256", "byteLength", "width", "height", "durationMs"],
+      "properties": {
+        "assetId": { "$ref": "#/$defs/id" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byteLength": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 7680 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 7680 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400000 }
+      }
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 7680 },
+        "y": { "type": "number", "minimum": 0, "maximum": 7680 }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 7680 },
+        "y": { "type": "number", "minimum": 0, "maximum": 7680 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 7680 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 7680 }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["atMs", "bounds", "points"],
+      "properties": {
+        "atMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "bounds": { "$ref": "#/$defs/bounds" },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/point" }
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMs", "endMs", "stepMs", "direction", "searchRadiusPx", "pyramidLevels", "maxIterations", "confidenceFloor", "deterministicSeed"],
+      "properties": {
+        "startMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "endMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "stepMs": { "type": "number", "minimum": 1, "maximum": 10000 },
+        "direction": { "enum": ["forward", "backward", "both"] },
+        "searchRadiusPx": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "pyramidLevels": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "maxIterations": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "confidenceFloor": { "type": "number", "minimum": 0, "maximum": 1 },
+        "deterministicSeed": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+      }
+    },
+    "solver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "implementationSha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "implementationSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "matrix": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "type": "number", "minimum": -1000000, "maximum": 1000000 }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["atMs", "state", "confidence"],
+      "properties": {
+        "atMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "state": { "enum": ["tracked", "low-confidence", "lost", "recovered"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "residualErrorPx": { "type": "number", "minimum": 0, "maximum": 100000 },
+        "matrix": { "$ref": "#/$defs/matrix" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "lost" } }, "required": ["state"] },
+          "then": { "not": { "required": ["matrix"] } },
+          "else": { "required": ["matrix", "residualErrorPx"] }
+        }
+      ]
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMs", "endMs", "state", "minConfidence"],
+      "properties": {
+        "startMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "endMs": { "type": "number", "minimum": 0, "maximum": 86400000 },
+        "state": { "enum": ["low-confidence", "lost", "recovered"] },
+        "minConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maxResidualErrorPx": { "type": "number", "minimum": 0, "maximum": 100000 }
+      }
+    }
+  }
+}

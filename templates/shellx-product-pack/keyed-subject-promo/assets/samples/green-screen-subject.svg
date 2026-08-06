@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1080" viewBox="0 0 900 1080" role="img" aria-label="Stylized presenter on green screen sample">
+  <defs>
+    <linearGradient id="jacket" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#312e81"/><stop offset=".55" stop-color="#7c3aed"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fed7aa"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#07111f" flood-opacity=".45"/></filter>
+  </defs>
+  <rect width="900" height="1080" fill="#00ff00"/>
+  <g filter="url(#shadow)">
+    <ellipse cx="476" cy="257" rx="126" ry="148" fill="url(#skin)"/>
+    <path d="M346 246C340 112 430 70 512 92C610 118 638 224 594 316C560 238 516 188 346 246Z" fill="#17122b"/>
+    <path d="M328 406C392 360 532 358 602 414L744 1080H154L280 454Z" fill="url(#jacket)"/>
+    <path d="M370 388L468 574L554 388C512 366 414 366 370 388Z" fill="#f8fafc"/>
+    <path d="M468 574L430 1080H524Z" fill="#17122b" fill-opacity=".72"/>
+    <path d="M276 490C170 580 104 714 68 842L200 890C246 754 304 656 386 588Z" fill="url(#jacket)"/>
+    <path d="M596 482C708 556 790 682 842 802L720 866C670 744 606 650 526 590Z" fill="url(#jacket)"/>
+    <ellipse cx="140" cy="872" rx="76" ry="52" transform="rotate(-14 140 872)" fill="url(#skin)"/>
+    <ellipse cx="768" cy="846" rx="76" ry="52" transform="rotate(18 768 846)" fill="url(#skin)"/>
+    <circle cx="430" cy="256" r="9" fill="#1f2937"/><circle cx="520" cy="256" r="9" fill="#1f2937"/>
+    <path d="M438 322C466 342 500 342 528 318" fill="none" stroke="#9a3412" stroke-width="8" stroke-linecap="round"/>
+  </g>
+</svg>

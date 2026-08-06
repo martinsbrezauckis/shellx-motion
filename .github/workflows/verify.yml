@@ -1,0 +1,122 @@
+# Verification for every push and pull request.
+#
+# Deliberately contains NO publish, release, or deploy job. Publishing from CI is a separate,
+# explicitly-authorised decision; a workflow that can publish is one that can publish by accident.
+#
+# The step order is cheapest-signal-first: hygiene and generated-file drift fail in seconds and
+# catch the most common class of mistake (editing a generated file, or editing its source without
+# regenerating), so a contributor is not waiting on the browser test suite to learn about it.
+name: verify
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A newer push to the same ref makes the older run's answer irrelevant.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Third-party actions are pinned to reviewed commit SHAs, never to tags. A tag is a mutable
+      # pointer: whoever controls the action's repository can move `v4` onto different code after
+      # the review that approved it, and this job holds a checkout of the repository. The trailing
+      # comment is the release each SHA was resolved from — the SHA is what runs, the comment is
+      # for humans. Re-resolve before changing one:
+      #   gh api repos/<owner>/<repo>/git/refs/tags/<tag>          # .object.sha
+      #   gh api repos/<owner>/<repo>/git/tags/<sha>               # annotated tags only, .object.sha
+      # `actionlint` cannot help here: it checks YAML and expression syntax, not supply-chain
+      # identity, so a syntactically perfect mutable tag passes it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # v4.3.0, not v4.4.0, deliberately: this is the commit the upstream `v4` tag itself points
+      # at. v4.4.0 is a breaking change that moves the action onto the Node 24 runner runtime, and
+      # upstream kept it out of the `v4` line. Pinning to it would have been a runtime change
+      # smuggled in under a supply-chain fix.
+      #
+      # No `version:` input on purpose. The action reads `packageManager` from the root
+      # package.json, which is the single reproducible pnpm identity for this repository;
+      # repeating the number here is a second place to forget. It requires checkout to have run
+      # first, which it has, immediately above.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # No NUL bytes, one job status vocabulary, and consistent shipping imports and determinism.
+      - name: Source hygiene
+        run: pnpm run source-hygiene:check
+
+      # Generated docs and published schemas must match the code that authors them.
+      #
+      # `docs:check` includes readme-commands-smoke, which EXECUTES the commands README.md documents.
+      # That is deliberate on `pull_request` too, forks included, because a fork PR editing the README
+      # is exactly the change this gate exists to check. It is safe to run on untrusted text only
+      # because the fence line must first parse into an argv of inert tokens
+      # (scripts/readme-command-tokenize.mjs), and the only program ever executed is `pnpm` running a
+      # script this repository declares. Before that fix the raw line went to a shell after a
+      # prefix-only check, and a README fence was arbitrary code execution on this runner. If that
+      # tokeniser is ever relaxed, this step stops being safe here — narrow the trigger, do not
+      # loosen the parser.
+      - name: Generated docs and contracts
+        run: pnpm run docs:check && pnpm run contracts:check
+
+      - name: Module size budgets
+        run: pnpm run architecture:check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # The browser lane needs a real Chrome/Chromium. The runner image ships one, and pointing at
+      # it explicitly beats relying on discovery order. The guard exists because a missing browser
+      # would otherwise surface as browser-lane tests quietly not exercising a browser.
+      - name: Confirm a browser is available
+        run: |
+          test -x /usr/bin/google-chrome || {
+            echo "No browser at /usr/bin/google-chrome. The runner image changed;" \
+                 "install one and set SHELLX_MOTION_BROWSER." >&2
+            exit 1
+          }
+          /usr/bin/google-chrome --version
+
+      # Same reasoning as the browser guard above, for the other external program Motion does not
+      # ship. The runner image happens to carry FFmpeg today, and "happens to" is the problem: when
+      # an image drops it, encode tests fail deep inside a render with a spawn error instead of
+      # saying which binary is missing. Fail here, in one line, naming it.
+      - name: Confirm FFmpeg is available
+        run: |
+          for tool in ffmpeg ffprobe; do
+            command -v "$tool" >/dev/null || {
+              echo "No $tool on PATH. The runner image changed; install it" \
+                   "(apt-get install -y ffmpeg) or set SHELLX_MOTION_${tool^^}." >&2
+              exit 1
+            }
+          done
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: Test
+        env:
+          SHELLX_MOTION_BROWSER: /usr/bin/google-chrome
+        run: pnpm run test
+
+      # Proves the packed artifact is installable and its bin actually runs — the failure mode a
+      # workspace-only test cannot see, because in-workspace exports point at TypeScript sources.
+      - name: Verify install
+        run: pnpm run build:verify

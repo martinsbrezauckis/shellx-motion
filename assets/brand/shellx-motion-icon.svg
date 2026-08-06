@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">ShellX Motion</title>
+  <desc id="description">The white ShellX X with a compact cyan keyframe curve badge.</desc>
+  <rect width="512" height="512" rx="112" fill="#0b0e0d"/>
+  <path fill="#f5f7f6" d="M92 109h89l75 101 76-101h88L302 255l117 149h-89l-74-103-77 103H93l117-149z"/>
+  <rect x="316" y="326" width="140" height="126" rx="31" fill="#0b0e0d" stroke="#3ad9f2" stroke-width="9"/>
+  <path d="M340 406c22-44 58 16 92-36" fill="none" stroke="#3ad9f2" stroke-width="8" stroke-linecap="round"/>
+  <path d="m340 394 12 12-12 12-12-12zm46-18 12 12-12 12-12-12zm46-18 12 12-12 12-12-12z" fill="#3ad9f2"/>
+</svg>

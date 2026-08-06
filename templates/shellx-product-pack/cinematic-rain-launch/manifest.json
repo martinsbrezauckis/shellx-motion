@@ -1,0 +1,17 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_shellx_cinematic_rain_launch",
+  "name": "ShellX Cinematic Rain Launch",
+  "motion": "motion.json",
+  "template": "template.json",
+  "assets": [
+    "assets/samples/night-street.svg",
+    "assets/masks/rain-occlusion.svg"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser", "ffmpeg"],
+    "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
+  },
+  "workflow": "template-pack-cinematic-rain-launch"
+}

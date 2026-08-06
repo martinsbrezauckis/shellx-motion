@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/browser-workflow-catalog@1",
+  "type": "object",
+  "required": ["schema", "entries"],
+  "properties": {
+    "schema": { "const": "shellx-motion/browser-workflow-catalog@1" },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "key",
+        "packageId",
+        "workflowHash",
+        "atMs",
+        "firstSeenAt",
+        "updatedAt",
+        "baseline",
+        "latest",
+        "drift",
+        "history"
+      ],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "packageId": { "type": "string", "minLength": 1 },
+        "workflowHash": { "$ref": "#/$defs/sha256" },
+        "atMs": { "type": "number", "minimum": 0 },
+        "firstSeenAt": { "type": "string", "minLength": 1 },
+        "updatedAt": { "type": "string", "minLength": 1 },
+        "baseline": { "$ref": "#/$defs/snapshot" },
+        "latest": { "$ref": "#/$defs/snapshot" },
+        "drift": { "$ref": "#/$defs/drift" },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/snapshot" }
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["capturedAt", "outputSha256", "outputPath", "receiptPath"],
+      "properties": {
+        "capturedAt": { "type": "string", "minLength": 1 },
+        "outputSha256": { "$ref": "#/$defs/sha256" },
+        "outputPath": { "type": "string", "minLength": 1 },
+        "receiptPath": { "type": "string", "minLength": 1 },
+        "tracePath": { "type": "string" },
+        "browser": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "viewport": {
+          "type": "object",
+          "properties": {
+            "width": { "type": "number", "exclusiveMinimum": 0 },
+            "height": { "type": "number", "exclusiveMinimum": 0 },
+            "deviceScaleFactor": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "workflow": {
+          "type": "object",
+          "properties": {
+            "stepCount": { "type": "integer", "minimum": 0 },
+            "networkPolicy": { "type": "string" }
+          }
+        },
+        "captureReadiness": {
+          "type": "object",
+          "required": ["schema"],
+          "properties": {
+            "schema": { "const": "shellx-motion/browser-capture-readiness@1" },
+            "page": { "const": "loaded" },
+            "stylesheets": { "const": "settled" },
+            "fonts": { "enum": ["ready", "unsupported", "timeout", "error"] },
+            "animationPolicy": { "const": "screenshot-disabled" },
+            "media": { "const": "settled-after-time-seek" },
+            "waitMs": { "type": "number", "minimum": 0 },
+            "diagnostics": {
+              "type": "object",
+              "properties": {
+                "stylesheetLinkCount": { "type": "number", "minimum": 0 },
+                "fontFaceCount": { "type": "number", "minimum": 0 },
+                "fontFaceLoadAttemptCount": { "type": "number", "minimum": 0 },
+                "fontFaceLoadedCount": { "type": "number", "minimum": 0 },
+                "finiteAnimationCount": { "type": "number", "minimum": 0 },
+                "finiteAnimationMaxMs": { "type": "number", "minimum": 0 },
+                "finiteTransitionCount": { "type": "number", "minimum": 0 },
+                "finiteTransitionMaxMs": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "required": ["status", "key", "baselineOutputSha256", "currentOutputSha256"],
+      "properties": {
+        "status": { "enum": ["new", "matched", "changed"] },
+        "key": { "type": "string", "minLength": 1 },
+        "baselineOutputSha256": { "$ref": "#/$defs/sha256" },
+        "previousOutputSha256": { "$ref": "#/$defs/sha256" },
+        "currentOutputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

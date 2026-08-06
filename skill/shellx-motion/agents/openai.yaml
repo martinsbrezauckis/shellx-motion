@@ -1,0 +1,14 @@
+# Display metadata for hosts that surface this skill in a picker.
+#
+# This file intentionally carries no MCP server block. Motion's connection details are not static:
+# the bridge resolves the live loopback port and the per-user access key at call time, so a checked-in
+# config would either be wrong or would embed a key, and embedding the key is the one thing this
+# project asks you not to do with it.
+#
+# To wire an agent up, see docs/public/connections.md — the Connections page for a desktop flow, or
+# the "Headless setup (no browser)" section for a server, container, or agent-only machine. Both end
+# at the same one-line client config pointing to the bundled `shellx-motion-mcp` stdio bridge.
+interface:
+  display_name: "ShellX Motion"
+  short_description: "Author and render local Motion packages"
+  default_prompt: "Use $shellx-motion to author, preview, and verify a local rich Motion package."

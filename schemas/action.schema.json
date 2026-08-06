@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/action@1",
+  "type": "object",
+  "required": ["id", "aliases", "permission", "mutates", "calls", "verify", "surfaces"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "aliases": { "type": "array", "items": { "type": "string" } },
+    "permission": { "enum": ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"] },
+    "mutates": { "type": "boolean" },
+    "calls": { "type": "array", "items": { "type": "string" } },
+    "verify": { "type": "array", "items": { "type": "string" } },
+    "surfaces": { "type": "array", "items": { "type": "string" } }
+  }
+}

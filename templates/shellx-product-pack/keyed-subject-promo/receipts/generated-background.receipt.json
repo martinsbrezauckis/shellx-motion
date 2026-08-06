@@ -1,0 +1,31 @@
+{
+  "schema": "shellx-motion/generated-asset-receipt@1",
+  "id": "generated_asset_pkg_shellx_keyed_subject_promo_assets_generated_atmosphere_fog_rays_mp4",
+  "packageId": "pkg_shellx_keyed_subject_promo",
+  "generatorRoute": "bundled-sample",
+  "assetRef": "assets/generated/atmosphere-fog-rays.mp4",
+  "mediaType": "video/mp4",
+  "promptSummary": "Cinematic atmospheric background footage: slow teal-cyan volumetric god-rays and drifting fog with fine dust motes over deep charcoal-black; one continuous slow push-in. No people, no text, no logos.",
+  "toolLabel": "bundled sample asset",
+  "provenanceNote": "Bundled AI-generated sample video used under the generator's applicable terms. The imported asset is a silent, single-video background for the keyed-subject-promo composite.",
+  "contentSha256": "24cfaf7065119713d771a48d3d47966c13004d95a8671c4cf2e53516c0834c7c",
+  "width": 736,
+  "height": 400,
+  "durationMs": 6042,
+  "createdAt": "2026-07-22T10:55:07.956Z",
+  "status": "available",
+  "sampleDetails": {
+    "licenseNote": "ai-generated sample used under the generator's applicable terms",
+    "intendedSlot": "keyed-subject-promo backgroundMedia slot (composite-background, canvas 1920x1080, fit: fill, silent moving footage behind the keyed subject)",
+    "processing": "The primary h264 video stream was retained without re-encoding; incidental audio and cover-art streams were removed so the bundled asset is a clean silent background.",
+    "verification": {
+      "measuredWith": "ffprobe (real outputs of the imported/stripped file)",
+      "streams": "1 video stream (h264, yuv420p, 736x400); 0 audio streams; 0 other streams",
+      "measuredWidth": 736,
+      "measuredHeight": 400,
+      "measuredDurationMs": 6042,
+      "sha256Verified": "24cfaf7065119713d771a48d3d47966c13004d95a8671c4cf2e53516c0834c7c",
+      "verdict": "PASS"
+    }
+  }
+}
