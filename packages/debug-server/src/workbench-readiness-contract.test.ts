@@ -21,9 +21,11 @@
  *
  * Dependencies: `./index` (real server), `../workbench/workbench.js`, `../workbench/about.js`.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import type { MotionToolName } from "@shellx-motion/core";
+import { pinMotionToolExecutables, type MotionToolPins } from "@shellx-motion/core/test-support";
 import type { MotionDebugContext } from "@shellx-motion/debug-api";
 import { startMotionDebugServer, type MotionDebugServerHandle } from "./index";
 
@@ -107,19 +109,31 @@ async function debugServer(ffmpegRunner?: FfmpegRunner) {
 }
 
 /**
+ * The three external tools, pinned to paths this suite created, for every test in this file.
+ *
+ * The server under test runs a REAL platform probe, and that probe resolves a real executable path
+ * from the real machine before the injected runner is ever consulted. So without a pin these fixture
+ * machines are only as reliable as the fixture's ability to recognise whatever browser the host
+ * carries — and it could not: `/^(chrome|chromium|google chrome)/i` does not match
+ * `/usr/bin/google-chrome`, so on CI the browser probe was classified as FFmpeg and two of these
+ * tests failed for a reason none of them is about.
+ */
+let pins: MotionToolPins;
+beforeAll(() => { pins = pinMotionToolExecutables("workbench-readiness"); });
+afterAll(() => pins.release());
+
+/**
  * Which of the three external tools a fixture machine has.
  *
- * Written as an explicit allow-list rather than "throw unless the path says ffprobe", because
- * Chromium's resolved path is whatever browser the HOST happens to carry — a fixture that decides
- * by exclusion silently made every one of these machines browser-less the moment Chromium joined
- * the probe, and the tests then failed for a reason none of them was about.
+ * Matched on the exact pinned path, so no name heuristic decides what a probe was asking about. An
+ * executable this suite did not pin throws a distinguishable error rather than being sorted into
+ * some tool's answer: it means the pin is not in force, which is a different failure from "this
+ * fixture machine does not have that tool".
  */
-function machineWith(tools: Array<"ffmpeg" | "ffprobe" | "chromium">): FfmpegRunner {
+function machineWith(tools: ReadonlyArray<MotionToolName>): FfmpegRunner {
   return async (command) => {
-    const name = (command.executable.split(/[\\/]/).at(-1) ?? "").replace(/\.exe$/i, "");
-    const tool = /^(chrome|chromium|google chrome)/i.test(name)
-      ? "chromium"
-      : name.startsWith("ffprobe") ? "ffprobe" : "ffmpeg";
+    const tool = pins.toolFor(command.executable);
+    if (!tool) throw new Error(`This suite pinned the tool executables, but the probe resolved ${command.executable}.`);
     if (!tools.includes(tool)) throw Object.assign(new Error(`spawn ${command.executable} ENOENT`), { code: "ENOENT" });
     return { exitCode: 0, stdout: `${tool} version 7.1-fixture`, stderr: "" };
   };

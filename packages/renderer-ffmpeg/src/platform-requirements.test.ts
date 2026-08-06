@@ -10,8 +10,9 @@
  * draw a single frame. Those tests assert BOTH directions — no false green, and no false red for a
  * machine the native lane can serve — because either one alone is satisfied by a wrong fix.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isAbsolute } from "node:path";
+import { pinMotionToolExecutables, type MotionToolPins } from "@shellx-motion/core/test-support";
 import {
   checkMotionPlatformRequirements,
   ffmpegLooksAbsent,
@@ -24,28 +25,46 @@ import {
   MOTION_PLATFORM_REQUIREMENTS_SCHEMA,
   MOTION_TOOL_VERSION_MAX_CHARS,
   probeMotionTool,
-  type FfmpegRunner
+  resolveMotionToolLocation,
+  type FfmpegRunner,
+  type MotionToolName
 } from "./index";
 
 /**
- * A runner that answers a version probe per executable name.
+ * The three tools, pinned to paths this suite created, for every test in this file.
  *
- * Chromium resolves to a real path on whatever machine runs this suite (`/usr/bin/google-chrome`, a
- * Playwright cache entry, …), so its answers are keyed on a PREFIX of the basename rather than an
- * exact name: `chrome`, `chrome.exe`, `Google Chrome for Testing` and `chromium` are all the same
- * fixture tool. Without that, a suite pinned to exact names would pass or fail depending on which
- * browser the host happened to have — the machine dependence these tests exist to remove.
+ * The probe resolves a real executable PATH from the real machine and hands that to the runner, so
+ * without a pin these tests answer about whatever browser and FFmpeg the host happens to carry. That
+ * is not hypothetical, and it has now cost this suite twice. The fixture recognised tools by NAME:
+ * first it did not know `ffmpeg.exe`, and four tests failed on Windows alone; then it did not know
+ * `/usr/bin/google-chrome` — the first system candidate, the browser GitHub's runner image carries,
+ * and the exact path this repository's own CI pins into `SHELLX_MOTION_BROWSER` — and six tests
+ * failed on CI while passing on every workstation whose browser was a Playwright cache entry named
+ * `chrome`. Both are the same defect: a test that lets the machine choose its own input.
+ *
+ * Pinning ends the guess rather than extending it by one more name. There is exactly one path each
+ * tool can resolve to, on every machine and every OS, and the runner below matches it exactly.
  */
-function runnerFor(answers: Record<string, { exitCode: number; stdout?: string; stderr?: string }>): FfmpegRunner {
+let pins: MotionToolPins;
+beforeAll(() => { pins = pinMotionToolExecutables("platform-requirements"); });
+afterAll(() => pins.release());
+
+/** One tool's answer to a version probe. */
+interface ToolAnswer { exitCode: number; stdout?: string; stderr?: string }
+
+/**
+ * A runner that answers a version probe per TOOL, matched on the exact path this suite pinned.
+ *
+ * A tool with no entry is not installed: the ENOENT-shaped default is what `missing` is made of.
+ * An executable that is not one of the pinned paths is a different failure entirely — the pin is not
+ * in force and the probe is describing the host — so it throws instead of being reported as one more
+ * absent tool, which is how the name-matching predecessor hid exactly that.
+ */
+function runnerFor(answers: Partial<Record<MotionToolName, ToolAnswer>>): FfmpegRunner {
   return async (command) => {
-    // Basename WITHOUT a Windows executable suffix. The resolver hands back `ffmpeg.exe` on win32, so
-    // keying the fake answers on the raw basename matched nothing there: every tool fell through to
-    // the ENOENT default, `missingCount` was 2 instead of 1, and four tests failed on Windows only.
-    // Third instance of this class in the release -- a test written and only ever exercised on one OS
-    // (after `command -v` in readme-commands-smoke and the job-status-lint path separator).
-    const name = (command.executable.split(/[\\/]/).at(-1) ?? command.executable).replace(/\.(exe|cmd|bat)$/i, "");
-    const key = /^(chrome|chromium|google chrome)/i.test(name) ? "chromium" : name;
-    const answer = answers[key] ?? { exitCode: 1, stderr: `spawn ${command.executable} ENOENT` };
+    const tool = pins.toolFor(command.executable);
+    if (!tool) throw new Error(`This suite pinned the tool executables, but the probe resolved ${command.executable}.`);
+    const answer = answers[tool] ?? { exitCode: 1, stderr: `spawn ${command.executable} ENOENT` };
     return { exitCode: answer.exitCode, stdout: answer.stdout ?? "", stderr: answer.stderr ?? "" };
   };
 }
@@ -56,6 +75,15 @@ const CHROMIUM_READY = { exitCode: 0, stdout: "Google Chrome for Testing 141.0.7
 const ALL_READY = { ffmpeg: READY, ffprobe: READY, chromium: CHROMIUM_READY };
 
 describe("checkMotionPlatformRequirements", () => {
+  it("resolves the executables this suite pinned, not the ones the host happens to have", () => {
+    // The guard on every other test in this file. If the pin ever stops taking effect — a renamed
+    // override variable, a resolver that consults something before it — the probes below quietly go
+    // back to describing the machine, which is the exact failure this fixture exists to end.
+    for (const tool of ["ffmpeg", "ffprobe", "chromium"] as const) {
+      expect(resolveMotionToolLocation(tool)).toMatchObject({ executable: pins.executable[tool], source: "override" });
+    }
+  });
+
   it("separates 'the probe ran' from 'the machine is ready'", async () => {
     const requirements = await checkMotionPlatformRequirements({
       runner: runnerFor({ ...ALL_READY, ffprobe: { exitCode: 1, stderr: "spawn ffprobe ENOENT" } })
@@ -234,13 +262,21 @@ describe("render.final is lane-dependent: Chromium blocks the default route, not
   });
 
   it("probes the browser the renderer would launch, not a PATH lookup", async () => {
-    // The resolver never falls back to a bare command name. A `chrome` on PATH that
-    // `findMotionBrowserExecutable` would not select must not be able to answer this probe green.
-    const probe = await probeMotionTool("chromium", runnerFor(ALL_READY));
+    // Deliberately OUTSIDE this suite's pin, because the property under test is what the resolver
+    // does when nobody named a browser: every route it can then take — a Playwright cache entry, a
+    // well-known system install, or the "this machine has none" fallback — is an absolute path. So a
+    // `chrome` on PATH that `findMotionBrowserExecutable` would not select can never answer this
+    // probe green. Pinning would make the assertion vacuously true, which is why it is lifted here.
+    delete process.env.SHELLX_MOTION_BROWSER;
+    try {
+      const probe = await probeMotionTool("chromium", async () => ({ exitCode: 1, stdout: "", stderr: "spawn ENOENT" }));
 
-    expect(probe.tool).toBe("chromium");
-    expect(probe.resolvedFrom).not.toBe("chromium");
-    expect(isAbsolute(probe.resolvedFrom)).toBe(true);
+      expect(probe.tool).toBe("chromium");
+      expect(probe.resolvedFrom).not.toBe("chromium");
+      expect(isAbsolute(probe.resolvedFrom)).toBe(true);
+    } finally {
+      process.env.SHELLX_MOTION_BROWSER = pins.executable.chromium;
+    }
   });
 });
 

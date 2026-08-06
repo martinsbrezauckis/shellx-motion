@@ -9,33 +9,48 @@
  * The parity assertion here compares the two results structurally, including with a tool made
  * deliberately absent, so a future change that re-derives one of them locally fails loudly.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dispatchDebugCommand } from "@shellx-motion/debug-api";
+import type { MotionToolName } from "@shellx-motion/core";
+import { pinMotionToolExecutables, type MotionToolPins } from "@shellx-motion/core/test-support";
 import type { FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
 import { doctorCommand } from "./doctor-command";
 
 const READY = "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers";
 
 /**
- * A runner that answers a version probe per executable basename.
+ * The tools the FIXTURE-driven suite below pins, so its answers describe the fixture machine.
  *
- * Chromium is named by whatever the host actually has — `chrome`, `chrome.exe`,
- * `Google Chrome for Testing`, `chromium` — because the resolver hands back a real path, so it is
- * matched by prefix. Keying it on one exact name would make this suite's answers depend on which
- * browser the machine running it happens to carry.
+ * Set up inside that suite and torn down after it, because the parity suite that follows is the
+ * opposite kind of test: it probes whatever this machine really has, and pinning would take that
+ * away. Nothing shared here leaks across the two.
  */
-function runnerFor(present: string[]): FfmpegRunner {
+let pins: MotionToolPins;
+
+/**
+ * A runner that answers a version probe for the tools a fixture machine has.
+ *
+ * Matched on the exact pinned path rather than on a name. The name-matching predecessor decided
+ * which tool an executable was with `/^(chrome|chromium|google chrome)/i`, which does not match
+ * `/usr/bin/google-chrome` — the browser GitHub's runner image carries, and the one this
+ * repository's CI pins — so `doctor` was told the browser was absent and this suite failed on CI
+ * while passing everywhere else. An executable that is not one of the pinned paths throws, because
+ * it means the pin is not in force and the answers would be about the host again.
+ */
+function runnerFor(present: ReadonlyArray<MotionToolName>): FfmpegRunner {
   return async (command) => {
-    const executableName = command.executable.split(/[\\/]/).at(-1) ?? command.executable;
-    const raw = executableName.replace(/\.exe$/i, "");
-    const name = /^(chrome|chromium|google chrome)/i.test(raw) ? "chromium" : raw;
-    return present.includes(name)
-      ? { exitCode: 0, stdout: `${name} version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers`, stderr: "" }
+    const tool = pins.toolFor(command.executable);
+    if (!tool) throw new Error(`This suite pinned the tool executables, but the probe resolved ${command.executable}.`);
+    return present.includes(tool)
+      ? { exitCode: 0, stdout: `${tool} version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers`, stderr: "" }
       : { exitCode: 1, stdout: "", stderr: `spawn ${command.executable} ENOENT` };
   };
 }
 
 describe("motion doctor", () => {
+  beforeAll(() => { pins = pinMotionToolExecutables("doctor-command"); });
+  afterAll(() => pins.release());
+
   it("reports a missing tool as a SUCCESSFUL report, not a failed command", async () => {
     const result = await doctorCommand(["--json"], { ffmpegRunner: runnerFor([]) }) as Record<string, any>;
 

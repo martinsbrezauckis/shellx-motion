@@ -6,8 +6,7 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
 
 ## Product and trust boundary
 
-- Local-first, self-hosted engine for a user's machine; hosted/SaaS execution is not a current
-  product requirement.
+- Local-first, self-hosted engine that runs on a user's own machine.
 - Declarative Motion layers cannot execute arbitrary code, fetch remote assets implicitly, or raise
   host resource limits. The `web`/`html`/`canvas` layer family is the deliberate exception: it
   renders package-local HTML in Chromium with JavaScript enabled, fenced by the network and
@@ -144,8 +143,8 @@ CLI/SDK and hand Cut rendered media instead.
   corrected when `motion.lottie.import` / `motion.dotlottie.import` were wired up — see above.)
 - `validate` reports schema/asset/manifest results in its JSON envelope only. It emits no receipt
   and creates no `receipts/` directory (`validateCommand` in `packages/cli/src/main.ts`).
-- Hosted execution, collaborative cloud state, marketplace delivery, and remote push are outside the
-  current local-first engine scope.
+- The engine's scope is the local render: authoring, rendering and evidence on one machine. Hosting,
+  shared cloud state, marketplace delivery and remote push belong to the products built on top of it.
 
 ## Near-term roadmap (post-0.1.0, not yet implemented)
 
