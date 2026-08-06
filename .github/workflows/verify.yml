@@ -96,14 +96,34 @@ jobs:
           /usr/bin/google-chrome --version
 
       # Same reasoning as the browser guard above, for the other external program Motion does not
-      # ship. The runner image happens to carry FFmpeg today, and "happens to" is the problem: when
-      # an image drops it, encode tests fail deep inside a render with a spawn error instead of
-      # saying which binary is missing. Fail here, in one line, naming it.
-      - name: Confirm FFmpeg is available
+      # ship — except this one stopped being hypothetical. The step used to only CONFIRM, on the
+      # reasoning that the runner image "happens to carry FFmpeg today, and 'happens to' is the
+      # problem". The first CI run of this repository (2026-08-06) proved the point: ubuntu-latest
+      # no longer ships FFmpeg, and the guard failed the build in one line naming the binary,
+      # which is what it was for.
+      #
+      # So it now ENSURES rather than asserts: install from the distro only when the image lacks
+      # it, then verify. Installed via apt-get rather than a third-party setup action on purpose —
+      # every third-party action in this file is SHA-pinned against a mutable-tag supply-chain
+      # attack, and the cheapest way to not pin another one is to not add another one. Ubuntu's
+      # own package is already in the runner's trust boundary.
+      # ShellX Cut's CI already solved this and passed where Motion failed: it installs ffmpeg in
+      # its Linux-deps step instead of assuming the image. The retry and noninteractive flags below
+      # are Cut's, adopted rather than reinvented — apt on a fresh runner intermittently races its
+      # mirrors, and a release gate that fails on a flaky mirror teaches people to re-run instead
+      # of to read.
+      - name: Ensure FFmpeg is available
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            echo "FFmpeg is not in this runner image; installing it from the distro." >&2
+            sudo apt-get -o Acquire::Retries=3 update -qq
+            sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends ffmpeg
+          fi
           for tool in ffmpeg ffprobe; do
             command -v "$tool" >/dev/null || {
-              echo "No $tool on PATH. The runner image changed; install it" \
+              echo "No $tool on PATH after the install attempt. Install it" \
                    "(apt-get install -y ffmpeg) or set SHELLX_MOTION_${tool^^}." >&2
               exit 1
             }
