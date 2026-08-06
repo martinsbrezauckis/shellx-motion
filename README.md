@@ -11,6 +11,8 @@ It is built to be operated by an AI agent rather than by a person clicking a tim
 capability is a typed command an agent can discover and call, over MCP, HTTP, or the CLI. It runs
 on your own machine — your files never leave it.
 
+**[Overview and demo films](https://theshellx.com/motion)** · **[Manual](https://docs.theshellx.com/manual/motion/)** — every command, searchable, generated from this repository.
+
 ### What goes in, what comes out
 
 | in | out |
