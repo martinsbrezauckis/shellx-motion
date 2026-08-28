@@ -30,6 +30,8 @@ import { startMotionDebugServer, type MotionDebugServerHandle } from "./index";
 
 const servers: MotionDebugServerHandle[] = [];
 const tempRoots: string[] = [];
+/** Receipt-backed reads use the Linux-only descriptor-relative stable reader. */
+const itLinux = process.platform === "linux" ? it : it.skip;
 const TERMINAL_JOB_FIXTURE_NOW_MS = 1_785_681_431_004;
 
 afterEach(async () => {
@@ -103,6 +105,8 @@ interface JobStatusView {
 }
 
 const TEST_CAPABILITY_TOKEN = "workbench-contract-token-0000000000000000000000";
+/** Stable host identity for receipts owned by this Workbench fixture. */
+const TEST_CALLER_ID = "debug-server:workbench-contract";
 
 /** Start a real loopback server and return an authenticated POST /debug dispatcher. */
 async function debugServer(context: Record<string, unknown> = {}) {
@@ -111,7 +115,7 @@ async function debugServer(context: Record<string, unknown> = {}) {
     port: 0,
     capabilityToken: TEST_CAPABILITY_TOKEN,
     grantedTier: "render_motion",
-    context: { renderPackageRoots: [STATIC_PACKAGE_ROOT, MOTION_PACKAGE_ROOT], ...context }
+    context: { callerId: TEST_CALLER_ID, renderPackageRoots: [STATIC_PACKAGE_ROOT, MOTION_PACKAGE_ROOT], ...context }
   });
   servers.push(handle);
   const dispatch = async (command: string, args: unknown = {}, requestedTier = "read_motion") => {
@@ -140,14 +144,14 @@ function receipt(input: { id: string; operation: string; status: string; created
     inputHashes: { motion: "a".repeat(64) },
     createdAt: input.createdAt,
     lane: "ffmpeg",
-    output: { path: input.outputPath },
+    output: { path: input.outputPath, callerId: TEST_CALLER_ID },
     artifacts: [{ role: "rendered_media", path: input.outputPath, status: "available", mediaType: "video/mp4", primary: true }],
     warnings: input.warnings ?? []
   };
 }
 
 describe("motion.receipts.panel — the field both browser panels bind to", () => {
-  it.each(Object.entries(BROWSER_SOURCES))(
+  itLinux.each(Object.entries(BROWSER_SOURCES))(
     "%s reads the rows a real motion.receipts.panel response carries",
     async (_name, source) => {
       const root = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-contract-"));
@@ -181,7 +185,7 @@ describe("motion.receipts.panel — the field both browser panels bind to", () =
     30000
   );
 
-  it.each(Object.entries(BROWSER_SOURCES))(
+  itLinux.each(Object.entries(BROWSER_SOURCES))(
     "%s reports a capped page as a page, not as the whole root",
     async (_name, source) => {
       const root = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-contract-"));
@@ -209,7 +213,7 @@ describe("motion.receipts.panel — the field both browser panels bind to", () =
     30000
   );
 
-  it("returns no rows for the fields the browsers used to read", async () => {
+  itLinux("returns no rows for the fields the browsers used to read", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-contract-"));
     tempRoots.push(root);
     await writeReceipt(root, "render.receipt.json", receipt({

@@ -30,12 +30,16 @@ import { startMotionDebugServer } from "./index.js";
 import { SDK_OPERATION_TIER } from "./sdk-operation-policy.js";
 
 const TOKEN = "sdk-transport-fence-test-token-0000000000000000";
+/** The host-authenticated owner of this fixture's receipt store. */
+const TEST_CALLER_ID = "debug-server:sdk-transport-fence";
 /** Marker that only ever exists inside the victim's receipt store. */
 const VICTIM_MARKER = "victim-only-package-id-that-must-not-cross-the-fence";
 
 let hostRoot: string;
 let victimRoot: string;
 const servers: Array<{ close: () => Promise<void> }> = [];
+/** Receipt-backed reads use the Linux-only descriptor-relative stable reader. */
+const itLinux = process.platform === "linux" ? it : it.skip;
 
 interface SdkAnswer { status: number; body: Record<string, unknown>; text: string }
 
@@ -75,7 +79,7 @@ async function writeVictimJobReceipt(root: string): Promise<void> {
     inputHashes: { motion: "a".repeat(64) },
     createdAt: "2026-07-01T00:00:00.000Z",
     lane: "ffmpeg",
-    output: { path: join(root, "victim.mp4"), preset: "mp4-h264" },
+    output: { path: join(root, "victim.mp4"), preset: "mp4-h264", callerId: TEST_CALLER_ID },
     warnings: []
   }, null, 2)}\n`, "utf8");
 }
@@ -100,7 +104,9 @@ async function startFencedServer(
     port: 0,
     grantedTier,
     capabilityToken: TOKEN,
-    ...(context ? { context } : {})
+    // A receipt reader is owner-scoped. This is host context, never request data,
+    // and therefore models the stable identity a real embedding host supplies.
+    context: { callerId: TEST_CALLER_ID, ...context }
   });
   servers.push(server);
   return server.url;
@@ -127,7 +133,7 @@ describe("POST /sdk is a fenced transport", () => {
     expect(answer.text).not.toContain(VICTIM_MARKER);
   });
 
-  it("still serves the host's own receipts root, so the fence is a fence and not a wall", async () => {
+  itLinux("still serves the host's own receipts root, so the fence is a fence and not a wall", async () => {
     await writeVictimJobReceipt(hostRoot);
     const url = await startFencedServer({ receiptsRoot: hostRoot });
 
@@ -190,10 +196,10 @@ describe("POST /sdk is a fenced transport", () => {
   });
 
   it("refuses a foreign receiptsRoot on a server that declared no root at all", async () => {
-    // `startMotionDebugServer` defaults `context` to `{}`. The shipped CLI passes a root, so the
-    // shipped product was safe and every library embedder was not. A boundary with nothing to
-    // compare against must refuse, not admit: "caller and host are the same party" is exactly the
-    // thing that is not true on a loopback server behind a bearer token.
+    // This fixture supplies only its host-authenticated caller identity and deliberately leaves
+    // receiptsRoot undeclared. A boundary with nothing to compare against must refuse, not admit:
+    // "caller and host are the same party" is exactly the thing that is not true on a loopback
+    // server behind a bearer token.
     const url = await startFencedServer();
 
     const answer = await postSdk(url, "status", { receiptsRoot: victimRoot });
