@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { chromium } from "playwright-core";
 import { LocalMotionJobGovernor, describeActiveScriptSources, loadMotionPackage, streamingFrameTimestampMs, type AgentScriptProvenanceAuthority, type MotionPackage } from "@shellx-motion/core";
@@ -22,6 +23,7 @@ import {
 } from "./browser-streaming-producer-evidence";
 
 const tempDirs: string[] = [];
+const fixturePackagesRoot = fileURLToPath(new URL("../../../fixtures/packages", import.meta.url));
 
 describe("browser streamed frame producer", () => {
   afterEach(async () => {
@@ -402,7 +404,7 @@ describe("browser streamed frame producer", () => {
 });
 
 async function compactEnvironmentMotionBlurFixture(): Promise<MotionPackage> {
-  const pkg = await loadMotionPackage(resolve("../../fixtures/packages/environment-rain-cinematic"));
+  const pkg = await loadMotionPackage(join(fixturePackagesRoot, "environment-rain-cinematic"));
   const compact = structuredClone(pkg);
   compact.motion.durationMs = 100;
   compact.motion.width = 320;
@@ -417,7 +419,7 @@ async function compactEnvironmentMotionBlurFixture(): Promise<MotionPackage> {
 }
 
 async function warningAndHandoffFixture(): Promise<MotionPackage> {
-  const pkg = await loadMotionPackage(resolve("../../fixtures/packages/lower-third"));
+  const pkg = await loadMotionPackage(join(fixturePackagesRoot, "lower-third"));
   const compact = structuredClone(pkg);
   compact.motion.durationMs = 1;
   compact.motion.width = 320;

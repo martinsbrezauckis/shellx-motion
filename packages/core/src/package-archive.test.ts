@@ -1,6 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 import { loadMotionPackage } from "./package";
@@ -10,7 +11,7 @@ import {
   type MotionPackageArchiveExtractionLimits
 } from "./package-archive";
 
-const fixtureRoot = resolve("../../fixtures/packages/lower-third");
+const fixtureRoot = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
 
 describe("package archive", () => {
   it("writes a deterministic portable archive with all package files and a receipt", async () => {
