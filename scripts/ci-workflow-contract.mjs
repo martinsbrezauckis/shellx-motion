@@ -82,6 +82,8 @@ requireText("host verification", host, "src/path-contract.test.ts");
 forbidText("host verification", host, "SHELLX_MOTION_BROWSER");
 
 const verify = contents.get("verify");
+requireText("verify", verify, "timeout-minutes: 60");
+requireText("verify", verify, "SHELLX_MOTION_BROWSER: /usr/bin/google-chrome");
 requireText("verify", verify, "run: pnpm test");
 forbidText("verify", verify, "pnpm run test:implementation");
 
