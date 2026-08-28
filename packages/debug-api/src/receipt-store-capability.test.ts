@@ -73,7 +73,7 @@ describe("stable receipt-store capability", () => {
   });
 
   it("keeps root-free lifecycle and snapshot reads available on an unsupported host", async () => {
-    const rootFree: MotionDebugContext = { tier: "read_motion", stableReceiptStorePlatform: "darwin" };
+    const rootFree: MotionDebugContext = { tier: "read_motion", stableReceiptStorePlatform: "darwin", callerId: "root-free-reader" };
     await expect(dispatchDebugCommand("motion.prompt.queue", {}, rootFree)).resolves.toMatchObject({ ok: true, result: { jobCount: 0 } });
     await expect(dispatchDebugCommand("motion.render.status", {}, rootFree)).resolves.toMatchObject({ ok: true, result: { jobCount: 0 } });
     await expect(dispatchDebugCommand("motion.agent.snapshot", {}, rootFree)).resolves.toMatchObject({ ok: true });

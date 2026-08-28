@@ -8,8 +8,9 @@ Motion converts **HTML to video**, **JSON to MP4**, and **Lottie to MP4**. Give 
 file, or an animation, and it renders finished video: MP4, WebM, GIF, or a PNG sequence.
 
 It is built to be operated by an AI agent rather than by a person clicking a timeline. Its typed
-Debug/MCP control plane and its documented CLI and SDK subsets run on your own machine — your files
-never leave it.
+Debug/MCP control plane and its documented CLI and SDK subsets run on your own machine. Rendering
+and file operations are local, while agent-assisted authoring can send prompts and permitted
+context to the external provider CLI you configure, under that provider's terms.
 
 **[Overview and demo films](https://theshellx.com/motion)** · **[Manual](https://docs.theshellx.com/manual/motion/)** — every command, searchable, generated from this repository.
 
@@ -75,8 +76,10 @@ The static registry is the complete protocol inventory. Authority-bound tools re
 and fail closed with `capability_unavailable` when their trusted host service is absent; the host
 cannot turn catalog or request data into authority.
 
-**Local-first and self-hosted.** Your footage, brand assets, and prompts never leave the machine.
-The server binds loopback only; remote publishing is not enabled.
+**Local-first and self-hosted.** Your footage and brand assets stay in local, host-approved roots
+unless you explicitly supply them to an external tool or network-enabled package surface. Agent
+prompts may be sent to the configured provider CLI. The server binds loopback only; remote
+publishing is not enabled.
 
 **Declarative layers cannot run code — but `web` layers can.** Almost every layer type is pure
 data: shapes, text, keyframes, environments, particles, and fixed 3D scenes declare what to draw and

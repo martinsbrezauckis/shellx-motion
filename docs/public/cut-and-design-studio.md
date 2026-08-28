@@ -129,8 +129,11 @@ film math it has not fixture-proven as receiver-exact.
   not delivered artifacts (Source separately derives its review storyboard).
   They reject force, dry-run, editable/live/auto modes, native/GPU/frame-lane
   controls, non-MP4 presets, audio, and injected renderer/FFmpeg/clock fields.
-  Script may include documented start, duration, and track placement. Motion
-  returns the plan; it does not apply anything to Cut.
+  Script may include documented start, duration, and track placement. Its P2B
+  JSON source is capped at 1 MiB before parsing, then normalized under the
+  scripted-video string, template-variable, and generated-work limits documented
+  in [Host interchange and archive limits](interchange-limits.md). Motion returns
+  the plan; it does not apply anything to Cut.
 
 - **Legacy Cut Generate-to-Cut (separate from atomic P2B Script-to-Cut).** Cut's
   Generate path emits `shellx-motion/scripted-video@1`;

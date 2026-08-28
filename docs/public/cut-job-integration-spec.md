@@ -274,9 +274,9 @@ motion_job_retry   { "args": { "jobId": "cut:failed-42" } }
 motion_job_submit  { "args": { …, "jobId": "cut:render-42" } }
 ```
 
-The caller id comes from the server's context (`context.callerId`), or is derived from the observed
-transport as `${transport}:${label}` when the host supplies none. **Set it explicitly** — the
-derived value is stable but not meaningful to Cut.
+The caller id comes from the server's host-authenticated context (`context.callerId`); an actor label
+is attribution and never substitutes for this owner principal. Direct CLI and local-SDK hosts have
+stable local defaults, but Cut must set it explicitly to its workspace identity.
 
 ---
 

@@ -16,6 +16,8 @@ import { admitBoundedPackageTree, publishAdmittedPackageTree } from "./bounded-p
 import type { PrivateConnectorDelivery } from "./connector-delivery";
 
 export const P2B_MAX_MEDIA_BYTES = 64 * 1024 * 1024;
+/** Scripted-video JSON is control data, not media. Bound it before JSON.parse. */
+export const P2B_MAX_SCRIPT_INPUT_BYTES = 1 * 1024 * 1024;
 
 /** Refuse every path-bound producer/content lane before Browser execution. */
 export function assertP2BPathlessExecutionInput(pkg: MotionPackage, label: string): void {

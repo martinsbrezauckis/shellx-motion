@@ -13,6 +13,10 @@ interface RenderLifecycleSnapshot {
 
 export interface RenderLifecycleReadServices {
   receiptsRoot?: string;
+  /** Host-authenticated logical caller; never derived from command input. */
+  lifecycleCallerId?: string;
+  /** Host-operator grant for the same exceptional all-owner view as motion.job.*. */
+  lifecycleCrossCallerScopeGranted?: boolean;
   readRenderLifecycleState?: (receiptsRoot?: string) => Promise<RenderLifecycleSnapshot>;
 }
 
@@ -23,6 +27,9 @@ export async function dispatchRenderLifecycleReadCommand(
 ): Promise<MotionDebugResult | null> {
   if (command !== "motion.render.status" && command !== "motion.render.queue") return null;
   if (!services.readRenderLifecycleState) return capabilityUnavailable("Render lifecycle receipt reading is unavailable.");
+  if (!services.lifecycleCallerId?.trim()) {
+    return ownerPrincipalUnavailable();
+  }
   const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
   const snapshot = await services.readRenderLifecycleState(receiptsRoot);
   return command === "motion.render.status"
@@ -62,4 +69,16 @@ function queueResult(receiptsRoot: string | undefined, snapshot: RenderLifecycle
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return { ok: false, error: { code: "capability_unavailable", message, suggestedAction: "Configure the required host capability and retry." }, warnings: [] };
+}
+
+function ownerPrincipalUnavailable(): MotionDebugResult {
+  return {
+    ok: false,
+    error: {
+      code: "capability_unavailable",
+      message: "Render lifecycle access requires a server-authenticated owner principal.",
+      suggestedAction: "Ask the host operator to use an authenticated Motion transport or configure a trusted in-process caller identity."
+    },
+    warnings: []
+  };
 }

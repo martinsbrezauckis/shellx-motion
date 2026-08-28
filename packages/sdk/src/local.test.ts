@@ -251,7 +251,7 @@ describe("local Motion SDK", () => {
     const status = await sdk.status({ receiptsRoot });
     expect(status).toMatchObject({ ok: true, output: { jobs: [expect.objectContaining({ jobId: rendered.output.receiptId, state: "succeeded" })], stateCounts: { succeeded: 1 } } });
 
-    const queued = receipt({ id: "render-sdk-queued", operation: "render.final", status: "not_run", packageId: "pkg_lower_third", output: { path: join(artifactRoot, "queued.mp4") } });
+    const queued = receipt({ id: "render-sdk-queued", operation: "render.final", status: "not_run", packageId: "pkg_lower_third", output: { callerId: "sdk:local", path: join(artifactRoot, "queued.mp4") } });
     await writeFile(join(receiptsRoot, "queued.receipt.json"), `${JSON.stringify(queued, null, 2)}\n`);
     const cancelled = await sdk.cancel({ receiptsRoot, jobId: queued.id, reason: "user stopped export" });
     expect(cancelled).toMatchObject({ ok: false, error: { code: "job_unknown" } });

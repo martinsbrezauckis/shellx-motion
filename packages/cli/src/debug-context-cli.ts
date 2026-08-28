@@ -75,6 +75,8 @@ interface CliDebugDispatchContextInput {
   debugName: MotionDebugCommand;
   tier: MotionDebugContext["tier"];
   actor: ReceiptActor;
+  /** Host-selected lifecycle/job principal; never derived from the actor label. */
+  callerId: string;
   scratchRoot?: string;
   cliHostReceiptStore?: { receiptsRoot: string; writeReceipt: NonNullable<MotionDebugContext["hostReceiptWriter"]> };
   cliReceiptsRoot?: string;
@@ -99,6 +101,10 @@ export function cliDebugDispatchContext(input: CliDebugDispatchContextInput): Mo
   return {
     tier: input.tier,
     actor: input.actor,
+    callerId: input.callerId,
+    // The direct shell operator already owns the local receipt files and is the explicit host.
+    // Keep legacy ownerless lifecycle evidence readable without weakening remote transports.
+    crossCallerJobScope: true,
     ...(input.scratchRoot
       ? { scratchRoot: input.scratchRoot }
       : input.cliHostReceiptStore

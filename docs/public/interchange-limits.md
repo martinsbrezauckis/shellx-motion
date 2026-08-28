@@ -57,6 +57,13 @@ and 1,024 tags. Before generating Motion data, it reserves at most 128 generated
 generated keyframes per frame, and 8,192 layers and 65,536 keyframes across the request. Inputs that
 would exceed those projected limits refuse instead of partially lowering.
 
+P2B Script-to-Cut applies a tighter 1 MiB source limit before it reads or parses file-backed JSON.
+Every retained scripted-video string is limited to 16 KiB of UTF-8. `template.variables` is cloned
+as JSON data only and is limited to 64 KiB, eight nested levels, 64 entries in one array or object,
+and 512 values in total. Receipt hashing uses the normalized closed schema rather than ignored
+caller fields, and package JSON is structurally measured against the 16 MiB interchange-file limit
+before a complete serialized buffer is allocated.
+
 Archive extraction remains streamed and additionally refuses an archive over 512 MiB, an expanded
 package over 1 GiB, an entry over 256 MiB, more than 10,000 entries, a path deeper than 32
 components, a path over 1,024 UTF-8 bytes, or JSON over 16 MiB. These are upper bounds, not host
@@ -81,6 +88,12 @@ authenticated caller identity for that exact resolution. The immutable connector
 that owner, and an explicit retry uses the retained owner rather than a caller-nominated replacement.
 The [Cut job integration specification](cut-job-integration-spec.md) defines the corresponding host
 setup and retry lifecycle.
+
+Receipt-derived `motion.render.status`, `motion.render.queue`, `motion.render.cancel`, and
+`motion.render.retry` use that same host-authenticated caller boundary. New final and control
+receipts retain their logical owner; reads and controls ignore another caller's receipts. Legacy
+ownerless receipts fail closed unless the host explicitly grants the operator-level cross-caller
+scope already used by `motion.job.*`.
 
 On Windows, an agent executable must resolve to a canonical regular `.exe`, `.com`, `.cmd`, `.bat`,
 or `.ps1` target from an absolute target or an absolute `PATH` entry. Motion revalidates that target

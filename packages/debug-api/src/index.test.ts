@@ -17365,7 +17365,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.render.status",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(result.ok).toBe(true);
@@ -17490,7 +17490,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.render.queue",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(result.ok).toBe(true);
@@ -17599,7 +17599,7 @@ describe("motion debug API", () => {
       const cancel = await dispatchDebugCommand(
         "motion.render.cancel",
         { receiptsRoot, receiptId: "render-final-queued", reason: "user stopped export" },
-        { tier: "render_motion" }
+        { tier: "render_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(cancel.ok).toBe(true);
@@ -17630,7 +17630,7 @@ describe("motion debug API", () => {
         });
       }
 
-      const status = await dispatchDebugCommand("motion.render.status", { receiptsRoot }, { tier: "read_motion" });
+      const status = await dispatchDebugCommand("motion.render.status", { receiptsRoot }, { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true });
 
       expect(status.ok).toBe(true);
       if (status.ok) {
@@ -17680,7 +17680,7 @@ describe("motion debug API", () => {
       const retry = await dispatchDebugCommand(
         "motion.render.retry",
         { receiptsRoot, receiptId: "render-final-failed", reason: "try again" },
-        { tier: "render_motion" }
+        { tier: "render_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(retry.ok).toBe(true);
@@ -17712,7 +17712,7 @@ describe("motion debug API", () => {
         });
       }
 
-      const status = await dispatchDebugCommand("motion.render.status", { receiptsRoot }, { tier: "read_motion" });
+      const status = await dispatchDebugCommand("motion.render.status", { receiptsRoot }, { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true });
 
       expect(status.ok).toBe(true);
       if (status.ok) {

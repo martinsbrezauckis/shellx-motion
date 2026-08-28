@@ -41,7 +41,7 @@ export function localDebugContext(
   return {
     tier,
     actor: sdkActor(tier, options),
-    ...(options.callerId?.trim() ? { callerId: options.callerId.trim() } : {}),
+    callerId: options.callerId?.trim() || "sdk:local",
     ...(resolvedScratchRoot ? { scratchRoot: resolvedScratchRoot } : {}),
     ...(options.receiptsRoot ? { receiptsRoot: options.receiptsRoot } : {}),
     ...(options.attestedRenderReuseProducerAuthority

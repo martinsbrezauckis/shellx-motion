@@ -7,6 +7,7 @@ describe("cliDebugDispatchContext", () => {
       debugName: "motion.render.final",
       tier: "render_motion",
       actor: { kind: "host", label: "cli", transport: "cli", sessionId: "cli-test", grantedTier: "render_motion" },
+      callerId: "cli:local",
       scratchRoot: "/host/scratch",
       cliReceiptsRoot: "/operator/receipts",
       renderRoots: {
@@ -20,7 +21,9 @@ describe("cliDebugDispatchContext", () => {
       scratchRoot: "/host/scratch",
       renderPackageRoots: ["/packages/lower-third"],
       renderInputRoots: ["/packages/lower-third", "/workflow"],
-      renderOutputRoots: ["/renders"]
+      renderOutputRoots: ["/renders"],
+      callerId: "cli:local",
+      crossCallerJobScope: true
     });
     expect(context.receiptsRoot).toBeUndefined();
   });
