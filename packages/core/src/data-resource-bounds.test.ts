@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   expandMotionPackageRows,
   MAX_BATCH_QUALITY_ROWS,
+  MAX_MOTION_DATA_ROW_BYTES,
   MAX_MOTION_DATA_ROW_FIELD_BYTES,
   MAX_MOTION_DATA_ROW_FIELDS,
   MAX_MOTION_DATA_ROW_ID_BYTES,
   MAX_MOTION_DATA_ROW_NESTING,
+  MAX_MOTION_DATA_ROW_VALUES,
   parseMotionDataRows,
   parseMotionDataRowsCsv,
   parseMotionDataRowsText,
@@ -44,6 +46,47 @@ describe("motion data resource bounds", () => {
       .toThrow(`Motion data rows must contain at most ${MAX_BATCH_QUALITY_ROWS} rows.`);
     expect(() => parseMotionDataRowsCsv(["id", ...compactRows.map((_, index) => `r${index}`), "overflow"].join("\n")))
       .toThrow(`Motion data rows must contain at most ${MAX_BATCH_QUALITY_ROWS} rows.`);
+  });
+
+  it("bounds ignored JSON wrapper members before JSON.parse while admitting ordinary metadata", () => {
+    const wrapped = JSON.stringify({
+      schema: "shellx-motion/data-rows@1",
+      source: { campaign: "autumn", labels: ["launch", "social"] },
+      rows: [{ id: "ada", title: "Ada Lovelace" }]
+    });
+    expect(parseMotionDataRowsText(wrapped)).toMatchObject([{ id: "ada", values: { title: "Ada Lovelace" } }]);
+
+    const tooManyWrapperFields = Array.from(
+      { length: MAX_MOTION_DATA_ROW_FIELDS },
+      (_, index) => `"field${index}":0`
+    ).join(",");
+    // The invalid rows value is never inspected: this is a lexical pre-JSON.parse refusal.
+    expect(() => parseMotionDataRowsText(`{"metadata":{${tooManyWrapperFields}},"rows":[invalid]}`))
+      .toThrow(`${MAX_MOTION_DATA_ROW_FIELDS}-field limit`);
+
+    const tooManyWrapperValues = Array.from({ length: MAX_MOTION_DATA_ROW_VALUES + 1 }, () => "0").join(",");
+    expect(() => parseMotionDataRowsText(`{"metadata":[${tooManyWrapperValues}],"rows":[{"id":"unreached"}]}`))
+      .toThrow(`${MAX_MOTION_DATA_ROW_VALUES}-value limit`);
+
+    const wrapperStringsOverBudget = Array.from(
+      { length: 17 },
+      (_, index) => `"field${index}":"${"x".repeat(MAX_MOTION_DATA_ROW_FIELD_BYTES)}"`
+    ).join(",");
+    expect(() => parseMotionDataRowsText(`{"metadata":{${wrapperStringsOverBudget}},"rows":[{"id":"unreached"}]}`))
+      .toThrow(`${MAX_MOTION_DATA_ROW_BYTES}-byte total value limit`);
+  });
+
+  it("bounds CSV header allocation at the shared field ceiling and admits a complete ceiling-width row", () => {
+    const headers = ["id", ...Array.from({ length: MAX_MOTION_DATA_ROW_FIELDS - 1 }, (_, index) => `field${index}`)];
+    const values = ["ada", ...Array.from({ length: MAX_MOTION_DATA_ROW_FIELDS - 1 }, (_, index) => `value${index}`)];
+    const [row] = parseMotionDataRowsCsv([headers.join(","), values.join(",")].join("\n"));
+    expect(Object.keys(row.values)).toHaveLength(MAX_MOTION_DATA_ROW_FIELDS);
+    expect(row.values).toMatchObject({ id: "ada", field0: "value0", field158: "value158" });
+
+    const tooManyHeaders = Array.from({ length: MAX_MOTION_DATA_ROW_FIELDS + 1 }, (_, index) => `field${index}`).join(",");
+    // The unterminated data record is never retained because the 161st header is refused first.
+    expect(() => parseMotionDataRowsCsv(`${tooManyHeaders}\n"unterminated`))
+      .toThrow(`${MAX_MOTION_DATA_ROW_FIELDS}-field limit`);
   });
 
   it("bounds fields, ids, nesting, and prototype-sensitive row keys before hashing", () => {

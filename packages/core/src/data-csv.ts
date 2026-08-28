@@ -1,4 +1,8 @@
-import { MAX_BATCH_QUALITY_ROWS, MAX_MOTION_DATA_ROW_FIELD_BYTES } from "./data-file-load";
+import {
+  MAX_BATCH_QUALITY_ROWS,
+  MAX_MOTION_DATA_ROW_FIELD_BYTES,
+  MAX_MOTION_DATA_ROW_FIELDS
+} from "./data-file-load";
 
 /** Parse CSV incrementally enough to retain only the header plus 256 non-empty records. */
 export function parseBoundedMotionDataRowsCsvRecords(input: string): string[][] {
@@ -18,6 +22,9 @@ export function parseBoundedMotionDataRowsCsvRecords(input: string): string[][] 
     field += character;
   };
   const closeField = (): void => {
+    if (record.length >= MAX_MOTION_DATA_ROW_FIELDS) {
+      throw new Error(`Motion CSV data row exceeds the ${MAX_MOTION_DATA_ROW_FIELDS}-field limit.`);
+    }
     record.push(field);
     field = "";
     fieldBytes = 0;

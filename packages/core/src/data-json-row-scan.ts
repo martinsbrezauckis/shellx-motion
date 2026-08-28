@@ -42,6 +42,7 @@ class MotionDataJsonScanner {
     this.expect("{");
     this.skipWhitespace();
     let foundRows = false;
+    const wrapperBudget: LexicalRowBudget = { fieldCount: 0, valueCount: 0, stringBytes: 0 };
     if (this.consume("}")) return;
     while (true) {
       const key = this.scanString(MAX_MOTION_DATA_ROW_FIELD_BYTES, "root key");
@@ -53,7 +54,8 @@ class MotionDataJsonScanner {
         foundRows = true;
         this.scanRowsArray();
       } else {
-        this.scanGenericValue(0);
+        this.chargeGenericField(key, `ignored wrapper.${key}`, wrapperBudget);
+        this.scanGenericValue(wrapperBudget, 0, `ignored wrapper.${key}`);
       }
       this.skipWhitespace();
       if (this.consume("}")) return;
@@ -144,16 +146,44 @@ class MotionDataJsonScanner {
     }
   }
 
-  private scanGenericValue(depth: number): void {
+  private chargeGenericField(key: string, path: string, budget: LexicalRowBudget): void {
+    budget.fieldCount += 1;
+    if (budget.fieldCount > MAX_MOTION_DATA_ROW_FIELDS) {
+      throw new Error(`Motion data rows JSON ${path} exceeds the ${MAX_MOTION_DATA_ROW_FIELDS}-field limit.`);
+    }
+    this.chargeGenericString(key, path, budget);
+  }
+
+  private chargeGenericString(value: string, path: string, budget: LexicalRowBudget): void {
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (bytes > MAX_MOTION_DATA_ROW_FIELD_BYTES) {
+      throw new Error(`Motion data rows JSON ${path} exceeds the ${MAX_MOTION_DATA_ROW_FIELD_BYTES}-byte field limit.`);
+    }
+    budget.stringBytes += bytes;
+    if (budget.stringBytes > MAX_MOTION_DATA_ROW_BYTES) {
+      throw new Error(`Motion data rows JSON ${path} exceeds the ${MAX_MOTION_DATA_ROW_BYTES}-byte total value limit.`);
+    }
+  }
+
+  private scanGenericValue(budget: LexicalRowBudget, depth: number, path: string): void {
     if (depth > MAX_NON_ROW_JSON_NESTING) throw new Error("Motion data rows JSON has excessive non-row nesting.");
+    budget.valueCount += 1;
+    if (budget.valueCount > MAX_MOTION_DATA_ROW_VALUES) {
+      throw new Error(`Motion data rows JSON ${path} exceeds the ${MAX_MOTION_DATA_ROW_VALUES}-value limit.`);
+    }
     this.skipWhitespace();
     const character = this.peek();
-    if (character === "\"") { this.scanString(undefined, "JSON string"); return; }
+    if (character === "\"") {
+      this.chargeGenericString(this.scanString(MAX_MOTION_DATA_ROW_FIELD_BYTES, path), path, budget);
+      return;
+    }
     if (character === "{") {
       this.expect("{"); this.skipWhitespace(); if (this.consume("}")) return;
       while (true) {
-        this.scanString(MAX_MOTION_DATA_ROW_FIELD_BYTES, "root key"); this.skipWhitespace(); this.expect(":");
-        this.scanGenericValue(depth + 1); this.skipWhitespace();
+        const key = this.scanString(MAX_MOTION_DATA_ROW_FIELD_BYTES, path);
+        this.chargeGenericField(key, `${path}.${key}`, budget);
+        this.skipWhitespace(); this.expect(":");
+        this.scanGenericValue(budget, depth + 1, `${path}.${key}`); this.skipWhitespace();
         if (this.consume("}")) return;
         this.expect(","); this.skipWhitespace();
       }
@@ -161,7 +191,7 @@ class MotionDataJsonScanner {
     if (character === "[") {
       this.expect("["); this.skipWhitespace(); if (this.consume("]")) return;
       while (true) {
-        this.scanGenericValue(depth + 1); this.skipWhitespace();
+        this.scanGenericValue(budget, depth + 1, path); this.skipWhitespace();
         if (this.consume("]")) return;
         this.expect(","); this.skipWhitespace();
       }

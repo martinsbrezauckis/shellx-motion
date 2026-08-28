@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
 import {
@@ -20,6 +20,7 @@ import {
   type MotionDebugContext,
   type MotionDebugResult
 } from "@shellx-motion/debug-api";
+import { loadMotionPackage } from "@shellx-motion/core";
 import {
   runHostLayoutAuthorityRepairAtStartup,
   type LayoutAuthorityRepairStartup,
@@ -130,6 +131,8 @@ export interface MotionDebugServerOptions {
   templateRoots?: string[];
   /** Host-test seam to suppress automatic checkout discovery; not a transport option. */
   useDefaultTemplateRoots?: boolean;
+  /** Host-only test seam invoked immediately before an exact poster package authority is retained. */
+  onWorkbenchPosterPackageAdmission?: (packageRoot: string) => void | Promise<void>;
   agentSnapshotSource?: MotionAgentSnapshotResourceSource;
   /** Absolute docs/public root the workbench documentation viewer serves. Defaults to the repo docs tree. */
   docsRoot?: string;
@@ -356,6 +359,7 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     artifactRootAuthorities,
     templateRoots,
     templateRootAuthorities,
+    ...(options.onWorkbenchPosterPackageAdmission ? { onWorkbenchPosterPackageAdmission: options.onWorkbenchPosterPackageAdmission } : {}),
     workbenchArtifactSessions: createWorkbenchArtifactSessions(),
     sdkTransport: options.sdkTransport ?? createLocalMotionSdkTransport(localSdkOptionsFromDebugContext({ ...serverContext, attestedRenderReuseProducerAuthority, callerId: serverContext.callerId?.trim() || jobOwnerPrincipal })),
     docsRoot: resolve(options.docsRoot ?? DEFAULT_DOCS_PUBLIC_ROOT),
@@ -596,15 +600,15 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && path === "/workbench/poster") {
-      const posterPath = resolveWorkbenchPosterHandle(
+      const posterHandle = resolveWorkbenchPosterHandle(
         workbenchArtifactSessionFromRequest(request, security.workbenchArtifactSessions),
         requestUrl.searchParams.get("handle")
       );
-      if (!posterPath) {
+      if (!posterHandle) {
         writeJson(response, 403, debugServerError("poster_not_visible", "Workbench poster requests require an opaque handle from this browser session."));
         return;
       }
-      const poster = await readWorkbenchPoster(posterPath, security.templateRoots, security.templateRootAuthorities);
+      const poster = await readWorkbenchPoster(posterHandle.path, [posterHandle.packageRoot], [posterHandle.authority]);
       if (!poster.ok) {
         writeJson(response, poster.status, debugServerError(poster.code, poster.message));
         return;
@@ -880,7 +884,13 @@ async function handleRequest(
       result,
       workbenchSession
     );
-    const workbenchPosters = posterHandlesForResult(command as MotionDebugCommand, result, workbenchSession);
+    const workbenchPosters = await posterHandlesForResult(
+      command as MotionDebugCommand,
+      result,
+      workbenchSession,
+      security.templateRootAuthorities,
+      security.onWorkbenchPosterPackageAdmission
+    );
     writeJson(response, statusForRawDebugResult(result), {
       ...result,
       command,
@@ -1355,11 +1365,13 @@ function previewArtifactHandleForResult(
  * path parameter must never turn an authenticated browser into a filesystem
  * reader, even when the path happens to sit inside a template collection.
  */
-function posterHandlesForResult(
+async function posterHandlesForResult(
   command: MotionDebugCommand,
   result: MotionDebugResult,
-  session: ReturnType<typeof workbenchArtifactSessionFromRequest>
-): Array<{ packageRoot: string; handle: string }> {
+  session: ReturnType<typeof workbenchArtifactSessionFromRequest>,
+  templateRootAuthorities: MotionDebugServerSecurityContext["templateRootAuthorities"],
+  onPackageAdmission?: MotionDebugServerSecurityContext["onWorkbenchPosterPackageAdmission"]
+): Promise<Array<{ packageRoot: string; handle: string }>> {
   if (command !== "motion.template.catalog" || !result.ok || !session) return [];
   const templates = objectRecord(result.result)?.templates;
   if (!Array.isArray(templates)) return [];
@@ -1367,12 +1379,47 @@ function posterHandlesForResult(
   for (const candidate of templates) {
     const template = objectRecord(candidate);
     const packageRoot = typeof template?.packageRoot === "string" && template.packageRoot ? template.packageRoot : null;
+    const packageId = typeof template?.packageId === "string" && template.packageId ? template.packageId : null;
+    const templateId = typeof template?.templateId === "string" && template.templateId ? template.templateId : null;
     const preview = objectRecord(template?.preview) ?? objectRecord(objectRecord(template?.metadata)?.preview);
     const poster = typeof preview?.poster === "string" && preview.poster ? preview.poster : null;
-    if (!packageRoot || !poster) continue;
-    handles.push({ packageRoot, handle: mintWorkbenchPosterHandle(session, resolve(packageRoot, poster)) });
+    if (!packageRoot || !packageId || !templateId || !poster) continue;
+    const templateRootAuthority = templateRootAuthorities.find((authority) => pathIsInsideRoot(packageRoot, authority.path));
+    if (!templateRootAuthority) continue;
+    try {
+      await templateRootAuthority.assertCurrent();
+      await onPackageAdmission?.(packageRoot);
+      const [packageAuthority] = await retainExistingArtifactRoots([packageRoot]);
+      if (!packageAuthority) continue;
+      await packageAuthority.assertCurrent();
+      if (!await currentPackageMatchesCatalog(packageRoot, packageId, templateId, poster)) continue;
+      // `loadMotionPackage` is asynchronous, so make the retained identity current again before
+      // the synchronous handle mint. A replacement after validation cannot inherit this authority.
+      await packageAuthority.assertCurrent();
+      const handle = mintWorkbenchPosterHandle(session, packageRoot, poster, packageAuthority);
+      if (handle) handles.push({ packageRoot, handle });
+    } catch {
+      // A catalog entry without a current, host-retained package authority has no poster capability.
+    }
   }
   return handles;
+}
+
+async function currentPackageMatchesCatalog(
+  packageRoot: string,
+  packageId: string,
+  templateId: string,
+  poster: string
+): Promise<boolean> {
+  const current = await loadMotionPackage(packageRoot);
+  return current.manifest.id === packageId
+    && current.template?.id === templateId
+    && current.template.metadata?.preview?.poster === poster;
+}
+
+function pathIsInsideRoot(path: string, root: string): boolean {
+  const pathFromRoot = relative(root, resolve(path));
+  return pathFromRoot === "" || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== ".." && !isAbsolute(pathFromRoot));
 }
 
 function closeServer(server: Server): Promise<void> {

@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
@@ -189,7 +189,7 @@ describe("Workbench poster session ownership", () => {
     }
   }, 180_000);
 
-  it("serves safe template posters and rejects scripted, non-SVG, caller-artifact, out-of-root, and anonymous requests", async () => {
+  it("serves safe package-local posters and refuses traversal, absolute, and backslash metadata", async () => {
     const workspaceRoot = await mkdtemp(join(TEST_WORKSPACE_ROOT, "node_modules/shellx-motion-agent-posters-workspace-"));
     const templateRoot = await mkdtemp(join(workspaceRoot, "templates-"));
     const callerArtifactRoot = await mkdtemp(join(workspaceRoot, "caller-artifacts-"));
@@ -201,7 +201,10 @@ describe("Workbench poster session ownership", () => {
     const forgedRasterPackage = await writePosterTemplatePackage(templateRoot, "forged-raster", "preview/poster.png", "<html><script>alert(1)</script></html>");
     const rasterNamedSvgPackage = await writePosterTemplatePackage(templateRoot, "raster-named-svg", "preview/poster.svg", PNG_SIGNATURE);
     const gifPackage = await writePosterTemplatePackage(templateRoot, "gif", "preview/poster.gif", Buffer.from("GIF89a\x01\x00\x01\x00\x00\x00\x00;", "latin1"));
-    const escapedPackage = await writePosterTemplatePackage(templateRoot, "escaped", relative(join(templateRoot, "escaped"), callerArtifactPosterPath));
+    const siblingPackage = await writePosterTemplatePackage(templateRoot, "sibling", "preview/private.png", PNG_SIGNATURE);
+    const traversalPackage = await writePosterTemplatePackage(templateRoot, "traversal", "../sibling/preview/private.png");
+    const absolutePackage = await writePosterTemplatePackage(templateRoot, "absolute", callerArtifactPosterPath);
+    const backslashPackage = await writePosterTemplatePackage(templateRoot, "backslash", "preview\\poster.png");
     const server = await withTrustedWorkspaceAnchor(
       await createTrustedWorkspaceAnchor(TEST_WORKSPACE_ROOT),
       async () => await startTestServer({ port: 0, templateRoots: [templateRoot], artifactRoots: [callerArtifactRoot], useDefaultTemplateRoots: false, context: { scratchRoot: callerArtifactRoot } })
@@ -254,6 +257,10 @@ describe("Workbench poster session ownership", () => {
       expect(safe.headers.get("x-content-type-options")).toBe("nosniff");
       expect(await safe.text()).toBe(SAFE_POSTER_SVG);
 
+      const sibling = await poster(handleFor(siblingPackage));
+      expect(sibling.status).toBe(200);
+      expect(Buffer.from(await sibling.arrayBuffer())).toEqual(PNG_SIGNATURE);
+
       const crossCaller = await poster(handleFor(safePackage), callerB);
       expect(crossCaller.status).toBe(403);
       expect(await crossCaller.json()).toMatchObject({ error: { code: "poster_not_visible" } });
@@ -281,9 +288,73 @@ describe("Workbench poster session ownership", () => {
       expect(gifPoster.status).toBe(400);
       expect(await gifPoster.json()).toMatchObject({ error: { code: "unsupported_poster" } });
 
-      const callerArtifactPoster = await poster(handleFor(escapedPackage));
-      expect(callerArtifactPoster.status).toBe(403);
-      expect(await callerArtifactPoster.json()).toMatchObject({ error: { code: "artifact_outside_roots" } });
+      expect(handles.has(traversalPackage)).toBe(false);
+      expect(handles.has(absolutePackage)).toBe(false);
+      expect(handles.has(backslashPackage)).toBe(false);
+    } finally {
+      await server.close();
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a package replaced after catalog discovery while preserving legitimate poster handles", async () => {
+    const workspaceRoot = await mkdtemp(join(TEST_WORKSPACE_ROOT, "node_modules/shellx-motion-poster-swap-workspace-"));
+    const templateRoot = await mkdtemp(join(workspaceRoot, "templates-"));
+    const replacementRoot = await mkdtemp(join(workspaceRoot, "replacement-"));
+    const originalBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from("catalog-original", "utf8")]);
+    const replacementBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from("replacement", "utf8")]);
+    const stableBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from("stable", "utf8")]);
+    const catalogPackage = await writePosterTemplatePackage(templateRoot, "catalog-package", "preview/original.png", originalBytes);
+    const stablePackage = await writePosterTemplatePackage(templateRoot, "stable-package", "preview/stable.png", stableBytes);
+    const replacementPackage = await writePosterTemplatePackage(replacementRoot, "replacement-package", "preview/replacement.png", replacementBytes);
+    const displacedPackage = join(workspaceRoot, "catalog-package-before-swap");
+    let swapped = false;
+    const server = await withTrustedWorkspaceAnchor(
+      await createTrustedWorkspaceAnchor(TEST_WORKSPACE_ROOT),
+      async () => await startTestServer({
+        port: 0,
+        templateRoots: [templateRoot],
+        useDefaultTemplateRoots: false,
+        context: { scratchRoot: workspaceRoot },
+        onWorkbenchPosterPackageAdmission: async (packageRoot) => {
+          if (swapped || packageRoot !== catalogPackage) return;
+          await rename(catalogPackage, displacedPackage);
+          await rename(replacementPackage, catalogPackage);
+          swapped = true;
+        }
+      })
+    );
+    try {
+      const session = await fetch(new URL("/workbench/artifact-session", server.url), { method: "POST" });
+      expect(session.status).toBe(200);
+      const cookie = session.headers.get("set-cookie")?.split(";", 1)[0];
+      expect(cookie).toMatch(/^shellx_motion_workbench_artifact_session=/);
+
+      const catalog = await fetch(new URL("/debug", server.url), {
+        method: "POST",
+        headers: { cookie: cookie!, "content-type": "application/json" },
+        body: JSON.stringify({ command: "motion.template.catalog", args: { templateRoot }, requestedTier: "read_motion" })
+      });
+      expect(catalog.status).toBe(200);
+      const body = await catalog.json() as { workbenchPosters?: Array<{ packageRoot: string; handle: string }> };
+      const handles = new Map((body.workbenchPosters ?? []).map((entry) => [entry.packageRoot, entry.handle]));
+
+      expect(swapped).toBe(true);
+      expect(await readFile(join(catalogPackage, "preview/replacement.png"))).toEqual(replacementBytes);
+      expect(handles.has(catalogPackage)).toBe(false);
+      const rawReplacement = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(join(catalogPackage, "preview/replacement.png"))}`, server.url), {
+        headers: { cookie: cookie! }
+      });
+      expect(rawReplacement.status).toBe(403);
+      expect(await rawReplacement.json()).toMatchObject({ error: { code: "poster_not_visible" } });
+
+      const stableHandle = handles.get(stablePackage);
+      expect(stableHandle).toMatch(/^wp_/);
+      const stablePoster = await fetch(new URL(`/workbench/poster?handle=${encodeURIComponent(stableHandle!)}`, server.url), {
+        headers: { cookie: cookie! }
+      });
+      expect(stablePoster.status).toBe(200);
+      expect(Buffer.from(await stablePoster.arrayBuffer())).toEqual(stableBytes);
     } finally {
       await server.close();
       await rm(workspaceRoot, { recursive: true, force: true });
