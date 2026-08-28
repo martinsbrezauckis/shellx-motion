@@ -17,6 +17,7 @@ import {
   type MotionPackage
 } from "./index";
 import { MotionDataExpansionBudget } from "./data-resource-bounds";
+import { interpolateMotionDataJson } from "./data-interpolation";
 
 describe("motion data resource bounds", () => {
   it("admits the shipped Product Metric row through both JSON routes and refuses the shared field ceiling", () => {
@@ -106,6 +107,25 @@ describe("motion data resource bounds", () => {
     const rows = parseMotionDataRows({ rows: [{ id: "amplified", copy: "x".repeat(MAX_MOTION_DATA_ROW_FIELD_BYTES) }] });
     expect(() => expandMotionPackageRows(repeated, rows)).toThrow(/interpolated document exceeds.*before serialization/i);
     expect(() => expandMotionPackageRows(amplificationPackage(1, "{{copy}}{{copy}}{{copy}}{{copy}}{{copy}}"), rows)).toThrow(/string limit/);
+  });
+
+  it("charges aggregate interpolation before retaining a multi-gigabyte expansion graph", () => {
+    const repeated = amplificationPackage(1, "safe");
+    (repeated.motion as MotionPackage["motion"] & Record<string, unknown>)["x-expansion"] = Array.from(
+      { length: 131_072 },
+      () => "x{{copy}}"
+    );
+    const rows = parseMotionDataRows({ rows: [{ id: "preallocation", copy: "x".repeat(MAX_MOTION_DATA_ROW_FIELD_BYTES) }] });
+    expect(() => expandMotionPackageRows(repeated, rows))
+      .toThrow(/interpolated document exceeds.*before serialization or expansion allocation/i);
+  });
+
+  it("charges completed strings exactly when a token joins a Unicode surrogate pair", () => {
+    const splitPairs = Array.from({ length: 80_000 }, () => "\uD83D{{low}}\uD83D{{low}}");
+    const expanded = interpolateMotionDataJson(splitPairs, { low: "\uDE00" }, "unicode", "motion.x-unicode");
+    expect(Array.isArray(expanded)).toBe(true);
+    expect((expanded as string[]).length).toBe(80_000);
+    expect((expanded as string[])[0]).toBe("😀😀");
   });
 
   it("reserves aggregate interpolation bytes before a caller can fan rows into output packages", () => {

@@ -1,5 +1,7 @@
 import { parseBoundedLottieJson } from "./lottie-json";
 
+const MAX_FLATTENED_PRECOMP_EXPANSION_BYTES = 16 * 1024 * 1024;
+
 export interface FlattenedLottiePrecomps {
   schema: "shellx-motion/lottie-precomp-flattening@1";
   animationText: string;
@@ -22,7 +24,7 @@ export function flattenStaticLottiePrecomps(sourceText: string): FlattenedLottie
   if (!Array.isArray(layers)) throw new Error("Lottie precomposition source requires a layers array.");
   const assets = indexPrecompAssets(source.assets);
   const stats = { precomps: 0, layers: 0, maxDepth: 0 };
-  const flattened = flattenLayers(layers, assets, { width, height, inFrame, outFrame, depth: 0, ancestry: [] }, stats);
+  const planned = flattenLayers(layers, assets, { width, height, inFrame, outFrame, depth: 0, ancestry: [] }, stats);
   if (stats.precomps === 0) {
     return {
       schema: "shellx-motion/lottie-precomp-flattening@1",
@@ -34,7 +36,7 @@ export function flattenStaticLottiePrecomps(sourceText: string): FlattenedLottie
       policy: "full-frame-identity-static"
     };
   }
-  source.layers = flattened.map((layer, index) => ({ ...layer, ind: index + 1 }));
+  source.layers = materializeFlattenedLayers(planned);
   return {
     schema: "shellx-motion/lottie-precomp-flattening@1",
     animationText: JSON.stringify(source),
@@ -46,20 +48,25 @@ export function flattenStaticLottiePrecomps(sourceText: string): FlattenedLottie
   };
 }
 
+interface PlannedFlattenedLottieLayer {
+  layer: Record<string, unknown>;
+  expanded: boolean;
+}
+
 function flattenLayers(
   values: unknown[],
   assets: Map<string, Record<string, unknown>>,
   context: { width: number; height: number; inFrame: number; outFrame: number; depth: number; ancestry: string[] },
   stats: { precomps: number; layers: number; maxDepth: number }
-): Record<string, unknown>[] {
-  const output: Record<string, unknown>[] = [];
+): PlannedFlattenedLottieLayer[] {
+  const output: PlannedFlattenedLottieLayer[] = [];
   for (const [index, value] of values.entries()) {
-    const layer = cloneRecord(value, `Lottie layer ${index}`);
+    const layer = requiredRecord(value, `Lottie layer ${index}`);
     if (layer.ty !== 0) {
       if (context.depth > 0 && layer.parent !== undefined) {
         throw new Error("Lottie precomposition child parent hierarchies are outside the exact flattening subset.");
       }
-      output.push(layer);
+      output.push({ layer, expanded: context.depth > 0 });
       continue;
     }
     if (context.depth >= 4) throw new Error("Lottie precomposition nesting exceeds the depth-4 limit.");
@@ -83,20 +90,39 @@ function flattenLayers(
     }, stats);
     const parentName = typeof layer.nm === "string" && layer.nm ? layer.nm : refId;
     for (const child of nested) {
-      const childIn = finiteFrame(child.ip, parentIn, `precomposition ${refId} child ip`);
-      const childOut = finiteFrame(child.op, parentOut, `precomposition ${refId} child op`);
+      const childIn = finiteFrame(child.layer.ip, parentIn, `precomposition ${refId} child ip`);
+      const childOut = finiteFrame(child.layer.op, parentOut, `precomposition ${refId} child op`);
       const ip = Math.max(parentIn, childIn);
       const op = Math.min(parentOut, childOut);
       if (op <= ip) continue;
-      const childName = typeof child.nm === "string" && child.nm ? child.nm : `Layer ${output.length + 1}`;
-      output.push({ ...child, nm: `${parentName}/${childName}`, ip, op });
+      const childName = typeof child.layer.nm === "string" && child.layer.nm ? child.layer.nm : `Layer ${output.length + 1}`;
+      if (output.length >= 256) throw new Error("Lottie precomposition expansion exceeds the 256-layer limit.");
+      output.push({ layer: { ...child.layer, nm: `${parentName}/${childName}`, ip, op }, expanded: true });
       stats.layers += 1;
-      if (output.length > 256) throw new Error("Lottie precomposition expansion exceeds the 256-layer limit.");
     }
     stats.precomps += 1;
     stats.maxDepth = Math.max(stats.maxDepth, context.depth + 1);
   }
   return output;
+}
+
+/**
+ * Measure every expanded final layer before cloning or retaining it. Parsed
+ * Lottie is JSON data, so JSON serialization is the exact byte representation
+ * this helper subsequently returns for each materialized record.
+ */
+function materializeFlattenedLayers(planned: PlannedFlattenedLottieLayer[]): Record<string, unknown>[] {
+  let expandedBytes = 0;
+  for (const [index, entry] of planned.entries()) {
+    if (!entry.expanded) continue;
+    const materialized = { ...entry.layer, ind: index + 1 };
+    const bytes = Buffer.byteLength(JSON.stringify(materialized), "utf8");
+    if (bytes > MAX_FLATTENED_PRECOMP_EXPANSION_BYTES - expandedBytes) {
+      throw new Error("Lottie precomposition expansion exceeds the 16 MiB expanded-byte limit.");
+    }
+    expandedBytes += bytes;
+  }
+  return planned.map(({ layer }, index) => cloneRecord({ ...layer, ind: index + 1 }, `Lottie flattened layer ${index}`));
 }
 
 function assertExactPrecompLayer(layer: Record<string, unknown>, refId: string): void {
@@ -173,9 +199,14 @@ function finiteFrame(value: unknown, fallback: number, label: string): number {
 }
 
 function cloneRecord(value: unknown, label: string): Record<string, unknown> {
+  const record = requiredRecord(value, label);
+  return structuredClone(record);
+}
+
+function requiredRecord(value: unknown, label: string): Record<string, unknown> {
   const record = mutableRecord(value);
   if (!record) throw new Error(`${label} must be an object.`);
-  return structuredClone(record);
+  return record;
 }
 
 function mutableRecord(value: unknown): Record<string, unknown> | null {

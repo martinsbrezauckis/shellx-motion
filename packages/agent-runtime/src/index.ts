@@ -1,7 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { MotionPermissionTier } from "@shellx-motion/actions";
 import {
   cleanupWindowsJobObjectLaunchPlan,
@@ -21,6 +20,7 @@ import {
 } from "@shellx-motion/core";
 
 import { antigravityAdapter } from "./antigravity";
+import { materializeAgentPromptFile } from "./agent-prompt-file";
 import { terminateAgentProcessTree, type AgentProcessTerminationMode } from "./agent-process-control";
 import { resolveNativeWindowsAgentCommand, revalidateNativeWindowsAgentCommand } from "./windows-agent-command";
 
@@ -582,31 +582,6 @@ async function spawnAgentCommand(command: AgentCommand): Promise<AgentProcessRes
     }
     throw error;
   }
-}
-
-async function materializeAgentPromptFile(
-  command: AgentCommand,
-  scratchRoot: string
-): Promise<{ command: AgentCommand; cleanup: () => Promise<void> }> {
-  if (!command.promptFileArg) return { command, cleanup: async () => undefined };
-  if (command.stdin === undefined) throw new Error("Agent prompt-file transport requires prompt stdin.");
-  const occurrences = command.args.filter((arg) => arg === command.promptFileArg).length;
-  if (occurrences !== 1) throw new Error(`Agent prompt-file argv must contain its marker exactly once; found ${occurrences}.`);
-
-  const promptRoot = resolve(scratchRoot, "agent-prompts");
-  await mkdir(promptRoot, { recursive: true, mode: 0o700 });
-  const promptPath = join(promptRoot, `${randomUUID()}.txt`);
-  await writeFile(promptPath, command.stdin, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  const prepared: AgentCommand = {
-    ...command,
-    args: command.args.map((arg) => arg === command.promptFileArg ? promptPath : arg),
-    stdin: undefined,
-    promptFileArg: undefined,
-  };
-  return {
-    command: prepared,
-    cleanup: async () => { await unlink(promptPath).catch(() => undefined); }
-  };
 }
 
 interface RunAgentChildOptions {
