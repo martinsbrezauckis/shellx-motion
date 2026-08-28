@@ -3,7 +3,7 @@
 This changelog describes user-facing capability. Internal checkpoints and detailed remediation
 history remain in the private roadmap and release evidence.
 
-## 0.2.65 — release candidate
+## 0.2.65 — 2026-08-28
 
 - Added a self-describing Motion-to-Cut connector contract with runtime discovery, generic job
   submission, lifecycle events, cancellation, artifact handoff and bounded opaque errors.
