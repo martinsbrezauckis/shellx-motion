@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { chromium } from "playwright-core";
 import type { MotionPackage } from "@shellx-motion/core";
 import { applyBrowserStyledTextRunStyles, renderBrowserStyledTextRuns } from "./styled-text-runs";
+import { launchConfiguredTestBrowser } from "./test-support/configured-browser";
 import { bindManifestTypographyFontAssets, browserTypographyAttestationRefusal } from "./typography-attestation";
 import { collectBrowserStyledTextRunEvidence } from "./typography-styled-runs";
 
@@ -44,7 +44,7 @@ describe("Browser manifest-bound styled text runs", () => {
   });
 
   it("installs the fixed source-mode serialization binding before applying run styles", async () => {
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchConfiguredTestBrowser();
     try {
       const page = await browser.newPage();
       await page.setContent('<main><span data-motion-text-run="true" data-motion-font-family="Brand" data-motion-font-weight="400" data-motion-font-style="normal"></span></main>');
@@ -73,7 +73,7 @@ describe("Browser manifest-bound styled text runs", () => {
     });
     expect(html).toContain("&quot;Quoted&quot;");
     expect(html).not.toContain("font-family:");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchConfiguredTestBrowser();
     try {
       const page = await browser.newPage();
       await page.setContent(`<main data-layer-id="title" data-motion-text="true">${html}</main>`);

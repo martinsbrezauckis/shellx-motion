@@ -3625,7 +3625,7 @@ describe("motion debug API", () => {
               executable: "claude",
               args: [
                 "--print", "--output-format", "json", "--permission-mode", "plan", "--safe-mode",
-                "--no-chrome", "--no-session-persistence", "--disallowedTools",
+                "--no-chrome", "--no-session-persistence", "--tools", "", "--disallowedTools",
                 "Bash,Edit,Write,NotebookEdit,Agent,Task,WebFetch,WebSearch"
               ]
             })

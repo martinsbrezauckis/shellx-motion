@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
 import { canonicalJsonSha256, type MotionPackage } from "@shellx-motion/core";
 import { buildGeneratedMotionHtml } from "./index";
 import { collectMotionTypographyEvidence } from "./typography-attestation";
+import { launchConfiguredTestBrowser } from "./test-support/configured-browser";
 
 describe("legacy simple text remains byte-stable without text-runs", () => {
   it("pins generated HTML plus typography evidence omission without a package output", async () => {
@@ -16,7 +16,7 @@ describe("legacy simple text remains byte-stable without text-runs", () => {
     // This is deliberately a no-output Chromium probe. The managed host's
     // OutputPathTopology guard owns package-copy/final-frame evidence; this
     // pins the production lowering and collector bytes without bypassing it.
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchConfiguredTestBrowser();
     try {
       const page = await browser.newPage({ viewport: { width: 320, height: 180 } });
       await page.setContent(generated.html);

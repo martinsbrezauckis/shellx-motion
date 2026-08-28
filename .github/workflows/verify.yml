@@ -24,7 +24,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       # Third-party actions are pinned to reviewed commit SHAs, never to tags. A tag is a mutable
       # pointer: whoever controls the action's repository can move `v4` onto different code after

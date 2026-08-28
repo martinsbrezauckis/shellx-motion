@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { chromium } from "playwright-core";
 import {
   canonicalJsonSha256,
   expandMotionPackageRows,
@@ -15,12 +14,13 @@ import {
 import { collectBrowserTextFitEvidence } from "./generated-text-fit";
 import { buildGeneratedMotionHtml } from "./index";
 import { applyBrowserStyledTextRunStyles, renderBrowserStyledTextRuns } from "./styled-text-runs";
+import { launchConfiguredTestBrowser } from "./test-support/configured-browser";
 
 const PRODUCT_METRIC_ROOT = fileURLToPath(new URL("../../../templates/shellx-product-pack/product-metric-card/", import.meta.url));
 
 describe("generated Browser text-fit with styled text-runs", () => {
   it("keeps safe overflow truthful, auto-fits every run at one scale, and preserves the legacy no-run evidence golden", async () => {
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchConfiguredTestBrowser();
     try {
       const page = await browser.newPage({ viewport: { width: 240, height: 120 } });
       await page.setContent(html("safe", true));
@@ -55,7 +55,7 @@ describe("generated Browser text-fit with styled text-runs", () => {
   it("keeps every data-generated Product Metric chart label inside its integer line box at the reported calibration frame", async () => {
     const base = productMetricPackage();
     const jobs = expandMotionPackageRows(base, productMetricRows());
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchConfiguredTestBrowser();
     try {
       for (const job of jobs) {
         // Keep the probe output-free; inject the exact header face below so it exercises the
