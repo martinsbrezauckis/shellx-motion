@@ -1,12 +1,38 @@
-import { canonicalJson, compareCodeUnits } from "./canonical-json";
+import { canonicalJson } from "./canonical-json";
 import { assertReadableLayerKeyframes } from "./keyframe-readability";
 import { resolvePackageAsset } from "./package";
 import { hashBuffer } from "./receipts";
 import { applyMotionRowTemplateValues } from "./data-template-bindings";
-import { assertBoundedMotionDataRowCount, readMotionDataRowsText } from "./data-file-load";
+import {
+  assertBoundedMotionDataRowCount,
+  MAX_BATCH_QUALITY_ROWS,
+  readMotionDataRowsText
+} from "./data-file-load";
+import {
+  assertBoundedMotionDataRowId,
+  assertBoundedMotionDataRowValue,
+  assertSafeMotionDataRowKey,
+  MotionDataExpansionBudget
+} from "./data-resource-bounds";
+import { parseBoundedMotionDataRowsCsvRecords } from "./data-csv";
+import { interpolateMotionDataJson, interpolateMotionDataString } from "./data-interpolation";
+import { assertBoundedMotionDataRowsJsonText } from "./data-json-row-scan";
 import { applyChartCompositionRecipe } from "./chart-composition-recipe";
 import type { MotionDocument, MotionLayer, MotionPackage, PackageManifest } from "./types";
-export { MAX_BATCH_QUALITY_ROWS, MAX_MOTION_DATA_ROWS_BYTES } from "./data-file-load";
+export {
+  MAX_BATCH_QUALITY_ROWS,
+  MAX_MOTION_DATA_ROWS_BYTES,
+  MAX_MOTION_DATA_ROW_BYTES,
+  MAX_MOTION_DATA_ROW_FIELD_BYTES,
+  MAX_MOTION_DATA_ROW_FIELDS,
+  MAX_MOTION_DATA_ROW_ID_BYTES,
+  MAX_MOTION_DATA_ROW_NESTING,
+  MAX_MOTION_DATA_ROW_VALUES,
+  MAX_MOTION_INTERPOLATED_BATCH_BYTES,
+  MAX_MOTION_INTERPOLATED_DOCUMENT_BYTES,
+  MAX_MOTION_INTERPOLATED_ROW_BYTES,
+  MAX_MOTION_INTERPOLATED_STRING_BYTES
+} from "./data-file-load";
 export interface MotionDataRow {
   id: string;
   index: number;
@@ -40,19 +66,20 @@ export async function loadDataRowsFile(rowsPath: string, options: { withinRoot?:
 export function parseMotionDataRowsText(input: string): MotionDataRow[] {
   const text = input.replace(/^\uFEFF/, "").trimStart();
   if (text.startsWith("{") || text.startsWith("[")) {
+    assertBoundedMotionDataRowsJsonText(text);
     return parseMotionDataRows(JSON.parse(text));
   }
   return parseMotionDataRowsCsv(input);
 }
 
 export function parseMotionDataRowsCsv(input: string): MotionDataRow[] {
-  const records = parseCsvRecords(input.replace(/^\uFEFF/, ""))
-    .filter((record) => record.some((field) => field.length > 0));
+  const records = parseBoundedMotionDataRowsCsvRecords(input.replace(/^\uFEFF/, ""));
   if (records.length === 0) throw new Error("Motion CSV data rows must include a header row.");
   assertBoundedMotionDataRowCount(records.length - 1);
   const headers = records[0].map((header, index) => {
     const key = header.trim();
     if (!key) throw new Error(`Motion CSV data row header ${index + 1} must be non-empty.`);
+    assertSafeMotionDataRowKey(key, `header ${index + 1}`);
     return key;
   });
   const rows = records.slice(1).map((record, index) => {
@@ -76,10 +103,14 @@ export function parseMotionDataRows(input: unknown): MotionDataRow[] {
   assertBoundedMotionDataRowCount(rowsInput.length);
   const seenIds = new Set<string>();
   return rowsInput.map((entry, index) => {
+    assertBoundedMotionDataRowValue(entry, index);
     const entryRecord = readRecord(entry);
     if (!entryRecord) throw new Error(`Motion data row ${index + 1} must be an object.`);
     const values = { ...entryRecord };
-    const id = slugId(String(values.id ?? `row-${index + 1}`));
+    const rawId = String(values.id ?? `row-${index + 1}`);
+    assertBoundedMotionDataRowId(rawId, index);
+    const id = slugId(rawId);
+    assertBoundedMotionDataRowId(id, index);
     if (seenIds.has(id)) {
       throw new Error(`Motion data row IDs must be unique after sanitization; duplicate id: ${id}.`);
     }
@@ -124,6 +155,7 @@ export function filterMotionDataRows(rows: MotionDataRow[], requestedRowIds: str
 }
 
 export function expandMotionPackageRows(pkg: MotionPackage, rows: MotionDataRow[]): ExpandedMotionJob[] {
+  const budget = new MotionDataExpansionBudget();
   return rows.map((row) => {
     const manifestId = `${pkg.manifest.id}_${row.id}`;
     const motionId = `${pkg.motion.id}_${row.id}`;
@@ -131,13 +163,15 @@ export function expandMotionPackageRows(pkg: MotionPackage, rows: MotionDataRow[
     const manifest: PackageManifest = {
       ...pkg.manifest,
       id: manifestId,
-      name: interpolateString(pkg.manifest.name, row.values),
+      name: interpolateMotionDataString(pkg.manifest.name, row.values, row.id, "manifest.name"),
       motion: "motion.json",
       assets: mergeAssetRefs(pkg.manifest.assets ?? [], rowMediaReplacementAssetRefs(replacements)),
       workflow: String(pkg.manifest.workflow ?? "batch-render")
     };
     // Expansion order: tokens, template bindings, replacements, patches, overrides, family materialization.
-    const interpolated = motionDocumentFromInterpolated(interpolateJson(pkg.motion, row.values));
+    const interpolated = motionDocumentFromInterpolated(interpolateMotionDataJson(pkg.motion, row.values, row.id, "motion"));
+    // The first document charge happens before template, replacement, patch, or recipe fan-out.
+    budget.assertDocument(interpolated, row.id);
     const templateApplied = applyMotionRowTemplateValues(pkg, interpolated, row.values, row.id);
     const overridden = applyMotionRowOverrides(
       applyMotionRowLayerPatches(
@@ -149,13 +183,13 @@ export function expandMotionPackageRows(pkg: MotionPackage, rows: MotionDataRow[
     );
     const motion = applyChartCompositionRecipe(overridden, row.values, row.id);
     const provenanceRecord = readRecord(motion.provenance) ?? {};
-    return {
+    const expanded: ExpandedMotionJob = {
       row,
       manifest,
       motion: {
         ...motion,
         id: motionId,
-        name: interpolateString(pkg.motion.name, row.values),
+        name: interpolateMotionDataString(pkg.motion.name, row.values, row.id, "motion.name"),
         provenance: {
           ...provenanceRecord,
           sourceApp: readRequiredString(provenanceRecord.sourceApp, "motion.provenance.sourceApp"),
@@ -167,6 +201,10 @@ export function expandMotionPackageRows(pkg: MotionPackage, rows: MotionDataRow[
         }
       }
     };
+    // Reserve the final serialized row before the CLI or Debug API can fan it out into packages,
+    // receipts, render plans, or Debug responses.
+    budget.reserveRow({ manifest: expanded.manifest, motion: expanded.motion }, row.id);
+    return expanded;
   });
 }
 
@@ -346,89 +384,6 @@ function manifestRowsRef(manifest: PackageManifest): string | null {
   return typeof data?.rows === "string" ? data.rows : null;
 }
 
-function interpolateJson(value: unknown, row: Record<string, unknown>): unknown {
-  if (typeof value === "string") return interpolateValue(value, row);
-  if (Array.isArray(value)) return value.map((entry) => interpolateJson(entry, row));
-  const record = readRecord(value);
-  if (record) {
-    return Object.fromEntries(Object.entries(record).map(([key, entry]) => [key, interpolateJson(entry, row)]));
-  }
-  return value;
-}
-
-function interpolateString(value: string, row: Record<string, unknown>): string {
-  return value.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
-    const replacement = readRowValue(row, key);
-    if (replacement === undefined || replacement === null) return "";
-    return typeof replacement === "string" ? replacement : JSON.stringify(replacement);
-  });
-}
-
-function interpolateValue(value: string, row: Record<string, unknown>): unknown {
-  const wholeToken = /^\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}$/.exec(value);
-  if (wholeToken) {
-    const replacement = readRowValue(row, wholeToken[1]);
-    return replacement === undefined || replacement === null ? "" : replacement;
-  }
-  return interpolateString(value, row);
-}
-
-function readRowValue(row: Record<string, unknown>, key: string): unknown {
-  if (Object.prototype.hasOwnProperty.call(row, key)) return resolveLocalizedRowValue(row, key, row[key]);
-  let current: unknown = row;
-  for (const segment of key.split(".")) {
-    const record = readRecord(current);
-    if (!record || !Object.prototype.hasOwnProperty.call(record, segment)) return readFlatLocalizedRowValue(row, key);
-    current = record[segment];
-  }
-  return resolveLocalizedRowValue(row, key, current);
-}
-
-function resolveLocalizedRowValue(row: Record<string, unknown>, key: string, value: unknown): unknown {
-  if (!key.startsWith("strings.")) return value;
-  const record = readRecord(value);
-  if (!record) return value;
-  return selectLocalizedValue(row, record) ?? value;
-}
-
-function readFlatLocalizedRowValue(row: Record<string, unknown>, key: string): unknown {
-  if (!key.startsWith("strings.")) return undefined;
-  const locale = readRowLocale(row);
-  for (const suffix of localizedSuffixes(locale)) {
-    const flatKey = `${key}.${suffix}`;
-    if (Object.prototype.hasOwnProperty.call(row, flatKey)) return row[flatKey];
-  }
-  const prefix = `${key}.`;
-  // Code-unit order, not localeCompare: this picks which localized string is BAKED INTO THE RENDER
-  // when no requested locale matched. Under localeCompare the chosen fallback — and therefore the
-  // rendered frame and every hash derived from it — moved with the machine's ambient locale.
-  const fallbackKey = Object.keys(row)
-    .filter((candidate) => candidate.startsWith(prefix) && typeof row[candidate] === "string")
-    .sort(compareCodeUnits)[0];
-  return fallbackKey ? row[fallbackKey] : undefined;
-}
-
-function selectLocalizedValue(row: Record<string, unknown>, values: Record<string, unknown>): unknown {
-  for (const suffix of localizedSuffixes(readRowLocale(row))) {
-    if (Object.prototype.hasOwnProperty.call(values, suffix)) return values[suffix];
-  }
-  // Same reasoning as readFlatLocalizedRowValue: the fallback locale pick lands in the rendered
-  // output, so it is ordered by code unit and cannot move with the host locale.
-  const fallbackKey = Object.keys(values)
-    .filter((candidate) => typeof values[candidate] === "string")
-    .sort(compareCodeUnits)[0];
-  return fallbackKey ? values[fallbackKey] : undefined;
-}
-
-function localizedSuffixes(locale: string | undefined): string[] {
-  return locale ? [locale, "default", "en"] : ["default", "en"];
-}
-
-function readRowLocale(row: Record<string, unknown>): string | undefined {
-  const locale = row.locale;
-  return typeof locale === "string" && locale.trim() ? locale.trim() : undefined;
-}
-
 function applyMotionRowOverrides(motion: MotionDocument, row: Record<string, unknown>): MotionDocument {
   const overrides = readRecord(row.motion);
   if (!overrides) return motion;
@@ -441,57 +396,6 @@ function applyMotionRowOverrides(motion: MotionDocument, row: Record<string, unk
     ...(overrides.height !== undefined ? { height: readRequiredNumber(overrides.height, "row.motion.height") } : {}),
     ...(overrides.background !== undefined ? { background: readRequiredString(overrides.background, "row.motion.background") } : {})
   };
-}
-
-function parseCsvRecords(input: string): string[][] {
-  const records: string[][] = [];
-  let record: string[] = [];
-  let field = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    if (inQuotes) {
-      if (char === "\"") {
-        if (input[index + 1] === "\"") {
-          field += "\"";
-          index += 1;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += char;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      if (field.length !== 0) throw new Error("Motion CSV data rows contain an unexpected quote.");
-      inQuotes = true;
-      continue;
-    }
-    if (char === ",") {
-      record.push(field);
-      field = "";
-      continue;
-    }
-    if (char === "\n" || char === "\r") {
-      record.push(field);
-      records.push(record);
-      record = [];
-      field = "";
-      if (char === "\r" && input[index + 1] === "\n") index += 1;
-      continue;
-    }
-    field += char;
-  }
-
-  if (inQuotes) throw new Error("Motion CSV data rows contain an unterminated quoted field.");
-  if (field.length > 0 || record.length > 0 || input.endsWith(",")) {
-    record.push(field);
-    records.push(record);
-  }
-  return records;
 }
 
 function slugId(value: string): string {

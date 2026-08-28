@@ -79,6 +79,7 @@ describe("motion debug server CLI", () => {
           ui: "/workbench",
           connections: "/workbench/connections",
           bootstrap: "/workbench/bootstrap",
+          artifactSession: "/workbench/artifact-session",
           artifact: "/workbench/artifact",
           poster: "/workbench/poster",
           updateState: "/workbench/update-state",

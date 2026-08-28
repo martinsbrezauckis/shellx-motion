@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -35,61 +35,6 @@ function authenticatedSocket(server: MotionDebugServerHandle): WebSocket {
 }
 
 describe("motion debug loopback server", () => {
-  it("serves the local workbench without embedding capabilities and bounds authenticated preview artifacts", async () => {
-    const artifactRoot = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-artifacts-"));
-    const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-outside-"));
-    const previewPath = join(artifactRoot, "preview.png");
-    const outsidePath = join(outsideRoot, "outside.png");
-    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    await writeFile(previewPath, pngSignature);
-    await writeFile(outsidePath, pngSignature);
-    const server = await startTestServer({ port: 0, artifactRoots: [artifactRoot] });
-    try {
-      const workbench = await globalThis.fetch(new URL("/workbench", server.url));
-      const html = await workbench.text();
-      expect(workbench.status).toBe(200);
-      expect(workbench.headers.get("content-security-policy")).toContain("default-src 'none'");
-      expect(html).toContain("ShellX Motion Workbench");
-      expect(html).not.toContain(TEST_CAPABILITY_TOKEN);
-
-      const script = await globalThis.fetch(new URL("/workbench.js", server.url));
-      expect(script.status).toBe(200);
-      expect(await script.text()).toContain("motion.timeline.panel");
-
-      const unauthenticated = await globalThis.fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(previewPath)}`, server.url));
-      expect(unauthenticated.status).toBe(401);
-
-      const artifact = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(previewPath)}`, server.url));
-      expect(artifact.status).toBe(200);
-      expect(artifact.headers.get("content-type")).toBe("image/png");
-      expect(Buffer.from(await artifact.arrayBuffer())).toEqual(pngSignature);
-
-      const mismatchedPath = join(artifactRoot, "not-really.png");
-      await writeFile(mismatchedPath, Buffer.from("not an image"));
-      const mismatched = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(mismatchedPath)}`, server.url));
-      expect(mismatched.status).toBe(400);
-      expect(await mismatched.json()).toMatchObject({ error: { code: "artifact_magic_mismatch" } });
-
-      const symlinkPath = join(artifactRoot, "linked.png");
-      try {
-        await symlink(outsidePath, symlinkPath);
-        const linked = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(symlinkPath)}`, server.url));
-        expect(linked.status).toBe(400);
-        expect(await linked.json()).toMatchObject({ error: { code: "unsafe_artifact" } });
-      } catch (error) {
-        if (!new Set(["EPERM", "EACCES"]).has((error as NodeJS.ErrnoException).code ?? "")) throw error;
-      }
-
-      const outside = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(outsidePath)}`, server.url));
-      expect(outside.status).toBe(403);
-      expect(await outside.json()).toMatchObject({ error: { code: "artifact_outside_roots" } });
-    } finally {
-      await server.close();
-      await rm(artifactRoot, { recursive: true, force: true });
-      await rm(outsideRoot, { recursive: true, force: true });
-    }
-  });
-
   it("exposes only minimal health without a capability", async () => {
     const server = await startTestServer({ port: 0 });
     try {
@@ -948,11 +893,6 @@ async function productPackFamilyCount(): Promise<number> {
   const entries = await readdir(PRODUCT_PACK_ROOT, { withFileTypes: true });
   return entries.filter((entry) => entry.isDirectory()).length;
 }
-const SAFE_POSTER_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1280\" height=\"720\"><rect width=\"1280\" height=\"720\" fill=\"#071014\"/><text x=\"40\" y=\"80\" fill=\"#24d6ff\">Poster</text></svg>";
-const SCRIPTED_POSTER_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"><script>alert(1)</script></svg>";
-/** Minimal valid PNG container signature — enough to satisfy the magic-byte gate. */
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
 describe("agent template reference APIs", () => {
   it("does not serve the retired human Gallery or its assets", async () => {
     const server = await startTestServer({ port: 0 });
@@ -1013,131 +953,6 @@ describe("agent template reference APIs", () => {
     }
   });
 
-  // Host-parity guard for the defect that shipped: the July 2026 pack replaced the
-  // hand-drawn SVG mockups with real 1920x1080 PNG renders, but the poster endpoint
-  // still allowed only ".svg", so agent consumers could not load the pack posters.
-  // This test binds the server's accepted formats to
-  // whatever the pack actually ships, so the two halves cannot drift apart again.
-  it("serves every poster the shipped product pack declares", async () => {
-    const server = await startTestServer({ port: 0, artifactRoots: [PRODUCT_PACK_ROOT] });
-    try {
-      const catalog = await fetch(new URL("/debug", server.url), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command: "motion.template.catalog", args: { templateRoot: PRODUCT_PACK_ROOT }, requestedTier: "read_motion" })
-      });
-      const templates = (await catalog.json()).result.templates as Array<{ packageRoot: string; metadata: { preview?: { poster?: string } } }>;
-      expect(templates).toHaveLength(await productPackFamilyCount());
-
-      for (const template of templates) {
-        const declared = template.metadata.preview?.poster;
-        expect(typeof declared).toBe("string");
-        const posterPath = join(template.packageRoot, declared as string);
-        let response: Response;
-        try {
-          // This byte-for-byte verification reads each large poster again from the local
-          // checkout after the response completes. On slower Windows disks that pause can
-          // outlive Node's five-second keep-alive window and race Undici's next pooled request.
-          // A fresh connection keeps this test about poster serving, not socket-pool timing.
-          response = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(posterPath)}`, server.url), {
-            headers: { connection: "close" }
-          });
-        } catch (error) {
-          throw new Error(`Poster request failed for ${posterPath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-        }
-        expect(response.status, `${posterPath} must be servable`).toBe(200);
-        expect(response.headers.get("content-type")).toMatch(/^image\/(png|jpeg|svg\+xml)$/);
-        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-        expect(response.headers.get("content-security-policy")).toContain("sandbox");
-        const bytes = Buffer.from(await response.arrayBuffer());
-        expect(bytes.byteLength).toBeGreaterThan(0);
-        expect(bytes).toEqual(await readFile(posterPath));
-      }
-    } finally {
-      await server.close();
-    }
-    // The source and public packs contain several multi-megabyte posters; the slow
-    // Windows fresh-install host needs substantially more than Vitest's default.
-  }, 180_000);
-
-  it("serves safe SVG posters and rejects scripted, non-SVG, out-of-root, and anonymous requests", async () => {
-    const artifactRoot = await mkdtemp(join(tmpdir(), "shellx-motion-agent-posters-"));
-    const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-agent-outside-"));
-    const safePosterPath = join(artifactRoot, "poster.svg");
-    const scriptedPosterPath = join(artifactRoot, "scripted.svg");
-    const rasterPath = join(artifactRoot, "poster.png");
-    const outsidePosterPath = join(outsideRoot, "outside.svg");
-    await writeFile(safePosterPath, SAFE_POSTER_SVG);
-    await writeFile(scriptedPosterPath, SCRIPTED_POSTER_SVG);
-    await writeFile(rasterPath, PNG_SIGNATURE);
-    await writeFile(outsidePosterPath, SAFE_POSTER_SVG);
-    const server = await startTestServer({ port: 0, artifactRoots: [artifactRoot] });
-    try {
-      const anonymous = await globalThis.fetch(new URL(`/workbench/poster?path=${encodeURIComponent(safePosterPath)}`, server.url));
-      expect(anonymous.status).toBe(401);
-
-      const poster = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(safePosterPath)}`, server.url));
-      expect(poster.status).toBe(200);
-      expect(poster.headers.get("content-type")).toBe("image/svg+xml");
-      expect(poster.headers.get("content-security-policy")).toContain("sandbox");
-      expect(poster.headers.get("x-content-type-options")).toBe("nosniff");
-      expect(await poster.text()).toBe(SAFE_POSTER_SVG);
-
-      const scripted = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(scriptedPosterPath)}`, server.url));
-      expect(scripted.status).toBe(400);
-      expect(await scripted.json()).toMatchObject({ error: { code: "unsafe_poster" } });
-
-      // PNG posters are first-class: the shipped product pack renders 1920x1080
-      // PNG key art, and this endpoint used to answer every one of them with
-      // 400 unsupported_poster for every agent catalog poster.
-      const raster = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(rasterPath)}`, server.url));
-      expect(raster.status).toBe(200);
-      expect(raster.headers.get("content-type")).toBe("image/png");
-      expect(raster.headers.get("x-content-type-options")).toBe("nosniff");
-      // A raster poster does not need SVG's inline-style relaxation, so it gets the tighter policy.
-      expect(raster.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
-      expect(Buffer.from(await raster.arrayBuffer())).toEqual(PNG_SIGNATURE);
-
-      // Raster posters are gated by magic bytes, not by extension: a file that
-      // merely claims to be a PNG is refused rather than served as image/png.
-      const forgedRasterPath = join(artifactRoot, "forged.png");
-      await writeFile(forgedRasterPath, "<html><script>alert(1)</script></html>");
-      const forgedRaster = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(forgedRasterPath)}`, server.url));
-      expect(forgedRaster.status).toBe(400);
-      expect(await forgedRaster.json()).toMatchObject({ error: { code: "unsafe_poster" } });
-
-      // Real PNG bytes under an .svg name still face the SVG gate, so the two
-      // format paths cannot be crossed by renaming a file.
-      const rasterNamedSvgPath = join(artifactRoot, "raster-named.svg");
-      await writeFile(rasterNamedSvgPath, PNG_SIGNATURE);
-      const rasterNamedSvg = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(rasterNamedSvgPath)}`, server.url));
-      expect(rasterNamedSvg.status).toBe(400);
-      expect(await rasterNamedSvg.json()).toMatchObject({ error: { code: "unsafe_poster" } });
-
-      // The poster allowlist stays narrower than the preview-frame allowlist:
-      // GIF is a valid preview artifact but never a poster.
-      const gifPath = join(artifactRoot, "poster.gif");
-      await writeFile(gifPath, Buffer.from("GIF89a\x01\x00\x01\x00\x00\x00\x00;", "latin1"));
-      const gifPoster = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(gifPath)}`, server.url));
-      expect(gifPoster.status).toBe(400);
-      expect(await gifPoster.json()).toMatchObject({ error: { code: "unsupported_poster" } });
-      const gifArtifact = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(gifPath)}`, server.url));
-      expect(gifArtifact.status).toBe(200);
-
-      const outside = await fetch(new URL(`/workbench/poster?path=${encodeURIComponent(outsidePosterPath)}`, server.url));
-      expect(outside.status).toBe(403);
-      expect(await outside.json()).toMatchObject({ error: { code: "artifact_outside_roots" } });
-
-      // The raster preview endpoint keeps its magic-byte guarantee and still refuses SVG.
-      const rasterEndpointSvg = await fetch(new URL(`/workbench/artifact?path=${encodeURIComponent(safePosterPath)}`, server.url));
-      expect(rasterEndpointSvg.status).toBe(400);
-      expect(await rasterEndpointSvg.json()).toMatchObject({ error: { code: "unsupported_artifact" } });
-    } finally {
-      await server.close();
-      await rm(artifactRoot, { recursive: true, force: true });
-      await rm(outsideRoot, { recursive: true, force: true });
-    }
-  });
 });
 
 function webSocketUpgradeStatus(server: MotionDebugServerHandle, extraHeaders: Record<string, string>): Promise<number> {

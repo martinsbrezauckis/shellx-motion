@@ -10,6 +10,7 @@ export interface MotionDebugServerTransportManifest {
     ui: "/workbench";
     connections: "/workbench/connections";
     bootstrap: "/workbench/bootstrap";
+    artifactSession: "/workbench/artifact-session";
     artifact: "/workbench/artifact";
     poster: "/workbench/poster";
     updateState: "/workbench/update-state";
@@ -25,7 +26,7 @@ export const DEBUG_SERVER_TRANSPORT_MANIFEST: MotionDebugServerTransportManifest
   auth: { http: "authorization-bearer", webSocket: "authenticated-subprotocol", tokenEnv: "SHELLX_MOTION_DEBUG_TOKEN" },
   rest: { health: "/health", contracts: "/debug/contracts", dispatch: "/debug", sdk: "/sdk" },
   workbench: {
-    ui: "/workbench", connections: "/workbench/connections", bootstrap: "/workbench/bootstrap", artifact: "/workbench/artifact",
+    ui: "/workbench", connections: "/workbench/connections", bootstrap: "/workbench/bootstrap", artifactSession: "/workbench/artifact-session", artifact: "/workbench/artifact",
     poster: "/workbench/poster", updateState: "/workbench/update-state", selectPath: "/workbench/select-path", auth: "one-use-launch-or-session-token-entry"
   },
   jsonRpc: { endpoint: "/rpc", methods: ["rpc.discover", "motion.debug.contracts", "motion.debug.dispatch", "server/discover", "initialize", "tools/list", "tools/call"] },

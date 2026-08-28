@@ -201,7 +201,9 @@ before embedding it.
 | `GET /workbench` | Standalone local Motion editor shell; Start Motion authenticates its first tab automatically. |
 | `POST /workbench/bootstrap` | One-use exchange used only by the locally opened Start Motion tab. |
 | `GET /workbench/connections` | Human agent/API connection and local-key configuration surface. |
-| `GET /workbench/artifact?path=` | Authenticated, allowlisted preview artifact serving. |
+| `POST /workbench/artifact-session` | Authenticated Workbench browser-session exchange for opaque preview handles. |
+| `GET /workbench/artifact?handle=` | Authenticated, browser-session-bound preview artifact serving; raw paths are never accepted. |
+| `GET /workbench/poster?handle=` | Authenticated, browser-session-bound serving for poster handles returned with that session's `motion.template.catalog` result; raw paths are never accepted. |
 | `GET /workbench/update-state` | Authenticated cached startup/periodic update status shared with agent discovery. |
 | `POST /workbench/select-path` | Authenticated native file/folder chooser for human Browse actions. |
 

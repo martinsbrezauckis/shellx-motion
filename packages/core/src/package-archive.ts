@@ -8,6 +8,7 @@ import { hashBuffer } from "./receipts";
 import { loadMotionPackage, resolvePackageAsset } from "./package";
 import { validatePackageAssetReferences } from "./package-asset-references";
 import { publishPackageArchiveOutputs } from "./package-archive-output-publication";
+import { parseBoundedPackageJsonBytes } from "./package-json-admission";
 import { loadSchema, validateDocument, type SchemaName } from "./validate";
 import { collectBoundedPackageArchiveEntries, type MotionPackageArchiveWriteLimits } from "./package-archive-write-input";
 import type { OperationReceipt, ReceiptArtifact } from "./types";
@@ -463,11 +464,7 @@ async function readBoundedJson(path: string, maxBytes: number, label: string): P
   const info = await lstat(path);
   if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${label} must be a regular file.`);
   if (info.size > maxBytes) throw new Error(`${label} exceeds the ${maxBytes}-byte JSON limit.`);
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    throw new Error(`${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  return parseBoundedPackageJsonBytes(await readFile(path), maxBytes, label);
 }
 
 async function assertValidSchema(schemaName: SchemaName, document: unknown, label: string): Promise<void> {
