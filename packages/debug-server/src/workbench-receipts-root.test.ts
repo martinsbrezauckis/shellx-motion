@@ -32,9 +32,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startMotionDebugServer, type MotionDebugServerHandle } from "./index";
 
 const TEST_CAPABILITY_TOKEN = "workbench-receipts-root-token-000000000000000000";
+/** Stable host identity for receipts owned by this Workbench fixture. */
+const TEST_CALLER_ID = "debug-server:workbench-receipts-root";
 
 const servers: MotionDebugServerHandle[] = [];
 const roots: string[] = [];
+/** Receipt-backed reads use the Linux-only descriptor-relative stable reader. */
+const itLinux = process.platform === "linux" ? it : it.skip;
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
@@ -52,7 +56,7 @@ async function seedReceipt(root: string): Promise<void> {
     lane: "ffmpeg",
     createdAt: "2026-08-06T00:00:00.000Z",
     inputHashes: { motion: "a".repeat(64) },
-    output: { path: join(root, "render.mp4") },
+    output: { path: join(root, "render.mp4"), callerId: TEST_CALLER_ID },
     artifacts: [{ role: "rendered_media", path: join(root, "render.mp4"), status: "available", mediaType: "video/mp4", primary: true }],
     warnings: []
   }, null, 2)}\n`, "utf8");
@@ -72,7 +76,7 @@ async function hostedServer(options: { declareReceiptsRoot: boolean }) {
     port: 0,
     capabilityToken: TEST_CAPABILITY_TOKEN,
     grantedTier: "write_local",
-    context: options.declareReceiptsRoot ? { receiptsRoot } : {}
+    context: options.declareReceiptsRoot ? { receiptsRoot, callerId: TEST_CALLER_ID } : { callerId: TEST_CALLER_ID }
   });
   servers.push(handle);
 
@@ -119,7 +123,7 @@ describe("Workbench receipt location", () => {
     expect(await server.contracts()).not.toHaveProperty("receiptsRoot");
   });
 
-  it("accepts the published root on every read the human pages make", async () => {
+  itLinux("accepts the published root on every read the human pages make", async () => {
     const server = await hostedServer({ declareReceiptsRoot: true });
     const published = (await server.contracts()).receiptsRoot as string;
     // The three commands the Inspector and History pages issue with a receipts root. Each one 400'd
