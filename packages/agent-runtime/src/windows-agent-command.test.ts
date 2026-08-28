@@ -39,6 +39,7 @@ const fakeAdapter: AgentAdapter = {
   label: "Fake Agent",
   transport: "local-cli",
   billing: "cli-subscription",
+  promptContextMode: "prompt-only",
   probeCommand: () => ({ executable: "fake-agent", args: ["--version"], shell: false }),
   promptCommand: (input) => ({ executable: "fake-agent", args: ["run", "--json"], cwd: input.cwd, stdin: input.prompt, shell: false })
 };

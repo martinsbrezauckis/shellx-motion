@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSourceImportDocument, loadedPackageInputHashes, PublicationCommitUncertainError, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
+import { buildSourceImportDocument, loadedPackageInputHashes, motionCapabilityCatalog, PublicationCommitUncertainError, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { assertP2BClosedTreeCapacity, assertP2BPathlessExecutionInput, P2B_MAX_SCRIPT_INPUT_BYTES } from "./p2b-connector-delivery";
 
@@ -60,6 +60,7 @@ vi.mock("./connector-delivery", async (importOriginal) => {
 });
 
 import { runCanvasToCutConnector } from "./canvas-to-cut";
+import { executePreparedMotionConnectorJob, prepareAdmittedMotionConnectorJob, type MotionConnectorReferenceAuthority } from "./connector-job-registry";
 import { runScriptToCutConnector } from "./script-to-cut";
 import { runSourceToCutConnector } from "./source-to-cut";
 
@@ -136,6 +137,85 @@ describe.runIf(process.platform === "linux")("Canvas/Script/Source P2B atomic co
       const bytes = await readFile(join(result.packageDir, ref));
       expect(packageReceipt.output.packageContentHashes[ref]).toEqual({ sha256: digest(bytes), byteLength: bytes.byteLength });
     }
+  });
+
+  it("refuses an asset-bearing generic Canvas opaque file before sibling reads, output resolution, or staging", async () => {
+    const { root, sourceDir, outDir } = await fixture();
+    const selectionPath = join(sourceDir, "selection-with-sibling-asset.json");
+    await writeFile(selectionPath, `${JSON.stringify(canvasSelectionWithAsset(Buffer.from("unread-sibling")), null, 2)}\n`, "utf8");
+    const calls: Array<{ fieldId: string; access: string }> = [];
+    const references: MotionConnectorReferenceAuthority = {
+      async resolvePath(reference) {
+        calls.push({ fieldId: reference.fieldId, access: reference.access });
+        if (reference.fieldId === "input") return selectionPath;
+        throw new Error("generic Canvas output must not resolve for an asset-bearing opaque input");
+      }
+    };
+
+    const result = await trusted(root, () => executePreparedMotionConnectorJob(canvasConnectorJob(), {
+      callerId: "cut:opaque-file-regression",
+      references,
+      signal: new AbortController().signal
+    }));
+
+    expect(result).toMatchObject({ ok: false, error: { code: "connector_reference_refused" } });
+    expect(calls).toEqual([{ fieldId: "input", access: "read" }]);
+    expect(faults.stagingRoots).toEqual([]);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps an asset-free generic Canvas opaque file functional", async () => {
+    const { root, sourceDir, outDir } = await fixture();
+    installSuccessfulProducers();
+    const selectionPath = join(sourceDir, "asset-free-selection.json");
+    await writeFile(selectionPath, `${JSON.stringify(canvasSelection(), null, 2)}\n`, "utf8");
+    const calls: Array<{ fieldId: string; access: string }> = [];
+    const references: MotionConnectorReferenceAuthority = {
+      async resolvePath(reference) {
+        calls.push({ fieldId: reference.fieldId, access: reference.access });
+        if (reference.fieldId === "input") return selectionPath;
+        if (reference.fieldId === "output") return outDir;
+        throw new Error(`unexpected generic Canvas reference ${reference.fieldId}`);
+      }
+    };
+
+    const result = await trusted(root, () => executePreparedMotionConnectorJob(canvasConnectorJob(), {
+      callerId: "cut:opaque-file-regression",
+      references,
+      signal: new AbortController().signal
+    }));
+
+    expect(result).toMatchObject({ ok: true, committed: true, result: { ok: true } });
+    expect(calls).toEqual([{ fieldId: "input", access: "read" }, { fieldId: "output", access: "write" }]);
+    await expect(stat(outDir)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it("keeps the named Canvas compatibility adapter's trusted bundle authority", async () => {
+    const { root, sourceDir, outDir } = await fixture();
+    installSuccessfulProducers();
+    const assetBytes = Buffer.from("named-trusted-bundle-asset");
+    const selectionPath = join(sourceDir, "named-selection-with-asset.json");
+    await mkdir(join(sourceDir, "assets"), { recursive: true, mode: 0o700 });
+    await writeFile(join(sourceDir, "assets", "product.png"), assetBytes);
+    await writeFile(selectionPath, `${JSON.stringify(canvasSelectionWithAsset(assetBytes), null, 2)}\n`, "utf8");
+    const references: MotionConnectorReferenceAuthority = {
+      async resolvePath(reference) {
+        if (reference.fieldId === "input") return selectionPath;
+        if (reference.fieldId === "output") return outDir;
+        throw new Error(`unexpected named Canvas reference ${reference.fieldId}`);
+      }
+    };
+
+    const result = await trusted(root, () => executePreparedMotionConnectorJob(canvasConnectorJob(), {
+      callerId: "cli:named-compatibility",
+      references,
+      signal: new AbortController().signal,
+      namedCompatibility: true,
+      namedCompatibilityOptions: {}
+    }));
+
+    expect(result).toMatchObject({ ok: true, committed: true, result: { ok: true } });
+    expect(await readFile(join(outDir, "package", "assets", "product.png"))).toEqual(assetBytes);
   });
 
   it("admits a file-backed Script before a hostile source mutation and never leaks the source path", async () => {
@@ -481,6 +561,17 @@ function requiredTree(pkg: MotionPackage): string {
   const tree = loadedPackageInputHashes(pkg)?.["admitted-package-tree"];
   if (!tree) throw new Error("P2B test expected Core's immutable admitted execution snapshot.");
   return tree;
+}
+function canvasConnectorJob() {
+  const descriptor = motionCapabilityCatalog().descriptors.find((candidate) => candidate.id === "connector.canvas-to-cut@1");
+  if (!descriptor) throw new Error("Canvas generic connector descriptor missing");
+  return prepareAdmittedMotionConnectorJob({
+    capabilityId: descriptor.id,
+    descriptorRevision: descriptor.revision,
+    descriptorFingerprint: descriptor.fingerprint,
+    requestSchemaId: descriptor.request.id,
+    request: { input: "opaque_canvas_selection", output: "opaque_delivery" }
+  });
 }
 function canvasSelection(): unknown {
   return { schema: "shellx-canvas/frame-selection@1", selectedFrameId: "frame", project: { id: "p2b", name: "P2B" }, brand: { tokens: { color: { accent: "#38bdf8" } } }, frames: [{ id: "frame", name: "Frame", durationMs: 1000, fps: 2, width: 640, height: 360, background: "#111827", layers: [{ id: "title", kind: "text", text: "Canvas P2B", startMs: 0, durationMs: 1000, transform: { x: 40, y: 40, width: 400, height: 80 }, style: { fontSize: 36, color: "#ffffff" } }] }], imageEditorOutputs: [] };

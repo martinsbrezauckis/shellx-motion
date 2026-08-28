@@ -129,6 +129,11 @@ film math it has not fixture-proven as receiver-exact.
   not delivered artifacts (Source separately derives its review storyboard).
   They reject force, dry-run, editable/live/auto modes, native/GPU/frame-lane
   controls, non-MP4 presets, audio, and injected renderer/FFmpeg/clock fields.
+  For generic `motion.connector.submit`, Canvas's opaque `input` reference authorizes
+  the stable selection file only: an asset-bearing selection is refused with
+  `connector_reference_refused` before Motion reads any sibling asset or resolves/creates
+  output state. The named local Canvas route retains its trusted local bundle authority,
+  including declared contained assets.
   Script may include documented start, duration, and track placement. Its P2B
   JSON source is capped at 1 MiB before parsing, then normalized under the
   scripted-video string, template-variable, and generated-work limits documented

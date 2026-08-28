@@ -7,13 +7,13 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  ANTIGRAVITY_EMPTY_OUTPUT_CODE,
   ANTIGRAVITY_EXECUTABLE,
   ANTIGRAVITY_PRINT_FLAG,
   antigravityAdapter,
   antigravityCliCommand,
   AntigravityPrintOrderError,
   assertAntigravityPrintLast,
+  AGENT_CONTEXT_UNBOUNDED_CODE,
   buildAgentRuntime,
   createCliAgentAdapters,
   type AgentRunner
@@ -28,7 +28,8 @@ describe("antigravity adapter", () => {
     expect(antigravity).toMatchObject({
       label: "Antigravity CLI",
       transport: "local-cli",
-      billing: "cli-subscription"
+      billing: "cli-subscription",
+      promptContextMode: "filesystem-read"
     });
     expect(antigravity?.probeCommand()).toEqual({
       executable: "agy",
@@ -131,19 +132,30 @@ describe("antigravity adapter", () => {
     expect(() => assertAntigravityPrintLast(["--sandbox", "--print", "hello"])).not.toThrow();
   });
 
-  it("unwraps the agy JSON envelope response field into structured output", async () => {
-    const runner: AgentRunner = async (command) => command.args.includes("--version")
-      ? { exitCode: 0, stdout: "1.1.8", stderr: "" }
-      : {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            conversation_id: "6fd72fb4",
-            status: "SUCCESS",
-            response: JSON.stringify({ calls: ["motion.preview.frame"] }),
-            usage: { total_tokens: 18017 }
-          }),
-          stderr: ""
-        };
+  it("keeps Antigravity health-visible but refuses its unbounded prompt context", async () => {
+    const commands: string[][] = [];
+    const runner: AgentRunner = async (command) => {
+      commands.push(command.args);
+      return { exitCode: 0, stdout: "1.1.8", stderr: "" };
+    };
+    const runtime = buildAgentRuntime({ adapters: [antigravityAdapter()], runner });
+
+    await expect(runtime.health()).resolves.toMatchObject([{ agentId: "antigravity", available: true, status: "ready" }]);
+    const result = await runtime.runPrompt({
+      agentId: "antigravity",
+      prompt: "preview current package",
+      packageId: "lower-third",
+      permission: "render_motion"
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: AGENT_CONTEXT_UNBOUNDED_CODE } });
+    expect(commands).toEqual([["--version"]]);
+  });
+
+  it("does not probe or spawn Antigravity when prompt execution is requested", async () => {
+    const runner: AgentRunner = async () => {
+      throw new Error("unbounded prompt execution must not invoke the runner");
+    };
     const runtime = buildAgentRuntime({ adapters: [antigravityAdapter()], runner });
 
     const result = await runtime.runPrompt({
@@ -153,37 +165,10 @@ describe("antigravity adapter", () => {
       permission: "render_motion"
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.structuredOutput).toEqual({ calls: ["motion.preview.frame"] });
-    expect(result.receipt.output.agentId).toBe("antigravity");
-    expect(result.receipt.output.command.args.at(-1)).toBe("<prompt>");
-    expect(result.receipt.output.command.args).not.toContain("preview current package");
+    expect(result).toMatchObject({ ok: false, error: { code: AGENT_CONTEXT_UNBOUNDED_CODE } });
   });
 
-  it("returns an honest issue-#76 error when agy exits 0 with empty stdout", async () => {
-    const runner: AgentRunner = async (command) => command.args.includes("--version")
-      ? { exitCode: 0, stdout: "1.1.8", stderr: "" }
-      : { exitCode: 0, stdout: "   \n", stderr: "" };
-    const runtime = buildAgentRuntime({ adapters: [antigravityAdapter()], runner });
-
-    const result = await runtime.runPrompt({
-      agentId: "antigravity",
-      prompt: "preview current package",
-      packageId: "lower-third",
-      permission: "render_motion"
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.code).toBe(ANTIGRAVITY_EMPTY_OUTPUT_CODE);
-    expect(result.error.message).toMatch(/issue #76/);
-    // A dropped response must never be reported as a passing receipt.
-    expect(result.receipt?.status).toBe("failed");
-    expect(result.receipt?.warnings.some((warning) => /issue #76/.test(warning))).toBe(true);
-  });
-
-  it("leaves adapters without a declared diagnosis on the generic empty-output path", async () => {
+  it("refuses Codex read-only mode because it can still read the filesystem", async () => {
     const runner: AgentRunner = async (command) => command.args.includes("--version")
       ? { exitCode: 0, stdout: "ok", stderr: "" }
       : { exitCode: 0, stdout: "", stderr: "" };
@@ -197,6 +182,6 @@ describe("antigravity adapter", () => {
       permission: "render_motion"
     });
 
-    expect(result).toMatchObject({ ok: false, error: { code: "agent_invalid_output" } });
+    expect(result).toMatchObject({ ok: false, error: { code: AGENT_CONTEXT_UNBOUNDED_CODE } });
   });
 });

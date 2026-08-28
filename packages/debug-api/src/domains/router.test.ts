@@ -389,11 +389,12 @@ describe("debug API domain router", () => {
   });
 
   it("keeps prompt queue and control receipts inside bounded agent capabilities", async () => {
-    expect(await dispatchDomainCommand("agent", "motion.prompt.queue", {})).toMatchObject({
+    const promptLifecycleServices = { receiptCallerId: "test-prompt" };
+    expect(await dispatchDomainCommand("agent", "motion.prompt.queue", {}, promptLifecycleServices)).toMatchObject({
       ok: true,
       result: { jobCount: 0 }
     });
-    expect(await dispatchDomainCommand("agent", "motion.prompt.queue", { receiptsRoot: "/receipts" })).toMatchObject({
+    expect(await dispatchDomainCommand("agent", "motion.prompt.queue", { receiptsRoot: "/receipts" }, promptLifecycleServices)).toMatchObject({
       ok: false,
       error: { code: "capability_unavailable" }
     });
@@ -416,7 +417,7 @@ describe("debug API domain router", () => {
       "agent",
       "motion.prompt.queue",
       { receiptsRoot: "/receipts" },
-      { readPromptLifecycleState }
+      { ...promptLifecycleServices, readPromptLifecycleState }
     )).toMatchObject({
       ok: true,
       visibleState: { jobCount: 1, actionableCount: 1, failedCount: 1 }
@@ -425,7 +426,8 @@ describe("debug API domain router", () => {
     expect(await dispatchDomainCommand(
       "agent",
       "motion.prompt.cancel",
-      { receiptsRoot: "/receipts", receiptId: "prompt-1" }
+      { receiptsRoot: "/receipts", receiptId: "prompt-1" },
+      promptLifecycleServices
     )).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
   });
 

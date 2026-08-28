@@ -1232,11 +1232,17 @@
           },
           "rowId": {
             "type": "string",
+            "maxLength": 256,
             "description": "Single data row ID to render; normalized the same way as Motion data rows."
           },
           "rowIds": {
             "type": "array",
-            "description": "Subset of data row IDs to render; preserves source row order."
+            "maxItems": 256,
+            "items": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "description": "Subset of at most 256 data row IDs to render; preserves source row order."
           },
           "preset": {
             "type": "string",

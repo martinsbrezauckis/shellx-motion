@@ -25,7 +25,7 @@ describe("MCI-2 self-describing connector discovery", () => {
       expect(roles).toEqual([...roles].sort());
       expect(new Set(roles).size).toBe(roles.length);
     }
-    for (const id of ["connector.canvas-to-cut@1", "connector.script-to-cut@1", "connector.source-to-cut@1", "connector.template-to-cut@1"]) {
+    for (const id of ["connector.script-to-cut@1", "connector.source-to-cut@1", "connector.template-to-cut@1"]) {
       expect(first.descriptors.find((descriptor) => descriptor.id === id)).toMatchObject({
         schema: "shellx-motion/capability-descriptor@2",
         revision: 2,
@@ -34,6 +34,14 @@ describe("MCI-2 self-describing connector discovery", () => {
         requirements: { permissionTier: "render_motion" }
       });
     }
+    expect(first.descriptors.find((descriptor) => descriptor.id === "connector.canvas-to-cut@1")).toMatchObject({
+      schema: "shellx-motion/capability-descriptor@2",
+      revision: 3,
+      summary: expect.stringContaining("asset-free Canvas selections only"),
+      availability: { state: "conditional", platforms: ["linux"], execution: "generic-connector-job" },
+      invocation: { schema: "shellx-motion/connector-job@2", admission: "admitted", jobControls: ["cancel", "events", "get", "list", "retry"] },
+      requirements: { permissionTier: "render_motion" }
+    });
     expect(first.descriptors.find((descriptor) => descriptor.id === "connector.canvas-to-mp4@1")).toMatchObject({
       revision: 3,
       availability: { state: "compatibility-only", platforms: ["linux"], execution: "named-cli-compatibility-only" },

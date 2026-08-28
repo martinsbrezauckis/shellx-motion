@@ -39,6 +39,8 @@ export {
 export type AgentId = "codex" | "claude-code" | "grok" | "antigravity" | string;
 export type AgentTransport = "local-cli";
 export type AgentBilling = "cli-subscription";
+/** Provider context: only `prompt-only` is execution-safe; `filesystem-read` is health-visible but unsafe. */
+export type AgentPromptContextMode = "prompt-only" | "filesystem-read";
 export type AgentHealthStatus = "ready" | "missing_binary" | "auth_required" | "quota_limited" | "timeout" | "failed";
 
 export interface AgentCommand {
@@ -83,6 +85,8 @@ export interface AgentAdapter {
   billing: AgentBilling;
   probeCommand: () => AgentCommand;
   promptCommand: (input: AgentPromptInput) => AgentCommand;
+  /** Required for prompt execution; an omitted mode is unsafe before command construction, probing, or spawn. */
+  promptContextMode?: AgentPromptContextMode;
   setup?: Partial<AgentSetupHints>;
   /**
    * Optional. When declared, an exit-0 run with empty stdout fails closed with
@@ -203,6 +207,7 @@ const AGENT_OUTPUT_OVERFLOW_EXIT_CODE = 125;
 const AGENT_RESOURCE_LIMIT_EXIT_CODE = 126;
 export const DEFAULT_AGENT_OUTPUT_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_AGENT_TRANSCRIPT_MAX_BYTES = 64 * 1024;
+export const AGENT_CONTEXT_UNBOUNDED_CODE = "agent_context_unbounded";
 const AGENT_PROMPT_FILE_ARG = "<prompt-file>";
 const BARE_SECRET_PATTERNS = [
   /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b/g,
@@ -229,6 +234,18 @@ export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunti
           error: {
             code: "agent_unknown",
             message: `${input.agentId ?? "codex"} is not configured.`
+          }
+        };
+      }
+
+      // Health remains independent, but a prompt must explicitly be prompt-only.
+      if (adapter.promptContextMode !== "prompt-only") {
+        return {
+          ok: false,
+          error: {
+            code: AGENT_CONTEXT_UNBOUNDED_CODE,
+            message: "The selected agent cannot run because its context is not bounded to the prompt.",
+            detail: adapter.promptContextMode === "filesystem-read" ? "The adapter permits filesystem reads." : "The adapter does not declare a prompt context mode."
           }
         };
       }
@@ -307,6 +324,7 @@ export function createCliAgentAdapters(): AgentAdapter[] {
       billing: "cli-subscription",
       probeCommand: () => ({ executable: "codex", args: ["--version"], shell: false }),
       promptCommand: codexCliCommand,
+      promptContextMode: "filesystem-read", // `--sandbox read-only` still permits arbitrary reads.
       setup: {
         authHint: "Authenticate Codex CLI locally before running Motion prompts.",
         quotaHint: "Check Codex CLI subscription limits or retry after the provider limit resets."
@@ -319,6 +337,7 @@ export function createCliAgentAdapters(): AgentAdapter[] {
       billing: "cli-subscription",
       probeCommand: () => ({ executable: "claude", args: ["--version"], shell: false }),
       promptCommand: claudeCodeCliCommand,
+      promptContextMode: "prompt-only",
       setup: {
         authHint: "Authenticate Claude Code CLI locally before running Motion prompts.",
         quotaHint: "Check Claude Code CLI subscription limits or retry after the provider limit resets."
@@ -331,6 +350,7 @@ export function createCliAgentAdapters(): AgentAdapter[] {
       billing: "cli-subscription",
       probeCommand: () => ({ executable: "grok", args: ["--version"], shell: false }),
       promptCommand: grokCliCommand,
+      promptContextMode: "prompt-only", // Exact empty `--tools=` disables the tool surface.
       setup: {
         authHint: "Authenticate Grok CLI locally before running Motion prompts.",
         quotaHint: "Check Grok CLI subscription limits or retry after the provider limit resets."
@@ -374,6 +394,7 @@ export function claudeCodeCliCommand(input: AgentPromptInput): AgentCommand {
       "--safe-mode",
       "--no-chrome",
       "--no-session-persistence",
+      "--tools", "",
       "--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent,Task,WebFetch,WebSearch"
     ],
     cwd: input.cwd,

@@ -203,6 +203,10 @@ export function antigravityAdapter(): AgentAdapter {
     billing: "cli-subscription",
     probeCommand: antigravityProbeCommand,
     promptCommand: antigravityCliCommand,
+    // `--sandbox`/`--add-dir` do not prove that the provider has no file-read
+    // context. Keep the adapter in health, but refuse prompt execution until
+    // an exact prompt-only invocation contract exists.
+    promptContextMode: "filesystem-read",
     setup: {
       installHint: "Install the Antigravity CLI and ensure agy is on PATH (the binary is agy, not antigravity).",
       authHint:

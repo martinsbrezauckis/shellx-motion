@@ -18,6 +18,20 @@ const RAW_PROMPT = "raw-prompt-text-that-must-not-outlive-its-deadline";
 
 let receiptsRoot: string;
 
+/**
+ * These fixtures model pre-ownership host evidence.  A caller-bound client
+ * must not see that evidence by default; the test exercises the explicit
+ * operator migration/read path instead.
+ */
+function legacyReceiptOperatorContext() {
+  return {
+    tier: "read_motion" as const,
+    receiptsRoot,
+    callerId: "test-operator",
+    crossCallerJobScope: true
+  };
+}
+
 async function writePromptReceipt(id: string, deleteAfter: string): Promise<string> {
   const path = join(receiptsRoot, `${id}.receipt.json`);
   await writeFile(path, JSON.stringify({
@@ -54,7 +68,7 @@ describe.skipIf(process.platform !== "linux")("raw prompt retention deadline", (
     const result = await dispatchDebugCommand(
       "motion.receipts.read",
       { receiptsRoot, receiptPath: path },
-      { tier: "read_motion", receiptsRoot }
+      legacyReceiptOperatorContext()
     );
 
     expect(result.ok).toBe(true);
@@ -70,7 +84,7 @@ describe.skipIf(process.platform !== "linux")("raw prompt retention deadline", (
     await dispatchDebugCommand(
       "motion.receipts.read",
       { receiptsRoot, receiptPath: path },
-      { tier: "read_motion", receiptsRoot }
+      legacyReceiptOperatorContext()
     );
 
     const onDisk = await readFile(path, "utf8");
@@ -87,7 +101,7 @@ describe.skipIf(process.platform !== "linux")("raw prompt retention deadline", (
     const result = await dispatchDebugCommand(
       "motion.receipts.read",
       { receiptsRoot, receiptPath: path },
-      { tier: "read_motion", receiptsRoot }
+      legacyReceiptOperatorContext()
     );
 
     expect(result.ok).toBe(true);
@@ -106,7 +120,7 @@ describe.skipIf(process.platform !== "linux")("raw prompt retention deadline", (
       const result = await dispatchDebugCommand(
         "motion.receipts.read",
         { receiptsRoot, receiptPath: path },
-        { tier: "read_motion", receiptsRoot }
+        legacyReceiptOperatorContext()
       );
 
       expect(result.ok).toBe(true);

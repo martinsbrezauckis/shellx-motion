@@ -58,6 +58,7 @@ import {
 import {
   createMotionPackage,
   createPackageValidationReceipt,
+  MAX_BATCH_QUALITY_ROWS,
   MotionOutputGuardError,
   createPreviewReceipt,
   audioQualityMeasurementRequired,
@@ -4567,6 +4568,16 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
     };
   }
   const rows = rowFilter.rows;
+  if (rows.length > MAX_BATCH_QUALITY_ROWS) {
+    return {
+      ok: false,
+      command: "render-batch",
+      error: {
+        code: "invalid_args",
+        message: `render-batch accepts at most ${MAX_BATCH_QUALITY_ROWS} selected rows.`
+      }
+    };
+  }
   const expanded = expandMotionPackageRows(pkg, rows);
   const activeJob = expanded.find((job) => activeScriptLayers(job.motion).length > 0); if (activeJob) {
     return {

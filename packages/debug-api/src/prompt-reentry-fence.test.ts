@@ -28,6 +28,7 @@ import { dispatchDebugCommand } from "./index";
 
 const VICTIM_MARKER = "victim-package-id-that-must-not-be-relayed-through-prompt-run";
 const VICTIM_RECEIPT_ID = "victim-receipt-1";
+const PROMPT_CALLER = "test-prompt";
 
 let hostReceiptsRoot: string;
 let foreignReceiptsRoot: string;
@@ -63,7 +64,7 @@ function proposingRuntime(debugCommands: Array<{ command: string; args: unknown 
   } as unknown as MotionPromptRuntime;
 }
 
-async function writeVictimReceipt(root: string): Promise<void> {
+async function writeVictimReceipt(root: string, callerId: string): Promise<void> {
   await mkdir(root, { recursive: true });
   await writeFile(join(root, `${VICTIM_RECEIPT_ID}.receipt.json`), `${JSON.stringify({
     schema: "shellx-motion/receipt@1",
@@ -74,7 +75,7 @@ async function writeVictimReceipt(root: string): Promise<void> {
     inputHashes: { motion: "b".repeat(64) },
     createdAt: "2026-07-01T00:00:00.000Z",
     lane: "ffmpeg",
-    output: { path: join(root, "victim.mp4"), preset: "mp4-h264" },
+    output: { callerId, path: join(root, "victim.mp4"), preset: "mp4-h264" },
     warnings: []
   }, null, 2)}\n`, "utf8");
 }
@@ -82,7 +83,7 @@ async function writeVictimReceipt(root: string): Promise<void> {
 beforeEach(async () => {
   hostReceiptsRoot = await mkdtemp(join(tmpdir(), "motion-reentry-host-"));
   foreignReceiptsRoot = await mkdtemp(join(tmpdir(), "motion-reentry-foreign-"));
-  await writeVictimReceipt(foreignReceiptsRoot);
+  await writeVictimReceipt(foreignReceiptsRoot, "test-foreign-prompt");
 });
 
 afterEach(async () => {
@@ -102,6 +103,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
       },
       {
         tier: "draft_motion",
+        callerId: PROMPT_CALLER,
         receiptsRoot: hostReceiptsRoot,
         promptRuntime: proposingRuntime([
           { command: "motion.receipts.read", args: { receiptsRoot: foreignReceiptsRoot, receiptId: VICTIM_RECEIPT_ID } }
@@ -129,6 +131,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
       },
       {
         tier: "draft_motion",
+        callerId: PROMPT_CALLER,
         receiptsRoot: hostReceiptsRoot,
         promptRuntime: proposingRuntime([
           { command: "motion.receipts.read", args: { receiptsRoot: foreignReceiptsRoot, receiptId: VICTIM_RECEIPT_ID } }
@@ -147,7 +150,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
   it.runIf(process.platform === "linux")("still admits an agent-proposed read of the host's own receipts root", async () => {
     // The fix must not turn prompt-driven execution off. A proposal that stays inside the host's
     // declared root is exactly what `executeAgentCommands` is for.
-    await writeVictimReceipt(hostReceiptsRoot);
+    await writeVictimReceipt(hostReceiptsRoot, PROMPT_CALLER);
 
     const result = await dispatchDebugCommand(
       "motion.prompt.run",
@@ -159,6 +162,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
       },
       {
         tier: "draft_motion",
+        callerId: PROMPT_CALLER,
         receiptsRoot: hostReceiptsRoot,
         promptRuntime: proposingRuntime([
           { command: "motion.receipts.read", args: { receiptsRoot: hostReceiptsRoot, receiptId: VICTIM_RECEIPT_ID } }
@@ -180,6 +184,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
       },
       {
         tier: "edit_motion",
+        callerId: PROMPT_CALLER,
         receiptsRoot: hostReceiptsRoot,
         promptRuntime: proposingRuntime([
           {

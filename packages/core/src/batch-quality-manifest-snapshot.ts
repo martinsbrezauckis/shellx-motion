@@ -1,6 +1,7 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJsonSha256 } from "./canonical-json";
+import { MAX_BATCH_QUALITY_ROWS } from "./data-file-load";
 import { hashBuffer } from "./receipts";
 import {
   BoundedResourceBudget,
@@ -13,7 +14,6 @@ import {
 const MAX_QUALITY_INPUT_BYTES = 4 * 1024 * 1024;
 const MAX_QUALITY_BASELINES = 64;
 const MAX_QUALITY_AGGREGATE_BYTES = 64 * 1024 * 1024;
-export const MAX_BATCH_QUALITY_ROWS = 256;
 export const MAX_BATCH_QUALITY_REQUEST_BYTES = 256 * 1024 * 1024;
 
 export function createBatchQualityRequestBudget(): BoundedResourceBudget {

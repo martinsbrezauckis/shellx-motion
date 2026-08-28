@@ -3,10 +3,10 @@ import { assertReadableLayerKeyframes } from "./keyframe-readability";
 import { resolvePackageAsset } from "./package";
 import { hashBuffer } from "./receipts";
 import { applyMotionRowTemplateValues } from "./data-template-bindings";
-import { readMotionDataRowsText } from "./data-file-load";
+import { assertBoundedMotionDataRowCount, readMotionDataRowsText } from "./data-file-load";
 import { applyChartCompositionRecipe } from "./chart-composition-recipe";
 import type { MotionDocument, MotionLayer, MotionPackage, PackageManifest } from "./types";
-export { MAX_MOTION_DATA_ROWS_BYTES } from "./data-file-load";
+export { MAX_BATCH_QUALITY_ROWS, MAX_MOTION_DATA_ROWS_BYTES } from "./data-file-load";
 export interface MotionDataRow {
   id: string;
   index: number;
@@ -49,6 +49,7 @@ export function parseMotionDataRowsCsv(input: string): MotionDataRow[] {
   const records = parseCsvRecords(input.replace(/^\uFEFF/, ""))
     .filter((record) => record.some((field) => field.length > 0));
   if (records.length === 0) throw new Error("Motion CSV data rows must include a header row.");
+  assertBoundedMotionDataRowCount(records.length - 1);
   const headers = records[0].map((header, index) => {
     const key = header.trim();
     if (!key) throw new Error(`Motion CSV data row header ${index + 1} must be non-empty.`);
@@ -72,6 +73,7 @@ export function parseMotionDataRows(input: unknown): MotionDataRow[] {
       : null;
   if (!rowsInput) throw new Error("Motion data rows must be an array or { rows: [...] }.");
   if (rowsInput.length === 0) throw new Error("Motion data rows must include at least one row.");
+  assertBoundedMotionDataRowCount(rowsInput.length);
   const seenIds = new Set<string>();
   return rowsInput.map((entry, index) => {
     const entryRecord = readRecord(entry);
@@ -497,9 +499,7 @@ function slugId(value: string): string {
   return slug || "row";
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return values.filter((value, index) => values.indexOf(value) === index);
-}
+function uniqueStrings(values: string[]): string[] { return [...new Set(values)]; }
 
 function motionDocumentFromInterpolated(value: unknown): MotionDocument {
   const record = readRecord(value);

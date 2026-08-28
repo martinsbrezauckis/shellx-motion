@@ -149,6 +149,29 @@ describe("atomic glTF package authoring", () => {
     }
   });
 
+  it("refuses lexical glTF JSON depth before atomic package publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-deep-gltf-"));
+    const sourcePath = join(root, "input.gltf");
+    const outputRoot = join(root, "package");
+    try {
+      const source = JSON.parse(await readFile(fixturePath, "utf8")) as Record<string, any>;
+      let nested: Record<string, unknown> = {};
+      for (let index = 0; index < 32; index += 1) nested = { nested };
+      source.extras = nested;
+      await writeFile(sourcePath, JSON.stringify(source));
+
+      await expect(writeStaticGltfPackage({
+        sourcePath,
+        outputRoot,
+        inputRoots: [root],
+        outputRoots: [root],
+      })).rejects.toThrow(/32-level pre-parse nesting limit/);
+      await expect(stat(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a derived camera outside canonical Motion bounds before atomic commit", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-camera-overflow-gltf-"));
     const sourcePath = join(root, "camera-overflow.gltf");
