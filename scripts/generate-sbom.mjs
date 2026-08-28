@@ -26,6 +26,7 @@ function parseArgs(argv) {
   let out = DEFAULT_OUTPUT;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--" && index === 0) continue;
     if (arg === "--out") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) fail("--out requires a file path");

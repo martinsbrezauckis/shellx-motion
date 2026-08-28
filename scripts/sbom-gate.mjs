@@ -21,8 +21,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(`SBOM gate failed: ${message}`);
 }
 
-function generate(out) {
-  const result = spawnSync(process.execPath, [GENERATOR, "--out", out], {
+function generate(out, options = {}) {
+  const separator = options.pnpmSeparator ? ["--"] : [];
+  const result = spawnSync(process.execPath, [GENERATOR, ...separator, "--out", out], {
     cwd: ROOT,
     encoding: "utf8"
   });
@@ -34,7 +35,9 @@ const temporaryRoot = mkdtempSync(join(tmpdir(), "shellx-motion-sbom-"));
 try {
   const first = generate(join(temporaryRoot, "first.cdx.json"));
   const second = generate(join(temporaryRoot, "second.cdx.json"));
+  const pnpmSeparated = generate(join(temporaryRoot, "pnpm-separated.cdx.json"), { pnpmSeparator: true });
   assert(first === second, "identical source inputs must produce byte-for-byte identical SBOM files");
+  assert(first === pnpmSeparated, "pnpm's leading argument separator must preserve the generated SBOM bytes");
 
   const bom = JSON.parse(first);
   const serialized = JSON.stringify(bom);
