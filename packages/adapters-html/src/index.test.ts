@@ -386,6 +386,19 @@ describe("HTML snippet export adapter", () => {
     );
   });
 
+  it("refuses an oversized SVG from descriptor metadata before it is buffered for sanitizing", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-oversized-svg-"));
+    const htmlPath = join(tempRoot, "incoming.html");
+    tempDirs.push(tempRoot);
+    await mkdir(join(tempRoot, "assets"), { recursive: true });
+    await writeFile(join(tempRoot, "assets", "logo.svg"), Buffer.alloc((8 * 1024 * 1024) + 1, 0x20));
+    await writeFile(htmlPath, htmlSnippetImportFixture(), "utf8");
+
+    await expect(importHtmlSnippetToMotionPackage({ htmlPath, packageDir: join(tempRoot, "package") })).rejects.toThrow(
+      "HTML snippet import SVG asset exceeds the 8 MiB limit: assets/logo.svg."
+    );
+  });
+
   it("rejects oversized HTML before parsing", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-oversized-"));
     const htmlPath = join(tempRoot, "incoming.html");

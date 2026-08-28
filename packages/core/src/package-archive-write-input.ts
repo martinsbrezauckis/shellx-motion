@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { compareCodeUnits } from "./canonical-json";
 import { stableFileIdentity, type StableFileIdentity } from "./stable-file-identity";
@@ -30,6 +30,30 @@ interface ReservedPackageArchiveSource {
   expectedIdentity: StableFileIdentity;
 }
 
+/**
+ * Bound every directory entry, including directories and ignored special files, before it can
+ * cause another metadata lookup or recursive traversal. The limit remains derived from the
+ * existing package file budget, while allowing an admissible file tree to carry its ancestors.
+ */
+class PackageArchiveTopologyBudget {
+  private entryCount = 0;
+  private readonly maxEntries: number;
+
+  constructor(limits: Readonly<MotionPackageArchiveWriteLimits>) {
+    this.maxEntries = limits.maxFiles * (limits.maxPathDepth + 1);
+    if (!Number.isSafeInteger(this.maxEntries)) {
+      throw new Error("Package archive topology limit is invalid.");
+    }
+  }
+
+  reserve(path: string): void {
+    if (this.entryCount + 1 > this.maxEntries) {
+      throw new Error(`Package archive exceeds the ${this.maxEntries}-entry topology limit: ${path}`);
+    }
+    this.entryCount += 1;
+  }
+}
+
 export async function collectBoundedPackageArchiveEntries(
   packageRoot: string,
   overrides: Partial<MotionPackageArchiveWriteLimits> | undefined,
@@ -37,7 +61,8 @@ export async function collectBoundedPackageArchiveEntries(
 ): Promise<PackageArchiveSourceEntry[]> {
   const limits = resolveArchiveWriteLimits(overrides);
   const budget = new BoundedResourceBudget(limits, "Package archive");
-  const files = await collectPackageFiles(packageRoot, budget, 0, packageRoot);
+  const topology = new PackageArchiveTopologyBudget(limits);
+  const files = await collectPackageFiles(packageRoot, budget, topology, 0, packageRoot);
   await services.afterEnumeration?.();
   const entries: PackageArchiveSourceEntry[] = [];
   for (const file of files) {
@@ -60,24 +85,37 @@ export async function collectBoundedPackageArchiveEntries(
   return entries.sort((left, right) => compareCodeUnits(left.path, right.path));
 }
 
-async function collectPackageFiles(root: string, budget: BoundedResourceBudget, depth = 0, packageRoot = root): Promise<ReservedPackageArchiveSource[]> {
+async function collectPackageFiles(
+  root: string,
+  budget: BoundedResourceBudget,
+  topology: PackageArchiveTopologyBudget,
+  depth = 0,
+  packageRoot = root
+): Promise<ReservedPackageArchiveSource[]> {
   if (depth > budget.limits.maxPathDepth) {
     throw new Error(`Package archive exceeds the ${budget.limits.maxPathDepth}-component depth limit.`);
   }
-  const entries = await readdir(root, { withFileTypes: true });
+  const directory = await opendir(root);
   const files: ReservedPackageArchiveSource[] = [];
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    const info = await lstat(path);
-    if (info.isSymbolicLink()) {
-      throw new Error(`Package archive does not support symbolic links: ${packageRelativePath(root, path)}`);
+  try {
+    for (;;) {
+      const entry = await directory.read();
+      if (entry === null) break;
+      const path = join(root, entry.name);
+      topology.reserve(path);
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) {
+        throw new Error(`Package archive does not support symbolic links: ${packageRelativePath(root, path)}`);
+      }
+      if (info.isDirectory()) {
+        files.push(...await collectPackageFiles(path, budget, topology, depth + 1, packageRoot));
+      } else if (info.isFile()) {
+        budget.reserve(path, info.size, packageRoot);
+        files.push({ absolutePath: path, expectedIdentity: stableFileIdentity(info) });
+      }
     }
-    if (info.isDirectory()) {
-      files.push(...await collectPackageFiles(path, budget, depth + 1, packageRoot));
-    } else if (info.isFile()) {
-      budget.reserve(path, info.size, packageRoot);
-      files.push({ absolutePath: path, expectedIdentity: stableFileIdentity(info) });
-    }
+  } finally {
+    await directory.close();
   }
   return files.sort((left, right) => compareCodeUnits(packageRelativePath(root, left.absolutePath), packageRelativePath(root, right.absolutePath)));
 }
