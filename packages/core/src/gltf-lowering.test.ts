@@ -68,6 +68,26 @@ describe("bounded glTF and GLB lowering", () => {
     expect(() => lower(escapedContainer, "source/escaped.json")).toThrow(/exceeds its bounded bufferView/);
   });
 
+  it("lexically bounds JSON depth and structure before parsing while ignoring quoted punctuation", () => {
+    const atDepthLimit = triangleGltf(true);
+    atDepthLimit.extras = nestedRecord(31);
+    expect(() => parseGltfContainer(Buffer.from(JSON.stringify(atDepthLimit)), "gltf")).not.toThrow();
+
+    const overDepthLimit = triangleGltf(true);
+    overDepthLimit.extras = nestedRecord(32);
+    expect(() => parseGltfContainer(Buffer.from(JSON.stringify(overDepthLimit)), "gltf"))
+      .toThrow(/32-level pre-parse nesting limit/);
+
+    const quotedPunctuation = triangleGltf(true);
+    quotedPunctuation.extras = { punctuation: "[{,:}]\\\"".repeat(20_000) };
+    expect(() => parseGltfContainer(Buffer.from(JSON.stringify(quotedPunctuation)), "gltf")).not.toThrow();
+
+    const structuralOverflow = triangleGltf(true);
+    structuralOverflow.extras = Array.from({ length: 50_001 }, () => 0);
+    expect(() => parseGltfContainer(Buffer.from(JSON.stringify(structuralOverflow)), "gltf"))
+      .toThrow(/50000-token pre-parse structural limit/);
+  });
+
   it("preflights primitive, per-object, and cumulative geometry budgets before accessor materialization", () => {
     const primitiveHeavy = meshBudgetGltf(17, 3);
     const primitiveContainer = parseGltfContainer(Buffer.from(JSON.stringify(primitiveHeavy)), "gltf");
@@ -151,6 +171,12 @@ function triangleBuffer(): Buffer {
   positions.forEach((value, index) => buffer.writeFloatLE(value, index * 4));
   [0, 1, 2].forEach((value, index) => buffer.writeUInt16LE(value, 36 + index * 2));
   return buffer;
+}
+
+function nestedRecord(depth: number): Record<string, unknown> {
+  let nested: Record<string, unknown> = {};
+  for (let index = 1; index < depth; index += 1) nested = { nested };
+  return nested;
 }
 
 function meshBudgetGltf(primitiveCount: number, vertexCount: number): Record<string, unknown> {

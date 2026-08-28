@@ -27,11 +27,11 @@ const P2_OUTPUTS = canonicalOutputs([
 ]);
 
 export const CURRENT_DOCUMENTATION_RESOURCES: readonly MotionDocumentationResource[] = [
-  documentationResource("motion.cut-and-design-studio"), documentationResource("motion.host-integration")
+  documentationResource("motion.cut-and-design-studio", 2), documentationResource("motion.host-integration")
 ].sort((left, right) => compareCodeUnits(left.id, right.id));
 
-function documentationResource(id: string): MotionDocumentationResource {
-  const content = { schema: "shellx-motion/docs-resource@1" as const, id, revision: 1 };
+function documentationResource(id: string, revision = 1): MotionDocumentationResource {
+  const content = { schema: "shellx-motion/docs-resource@1" as const, id, revision };
   return { ...content, fingerprint: documentationResourceFingerprint(content) };
 }
 
@@ -58,7 +58,7 @@ export const CURRENT_CONNECTOR_DESCRIPTORS: readonly ConnectorCapabilityDescript
     outputs: [{ role: "receipt", mediaKinds: ["application/json"], schemas: ["shellx-motion/receipt@1"] }, { role: "rendered_media", mediaKinds: ["video/mp4"], schemas: ["shellx-motion/artifact-handle-ref@1"] }],
     invocation: compatibilityInvocation(), requirements: { integrationModes: ["render.final"], integrationFeatures: ["artifact.attestation"], permissionTier: "write_local" }
   }),
-  p2Descriptor("connector.canvas-to-cut@1", "Canvas to Cut P2B", "Linux-only P2B Browser-to-FFmpeg H.264 rendered-media handoff.", "canvas-to-cut", "Linux-only P2B; requires an absent or empty output and produces real Browser-to-FFmpeg H.264 rendered media."),
+  p2Descriptor("connector.canvas-to-cut@1", "Canvas to Cut P2B", "Linux-only P2B Browser-to-FFmpeg H.264 rendered-media handoff; generic opaque input accepts asset-free Canvas selections only.", "canvas-to-cut", "Linux-only P2B; generic opaque input authorizes one stable asset-free Canvas selection file, while named local compatibility retains trusted bundle authority.", 3),
   descriptor({
     id: "connector.cut-generate-to-cut@1", revision: 3, title: "Cut Generate to Cut", summary: "Linux-only legacy named compatibility handoff retained without generic connector-job admission.", category: "cut-handoff",
     documentation: documentation("motion.cut-and-design-studio", "connector-modes-into-cut"),
@@ -74,9 +74,9 @@ export const CURRENT_CONNECTOR_DESCRIPTORS: readonly ConnectorCapabilityDescript
   refusedDescriptor("cut.c7-scene-orchestration-handoff@1", "C7 scene orchestration Cut handoff", "C7 scene orchestration remains outside current Cut connector admission.", "Current C7/Cut admission is refused; discovery does not authorize execution.")
 ].sort((left, right) => compareCodeUnits(left.id, right.id));
 
-function p2Descriptor(id: string, title: string, summary: string, route: string, reason: string): ConnectorCapabilityDescriptor {
+function p2Descriptor(id: string, title: string, summary: string, route: string, reason: string, revision = 2): ConnectorCapabilityDescriptor {
   return descriptor({
-    id, revision: 2, title, summary, category: "cut-handoff", documentation: documentation("motion.cut-and-design-studio", "template-to-cut-and-p2b-canvas-script-and-source-to-cut"),
+    id, revision, title, summary, category: "cut-handoff", documentation: documentation("motion.cut-and-design-studio", "template-to-cut-and-p2b-canvas-script-and-source-to-cut"),
     availability: { state: "conditional", reason, platforms: ["linux"], execution: "generic-connector-job" },
     request: requestSchema(`shellx-motion/connector-request/${route}@1`, [referenceField("input"), referenceField("output")]), outputs: P2_OUTPUTS,
     invocation: admittedInvocation(), requirements: { integrationModes: ["cut.import.plan"], integrationFeatures: ["artifact.attestation"], permissionTier: "render_motion" }

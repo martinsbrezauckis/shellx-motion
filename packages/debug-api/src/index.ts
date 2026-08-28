@@ -98,8 +98,9 @@ import {
   type TemplatePerformance,
   type TemplateValue
 } from "@shellx-motion/core";
-import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-browser"; import type { GpuActiveHardwareProbeResult, GpuEffectModuleUseAuthority } from "@shellx-motion/renderer-browser"; import type { DebugAgentScriptHostContext } from "./debug-agent-script-host-context.js"; import { writeContextReceipt, type DebugHostReceiptContext } from "./debug-host-receipt-writer.js"; import { selectDebugBrowserFrameRenderer } from "./debug-browser-frame-renderer-selection.js"; import { agentScriptBatchCopyRefusal } from "./agent-script-batch-refusal.js"; import { readDebugJson } from "./debug-json-read.js"; import { publishBrowserWorkflowJsonSidecar } from "./browser-workflow-sidecar-publication.js";
-import { applyRenderLifecycleOwner, renderLifecycleReceiptVisible } from "./render-lifecycle-ownership.js";
+import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-browser"; import type { GpuActiveHardwareProbeResult, GpuEffectModuleUseAuthority } from "@shellx-motion/renderer-browser"; import type { DebugAgentScriptHostContext } from "./debug-agent-script-host-context.js"; import type { DebugHostReceiptContext } from "./debug-host-receipt-writer.js"; import { selectDebugBrowserFrameRenderer } from "./debug-browser-frame-renderer-selection.js"; import { agentScriptBatchCopyRefusal } from "./agent-script-batch-refusal.js"; import { readDebugJson } from "./debug-json-read.js"; import { publishBrowserWorkflowJsonSidecar } from "./browser-workflow-sidecar-publication.js";
+import { stampReceiptOwner, visibleReceiptEntries } from "./receipt-ownership.js";
+import { createReceiptOwnershipAccess } from "./receipt-ownership-access.js"; import { persistHostReceipt, receiptAccessScope, receiptVisibleForHost, stampHostReceipt } from "./receipt-ownership-host.js";
 import { debugBatchOutputTopologyError, prepareDebugBatchOutput } from "./batch-output-admission.js";
 import { inspectDebugBatchResumeOwner, type DebugBatchResumeOutput } from "./batch-resume-ownership.js";
 import {
@@ -503,9 +504,7 @@ export async function readMotionAgentSnapshotResource(args: { packageRoot?: stri
   return await readMotionAgentSnapshotFromHost(args, snapshotServices(context));
 }
 
-function snapshotServices(context: MotionDebugContext) {
-  return agentSnapshotHostServices(context, { isPathInsideTrustedRoot, readSnapshotReceipts: readReceiptEntriesWithStatus, jobCallerId: dispatchCallerId(context) });
-}
+function snapshotServices(context: MotionDebugContext) { return agentSnapshotHostServices(context, { isPathInsideTrustedRoot, readSnapshotReceipts: async (receiptsRoot) => await receiptOwnershipAccess(context).status(receiptsRoot), jobCallerId: dispatchCallerId(context) }); }
 
 export async function dispatchDebugCommand(command: MotionDebugCommand, args: unknown, context: MotionDebugContext): Promise<MotionDebugResult> {
   const hostJobScope = HOST_JOB_OPERATIONS[command];
@@ -569,7 +568,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     executeFinal: async (renderArgs, signal) => await dispatchDebugCommandUnsafe("motion.render.final", renderArgs, { ...context, executionSignal: signal }),
     unhandled: (error) => unhandledDebugCommandError("motion.job.submit", error), connectorUnhandled: (error) => unhandledDebugCommandError("motion.connector.submit", error)
   });
-  const withAttestedRenderReuse = createAttestedRenderReuseFinalExecutor({ engineVersion: MOTION_ENGINE_VERSION, writeReceipt: async (root, receipt) => await writeReceiptFile(root, applyReceiptActor(receipt, context.actor)), invalidArgs, ...(context.attestedRenderReuseProducerAuthority ? { producerAuthority: context.attestedRenderReuseProducerAuthority } : {}) });
+  const withAttestedRenderReuse = createAttestedRenderReuseFinalExecutor({ engineVersion: MOTION_ENGINE_VERSION, writeReceipt: async (root, receipt) => await persistHostReceipt(context, root, receipt, writeReceiptFile), invalidArgs, ...(context.attestedRenderReuseProducerAuthority ? { producerAuthority: context.attestedRenderReuseProducerAuthority } : {}) });
   const domainResult = await dispatchDomainCommand(definition.domain, command, args, {
     checkpointStoryboardRecordStore: context.checkpointStoryboardRecordStore,
     checkpointStoryboardMaterializationAuthority: context.checkpointStoryboardMaterializationAuthority, checkpointStoryboardBehaviorResolutionAuthority: context.checkpointStoryboardBehaviorResolutionAuthority, checkpointStoryboardRelationResolutionAuthority: context.checkpointStoryboardRelationResolutionAuthority, checkpointStoryboardRelationActionResolutionAuthority: context.checkpointStoryboardRelationActionResolutionAuthority, checkpointStoryboardLifecycleResolutionAuthority: context.checkpointStoryboardLifecycleResolutionAuthority, checkpointStoryboardGeometryMorphResolutionAuthority: context.checkpointStoryboardGeometryMorphResolutionAuthority, checkpointStoryboardRetainedTraceResolutionAuthority: context.checkpointStoryboardRetainedTraceResolutionAuthority, checkpointStoryboardRetainedTracePreviewAuthority: context.checkpointStoryboardRetainedTracePreviewAuthority, checkpointStoryboardRetainedTraceReviewAuthority: context.checkpointStoryboardRetainedTraceReviewAuthority,
@@ -586,7 +585,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       return reservation ? {
         writeReceipt: async (receipt) => {
           await context.rawPromptReceiptWriteTestHook?.(receipt);
-          return await reservation.writeJson(`${safeFileToken(receipt.id)}.receipt.json`, applyReceiptActor(receipt, context.actor));
+          return await reservation.writeJson(`${safeFileToken(receipt.id)}.receipt.json`, stampHostReceipt(context, receipt));
         },
         close: async () => await reservation.close()
       } : null;
@@ -597,10 +596,10 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     }),
     isAgentReceiptPathInsideRoot: isReceiptPathInsideRoot,
     readAgentTranscript: async (input) => {
-      const entries = await readReceiptEntries(input.receiptsRoot);
+      const entries = await receiptOwnershipAccess(context).list(input.receiptsRoot);
       let targetEntry: ReceiptEntry | undefined;
       if (input.receiptPath) {
-        const read = await readReceiptEntryInsideRoot(input.receiptsRoot, input.receiptPath);
+        const read = await receiptOwnershipAccess(context).entry(input.receiptsRoot, input.receiptPath);
         targetEntry = read.entry ?? undefined;
       } else if (input.receiptId) {
         targetEntry = findReceiptEntryById(entries, input.receiptId);
@@ -621,7 +620,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         ...(input.contactSheet !== undefined ? { contactSheet: input.contactSheet } : {}),
         ...(input.contactSheetPath ? { contactSheetPath: input.contactSheetPath } : {})
       };
-      const quality = await readAgentRevisionQualityReceipts(evidenceArgs, input.receiptsRoot);
+      const quality = await readAgentRevisionQualityReceipts(evidenceArgs, input.receiptsRoot, context);
       if (!quality.ok) return quality;
       const contactSheet = await readAgentRevisionContactSheet(evidenceArgs, input.contactSheetRoots);
       if (!contactSheet.ok) return contactSheet;
@@ -634,7 +633,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       };
     },
     readPromptLifecycleState: async (root) => {
-      const entries = await readReceiptEntries(root);
+      const entries = await receiptOwnershipAccess(context).list(root);
       const controls = promptControlIndex(entries);
       const jobs = entries
         .filter((entry) => isPromptJobReceipt(entry.receipt))
@@ -642,7 +641,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       return { jobs, stateCounts: promptStateCounts(jobs) };
     },
     readPromptControlTarget: async (root, receiptId) => {
-      const entries = await readReceiptEntries(root, receiptControlReadServices(context));
+      const entries = await receiptOwnershipAccess(context).list(root, receiptControlReadServices(context));
       const entry = findReceiptEntryById(entries, receiptId);
       if (!entry) return { kind: "missing" as const };
       if (!isPromptJobReceipt(entry.receipt)) return { kind: "not_prompt" as const };
@@ -665,6 +664,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     ...(context.streamingFinalRenderer ? { streamingFinalRenderer: context.streamingFinalRenderer } : {}),
     browserFrameRenderer: browserRenderer.renderer, activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable, ...(browserRenderer.sessionFactory ? { browserPreviewStripSessionFactory: browserRenderer.sessionFactory } : {}),
     ...snapshotServices(context),
+    receiptCallerId: lifecycleCallerId,
     packageLoader: loadMotionPackage,
     agentScriptAuthority: context.agentScriptAuthority,
     observedMcpAgentSession: context.observedMcpAgentSession,
@@ -674,8 +674,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     ensureDirectory: async (path) => { await mkdir(path, { recursive: true }); },
     workflowCatalogUpserter: upsertBrowserWorkflowCatalog, publishJsonSidecar: publishBrowserWorkflowJsonSidecar,
     browsePackages: buildPackageBrowser,
-    listReceiptEntries: async (root) => await readReceiptEntries(root, context.stableReceiptStoreReadTestServices),
-    readReceiptEntryInsideRoot,
+    listReceiptEntries: async (root) => await receiptOwnershipAccess(context).list(root, context.stableReceiptStoreReadTestServices),
+    readReceiptEntryInsideRoot: async (root, receiptPath) => await receiptOwnershipAccess(context).entry(root, receiptPath),
     summarizeReceipt: receiptSummary,
     summarizeReceiptsPanel: receiptsPanelSummary,
     listPlatformReceiptEntries: readPlatformReceiptEntries,
@@ -683,7 +683,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     isPathInsideTrustedRoot,
     archivePackage: writeMotionPackageArchive,
     extractPackage: extractMotionPackageArchive,
-    writeReviewBundle,
+    writeReviewBundle: async (input) => await writeReviewBundle({ ...input, ...(input.receiptsRoot ? { receipts: (await receiptOwnershipAccess(context).list(input.receiptsRoot)).map(({ path, receipt }) => ({ path, receipt })) } : {}) }),
     ...(context.artifactRoots ? { artifactRoots: context.artifactRoots } : {}), ...(context.artifactRootAuthorities ? { artifactRootAuthorities: context.artifactRootAuthorities } : {}),
     scriptedPackageWriter: writeScriptedMotionPackage,
     htmlSnippetExporter: writeHtmlSnippetExport,
@@ -741,7 +741,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       };
     },
     readReceiptRenderState: async (root) => {
-      const entries = root ? await readReceiptEntries(root, context.stableReceiptStoreReadTestServices) : [];
+      const entries = root ? await receiptOwnershipAccess(context).list(root, context.stableReceiptStoreReadTestServices) : [];
       const controls = renderControlIndex(entries);
       const receipts = entries.map((entry) => receiptSummary(entry));
       const jobs = entries
@@ -764,8 +764,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     lifecycleCallerId,
     lifecycleCrossCallerScopeGranted: context.crossCallerJobScope === true,
     readRenderLifecycleState: async (root) => {
-      const entries = root ? await readReceiptEntries(root) : [];
-      const visibleEntries = entries.filter((entry) => renderLifecycleReceiptVisible(entry.receipt, lifecycleCallerId, context.crossCallerJobScope === true));
+      const visibleEntries = root ? await receiptOwnershipAccess(context).list(root) : [];
       const controls = renderControlIndex(visibleEntries);
       const statusJobs = visibleEntries
         .filter((entry) => isRenderJobReceipt(entry.receipt))
@@ -781,10 +780,10 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       const entry = findReceiptEntryById(entries, receiptId);
       if (!entry) return { kind: "missing" as const };
       if (!isRenderJobReceipt(entry.receipt)) return { kind: "not_render" as const };
-      if (!renderLifecycleReceiptVisible(entry.receipt, lifecycleCallerId, context.crossCallerJobScope === true)) return { kind: "not_visible" as const };
+      if (!receiptVisibleForHost(entry.receipt, context)) return { kind: "not_visible" as const };
       if (!entry.snapshot) return { kind: "missing" as const };
       await context.receiptControlTargetTestHook?.({ kind: "render", receiptsRoot: root, receiptId });
-      const controls = renderControlIndex(entries.filter((candidate) => renderLifecycleReceiptVisible(candidate.receipt, lifecycleCallerId, context.crossCallerJobScope === true)));
+      const controls = renderControlIndex(visibleReceiptEntries(entries, receiptAccessScope(context)));
       const job = renderStatusJob(entry, controls);
       return {
         kind: "render" as const,
@@ -874,8 +873,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           ...debugQualityInputHashes(retained.evidence)
         },
         runner: context.ffmpegRunner,
-        // Domain-driven quality manifests (e.g. quality.panel) inherit this dispatch's actor.
-        actor: context.actor
+        // Domain-driven quality manifests (e.g. quality.panel) inherit this dispatch's actor and owner.
+        actor: context.actor, callerId: dispatchCallerId(context)
       });
       return attachDebugQualityInputs(
         result,
@@ -931,7 +930,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     readReceipt: readReceiptFile,
     readJson: readDebugJson,
     receiptActor: context.actor,
-    writeReceipt: (root, receipt) => writeContextReceipt(context, root, applyReceiptActor(applyRenderLifecycleOwner(receipt, lifecycleCallerId), context.actor), writeReceiptFile),
+    writeReceipt: (root, receipt) => persistHostReceipt(context, root, receipt, writeReceiptFile),
     writeJson: writeJsonFile
   });
   if (domainResult) return domainResult;
@@ -1041,7 +1040,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       await publication.publishFile(await publication.verifyFile());
       published = true;
       remapPublicationPaths(receipt, publication.stagingPath, outputPath); remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), context.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await persistHostReceipt(context, receiptsRoot, receipt, writeReceiptFile) : undefined;
       return {
         ok: true,
         receiptId: receipt.id,
@@ -1175,7 +1174,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       published = true;
       remapPublicationPaths(receipt, publication.stagingPath, outputPath);
       remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), context.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await persistHostReceipt(context, receiptsRoot, receipt, writeReceiptFile) : undefined;
       return {
         ok: true, receiptId: receipt.id,
         visibleState: { panel: "receipts", operation: "render.final", packageId: pkg.manifest.id, outputPath, status: receipt.status },
@@ -1233,7 +1232,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable,
             ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {})
           },
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor))
+          persistReceipt: async (root, receipt, actor) => await persistHostReceipt(context, root, receipt, writeReceiptFile, actor)
         });
       }
       const nativeRefusal = frameLane === "native" ? nativeFrameLaneRefusal(pkg, frameLane, "delivery") : null;
@@ -1255,7 +1254,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             if (qualityCheck.ok) return { qualityCheck }; redactAbortedFinalOutputEvidence(receipt, { code: qualityCheck.error.code, message: qualityCheck.error.message }); const failed = abortedQualityCheckEvidence(qualityCheck);
             return { qualityCheck: failed, failure: debugRenderQualityManifestFailure({ lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath, receipt, qualityManifestPath, qualityCheck: failed, extra: { frameTransport: transport } }) };
           }} : {}),
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor))
+          persistReceipt: async (root, receipt, actor) => await persistHostReceipt(context, root, receipt, writeReceiptFile, actor)
         });
       }
       if (frameLane === "gpu") return invalidArgs("GPU final rendering requires the strict streamed FFmpeg path and never falls back to materialized frames.");
@@ -1377,7 +1376,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           framePass,
           receiptsRoot,
           actor: renderContext.actor,
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor)),
+          persistReceipt: async (root, receipt, actor) => await persistHostReceipt(context, root, receipt, writeReceiptFile, actor),
           frameLane,
           preset: ffmpegPreset,
           packageId: pkg.manifest.id,
@@ -1435,7 +1434,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       await publication.publishFile(await publication.verifyFile());
       published = true;
       remapPublicationPaths(encoded, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(encoded.receipt, dispatchCallerId(renderContext)), renderContext.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await persistHostReceipt(renderContext, receiptsRoot, encoded.receipt, writeReceiptFile) : undefined;
 
       return {
         ok: true,
@@ -1498,7 +1497,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       const rowFilter = filterMotionDataRows(allRows, request.rowIds);
       if (!rowFilter.ok) return { ok: false as const, result: invalidArgs(rowFilter.message) };
       const rows = rowFilter.rows;
-      if (request.qualityManifestPath && rows.length > MAX_BATCH_QUALITY_ROWS) {
+      if (rows.length > MAX_BATCH_QUALITY_ROWS) {
         return { ok: false as const, result: invalidArgs(`motion.render.batch accepts at most ${MAX_BATCH_QUALITY_ROWS} selected rows.`) };
       }
       const expanded = expandMotionPackageRows(pkg, rows);
@@ -1890,7 +1889,7 @@ async function executePromptDebugCommands(
     if (childReceipt && context.receiptsRoot) {
       // Prompt-driven child operations inherit the prompt's actor context: stamp the copied child
       // receipt so an agent's sub-commands are attributed in History exactly like direct commands.
-      await writeReceiptFile(context.receiptsRoot, applyReceiptActor(childReceipt, context.actor));
+      await persistHostReceipt(context, context.receiptsRoot, childReceipt, writeReceiptFile);
     }
     const receiptId = result.ok ? result.receiptId ?? childReceipt?.id : undefined;
     const record: PromptDebugCommandExecutionRecord = result.ok
@@ -2095,7 +2094,7 @@ async function runDebugRenderQualityManifest(input: {
       packageId: input.packageId,
       receiptInputHashes: callerQualityInputHashes,
       qualityInputRoots: qualityCheckInputRoots(input.context),
-      actor: input.context.actor
+      actor: input.context.actor, callerId: dispatchCallerId(input.context)
     }));
   }
   if (input.preset === "png-sequence") {
@@ -2109,7 +2108,7 @@ async function runDebugRenderQualityManifest(input: {
       fps: input.fps,
       receiptInputHashes: callerQualityInputHashes,
       qualityInputRoots: qualityCheckInputRoots(input.context),
-      actor: input.context.actor
+      actor: input.context.actor, callerId: dispatchCallerId(input.context)
     }));
   }
   const physicalInputPath = input.inputPath, publicInputPath = input.displayInputPath ?? physicalInputPath;
@@ -2149,7 +2148,7 @@ async function runDebugRenderQualityManifest(input: {
       runner: input.context.ffmpegRunner,
       inputRoots: [...qualityCheckInputRoots(input.context), dirname(physicalInputPath), snapshot.root, resolve(input.packageRoot)],
       receiptsRoot: input.receiptsRoot,
-      actor: input.context.actor,
+      actor: input.context.actor, callerId: dispatchCallerId(input.context),
       packageId: input.packageId,
       receiptInputHashes: { [publicInputPath]: snapshot.sha256, ...callerQualityInputHashes },
       defaults: {
@@ -2284,8 +2283,8 @@ async function runDebugQualityManifest(input: {
 	  runner?: FfmpegRunner;
 	  inputRoots: string[];
 	  receiptsRoot?: string;
-	  /** Transport-observed actor to stamp onto the quality-check receipt (threaded from the render context). */
-	  actor?: ReceiptActor;
+	  /** Transport-observed actor and authenticated owner, never command data. */
+	  actor?: ReceiptActor; callerId?: string;
 	  packageId: string;
 	  receiptInputHashes?: Record<string, string>;
 	  sourceFramePath?: string;
@@ -2409,7 +2408,7 @@ async function runDebugQualityManifest(input: {
         inputPath: publicInputPath,
         manifestPath: publicManifestPath,
         receiptsRoot: input.receiptsRoot,
-        actor: input.actor, inputHashes: input.receiptInputHashes,
+        actor: input.actor, callerId: input.callerId, inputHashes: input.receiptInputHashes,
 	        output: {
           inputPath: publicInputPath,
           manifestPath: publicManifestPath,
@@ -2451,7 +2450,7 @@ async function runDebugQualityManifest(input: {
 	    warnings
 	  });
 	  // Attribute the quality-check receipt with the same transport actor as its sibling render receipt.
-	  const hostReceiptPath = input.receiptsRoot ? await writeReceiptFile(input.receiptsRoot, applyReceiptActor(receipt, input.actor)) : undefined;
+	  const hostReceiptPath = input.receiptsRoot ? await writeReceiptFile(input.receiptsRoot, applyReceiptActor(stampReceiptOwner(receipt, input.callerId), input.actor)) : undefined;
 	  return {
 	    ok: true,
 	    receiptId,
@@ -2484,8 +2483,8 @@ async function runDebugPngStillFrameQualityManifest(input: {
   receiptsRoot?: string;
   packageId: string; qualityInputRoots: string[];
   receiptInputHashes?: Record<string, string>;
-  /** Transport-observed actor, threaded from the render context onto the quality receipt. */
-  actor?: ReceiptActor;
+  /** Transport-observed actor and authenticated owner, never command data. */
+  actor?: ReceiptActor; callerId?: string;
 }): Promise<MotionDebugResult> {
   const publicInputPath = input.displayInputPath ?? input.inputPath, inputHashes = { ...(input.receiptInputHashes ?? {}), [input.displayInputPath ?? input.inputPath]: await hashReceiptInputPath(input.inputPath) }, inspected = await inspectPngFile(input.inputPath);
   if (!inspected.ok) {
@@ -2496,7 +2495,7 @@ async function runDebugPngStillFrameQualityManifest(input: {
       inputPath: publicInputPath,
       manifestPath: input.displayManifestPath ?? input.manifestPath,
       receiptsRoot: input.receiptsRoot,
-      actor: input.actor, inputHashes,
+      actor: input.actor, callerId: input.callerId, inputHashes,
       output: {
         inputPath: publicInputPath,
         manifestPath: input.displayManifestPath ?? input.manifestPath
@@ -2510,7 +2509,7 @@ async function runDebugPngStillFrameQualityManifest(input: {
     outDir: input.outDir,
     inputRoots: [...input.qualityInputRoots, dirname(input.inputPath)],
     receiptsRoot: input.receiptsRoot,
-    actor: input.actor,
+    actor: input.actor, callerId: input.callerId,
     packageId: input.packageId,
     receiptInputHashes: inputHashes,
     sourceFramePath: input.inputPath, displayFramePath: (path) => path === input.inputPath ? publicInputPath : path,
@@ -2551,8 +2550,8 @@ async function runDebugPngSequenceQualityManifest(input: {
   durationMs: number;
   fps: number; qualityInputRoots: string[];
   receiptInputHashes?: Record<string, string>;
-  /** Transport-observed actor, threaded from the render context onto the quality receipt. */
-  actor?: ReceiptActor;
+  /** Transport-observed actor and authenticated owner, never command data. */
+  actor?: ReceiptActor; callerId?: string;
 }): Promise<MotionDebugResult> {
   const publicInputPath = input.displayInputPath ?? input.inputPath, inputHashes = { ...(input.receiptInputHashes ?? {}), [input.displayInputPath ?? input.inputPath]: await hashReceiptInputPath(input.inputPath) }, firstFramePath = join(input.inputPath, frameFileName(0));
   const inspected = await inspectPngFile(firstFramePath);
@@ -2564,7 +2563,7 @@ async function runDebugPngSequenceQualityManifest(input: {
       inputPath: publicInputPath,
       manifestPath: input.displayManifestPath ?? input.manifestPath,
       receiptsRoot: input.receiptsRoot,
-      actor: input.actor, inputHashes,
+      actor: input.actor, callerId: input.callerId, inputHashes,
       output: {
         inputPath: publicInputPath,
         manifestPath: input.displayManifestPath ?? input.manifestPath
@@ -2588,7 +2587,7 @@ async function runDebugPngSequenceQualityManifest(input: {
     outDir: input.outDir,
     inputRoots: [...input.qualityInputRoots, input.inputPath],
     receiptsRoot: input.receiptsRoot,
-    actor: input.actor,
+    actor: input.actor, callerId: input.callerId,
     packageId: input.packageId,
     receiptInputHashes: { frames: sequenceHash, ...inputHashes },
     sourceFrameForSample: (sample) => ({ path: join(input.inputPath, frameFileName(sequenceFrameIndexForAtMs(sample.atMs, input.durationMs, input.fps))) }), displayFramePath: (path) => join(publicInputPath, relative(input.inputPath, path)),
@@ -3369,8 +3368,8 @@ async function qualityFailureWithReceipt(input: {
   inputPath: string;
   manifestPath?: string;
   receiptsRoot?: string;
-  /** Transport-observed actor to stamp onto the quality-failure receipt (threaded from the render context). */
-  actor?: ReceiptActor;
+  /** Transport-observed actor and authenticated owner, never command data. */
+  actor?: ReceiptActor; callerId?: string;
   inputHashes?: Record<string, string>;
   output: Record<string, unknown>;
 }): Promise<MotionDebugResult> {
@@ -3394,7 +3393,7 @@ async function qualityFailureWithReceipt(input: {
     warnings: [input.message],
     status: "failed"
   });
-  const hostReceiptPath = input.receiptsRoot ? await writeReceiptFile(input.receiptsRoot, applyReceiptActor(receipt, input.actor)) : undefined;
+  const hostReceiptPath = input.receiptsRoot ? await writeReceiptFile(input.receiptsRoot, applyReceiptActor(stampReceiptOwner(receipt, input.callerId), input.actor)) : undefined;
   return {
     ok: false,
     error: {
@@ -8518,7 +8517,7 @@ async function writeDebugBatchReceipt(input: {
   // receipts. This is the batch-orchestration analogue of the writeReceipt
   // choke closure that covers every domain service; applyReceiptActor mutates in
   // place and is a no-op when no actor was observed (direct/legacy callers).
-  applyReceiptActor(receipt, input.actor);
+  applyReceiptActor(stampReceiptOwner(receipt, input.callerId), input.actor);
   await writeJsonFile(receiptPath, receipt);
   return receipt;
 }
@@ -8698,7 +8697,7 @@ async function writeDebugBatchRowPlanReceipt(input: {
   };
   // Attribute the per-row plan receipt to the transport-observed actor, matching
   // the aggregate and per-row final-render receipts. No-op when no actor was observed.
-  applyReceiptActor(receipt, input.actor);
+  applyReceiptActor(stampReceiptOwner(receipt, input.callerId), input.actor);
   await writeJsonFile(receiptPath, receipt);
   return receiptPath;
 }
@@ -8764,10 +8763,9 @@ async function readReceiptEntriesWithStatus(receiptsRoot: string): Promise<impor
   return await readStableReceiptEntries(receiptsRoot, readOperationReceipt, enforceReceiptReadAcceptance);
 }
 
-async function readAgentRevisionQualityReceipts(
-  args: unknown,
-  receiptsRoot: string | undefined
-): Promise<{ ok: true; receipts: OperationReceipt[] } | { ok: false; message: string }> {
+function receiptOwnershipAccess(context: MotionDebugContext) { return createReceiptOwnershipAccess(receiptAccessScope(context), { readEntries: readReceiptEntries, readEntry: readReceiptEntryInsideRoot, readEntriesWithStatus: async (receiptsRoot: string) => { const read = await readReceiptEntriesWithStatus(receiptsRoot); return { ...read, entries: read.entries as ReceiptEntry[] }; } }); }
+
+async function readAgentRevisionQualityReceipts(args: unknown, receiptsRoot: string | undefined, context: MotionDebugContext): Promise<{ ok: true; receipts: OperationReceipt[] } | { ok: false; message: string }> {
   const receipts: OperationReceipt[] = [];
   const inlineReceipt = readRecordArg(args, "qualityReceipt");
   if (inlineReceipt) {
@@ -8795,7 +8793,7 @@ async function readAgentRevisionQualityReceipts(
       return { ok: false, message: "qualityReceiptPath must be inside receiptsRoot." };
     }
     if (!receiptsRoot) return { ok: false, message: "qualityReceiptPath requires receiptsRoot." };
-    const read = await readReceiptEntryInsideRoot(receiptsRoot, path);
+    const read = await receiptOwnershipAccess(context).entry(receiptsRoot, path);
     if (!read.insideRoot || !read.entry) return { ok: false, message: `Quality receipt not found at path: ${path}.` };
     receipts.push(read.entry.receipt);
   }
@@ -8806,7 +8804,7 @@ async function readAgentRevisionQualityReceipts(
   ].filter((id): id is string => typeof id === "string" && id.length > 0);
   if (qualityReceiptIds.length > 0) {
     if (!receiptsRoot) return { ok: false, message: "qualityReceiptId requires receiptsRoot." };
-    const entries = await readReceiptEntries(receiptsRoot);
+    const entries = await receiptOwnershipAccess(context).list(receiptsRoot);
     for (const id of qualityReceiptIds) {
       const entry = findReceiptEntryById(entries, id);
       if (!entry) return { ok: false, message: `Quality receipt not found: ${id}.` };

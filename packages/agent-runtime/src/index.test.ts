@@ -25,10 +25,10 @@ const fakeAdapter: AgentAdapter = {
   label: "Fake Agent",
   transport: "local-cli",
   billing: "cli-subscription",
+  promptContextMode: "prompt-only",
   probeCommand: () => ({ executable: "fake-agent", args: ["--version"], shell: false }),
   promptCommand: (input) => ({ executable: "fake-agent", args: ["run", "--json"], cwd: input.cwd, stdin: input.prompt, shell: false })
 };
-
 function agentWithProbe(id: string, executable: string): AgentAdapter {
   return {
     ...fakeAdapter,
@@ -67,7 +67,7 @@ describe("local CLI agent runtime", () => {
     const claude = claudeCodeCliCommand({ prompt: "plan only", cwd: "/workspace" });
     expect(claude.args).toEqual([
       "--print", "--output-format", "json", "--permission-mode", "plan", "--safe-mode",
-      "--no-chrome", "--no-session-persistence", "--disallowedTools",
+      "--no-chrome", "--no-session-persistence", "--tools", "", "--disallowedTools",
       "Bash,Edit,Write,NotebookEdit,Agent,Task,WebFetch,WebSearch"
     ]);
     expect(claude.stdin).toBe("plan only");

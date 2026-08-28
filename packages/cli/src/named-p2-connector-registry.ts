@@ -47,6 +47,7 @@ export async function runNamedP2ConnectorThroughRegistry(input: {
     // adapter distinct while satisfying the generic registry's caller-qualified resolver shape.
     callerId: input.callerId ?? "cli:named-compatibility",
     signal: input.signal,
+    namedCompatibility: true,
     namedCompatibilityOptions: input.namedCompatibilityOptions,
     references: {
       async resolvePath(reference) {

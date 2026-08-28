@@ -26,6 +26,7 @@ import { dispatchDebugCommand } from "./index";
 
 const RAW_PROMPT = "raw-prompt-body-past-its-deletion-deadline";
 const RECEIPT_ID = "prompt-expired-1";
+const LEGACY_RECEIPT_OPERATOR = "test-operator";
 
 let receiptsRoot: string;
 let receiptPath: string;
@@ -84,7 +85,12 @@ async function readViaDebugApi(): Promise<{ ok: boolean; body: string }> {
   const result = await dispatchDebugCommand(
     "motion.receipts.read",
     { receiptsRoot, receiptId: RECEIPT_ID },
-    { tier: "read_motion", receiptsRoot }
+    {
+      tier: "read_motion",
+      receiptsRoot,
+      callerId: LEGACY_RECEIPT_OPERATOR,
+      crossCallerJobScope: true
+    }
   );
   return { ok: result.ok, body: JSON.stringify(result) };
 }

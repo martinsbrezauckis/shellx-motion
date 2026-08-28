@@ -29,6 +29,14 @@ smaller typed surfaces. Pick the one that fits your host without assuming univer
   command returns a structured JSON envelope. This is the default path for
   configured local CLI agents.
 
+  Agent health is deliberately separate from prompt-context admission. A
+  provider is invoked only when its adapter explicitly declares a
+  `prompt-only` context; omitted or filesystem-read-capable adapters return
+  `agent_context_unbounded` before their prompt command is probed or spawned.
+  The source CLI admits prompt execution only for adapters with an exact
+  disable-all-tools contract. Adapters that retain filesystem-read context
+  remain visible through `agent health`, but prompt execution is refused.
+
   There is no `motion.screenshot`. It was removed: Motion is a headless engine
   with no panel of its own, so the command could only relay a request to the host
   and report `ok: true` for something it had no way to verify. For an image on

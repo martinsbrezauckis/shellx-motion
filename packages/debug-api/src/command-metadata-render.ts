@@ -8,6 +8,7 @@
  *
  * Dependencies: `command-registry.ts` (types only). Primary caller: `command-metadata.ts`.
  */
+import { MAX_BATCH_QUALITY_ROWS } from "@shellx-motion/core";
 import type { MotionDebugCommandMetadata } from "./command-registry.js";
 import { MAX_RENDER_CACHE_PLAN_AT_MS } from "./domains/render-cache-plan-input.js";
 
@@ -78,8 +79,8 @@ export const RENDER_COMMAND_METADATA: MotionDebugCommandMetadata = {
         packageRoot: { type: "string", description: "Motion package root containing manifest, motion, assets, and optional data rows." },
         outDir: { type: "string", description: "Directory for expanded row packages, render outputs, and batch receipts." },
         rowsPath: { type: "string", description: "Optional external CSV or JSON data rows file." },
-        rowId: { type: "string", description: "Single data row ID to render; normalized the same way as Motion data rows." },
-        rowIds: { type: "array", description: "Subset of data row IDs to render; preserves source row order." },
+        rowId: { type: "string", maxLength: 256, description: "Single data row ID to render; normalized the same way as Motion data rows." },
+        rowIds: { type: "array", maxItems: MAX_BATCH_QUALITY_ROWS, items: { type: "string", maxLength: 256 }, description: "Subset of at most 256 data row IDs to render; preserves source row order." },
         preset: { type: "string", enumRef: "exportPreset", default: "mp4-h264", description: "Export preset for the rendered output." },
         frameLane: { type: "string", enum: ["browser", "native", "gpu"], default: "browser", description: "Frame rasterizer for every row. GPU rows are fresh-only strict streamed FFmpeg video: absent host capability, GIF/still/sequence output, resume/cache, retained frames, or browser workflows refuse before queueing." },
         keepFrames: { type: "boolean", description: "Pass explicit final-video FFmpeg frame retention to every batch row; batch plans containing a non-video preset are refused. File-video rows stream directly to FFmpeg by default." },

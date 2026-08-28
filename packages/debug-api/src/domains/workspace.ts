@@ -1,4 +1,4 @@
-import { hashBuffer, isPublicationCommitUncertain, type MotionPackage, type OperationReceipt, type RetainedDirectoryAuthority } from "@shellx-motion/core";
+import { hashBuffer, isPublicationCommitUncertain, type MotionPackage, type OperationReceipt, type RetainedDirectoryAuthority, type ReviewBundleReceiptEntry } from "@shellx-motion/core";
 import { resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { nonNegativeIntegerArg, objectArg, stringArg, stringArrayArg } from "./args.js";
@@ -29,7 +29,7 @@ export interface WorkspaceDomainServices extends WorkspacePackagePatchServices, 
   summarizeReceiptsPanel?: (entries: WorkspaceReceiptEntry[], limit: number) => Record<string, unknown>;
   archivePackage?: (input: { packageRoot: string; archivePath: string; receiptPath?: string }) => Promise<WorkspaceArchiveResult>;
   extractPackage?: (input: { archivePath: string; packageRoot: string; receiptPath?: string }) => Promise<WorkspaceExtractResult>;
-  writeReviewBundle?: (input: { packageRoot?: string; receiptsRoot?: string; artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
+  writeReviewBundle?: (input: { packageRoot?: string; receiptsRoot?: string; receipts?: ReviewBundleReceiptEntry[]; artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
   /**
    * Extra directories the HOST approved for review-bundle artifact copying. Never read from args:
    * see `artifactRoots` on MotionDebugContext for why a caller must not supply its own approvals.

@@ -2,7 +2,7 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { expandMotionPackageRows, filterMotionDataRows, loadDataRowsFile, loadMotionPackage, loadPackageDataRows, MAX_MOTION_DATA_ROWS_BYTES, parseMotionDataRows, parseMotionDataRowsCsv, type MotionPackage } from "./index";
+import { expandMotionPackageRows, filterMotionDataRows, loadDataRowsFile, loadMotionPackage, loadPackageDataRows, MAX_BATCH_QUALITY_ROWS, MAX_MOTION_DATA_ROWS_BYTES, parseMotionDataRows, parseMotionDataRowsCsv, type MotionPackage } from "./index";
 
 describe("motion data rows", () => {
   const fixtureRoot = resolve("../../fixtures/packages/batch-card");
@@ -98,6 +98,21 @@ describe("motion data rows", () => {
       missingRowIds: ["missing_row"],
       message: "Motion data row IDs not found: missing_row."
     });
+  });
+
+  it("admits exactly the shared batch row limit and refuses one extra JSON or CSV row before normalization", () => {
+    const rowsAtLimit = Array.from({ length: MAX_BATCH_QUALITY_ROWS }, (_, index) => ({ id: `row-${index + 1}` }));
+    const rowsOverLimit = [...rowsAtLimit, { id: "row-over-limit" }];
+
+    expect(parseMotionDataRows({ rows: rowsAtLimit })).toHaveLength(MAX_BATCH_QUALITY_ROWS);
+    expect(() => parseMotionDataRows({ rows: rowsOverLimit }))
+      .toThrow(`Motion data rows must contain at most ${MAX_BATCH_QUALITY_ROWS} rows.`);
+
+    const csvAtLimit = ["id", ...rowsAtLimit.map((row) => row.id)].join("\n");
+    const csvOverLimit = ["id", ...rowsOverLimit.map((row) => row.id)].join("\n");
+    expect(parseMotionDataRowsCsv(csvAtLimit)).toHaveLength(MAX_BATCH_QUALITY_ROWS);
+    expect(() => parseMotionDataRowsCsv(csvOverLimit))
+      .toThrow(`Motion data rows must contain at most ${MAX_BATCH_QUALITY_ROWS} rows.`);
   });
 
   it("preserves exact row-token value types and nested row paths for variant expansion", async () => {

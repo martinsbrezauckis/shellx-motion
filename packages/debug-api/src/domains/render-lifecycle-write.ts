@@ -2,7 +2,7 @@
 import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import type { StableReceiptSnapshot } from "../receipt-store-stable-reader.js";
-import { renderLifecycleReceiptOwner } from "../render-lifecycle-ownership.js";
+import { receiptOwner } from "../receipt-ownership.js";
 import { stringArg } from "./args.js";
 
 export type RenderControlTarget =
@@ -65,7 +65,7 @@ async function cancel(
     return invalidArgs(`Cannot cancel ${target.state} render job: ${target.receipt.id}.`);
   }
   const output = {
-    ...(renderLifecycleReceiptOwner(target.receipt) ? { callerId: renderLifecycleReceiptOwner(target.receipt) } : {}),
+    ...(receiptOwner(target.receipt) ? { callerId: receiptOwner(target.receipt) } : {}),
     targetReceiptId: target.receipt.id,
     targetReceiptPath: target.path,
     targetOperation: target.receipt.operation,
@@ -109,7 +109,7 @@ async function retry(
   }
   const retryAttempt = source.retryCount + 1;
   const output = {
-    ...(renderLifecycleReceiptOwner(source.receipt) ? { callerId: renderLifecycleReceiptOwner(source.receipt) } : {}),
+    ...(receiptOwner(source.receipt) ? { callerId: receiptOwner(source.receipt) } : {}),
     sourceReceiptId: source.receipt.id,
     sourceReceiptPath: source.path,
     sourceOperation: source.receipt.operation,

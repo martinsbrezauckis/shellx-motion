@@ -15,7 +15,7 @@ import {
   type GenericConnectorRequestPreparation,
   type MotionJobFailure
 } from "@shellx-motion/core";
-import { runCanvasToCutConnector } from "./canvas-to-cut";
+import { prepareCanvasToCutConnectorSelection, runPreparedCanvasToCutConnector } from "./canvas-to-cut";
 import { runScriptToCutConnector } from "./script-to-cut";
 import { runSourceToCutConnector } from "./source-to-cut";
 import { runTemplateToCutConnector } from "./template-to-cut";
@@ -53,6 +53,8 @@ export interface MotionConnectorJobExecutionServices {
   callerId: string;
   references: MotionConnectorReferenceAuthority;
   signal: AbortSignal;
+  /** Trusted internal marker for the named local compatibility adapter, never a generic request field. */
+  namedCompatibility?: true;
   /** Trusted named-CLI adapter data; never accepted by the generic connector submit request. */
   namedCompatibilityOptions?: Readonly<Record<string, unknown>>;
 }
@@ -79,12 +81,19 @@ type RegisteredExecutor = (
 
 const EXECUTORS: Readonly<Record<string, RegisteredExecutor>> = Object.freeze({
   "connector.canvas-to-cut@1": async (prepared, services) => {
-    const paths = await inputOutputPaths(prepared, services);
-    return await runCanvasToCutConnector({
-      canvasSelectionPath: paths.input,
-      outDir: paths.output,
+    const canvasSelectionPath = await referencePath(prepared, services, "input", "read");
+    throwIfAborted(services.signal);
+    const canvas = await prepareCanvasToCutConnectorSelection({
+      canvasSelectionPath,
+      // Generic submit has only the selected opaque file. The named CLI is a distinct host-owned
+      // compatibility adapter and explicitly marks its trusted local selection bundle.
+      canvasSelectionAuthority: services.namedCompatibility === true ? "trusted-local-bundle" : "opaque-file",
       signal: services.signal
     });
+    throwIfAborted(services.signal);
+    const outDir = await referencePath(prepared, services, "output", "write");
+    throwIfAborted(services.signal);
+    return await runPreparedCanvasToCutConnector(canvas, outDir);
   },
   "connector.script-to-cut@1": async (prepared, services) => {
     const paths = await inputOutputPaths(prepared, services);

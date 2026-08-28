@@ -21,6 +21,7 @@ describe("agent process lifecycle", () => {
         label: "Leader-first Agent",
         transport: "local-cli",
         billing: "cli-subscription",
+        promptContextMode: "prompt-only",
         probeCommand: () => ({ executable: process.execPath, args: ["-e", "process.stdout.write('ok')"], shell: false }),
         promptCommand: (input) => ({ executable: process.execPath, args: ["-e", parentCode, grandchildPidPath], stdin: input.prompt, timeoutMs: 1_000, shell: false }),
       };

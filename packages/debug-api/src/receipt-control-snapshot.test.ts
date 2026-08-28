@@ -42,7 +42,8 @@ describe("receipt control target snapshots", () => {
 
         const result = await dispatchDebugCommand(control.command, { receiptsRoot, receiptId }, {
           tier: control.tier,
-          ...(control.operation === "render.final" ? { callerId: "snapshot-operator", crossCallerJobScope: true } : {}),
+          callerId: "snapshot-operator",
+          crossCallerJobScope: true,
           receiptControlTargetTestHook: async () => {
             await rename(nested, held);
             await mkdir(nested);
@@ -81,7 +82,8 @@ describe("receipt control target snapshots", () => {
 
         const result = await dispatchDebugCommand(control.command, { receiptsRoot, receiptId }, {
           tier: control.tier,
-          ...(control.operation === "render.final" ? { callerId: "snapshot-operator", crossCallerJobScope: true } : {})
+          callerId: "snapshot-operator",
+          crossCallerJobScope: true
         });
 
         expect(result).toEqual({
@@ -109,6 +111,8 @@ describe("receipt control target snapshots", () => {
 
       const result = await dispatchDebugCommand("motion.prompt.retry", { receiptsRoot, receiptId: target.id }, {
         tier: "draft_motion",
+        callerId: "snapshot-operator",
+        crossCallerJobScope: true,
         receiptControlTargetAfterLeafOpen: async () => { await appendFile(targetPath, " ", "utf8"); }
       });
 
@@ -133,7 +137,11 @@ describe("receipt control target snapshots", () => {
       };
       const admittedBytes = `${JSON.stringify(target, null, 2)}\n`;
       await writeFile(targetPath, admittedBytes, "utf8");
-      const result = await dispatchDebugCommand("motion.prompt.retry", { receiptsRoot, receiptId: target.id }, { tier: "draft_motion" });
+      const result = await dispatchDebugCommand("motion.prompt.retry", { receiptsRoot, receiptId: target.id }, {
+        tier: "draft_motion",
+        callerId: "snapshot-operator",
+        crossCallerJobScope: true
+      });
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;

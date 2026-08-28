@@ -3,6 +3,7 @@ import type { GltfSourceFormat, ParsedGltfContainer } from "./gltf-types";
 
 export const MAX_GLTF_SOURCE_BYTES = 16 * 1024 * 1024;
 export const MAX_GLTF_JSON_BYTES = 2 * 1024 * 1024;
+export const MAX_GLTF_NORMALIZED_JSON_BYTES = 16 * 1024 * 1024;
 export const MAX_GLTF_BUFFER_BYTES = 12 * 1024 * 1024;
 export const MAX_GLTF_BUFFERS = 4;
 export const MAX_GLTF_ACCESSORS = 128;
@@ -16,6 +17,8 @@ export const MAX_GLTF_IMAGES = 16;
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BIN_CHUNK = 0x004e4942;
+const MAX_GLTF_JSON_DEPTH = 32;
+const MAX_GLTF_JSON_STRUCTURAL_TOKENS = 50_000;
 
 /** Parse a bounded glTF 2.0 JSON/data-URI document or GLB without resolving network/external paths. */
 export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): ParsedGltfContainer {
@@ -25,6 +28,7 @@ export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): Par
   const parsed = format === "glb" ? parseGlb(bytes) : { jsonBytes: bytes, binaryChunk: undefined };
   if (parsed.jsonBytes.byteLength > MAX_GLTF_JSON_BYTES) throw new Error(`glTF JSON exceeds ${MAX_GLTF_JSON_BYTES} bytes.`);
   const sourceText = new TextDecoder("utf-8", { fatal: true }).decode(parsed.jsonBytes).replace(/[\u0000\u0020\t\r\n]+$/g, "");
+  assertBoundedGltfJsonText(sourceText);
   let jsonValue: unknown;
   try { jsonValue = JSON.parse(sourceText); } catch { throw new Error("glTF JSON is invalid."); }
   const json = record(jsonValue, "glTF document");
@@ -39,15 +43,57 @@ export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): Par
   assertBoundedArray(json.textures, MAX_GLTF_TEXTURES, "textures", true);
   assertBoundedArray(json.images, MAX_GLTF_IMAGES, "images", true);
   const buffers = readBuffers(json.buffers as unknown[], parsed.binaryChunk);
+  const jsonText = `${JSON.stringify(json, null, 2)}\n`;
+  if (Buffer.byteLength(jsonText, "utf8") > MAX_GLTF_NORMALIZED_JSON_BYTES) {
+    throw new Error(`Normalized glTF JSON exceeds ${MAX_GLTF_NORMALIZED_JSON_BYTES} bytes.`);
+  }
   return {
     format,
     sourceSha256: hashBuffer(bytes),
     json,
-    jsonText: `${JSON.stringify(json, null, 2)}\n`,
+    jsonText,
     buffers,
     bufferSha256: buffers.map(hashBuffer),
     byteLength: bytes.byteLength,
   };
+}
+
+/**
+ * Reject nested or punctuation-heavy JSON before JSON.parse allocates its object graph.
+ * Quoted content is deliberately skipped so structural characters in names and data URIs do
+ * not count as JSON structure.
+ */
+function assertBoundedGltfJsonText(sourceText: string): void {
+  let structuralTokens = 0;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < sourceText.length; index += 1) {
+    const code = sourceText.charCodeAt(index);
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (code === 0x5c) escaped = true;
+      else if (code === 0x22) inString = false;
+      continue;
+    }
+    if (code === 0x22) {
+      inString = true;
+      continue;
+    }
+    if (code === 0x7b || code === 0x5b) {
+      structuralTokens += 1;
+      depth += 1;
+      if (depth > MAX_GLTF_JSON_DEPTH) {
+        throw new Error(`glTF JSON exceeds the ${MAX_GLTF_JSON_DEPTH}-level pre-parse nesting limit.`);
+      }
+    } else if (code === 0x7d || code === 0x5d || code === 0x2c || code === 0x3a) {
+      structuralTokens += 1;
+      if (code === 0x7d || code === 0x5d) depth -= 1;
+    }
+    if (structuralTokens > MAX_GLTF_JSON_STRUCTURAL_TOKENS) {
+      throw new Error(`glTF JSON exceeds the ${MAX_GLTF_JSON_STRUCTURAL_TOKENS}-token pre-parse structural limit.`);
+    }
+  }
 }
 
 function parseGlb(bytes: Buffer): { jsonBytes: Buffer; binaryChunk?: Buffer } {

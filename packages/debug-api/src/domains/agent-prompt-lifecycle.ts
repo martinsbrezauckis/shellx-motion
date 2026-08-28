@@ -2,6 +2,7 @@
 import { hashBuffer, JOB_STATES, type JobState, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import type { StableReceiptSnapshot } from "../receipt-store-stable-reader.js";
+import { receiptOwner } from "../receipt-ownership.js";
 import { stringArg } from "./args.js";
 
 interface PromptQueueJob { state: string; availableActions: unknown[]; warnings?: string[] }
@@ -22,6 +23,8 @@ export type PromptControlTarget =
 
 export interface AgentPromptLifecycleServices {
   receiptsRoot?: string;
+  /** Authenticated host principal; prompt history is never anonymous shared state. */
+  receiptCallerId?: string;
   readPromptLifecycleState?: (receiptsRoot: string) => Promise<{ jobs: PromptQueueJob[]; stateCounts: unknown }>;
   readPromptControlTarget?: (receiptsRoot: string, receiptId: string) => Promise<PromptControlTarget>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
@@ -32,13 +35,17 @@ export async function dispatchAgentPromptLifecycleCommand(
   args: unknown,
   services: AgentPromptLifecycleServices
 ): Promise<MotionDebugResult | null> {
-  if (command === "motion.prompt.queue") return queue(args, services);
+  if (command === "motion.prompt.queue") {
+    if (!services.receiptCallerId?.trim()) return ownerPrincipalUnavailable();
+    return queue(args, services);
+  }
   if (command !== "motion.prompt.cancel" && command !== "motion.prompt.retry") return null;
   const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
   const receiptId = stringArg(args, "receiptId") ?? stringArg(args, "id");
   const reason = stringArg(args, "reason") ?? undefined;
   if (!receiptsRoot) return invalidArgs(`${command} requires receiptsRoot.`);
   if (!receiptId) return invalidArgs(`${command} requires receiptId.`);
+  if (!services.receiptCallerId?.trim()) return ownerPrincipalUnavailable();
   if (!services.readPromptControlTarget || !services.writeReceipt) return capabilityUnavailable("Prompt lifecycle control persistence is unavailable.");
   const target = await services.readPromptControlTarget(receiptsRoot, receiptId);
   if (target.kind === "missing") return invalidArgs(`Prompt receipt not found: ${receiptId}.`);
@@ -80,6 +87,7 @@ async function cancel(
     return invalidArgs(`Cannot cancel ${target.state} prompt job: ${target.receipt.id}.`);
   }
   const output = {
+    ...(receiptOwner(target.receipt) ? { callerId: receiptOwner(target.receipt) } : {}),
     targetReceiptId: target.receipt.id, targetReceiptPath: target.path,
     targetOperation: target.receipt.operation, targetStatus: target.receipt.status,
     targetState: target.state, targetReceiptSnapshot: target.snapshot, request: target.request,
@@ -119,6 +127,7 @@ async function retry(
   }
   const retryAttempt = source.retryCount + 1;
   const output = {
+    ...(receiptOwner(source.receipt) ? { callerId: receiptOwner(source.receipt) } : {}),
     sourceReceiptId: source.receipt.id, sourceReceiptPath: source.path,
     sourceOperation: source.receipt.operation, sourceStatus: source.receipt.status,
     sourceState: source.state, sourceReceiptSnapshot: source.snapshot, request: source.request,
@@ -163,4 +172,16 @@ function invalidArgs(message: string): MotionDebugResult {
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return { ok: false, error: { code: "capability_unavailable", message, suggestedAction: "Configure the required host capability and retry." }, warnings: [] };
+}
+
+function ownerPrincipalUnavailable(): MotionDebugResult {
+  return {
+    ok: false,
+    error: {
+      code: "capability_unavailable",
+      message: "Prompt lifecycle access requires a server-authenticated owner principal.",
+      suggestedAction: "Ask the host operator to use an authenticated Motion transport or configure a trusted in-process caller identity."
+    },
+    warnings: []
+  };
 }

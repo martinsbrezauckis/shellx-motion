@@ -1289,7 +1289,7 @@ Tier `render_motion` · mutates: yes
 | `outDir` | `string` | yes |  |  | Directory for expanded row packages, render outputs, and batch receipts. |
 | `rowsPath` | `string` | no |  |  | Optional external CSV or JSON data rows file. |
 | `rowId` | `string` | no |  |  | Single data row ID to render; normalized the same way as Motion data rows. |
-| `rowIds` | `array` | no |  |  | Subset of data row IDs to render; preserves source row order. |
+| `rowIds` | `array` | no |  |  | Subset of at most 256 data row IDs to render; preserves source row order. |
 | `preset` | `string` | no |  | [`exportPreset`](#argument-value-enumerations) (10 values) | Export preset for the rendered output. Defaults to `mp4-h264`. |
 | `frameLane` | `string` | no |  | `browser`, `native`, `gpu` | Frame rasterizer for every row. GPU rows are fresh-only strict streamed FFmpeg video: absent host capability, GIF/still/sequence output, resume/cache, retained frames, or browser workflows refuse before queueing. Defaults to `browser`. |
 | `keepFrames` | `boolean` | no |  |  | Pass explicit final-video FFmpeg frame retention to every batch row; batch plans containing a non-video preset are refused. File-video rows stream directly to FFmpeg by default. |

@@ -50,7 +50,7 @@ describe("named P2 connector registry adapter", () => {
     const services = registry.execute.mock.calls[0]![1];
     await expect(services.references.resolvePath({ fieldId: "input", reference: "named_input", access: "read" })).resolves.toBe("/trusted/input");
     await expect(services.references.resolvePath({ fieldId: "output", reference: "named_output", access: "write" })).resolves.toBe("/trusted/output");
-    expect(services).toMatchObject({ signal, namedCompatibilityOptions: { values: { title: "Catalog driven" } } });
+    expect(services).toMatchObject({ signal, namedCompatibility: true, namedCompatibilityOptions: { values: { title: "Catalog driven" } } });
   });
 
   it("preserves the generic registry error code", async () => {

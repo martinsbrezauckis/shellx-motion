@@ -1298,7 +1298,13 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.support.bundle",
         { packageRoot, outDir, receiptsRoot },
-        { tier: "write_local", scratchRoot: tempRoot, receiptsRoot }
+        {
+          tier: "write_local",
+          scratchRoot: tempRoot,
+          receiptsRoot,
+          callerId: "test-operator",
+          crossCallerJobScope: true
+        }
       );
 
       expect(result.ok, `support bundle failed: ${JSON.stringify(result, null, 2)}`).toBe(true);
@@ -1439,7 +1445,12 @@ describe("motion debug API", () => {
         // a root the HOST approved -- otherwise a crafted receipt could pull any readable file into a
         // bundle someone then shares. The host approves the directory here; the shipped server passes
         // its own artifact roots, and the CLI takes --artifact-root.
-        { tier: "write_local", artifactRoots: [tempRoot] }
+        {
+          tier: "write_local",
+          artifactRoots: [tempRoot],
+          callerId: "test-operator",
+          crossCallerJobScope: true
+        }
       );
 
       expect(result.ok).toBe(true);
@@ -3908,7 +3919,7 @@ describe("motion debug API", () => {
           rawRequestDeleteAfter: deleteAfter,
           rawRequestPurpose: "debugging"
         },
-        { tier: "render_motion", receiptsRoot, promptRuntime: createFakePromptRuntime() }
+        { tier: "render_motion", receiptsRoot, callerId: "test-prompt", promptRuntime: createFakePromptRuntime() }
       );
 
       expect(retained.ok).toBe(true);
@@ -3954,7 +3965,7 @@ describe("motion debug API", () => {
         "motion.prompt.run",
         { request, packageId: "pkg_deadline", agentId: "fake", retainRawRequest: true, rawRequestDeleteAfter: deleteAfter, rawRequestPurpose: "debugging" },
         {
-          tier: "render_motion", receiptsRoot, promptRuntime: createFakePromptRuntime(), promptNow: () => now,
+          tier: "render_motion", receiptsRoot, callerId: "test-prompt", promptRuntime: createFakePromptRuntime(), promptNow: () => now,
           rawPromptReceiptWriteTestHook: (receipt) => { if (receipt.operation === "agent.prompt") now = "2040-01-01T00:00:02.000Z"; }
         }
       );
@@ -4067,6 +4078,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "edit_motion",
+          callerId: "test-prompt",
           scratchRoot: outDir,
           authoringInputRoots: [packageRoot],
           authoringOutputRoots: [outDir],
@@ -4292,6 +4304,7 @@ describe("motion debug API", () => {
       packageId: "pkg_transcript",
       lane: "agent",
       output: {
+        callerId: "test-prompt",
         agentId: "fake",
         label: "Fake Agent",
         transport: "local-cli",
@@ -4312,6 +4325,7 @@ describe("motion debug API", () => {
       packageId: "pkg_transcript",
       lane: "agent",
       output: {
+        callerId: "test-prompt",
         agentId: "fake",
         agentReceiptId: "agent-transcript-001",
         debugCommands: ["motion.preview.frame", "motion.receipts.read"],
@@ -4326,7 +4340,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.agent.transcript",
         { receiptsRoot, receiptId: "prompt-transcript-001" },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-prompt" }
       );
 
       expect(result.ok).toBe(true);
@@ -4385,6 +4399,7 @@ describe("motion debug API", () => {
       packageId: "pkg_prompt_queue",
       lane: "agent",
       output: {
+        callerId: "test-prompt",
         request: "edit the title and preview",
         agentId: "codex",
         permission: "edit_motion"
@@ -4397,6 +4412,7 @@ describe("motion debug API", () => {
       packageId: "pkg_prompt_queue",
       lane: "agent",
       output: {
+        callerId: "test-prompt",
         request: "render preview with local agent",
         agentId: "codex",
         error: { code: "agent_unavailable", message: "Codex unavailable." }
@@ -4409,6 +4425,7 @@ describe("motion debug API", () => {
       packageId: "pkg_prompt_queue",
       lane: "debug-api",
       output: {
+        callerId: "test-prompt",
         targetReceiptId: "prompt-run-queued-panel",
         targetState: "pending",
         reason: "user stopped queued prompt"
@@ -4421,6 +4438,7 @@ describe("motion debug API", () => {
       packageId: "pkg_prompt_queue",
       lane: "agent",
       output: {
+        callerId: "test-prompt",
         sourceReceiptId: "prompt-run-failed-panel",
         sourceReceiptPath: join(receiptsRoot, "failed.receipt.json"),
         request: "render preview with local agent",
@@ -4444,7 +4462,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.prompt.queue",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-prompt" }
       );
 
       expect(result.ok).toBe(true);
@@ -4535,7 +4553,7 @@ describe("motion debug API", () => {
       status: "not_run",
       packageId: "pkg_prompt_control",
       lane: "agent",
-      output: { request: "edit product title", agentId: "codex" }
+      output: { callerId: "test-prompt", request: "edit product title", agentId: "codex" }
     });
     const failed = debugReceipt({
       id: "prompt-run-failed-control",
@@ -4543,7 +4561,7 @@ describe("motion debug API", () => {
       status: "failed",
       packageId: "pkg_prompt_control",
       lane: "agent",
-      output: { request: "preview current package", agentId: "codex" }
+      output: { callerId: "test-prompt", request: "preview current package", agentId: "codex" }
     });
 
     try {
@@ -4554,7 +4572,7 @@ describe("motion debug API", () => {
       const cancel = await dispatchDebugCommand(
         "motion.prompt.cancel",
         { receiptsRoot, receiptId: "prompt-run-queued-control", reason: "user cancelled prompt" },
-        { tier: "draft_motion" }
+        { tier: "draft_motion", callerId: "test-prompt" }
       );
       expect(cancel.ok).toBe(true);
       if (cancel.ok) {
@@ -4581,7 +4599,7 @@ describe("motion debug API", () => {
       const retry = await dispatchDebugCommand(
         "motion.prompt.retry",
         { receiptsRoot, receiptId: "prompt-run-failed-control", reason: "retry with refreshed auth" },
-        { tier: "draft_motion" }
+        { tier: "draft_motion", callerId: "test-prompt" }
       );
       expect(retry.ok).toBe(true);
       if (retry.ok) {
@@ -4638,7 +4656,12 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.state",
         { packageRoot, receiptsRoot },
-        { tier: "read_motion", scratchRoot: receiptsRoot }
+        {
+          tier: "read_motion",
+          scratchRoot: receiptsRoot,
+          callerId: "test-operator",
+          crossCallerJobScope: true
+        }
       );
 
       expect(result.ok).toBe(true);
@@ -4774,17 +4797,17 @@ describe("motion debug API", () => {
       const regular = await dispatchDebugCommand(
         "motion.receipts.read",
         { receiptsRoot, receiptPath },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
       const oversized = await dispatchDebugCommand(
         "motion.receipts.read",
         { receiptsRoot, receiptPath: oversizedPath },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
       const listed = await dispatchDebugCommand(
         "motion.receipts.list",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
       expect(regular).toMatchObject({ ok: true, receiptId: "safe-direct-receipt" });
       expect(oversized).toMatchObject({ ok: false, error: { code: "receipt_not_found" } });
@@ -4793,7 +4816,7 @@ describe("motion debug API", () => {
         const linked = await dispatchDebugCommand(
           "motion.receipts.read",
           { receiptsRoot, receiptPath: symlinkPath },
-          { tier: "read_motion" }
+          { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
         );
         expect(linked).toMatchObject({ ok: false, error: { code: "receipt_not_found" } });
       }
@@ -16990,7 +17013,7 @@ describe("motion debug API", () => {
       const listed = await dispatchDebugCommand(
         "motion.receipts.list",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(listed.ok).toBe(true);
@@ -17026,7 +17049,7 @@ describe("motion debug API", () => {
       const read = await dispatchDebugCommand(
         "motion.receipts.read",
         { receiptsRoot, receiptId: "render-final-1" },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(read.ok).toBe(true);
@@ -17114,7 +17137,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.receipts.panel",
         { receiptsRoot, limit: 2 },
-        { tier: "read_motion" }
+        { tier: "read_motion", callerId: "test-operator", crossCallerJobScope: true }
       );
 
       expect(result.ok).toBe(true);
@@ -19130,6 +19153,19 @@ describe("motion debug API", () => {
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
+  });
+
+  it("publishes bounded Debug batch row selection arguments", () => {
+    const argsSchema = debugContract("motion.render.batch").argsSchema as { properties: Record<string, unknown> };
+    const rowIds = argsSchema.properties.rowIds;
+    const rowId = argsSchema.properties.rowId;
+
+    expect(rowIds).toMatchObject({
+      type: "array",
+      maxItems: 256,
+      items: { type: "string", maxLength: 256 }
+    });
+    expect(rowId).toMatchObject({ type: "string", maxLength: 256 });
   });
 
   it("rejects missing debug batch/data row selections", async () => {
