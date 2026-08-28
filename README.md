@@ -94,10 +94,11 @@ JSON rows to produce deterministic variants. Template quality requirements are d
 
 ### Receipts and reproducibility
 
-Evidence-producing operations return structured receipts. Depending on the operation and the
-host-governed destination, a receipt may also be persisted beside the artifact, inside the output
-package, or under a dedicated receipt root. Receipts bind source identities, renderer decisions,
-output hashes, warnings, and quality results. See
+Evidence-producing operations return their declared receipts as structured records. Depending on
+the operation and the host-governed destination, a receipt may also be persisted beside the
+artifact, inside the output package, or under a dedicated receipt root.
+Read-only discovery and state commands emit no receipt. Receipts bind source identities, renderer
+decisions, output hashes, warnings, and quality results. See
 [Receipts and trust](docs/public/receipts-and-trust.md) for the exact persistence rules.
 
 ### Agent and application control
@@ -113,6 +114,13 @@ use intentional subsets of that registry:
 | Action discovery | Search, guidance, and plans for supported workflows |
 | Workbench | Human operation over the same package and command contracts |
 | Connector protocol | Self-describing job and artifact handoff to compatible hosts |
+
+The current callable inventory is 300 typed Debug/MCP commands, 234 direct CLI routes,
+and 7 semantic CLI equivalents. 59 named Debug/MCP commands deliberately have no CLI route
+and require Debug API or MCP. Application integrations have 35 dedicated local-SDK operations,
+while action discovery publishes 174 discoverable actions.
+The Local SDK has no dedicated template catalog, plan, apply, or media-replace API; those workflows
+use their declared Debug/MCP, CLI, or higher-level host routes.
 
 The generated [Debug command reference](docs/public/DEBUG_API_COMMANDS.md) is the readable command
 index. The JSON files under [`schemas/`](schemas/) are the machine contracts.
