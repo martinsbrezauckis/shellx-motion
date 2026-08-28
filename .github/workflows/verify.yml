@@ -150,11 +150,11 @@ jobs:
       - name: Test
         env:
           SHELLX_MOTION_BROWSER: /usr/bin/google-chrome
-        # The default test contract is runnable in the generated public source
-        # release. CI is the implementation tree, so it also retains generator,
-        # Git-index, and Git-bound native-qualification contract coverage through
-        # the explicit implementation gate.
-        run: pnpm run test:implementation
+        # GitHub evaluates the generated public source repository, where the
+        # default test contract is authoritative. Implementation-only generator,
+        # Git-index, and native-qualification coverage runs before export and its
+        # withheld sources must never become a public CI dependency.
+        run: pnpm test
 
       # Proves the packed artifact is installable and its bin actually runs — the failure mode a
       # workspace-only test cannot see, because in-workspace exports point at TypeScript sources.

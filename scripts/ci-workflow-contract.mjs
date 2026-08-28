@@ -81,6 +81,10 @@ requireText("host verification", host, "src/windows-job-object.test.ts");
 requireText("host verification", host, "src/path-contract.test.ts");
 forbidText("host verification", host, "SHELLX_MOTION_BROWSER");
 
+const verify = contents.get("verify");
+requireText("verify", verify, "run: pnpm test");
+forbidText("verify", verify, "pnpm run test:implementation");
+
 const dependencyReview = contents.get("dependency review");
 requireText("dependency review", dependencyReview, "contents: read");
 requireText("dependency review", dependencyReview, "fail-on-severity: high");
