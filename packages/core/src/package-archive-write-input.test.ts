@@ -11,6 +11,25 @@ afterEach(async () => {
 });
 
 describe("package archive write input", () => {
+  it("refuses a directory-entry flood before retaining source bytes", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "source.bin"), "one", "utf8");
+    await Promise.all(["one", "two"].map(async (name) => await mkdir(join(root, name))));
+    const afterEnumeration = vi.fn(async () => undefined);
+    const allocation = vi.spyOn(Buffer, "allocUnsafe");
+
+    try {
+      await withinWorkspace(root, async () => {
+        await expect(collectBoundedPackageArchiveEntries(root, { maxFiles: 1, maxPathDepth: 1 }, { afterEnumeration }))
+          .rejects.toThrow(/exceeds the 2-entry topology limit/);
+      });
+      expect(afterEnumeration).not.toHaveBeenCalled();
+      expect(allocation).not.toHaveBeenCalled();
+    } finally {
+      allocation.mockRestore();
+    }
+  });
+
   it("refuses a grown replacement after enumeration before retaining unreserved bytes", async () => {
     const root = await scratch();
     const source = join(root, "source.bin");

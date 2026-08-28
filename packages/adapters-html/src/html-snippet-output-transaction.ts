@@ -6,11 +6,13 @@
  * or competing artifact. Core owns the same-filesystem private reservation and atomic publish;
  * this adapter owns the closed nested-file inventory and no-follow descriptor writes inside it.
  */
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { lstat, mkdir, open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { acquireDerivedOutputPublication, type DerivedOutputPublication } from "@shellx-motion/core";
+
+const DESCRIPTOR_COPY_CHUNK_BYTES = 64 * 1024;
 
 export class HtmlSnippetOutputTransaction {
   private readonly written = new Set<string>();
@@ -51,14 +53,10 @@ export class HtmlSnippetOutputTransaction {
     );
     try {
       const hash = createHash("sha256");
-      let size = 0;
-      for await (const chunk of source.createReadStream({ start: 0, autoClose: false })) {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk as Buffer;
+      const size = await consumeBoundedDescriptor(source, expectedSize, label, async (bytes) => {
         hash.update(bytes);
-        size += bytes.byteLength;
         await writeAll(target, bytes);
-      }
-      if (size !== expectedSize) throw new Error(`HTML snippet import asset changed while it was being staged: ${label}.`);
+      });
       await assertRegularHandle(target, destination);
       this.written.add(relativePath);
       return { sha256: hash.digest("hex"), size };
@@ -85,6 +83,70 @@ export class HtmlSnippetOutputTransaction {
     await securePrivateParent(this.stagePath, dirname(destination));
     return destination;
   }
+}
+
+/**
+ * Retain one bounded descriptor's bytes without reopening its path. The one-byte probe makes a
+ * file that grew beyond its admitted metadata limit fail before the extra byte is retained.
+ */
+export async function readBoundedDescriptor(source: FileHandle, expectedSize: number, label: string): Promise<Buffer> {
+  assertValidExpectedSize(expectedSize, label);
+  const bytes = Buffer.allocUnsafe(expectedSize);
+  let offset = 0;
+  await consumeBoundedDescriptor(source, expectedSize, label, async (chunk) => {
+    chunk.copy(bytes, offset);
+    offset += chunk.byteLength;
+  });
+  return bytes;
+}
+
+/** Read at most the admitted descriptor size plus one byte, then prove that its facts never moved. */
+async function consumeBoundedDescriptor(
+  source: FileHandle,
+  expectedSize: number,
+  label: string,
+  consume: (bytes: Buffer) => Promise<void>
+): Promise<number> {
+  assertValidExpectedSize(expectedSize, label);
+  const before = await source.stat();
+  assertAdmittedDescriptor(before, expectedSize, label);
+  const chunk = Buffer.allocUnsafe(Math.min(DESCRIPTOR_COPY_CHUNK_BYTES, expectedSize + 1));
+  let size = 0;
+  while (size < expectedSize + 1) {
+    const maximum = Math.min(chunk.byteLength, expectedSize + 1 - size);
+    const { bytesRead } = await source.read(chunk, 0, maximum, size);
+    if (bytesRead === 0) break;
+    if (size + bytesRead > expectedSize) throw changedDescriptor(label);
+    await consume(chunk.subarray(0, bytesRead));
+    size += bytesRead;
+  }
+  if (size !== expectedSize) throw changedDescriptor(label);
+  const after = await source.stat();
+  if (!sameDescriptorFacts(before, after)) throw changedDescriptor(label);
+  return size;
+}
+
+function assertValidExpectedSize(expectedSize: number, label: string): void {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 0 || expectedSize === Number.MAX_SAFE_INTEGER) {
+    throw new Error(`HTML snippet import asset has an invalid admitted size: ${label}.`);
+  }
+}
+
+function assertAdmittedDescriptor(facts: Stats, expectedSize: number, label: string): void {
+  if (!facts.isFile() || facts.size !== expectedSize) throw changedDescriptor(label);
+}
+
+function sameDescriptorFacts(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+function changedDescriptor(label: string): Error {
+  return new Error(`HTML snippet import asset changed while it was being staged: ${label}.`);
 }
 
 async function securePrivateParent(root: string, target: string): Promise<void> {

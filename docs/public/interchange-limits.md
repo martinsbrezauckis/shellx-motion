@@ -35,7 +35,8 @@ precomposition visits, 4,096 total discovery work items, and precomposition dept
 bundled fonts are limited to 32. State machines are preserved as data and are never executed.
 
 HTML snippet import admits at most 8 MiB of markup, 1,000 declared layers, and 256 MiB for one
-package-relative media asset (512 MiB across its admitted media). Its parser permits at most 64
+package-relative media asset (512 MiB across its admitted media). SVG assets are sanitized in
+memory and retain their existing 8 MiB SVG-specific ceiling. Its parser permits at most 64
 attributes and 64 CSS declarations for an element, 64,128 of each across the document, 64 KiB of
 attribute/style string materialization for an element, and 8 MiB in aggregate. Lossiness output is
 also bounded to 2,048 findings and 768 KiB of serialized finding/warning data. These are refusal

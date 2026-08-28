@@ -44,6 +44,7 @@ vi.mock("@shellx-motion/core", async (importOriginal) => {
 });
 
 import { importHtmlSnippetToMotionPackage, writeHtmlSnippetExport } from "./index.js";
+import { HtmlSnippetOutputTransaction, readBoundedDescriptor } from "./html-snippet-output-transaction.js";
 
 const roots: string[] = [];
 
@@ -150,7 +151,66 @@ describe("HTML snippet output transaction", () => {
     expect(receipt.inputHashes["manifest.json"]).not.toBe(sha256(Buffer.from(changedManifest)));
     expect(receipt.inputHashes["motion.json"]).not.toBe(sha256(Buffer.from(changedMotion)));
   });
+
+  it("caps an SVG descriptor at its admitted size plus one byte and rejects concurrent growth", async () => {
+    const admitted = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const source = descriptor(admitted, Buffer.concat([admitted, Buffer.from("x")]));
+
+    await expect(readBoundedDescriptor(source, admitted.byteLength, "assets/logo.svg"))
+      .rejects.toThrow("HTML snippet import asset changed while it was being staged: assets/logo.svg.");
+
+    expect(source.read).toHaveBeenCalledWith(expect.any(Buffer), 0, admitted.byteLength + 1, 0);
+  });
+
+  it("caps a non-SVG descriptor copy at its admitted size plus one byte and revalidates its identity", async () => {
+    const root = await scratch();
+    const admitted = Buffer.from("png");
+    const source = descriptor(admitted, Buffer.concat([admitted, Buffer.from("x")]));
+    const transaction = await HtmlSnippetOutputTransaction.acquire(join(root, "package"));
+    try {
+      await expect(transaction.copyFromDescriptor("assets/photo.png", source, admitted.byteLength, "assets/photo.png"))
+        .rejects.toThrow("HTML snippet import asset changed while it was being staged: assets/photo.png.");
+      expect(source.read).toHaveBeenCalledWith(expect.any(Buffer), 0, admitted.byteLength + 1, 0);
+
+      const identityChanged = descriptor(admitted, admitted, true);
+      await expect(transaction.copyFromDescriptor("assets/changed.png", identityChanged, admitted.byteLength, "assets/changed.png"))
+        .rejects.toThrow("HTML snippet import asset changed while it was being staged: assets/changed.png.");
+    } finally {
+      await transaction.abort();
+    }
+  });
+
+  it("keeps unchanged descriptor reads compatible", async () => {
+    const source = descriptor(Buffer.from("static SVG"));
+
+    await expect(readBoundedDescriptor(source, 10, "assets/logo.svg")).resolves.toEqual(Buffer.from("static SVG"));
+  });
 });
+
+function descriptor(admitted: Buffer, readable = admitted, mutateAfterRead = false) {
+  let statCalls = 0;
+  const handle = {
+    stat: vi.fn(async () => descriptorStats(admitted.byteLength, mutateAfterRead && statCalls++ > 0 ? 1 : 0)),
+    read: vi.fn(async (buffer: Buffer, offset: number, length: number, position: number) => {
+      const available = readable.subarray(position, position + length);
+      available.copy(buffer, offset);
+      return { bytesRead: available.byteLength, buffer };
+    })
+  };
+  return handle as unknown as import("node:fs/promises").FileHandle;
+}
+
+function descriptorStats(size: number, version: number) {
+  return {
+    isFile: () => true,
+    dev: 1,
+    ino: 2,
+    nlink: 1,
+    size,
+    mtimeMs: version,
+    ctimeMs: version
+  };
+}
 
 async function writePackage(root: string, name: string): Promise<string> {
   const packageRoot = join(root, "package");

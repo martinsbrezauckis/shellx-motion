@@ -99,6 +99,8 @@ export const MAX_HTML_DECODED_STRING_CHARS = MAX_HTML_SNIPPET_BYTES;
 export const MAX_HTML_LOSSINESS_FINDINGS = 2_048;
 export const MAX_HTML_LOSSINESS_RECEIPT_BYTES = 768 * 1024;
 export const MAX_HTML_ASSET_BYTES = 256 * 1024 * 1024;
+/** SVG is parsed and sanitized in memory, so it has the same bounded input ceiling as the HTML source. */
+export const MAX_HTML_SVG_BYTES = 8 * 1024 * 1024;
 export const MAX_HTML_TOTAL_ASSET_BYTES = 512 * 1024 * 1024;
 export const IMAGE_ASSET_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
 export const VIDEO_ASSET_EXTENSIONS = new Set([".mp4", ".webm"]);

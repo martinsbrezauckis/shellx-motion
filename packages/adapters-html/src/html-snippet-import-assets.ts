@@ -4,10 +4,11 @@ import { dirname, extname, resolve } from "node:path";
 import { hashBuffer } from "@shellx-motion/core";
 import {
   MAX_HTML_ASSET_BYTES,
+  MAX_HTML_SVG_BYTES,
   MAX_HTML_TOTAL_ASSET_BYTES
 } from "./html-snippet-types.js";
 import { assertSafeHtmlMediaAsset, pathIsInside } from "./html-snippet-shared.js";
-import { HtmlSnippetOutputTransaction } from "./html-snippet-output-transaction.js";
+import { HtmlSnippetOutputTransaction, readBoundedDescriptor } from "./html-snippet-output-transaction.js";
 
 /** Stage each declared asset from the verified descriptor rather than resolving its path twice. */
 export async function stageHtmlSnippetAssets(input: {
@@ -29,10 +30,13 @@ export async function stageHtmlSnippetAssets(input: {
       const info = await handle.stat();
       if (!info.isFile()) throw new Error(`HTML snippet import asset must be a regular file: ${assetRef}.`);
       if (info.size > MAX_HTML_ASSET_BYTES) throw new Error(`HTML snippet import asset exceeds the 256 MiB limit: ${assetRef}.`);
+      if (declaredExtension === ".svg" && info.size > MAX_HTML_SVG_BYTES) {
+        throw new Error(`HTML snippet import SVG asset exceeds the 8 MiB limit: ${assetRef}.`);
+      }
       totalBytes += info.size;
       if (totalBytes > MAX_HTML_TOTAL_ASSET_BYTES) throw new Error("HTML snippet import assets exceed the 512 MiB total limit.");
       if (declaredExtension === ".svg") {
-        const bytes = await handle.readFile();
+        const bytes = await readBoundedDescriptor(handle, info.size, assetRef);
         assertSafeHtmlMediaAsset(assetRef, bytes, `HTML snippet import asset ${assetRef}`);
         await input.transaction.writeFile(assetRef, bytes);
         staged.push({ path: assetRef, sha256: hashBuffer(bytes), size: bytes.byteLength });
