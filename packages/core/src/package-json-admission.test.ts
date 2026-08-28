@@ -83,6 +83,21 @@ describe("package JSON structural admission", () => {
     }
   }, 45_000);
 
+  it("retains a 4,502-layer package snapshot within the package admission budgets", () => {
+    const files = {
+      "manifest.json": manifestText(),
+      "motion.json": JSON.stringify({
+        ...minimalMotionDocument(),
+        layers: Array.from({ length: 4_502 }, (_entry, index) => ({ ...minimalLayer(), id: `layer_${index}` }))
+      })
+    };
+    const snapshot = new Map(Object.entries(files).map(([path, text]) => {
+      const bytes = Buffer.from(text, "utf8");
+      return [path, { bytes, sha256: createHash("sha256").update(bytes).digest("hex") }] as const;
+    }));
+    const pkg = loadMotionPackageFromAdmittedFiles("/virtual/json-admission", snapshot);
+    expect(pkg.motion.layers).toHaveLength(4_502);
+  }, 45_000);
 });
 
 async function expectRejectedByEveryPackageRoute(name: string, files: Record<string, string>, error: RegExp): Promise<void> {

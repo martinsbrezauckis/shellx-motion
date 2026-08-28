@@ -37,7 +37,7 @@
     "build:clean": "node scripts/build.mjs --clean",
     "build:verify": "node scripts/verify-install.mjs",
     "test": "pnpm run test:public",
-    "test:public": "pnpm run source-hygiene:public && pnpm docs:check && pnpm run args:check && pnpm run version:check && pnpm run architecture:check && pnpm run corpus:check && pnpm run test:scripts && pnpm -r --workspace-concurrency=1 --if-present run test --pool=forks --maxWorkers=1 --no-file-parallelism",
+    "test:public": "pnpm run source-hygiene:public && pnpm docs:check && pnpm run args:check && pnpm run version:check && pnpm run architecture:check && pnpm run corpus:check && pnpm run test:scripts && pnpm -r --no-bail --workspace-concurrency=1 --if-present run test --pool=forks --maxWorkers=1 --no-file-parallelism",
     "test:scripts": "vitest run --config vitest.scripts.config.ts --pool=forks --maxWorkers=1 --no-file-parallelism",
     "source-hygiene:check": "pnpm run source-hygiene:public",
     "source-hygiene:public": "node scripts/no-nul-bytes.mjs && node scripts/job-status-lint.mjs && node scripts/shipping-imports-gate.mjs && node scripts/canonical-determinism-gate.mjs && node scripts/test-timeout-floor-gate.mjs",
