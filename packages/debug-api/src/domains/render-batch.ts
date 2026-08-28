@@ -25,6 +25,8 @@ export interface BatchRenderRequest {
   forcePreset: boolean;
   dryRun: boolean;
   resume: boolean;
+  /** Authenticated host principal retained with batch receipt and resume identity; never command data. */
+  callerId?: string;
   minUniqueFrameHashes?: number;
   workflow?: BrowserCaptureWorkflow;
   workflowPath?: string;
@@ -35,6 +37,8 @@ export interface BatchRenderRequest {
 }
 
 export interface RenderBatchServices {
+  /** Authenticated host principal; callers cannot nominate this in command arguments. */
+  callerId?: string;
   /** Render roots are host configuration, never derived from request fields. */
   renderRootPolicy?: RenderRootPolicy;
   /** Test-only seam after rows admission and before the stable reader opens it. */
@@ -51,6 +55,7 @@ export async function dispatchRenderBatchCommand(
   services: RenderBatchServices
 ): Promise<MotionDebugResult | null> {
   if (command !== "motion.render.batch") return null;
+  const callerId = services.callerId?.trim() || undefined;
   const packageRoot = stringArg(args, "packageRoot");
   const outDir = stringArg(args, "outDir");
   const rowsPath = stringArg(args, "rowsPath") ?? undefined;
@@ -108,7 +113,8 @@ export async function dispatchRenderBatchCommand(
     ...(workflow ? { workflow } : {}),
     ...(workflowPath ? { workflowPath } : {}),
     ...(rowsInputRoot ? { rowsInputRoot } : {}),
-    ...(packageInputRoot ? { packageInputRoot } : {})
+    ...(packageInputRoot ? { packageInputRoot } : {}),
+    ...(callerId ? { callerId } : {})
   };
   if (dryRun) {
     if (!services.executeBatchPlan) return capabilityUnavailable("Batch render planning is unavailable.");

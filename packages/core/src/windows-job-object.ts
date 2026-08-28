@@ -4,6 +4,7 @@ import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 import type { LocalMotionProcessContainmentEvidence } from "./job-governor";
+import { resolveWindowsSystemExecutable, windowsSystemExecutableCandidate } from "./windows-system-executable";
 
 const WINDOWS_JOB_REQUEST_SCHEMA = "shellx-motion/windows-job-request@1" as const;
 const WINDOWS_JOB_STATUS_SCHEMA = "shellx-motion/windows-job-status@1" as const;
@@ -14,7 +15,7 @@ const MIN_JOB_MEMORY_BYTES = 64 * 1024 * 1024;
 const MAX_JOB_MEMORY_BYTES = 1024 * 1024 * 1024 * 1024;
 
 export interface WindowsJobObjectLaunchPlan {
-  executable: "powershell.exe";
+  executable: string;
   args: string[];
   requestPath: string;
   statusPath: string;
@@ -125,10 +126,13 @@ export async function createWindowsJobObjectLaunchPlan(input: {
       maxJobMemoryBytes: input.maxJobMemoryBytes,
       maxActiveProcesses,
     };
+    const launcherExecutable = process.platform === "win32"
+      ? resolveWindowsSystemExecutable("powershell")
+      : windowsSystemExecutableCandidate("powershell");
     await writeFile(requestPath, `${JSON.stringify(request)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
 
     return {
-      executable: "powershell.exe",
+      executable: launcherExecutable,
       args: [
         "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", canonicalHelper, "-RequestPath", requestPath,

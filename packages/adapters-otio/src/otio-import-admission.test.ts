@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission";
+import { assertBoundedOtioJson, assertBoundedOtioJsonText, assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission";
 
 describe("OTIO import admission", () => {
   it("rejects overflow, non-safe, and over-cap derived RationalTime", () => {
@@ -18,5 +18,14 @@ describe("OTIO import admission", () => {
     const manifest = { schema: "shellx-motion/package-manifest@1", id: "pkg_otio", name: "OTIO", motion: "motion.json", assets: [], sourceApp: "otio", compatibility: { lanes: ["otio"], hosts: ["shellx-motion"] } } as any;
     const motion = { schema: "shellx-motion/motion@1", id: "motion_otio", name: "OTIO", durationMs: -1, fps: 24, width: 1280, height: 720, layers: [], assets: [], provenance: { sourceApp: "otio", createdBy: "test" } } as any;
     await expect(assertGeneratedOtioPackage(manifest, motion)).rejects.toThrow(/generated an invalid Motion document/);
+  });
+
+  it("refuses structural amplification before OTIO-specific cloning or diagnostics", () => {
+    expect(() => assertBoundedOtioJsonText(`[${Array.from({ length: 50_002 }, () => "{}").join(",")}]`)).toThrow("pre-parse structural limit");
+    expect(() => assertBoundedOtioJsonText(JSON.stringify({ literal: "[{},".repeat(20_000) }))).not.toThrow();
+    expect(() => assertBoundedOtioJson(Array.from({ length: 10_001 }, () => null))).toThrow("10000-item array limit");
+    let nested: unknown = null;
+    for (let index = 0; index < 34; index += 1) nested = { child: nested };
+    expect(() => assertBoundedOtioJson(nested)).toThrow("32-level nesting limit");
   });
 });

@@ -961,7 +961,7 @@ Tier `render_motion` · mutates: yes
 | `descriptorRevision` | `number` | yes |  |  | Exact descriptor revision observed during discovery. |
 | `descriptorFingerprint` | `string` | yes |  |  | Exact descriptor fingerprint observed during discovery. |
 | `requestSchemaId` | `string` | yes |  |  | Exact request schema id advertised by the selected descriptor. |
-| `request` | `object` | yes |  |  | Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles. |
+| `request` | `object` | yes |  |  | Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles, resolved only with the authenticated caller identity. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
@@ -1299,7 +1299,7 @@ Tier `render_motion` · mutates: yes
 | `workflow` | `object` | no |  |  | Inline shellx-motion/browser-workflow@1 replay plan for each rendered row. |
 | `workflowPath` | `string` | no |  |  | Optional deterministic browser workflow JSON path to replay for each rendered row. |
 | `dryRun` | `boolean` | no |  |  | Plan expanded row packages and receipts without rendering media. |
-| `resume` | `boolean` | no |  |  | Reuse completed row outputs when idempotency evidence still matches. |
+| `resume` | `boolean` | no |  |  | Reuse completed row outputs only when idempotency and retained authenticated caller ownership match; resume without a host caller principal fails before output writes. |
 
 Other arguments are accepted and passed through unread; this command does not close its argument set.
 

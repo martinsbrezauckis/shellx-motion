@@ -10,6 +10,7 @@ import {
   waitForWindowsJobObjectStatus,
   windowsJobObjectContainmentEvidence,
 } from "./windows-job-object";
+import { resolveWindowsSystemExecutable, windowsSystemExecutableCandidate } from "./windows-system-executable";
 
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -32,7 +33,9 @@ describe("shared Windows Job Object launch planning", () => {
       maxActiveProcesses: 32,
     });
 
-    expect(plan.executable).toBe("powershell.exe");
+    expect(plan.executable).toBe(process.platform === "win32"
+      ? resolveWindowsSystemExecutable("powershell")
+      : windowsSystemExecutableCandidate("powershell"));
     expect(plan.args).toEqual([
       "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
       "-File", plan.helperPath, "-RequestPath", plan.requestPath,

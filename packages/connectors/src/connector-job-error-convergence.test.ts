@@ -18,7 +18,7 @@ vi.mock("./template-to-cut", () => ({
 import { executePreparedMotionConnectorJob, prepareAdmittedMotionConnectorJob } from "./connector-job-registry";
 
 describe.runIf(process.platform === "linux")("connector typed failure convergence", () => {
-  it("preserves an unknown future code and retry policy through the generic registry", async () => {
+  it("preserves an unknown future code and retry policy through the caller-qualified generic registry", async () => {
     const descriptor = motionCapabilityCatalog().descriptors.find((entry) => entry.id === "connector.template-to-cut@1");
     if (!descriptor) throw new Error("Template-to-Cut descriptor is missing.");
     const prepared = prepareAdmittedMotionConnectorJob({
@@ -28,10 +28,18 @@ describe.runIf(process.platform === "linux")("connector typed failure convergenc
       requestSchemaId: descriptor.request.id,
       request: { input: "input_ref", output: "output_ref" }
     });
+    const resolvedFor: string[] = [];
     const result = await executePreparedMotionConnectorJob(prepared, {
-      references: { async resolvePath(input) { return input.access === "read" ? "/motion/input" : "/motion/output"; } },
+      callerId: "cut:workspace-a",
+      references: {
+        async resolvePath(input) {
+          resolvedFor.push(input.callerId);
+          return input.access === "read" ? "/motion/input" : "/motion/output";
+        }
+      },
       signal: new AbortController().signal
     });
+    expect(resolvedFor).toEqual(["cut:workspace-a", "cut:workspace-a"]);
     expect(result).toMatchObject({
       ok: false,
       error: {

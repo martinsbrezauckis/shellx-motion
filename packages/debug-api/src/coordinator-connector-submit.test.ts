@@ -52,12 +52,14 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
   it("submits one descriptor-bound job and cancels while its opaque input is resolving", async () => {
     const { jobs, bindings } = await coordinator();
     let resolutions = 0;
+    const resolvedFor: string[] = [];
     const submitted = await submitCoordinatedConnector(request("cut:generic-cancel"), {
       jobTrackingDisabled: false,
       callerId: "cut:workspace",
       connectorJobReferences: {
         async resolvePath(input) {
           resolutions += 1;
+          resolvedFor.push(input.callerId);
           return await new Promise<string>((_resolve, reject) => {
             const stop = () => reject(input.signal.reason instanceof Error ? input.signal.reason : new Error("cancelled"));
             if (input.signal.aborted) stop(); else input.signal.addEventListener("abort", stop, { once: true });
@@ -70,6 +72,7 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
     });
     expect(submitted).toMatchObject({ ok: true, result: { jobId: "cut:generic-cancel", binding: { capabilityId: "connector.template-to-cut@1", descriptorRevision: 2 } } });
     await eventually(async () => resolutions, (count) => count === 1);
+    expect(resolvedFor).toEqual(["cut:workspace"]);
     await expect(jobs.cancel({ jobId: "cut:generic-cancel", callerId: "other:workspace" })).resolves.toMatchObject({ ok: false, code: "job_not_visible" });
     await expect(jobs.cancel({ jobId: "cut:generic-cancel", callerId: "cut:workspace", reason: "operator stop" })).resolves.toMatchObject({ ok: true });
     const terminal = await eventually(
@@ -142,6 +145,7 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
 
     const restarted = coordinatorAt(root);
     let resolutions = 0;
+    const resolvedFor: string[] = [];
     expect(resolutions).toBe(0);
     await expect(retryCoordinatedJob({
       jobId: submittedRequest.jobId,
@@ -149,10 +153,17 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
       newJobId: "cut:restart-retry"
     }, {
       connectorJobBindingJournal: bindings,
-      connectorJobReferences: { async resolvePath() { resolutions += 1; return "/motion-test-missing"; } },
+      connectorJobReferences: {
+        async resolvePath(input) {
+          resolutions += 1;
+          resolvedFor.push(input.callerId);
+          return "/motion-test-missing";
+        }
+      },
       coordinator: () => restarted
     })).resolves.toMatchObject({ ok: true, value: { jobId: "cut:restart-retry", priorJobId: "cut:restart-source" } });
     await eventually(async () => resolutions, (count) => count === 2);
+    expect(resolvedFor).toEqual(["cut:workspace", "cut:workspace"]);
     await expect(bindings.read({ jobId: "cut:restart-retry", callerId: "cut:workspace" }))
       .resolves.toMatchObject({ ok: true, binding: { request: submittedRequest.request } });
     await eventually(

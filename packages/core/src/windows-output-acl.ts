@@ -8,6 +8,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolveWindowsSystemExecutable } from "./windows-system-executable";
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_SID = "S-1-5-18";
@@ -116,7 +117,7 @@ export function evaluateWindowsOutputAcl(snapshot: WindowsOutputAclSnapshot, opt
 
 async function inspectWindowsOutputAcls(paths: readonly string[]): Promise<WindowsOutputAclSnapshot[]> {
   try {
-    const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_OUTPUT_ACL_SCRIPT], {
+    const { stdout } = await execFileAsync(resolveWindowsSystemExecutable("powershell"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_OUTPUT_ACL_SCRIPT], {
       encoding: "utf8",
       windowsHide: true,
       timeout: 15_000,

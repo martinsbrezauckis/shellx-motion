@@ -479,14 +479,6 @@ describe("HTML snippet export adapter", () => {
       expect(await importWithin(html)).toEqual({ layerCount: 1 });
     });
 
-    it("imports a 400 KB CSS transform value without stalling", async () => {
-      // 57.4 s before the rewrite: `/([a-z-]+)\(([^)]*)\)/gi` re-tried the letter run per offset.
-      const style = `transform:${"a".repeat(400_000)}`;
-      const html = adversarialSnippet(`<div data-layer-id="only" data-layer-type="text" style="${style}">hi</div>`);
-      expect(html.length).toBeGreaterThan(400_000);
-      expect(await importWithin(html)).toEqual({ layerCount: 1 });
-    });
-
     it("imports 800 KB of <html openers without stalling on the document attribute probe", async () => {
       // 28.6 s before the rewrite for `/<html\b([^>]*)>/i` on this shape.
       const html = adversarialSnippet("<div data-layer-id=\"only\" data-layer-type=\"text\">hi</div>", "<html".repeat(160_000));

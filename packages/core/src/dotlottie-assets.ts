@@ -13,16 +13,21 @@ export function readSelectedDotLottieAssets(input: {
   limits: DotLottieLimits;
 }): { images: DotLottieBundledImage[]; fonts: DotLottieBundledFont[] } {
   const animation = parseBoundedLottieJson(input.animationText);
+  const layers = selectedCompositionLayers(animation);
   return {
-    images: readImages(animation, input),
-    fonts: input.version === "2" ? readFonts(animation, input) : []
+    images: readImages(animation, input, layers),
+    fonts: input.version === "2" ? readFonts(animation, input, layers) : []
   };
 }
 
-function readImages(animation: Record<string, unknown>, input: Omit<Parameters<typeof readSelectedDotLottieAssets>[0], "animationText">): DotLottieBundledImage[] {
+function readImages(
+  animation: Record<string, unknown>,
+  input: Omit<Parameters<typeof readSelectedDotLottieAssets>[0], "animationText">,
+  layers: readonly Record<string, unknown>[]
+): DotLottieBundledImage[] {
   const assets = Array.isArray(animation.assets) ? animation.assets.map(readDotLottieRecord).filter(nonNull) : [];
   const referencedIds = new Set<string>();
-  for (const layer of selectedCompositionLayers(animation)) {
+  for (const layer of layers) {
     if (layer?.ty !== 2) continue;
     const refId = typeof layer.refId === "string" ? layer.refId : null;
     if (!refId) throw new Error("dotLottie image layers require a non-empty string refId.");
@@ -55,9 +60,13 @@ function readImages(animation: Record<string, unknown>, input: Omit<Parameters<t
   return images.sort((left, right) => compareCodeUnits(left.assetId, right.assetId));
 }
 
-function readFonts(animation: Record<string, unknown>, input: Omit<Parameters<typeof readSelectedDotLottieAssets>[0], "animationText">): DotLottieBundledFont[] {
+function readFonts(
+  animation: Record<string, unknown>,
+  input: Omit<Parameters<typeof readSelectedDotLottieAssets>[0], "animationText">,
+  layers: readonly Record<string, unknown>[]
+): DotLottieBundledFont[] {
   const fontList = readDotLottieRecord(animation.fonts)?.list;
-  const referencedNames = referencedFontNames(animation);
+  const referencedNames = referencedFontNames(layers);
   if (referencedNames.size === 0) return [];
   if (fontList === undefined) return [];
   if (!Array.isArray(fontList) || fontList.length > 32) throw new Error("dotLottie selected animation supports at most 32 bundled fonts.");
@@ -98,9 +107,9 @@ function readFonts(animation: Record<string, unknown>, input: Omit<Parameters<ty
   return fonts.sort((left, right) => compareCodeUnits(left.fontName, right.fontName));
 }
 
-function referencedFontNames(animation: Record<string, unknown>): Set<string> {
+function referencedFontNames(layers: readonly Record<string, unknown>[]): Set<string> {
   const names = new Set<string>();
-  for (const layer of selectedCompositionLayers(animation)) {
+  for (const layer of layers) {
     if (layer?.ty !== 5) continue;
     const documentData = readDotLottieRecord(readDotLottieRecord(layer.t)?.d);
     const keyframes = Array.isArray(documentData?.k) ? documentData.k : [];
@@ -112,8 +121,18 @@ function referencedFontNames(animation: Record<string, unknown>): Set<string> {
   return names;
 }
 
+const MAX_DOTLOTTIE_DISCOVERY_ASSETS = 256;
+const MAX_DOTLOTTIE_LAYERS_PER_COMPOSITION = 4_096;
+const MAX_DOTLOTTIE_PRECOMP_VISITS = 64;
+const MAX_DOTLOTTIE_DISCOVERY_WORK = 4_096;
+const MAX_DOTLOTTIE_PRECOMP_DEPTH = 4;
+
 function selectedCompositionLayers(animation: Record<string, unknown>): Record<string, unknown>[] {
-  const assets = Array.isArray(animation.assets) ? animation.assets.map(readDotLottieRecord).filter(nonNull) : [];
+  const assetValues = Array.isArray(animation.assets) ? animation.assets : [];
+  if (assetValues.length > MAX_DOTLOTTIE_DISCOVERY_ASSETS) {
+    throw new Error(`dotLottie selected animation supports at most ${MAX_DOTLOTTIE_DISCOVERY_ASSETS} assets for bounded precomposition discovery.`);
+  }
+  const assets = assetValues.map(readDotLottieRecord).filter(nonNull);
   const precomps = new Map<string, Record<string, unknown>>();
   for (const asset of assets) {
     if (!Array.isArray(asset.layers)) continue;
@@ -123,13 +142,26 @@ function selectedCompositionLayers(animation: Record<string, unknown>): Record<s
     precomps.set(id, asset);
   }
   const collected: Record<string, unknown>[] = [];
+  let work = 0;
+  let precompVisits = 0;
   const visit = (values: unknown[], depth: number, ancestry: string[]): void => {
-    if (depth > 4) throw new Error("dotLottie selected animation precomposition nesting exceeds the depth-4 limit.");
+    if (values.length > MAX_DOTLOTTIE_LAYERS_PER_COMPOSITION) {
+      throw new Error(`dotLottie selected animation compositions support at most ${MAX_DOTLOTTIE_LAYERS_PER_COMPOSITION} layers.`);
+    }
     for (const value of values) {
+      work += 1;
+      if (work > MAX_DOTLOTTIE_DISCOVERY_WORK || collected.length >= MAX_DOTLOTTIE_DISCOVERY_WORK) {
+        throw new Error(`dotLottie selected animation asset discovery exceeds the ${MAX_DOTLOTTIE_DISCOVERY_WORK}-work limit.`);
+      }
       const layer = readDotLottieRecord(value);
       if (!layer) throw new Error("dotLottie selected animation layers must be objects.");
       collected.push(layer);
       if (layer.ty !== 0) continue;
+      if (depth >= MAX_DOTLOTTIE_PRECOMP_DEPTH) throw new Error(`dotLottie selected animation precomposition nesting exceeds the depth-${MAX_DOTLOTTIE_PRECOMP_DEPTH} limit.`);
+      precompVisits += 1;
+      if (precompVisits > MAX_DOTLOTTIE_PRECOMP_VISITS) {
+        throw new Error(`dotLottie selected animation precomposition discovery exceeds the ${MAX_DOTLOTTIE_PRECOMP_VISITS}-visit limit.`);
+      }
       const refId = typeof layer.refId === "string" ? layer.refId : "";
       const asset = precomps.get(refId);
       if (!refId || !asset || !Array.isArray(asset.layers)) throw new Error("dotLottie precomposition layer requires a resolvable asset.");

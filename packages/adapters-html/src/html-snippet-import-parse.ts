@@ -27,19 +27,27 @@ import {
   stripTags,
   uniqueStrings
 } from "./html-snippet-shared.js";
+import {
+  appendHtmlSnippetLossiness,
+  createHtmlSnippetLossinessBudget,
+  createHtmlSnippetParseBudget
+} from "./html-snippet-import-bounds.js";
 import { hasExternalStylesheetLink, readHtmlComposition, readHtmlLayerElements } from "./html-snippet-import-markup.js";
 
 export function parseHtmlSnippet(html: string, options: { createdBy: string }): ParsedHtmlSnippet {
-  const composition = readHtmlComposition(html);
-  const layerElements = readHtmlLayerElements(composition.mainInner);
+  const parseBudget = createHtmlSnippetParseBudget();
+  const composition = readHtmlComposition(html, parseBudget);
+  const layerElements = readHtmlLayerElements(composition.mainInner, parseBudget);
   if (layerElements.length > MAX_HTML_LAYER_COUNT) throw new Error("HTML snippet import exceeds the 1000-layer limit.");
   const layers: MotionLayer[] = [];
-  const lossiness: HtmlSnippetLossinessFinding[] = htmlDocumentLossiness(html, composition);
+  const lossiness: HtmlSnippetLossinessFinding[] = [];
+  const lossinessBudget = createHtmlSnippetLossinessBudget();
+  appendHtmlSnippetLossiness(lossiness, htmlDocumentLossiness(html, composition), lossinessBudget);
   const assetRefs: string[] = [];
 
   for (const element of layerElements) {
     const parsed = htmlElementToMotionLayer(element);
-    lossiness.push(...parsed.lossiness);
+    appendHtmlSnippetLossiness(lossiness, parsed.lossiness, lossinessBudget);
     if (!parsed.layer) continue;
     layers.push(parsed.layer);
     if (parsed.assetRef) assetRefs.push(parsed.assetRef);

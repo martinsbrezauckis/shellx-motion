@@ -1,6 +1,7 @@
 import { hashBuffer } from "./receipts";
 import { scanMarkupAttributes, scanMarkupOpenTags, scanMarkupTagPairs } from "./bounded-markup";
 import { parseBoundedLottieJson } from "./lottie-json";
+import { summarizeLottieShapeSiblings } from "./lottie-shape-sibling-summary";
 import {
   motionAffineMatrix,
   multiplyMotionAffineMatrices,
@@ -1117,12 +1118,12 @@ function diagnoseLottieShapeItems(
     return;
   }
   const records = value.map(readJsonRecord);
-  const localTransform = records.find((candidate) => readJsonString(candidate.ty) === "tr");
+  const siblingSummary = summarizeLottieShapeSiblings(records);
+  const localTransform = siblingSummary.localTransform;
   const transform = inheritedTransform && staticDiagnosticLottieTransform(localTransform)
     ? combineLottieTransforms(inheritedTransform, lottieStaticTransform(localTransform))
     : null;
-  value.forEach((entry, index) => {
-    const item = readJsonRecord(entry);
+  records.forEach((item, index) => {
     const path = `${basePath}[${index}]`;
     const type = readJsonString(item.ty);
     if (type === "gr") {
@@ -1155,9 +1156,7 @@ function diagnoseLottieShapeItems(
       return;
     }
     if (type === "gf") {
-      const geometry = records.filter((candidate) => ["sh", "rc", "el"].includes(readJsonString(candidate.ty) ?? ""));
-      const gradientFillCount = records.filter((candidate) => readJsonString(candidate.ty) === "gf").length;
-      const solidFillCount = records.filter((candidate) => readJsonString(candidate.ty) === "fl").length;
+      const { geometry, gradientFillCount, solidFillCount } = siblingSummary;
       if (geometry.length !== 1 || readJsonString(geometry[0]?.ty) !== "rc" || gradientFillCount !== 1 || solidFillCount > 0) {
         unsupported.push(feature(path, "lottie.shape.gradient.linear", "unsupported", "Editable gradient lowering requires exactly one static zero-radius rectangle, one gradient fill, and no solid fill in the same group."));
         return;

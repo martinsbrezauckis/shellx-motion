@@ -38,6 +38,8 @@ export type MotionConnectorReferenceAccess = "read" | "write";
 /** Host authority: opaque caller data can become a path only through this trusted callback. */
 export interface MotionConnectorReferenceAuthority {
   resolvePath(input: {
+    /** Authenticated coordinator owner; opaque references are never portable across callers. */
+    callerId: string;
     capabilityId: string;
     fieldId: string;
     reference: string;
@@ -47,6 +49,8 @@ export interface MotionConnectorReferenceAuthority {
 }
 
 export interface MotionConnectorJobExecutionServices {
+  /** Authenticated logical owner carried by the coordinator or named-CLI compatibility adapter. */
+  callerId: string;
   references: MotionConnectorReferenceAuthority;
   signal: AbortSignal;
   /** Trusted named-CLI adapter data; never accepted by the generic connector submit request. */
@@ -212,7 +216,14 @@ async function referencePath(
 ): Promise<string> {
   const reference = prepared.request[fieldId];
   if (typeof reference !== "string") throw connectorJobError("invalid_args", `Connector request field '${fieldId}' is not an opaque reference.`);
-  const path = await services.references.resolvePath({ capabilityId: prepared.capabilityId, fieldId, reference, access, signal: services.signal });
+  const path = await services.references.resolvePath({
+    callerId: services.callerId,
+    capabilityId: prepared.capabilityId,
+    fieldId,
+    reference,
+    access,
+    signal: services.signal
+  });
   if (typeof path !== "string" || !isAbsolute(path)) {
     throw connectorJobError("connector_reference_refused", `The host did not resolve '${fieldId}' to an absolute trusted path.`);
   }

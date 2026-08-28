@@ -100,6 +100,7 @@ import {
 } from "@shellx-motion/core";
 import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-browser"; import type { GpuActiveHardwareProbeResult, GpuEffectModuleUseAuthority } from "@shellx-motion/renderer-browser"; import type { DebugAgentScriptHostContext } from "./debug-agent-script-host-context.js"; import { writeContextReceipt, type DebugHostReceiptContext } from "./debug-host-receipt-writer.js"; import { selectDebugBrowserFrameRenderer } from "./debug-browser-frame-renderer-selection.js"; import { agentScriptBatchCopyRefusal } from "./agent-script-batch-refusal.js"; import { readDebugJson } from "./debug-json-read.js"; import { publishBrowserWorkflowJsonSidecar } from "./browser-workflow-sidecar-publication.js";
 import { debugBatchOutputTopologyError, prepareDebugBatchOutput } from "./batch-output-admission.js";
+import { inspectDebugBatchResumeOwner, type DebugBatchResumeOutput } from "./batch-resume-ownership.js";
 import {
   audioWarningsForExportPreset,
   buildEncodeImageSequenceCommand,
@@ -908,6 +909,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     }),
     executeStillFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugStillFinalRender(request, context)), executeSequenceFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugSequenceFinalRender(request, context)), executeFfmpegFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugFfmpegFinalRender(request, context)),
     gpuFinalExecutionAvailable: context.gpuFinalExecutionAvailable === true,
+    callerId: dispatchCallerId(context),
     retainedBatchQualityManifestPath: context.retainedBatchQualityManifest?.published.appliedPath,
     producerAuthority: context.attestedRenderReuseProducerAuthority,
     executeBatchPlan: (renderArgs) => runDebugBatchPlan(renderArgs, context),
@@ -1524,7 +1526,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         const packageDir = join(request.outDir, "packages", job.manifest.id);
         const outputPath = debugBatchOutputPath(join(request.outDir, "render"), job.manifest.id, jobPreset);
         const qualitySnapshot = request.qualityManifestPath ? await prepareBatchQualityManifestSnapshot({ sourcePath: request.qualityManifestPath, context: { values: job.row.values, rowId: job.row.id, rowIndex: job.row.index, rowHash: job.row.hash, rowKey: job.row.key, packageId: job.manifest.id, packageDir, outputPath }, requestBudget: qualityRequestBudget }) : undefined, qualityInputs = qualitySnapshot ? batchQualityInputEvidence(qualitySnapshot) : undefined;
-        const idempotencyKey = debugBatchJobIdempotencyKey({ packageId: job.manifest.id, rowId: job.row.id, rowHash: job.row.hash, manifest: job.manifest, motion: job.motion, preset: jobPreset, quality, qualityInputs, frameLane: request.frameLane, keepFrames: request.keepFrames, workflowIdempotencyHash });
+        const idempotencyKey = debugBatchJobIdempotencyKey({ packageId: job.manifest.id, rowId: job.row.id, rowHash: job.row.hash, manifest: job.manifest, motion: job.motion, preset: jobPreset, quality, qualityInputs, frameLane: request.frameLane, keepFrames: request.keepFrames, workflowIdempotencyHash, callerId: request.callerId });
         const audioWarnings = debugAudioWarningsForMotionExportPreset(jobPreset, resolvePackageAudioInputs({ root: pkg.root, manifest: job.manifest, motion: job.motion }).length);
         jobs.push({
           rowId: job.row.id,
@@ -1536,6 +1538,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           outputPath,
           preset: jobPreset,
           frameLane: request.frameLane,
+          ...(request.callerId ? { callerId: request.callerId } : {}),
           ...(frameTransport ? { frameTransport } : {}),
           ...(request.keepFrames !== undefined ? { keepFrames: request.keepFrames } : {}),
           ...(quality ? { quality } : {}),
@@ -1575,14 +1578,14 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           row: expanded[index].row, manifest: expanded[index].manifest, motion: expanded[index].motion,
           packageDir: jobs[index].packageDir, outputPath: jobs[index].outputPath,
           preset: jobs[index].preset, status: "not_run", idempotencyKey: jobs[index].idempotencyKey,
-          quality, qualityManifestPath, qualityInputs: jobs[index].qualityInputs, frameLane: request.frameLane, frameTransport: jobs[index].frameTransport as ReturnType<typeof planFinalVideoFrameTransport> | undefined, packageAssetInputHashes, warnings: debugResultWarnings(jobs[index]), actor: context.actor
+          quality, qualityManifestPath, qualityInputs: jobs[index].qualityInputs, frameLane: request.frameLane, frameTransport: jobs[index].frameTransport as ReturnType<typeof planFinalVideoFrameTransport> | undefined, packageAssetInputHashes, warnings: debugResultWarnings(jobs[index]), callerId: request.callerId, actor: context.actor
         });
         Object.assign(jobs[index], { planReceiptPath, receiptPath: planReceiptPath });
       }
       await batchOutput.assertCurrent();
       const receipt = await writeDebugBatchReceipt({
         receiptsRoot, pkg, rows, dryRun: true, preset: request.preset, ...presetSummary,
-        quality, qualityManifestPath, frameLane: request.frameLane, jobs, status: "not_run", actor: context.actor
+        quality, qualityManifestPath, frameLane: request.frameLane, jobs, status: "not_run", callerId: request.callerId, actor: context.actor
       });
       const receiptPath = join(receiptsRoot, "batch-render.receipt.json");
       return {
@@ -1624,11 +1627,17 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (await isUnsafePackageOutputDir(pkg.root, outDir)) {
         return invalidArgs("motion.render.batch outDir must be outside packageRoot.");
       }
-      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume, keepFrames });
+      let retainedResumeOutput: DebugBatchResumeOutput | undefined;
+      let previousBatchJobs = new Map<string, Record<string, unknown>>();
+      if (resume) {
+        const resumePreflight = await inspectDebugBatchResumeOwner(outDir, request.callerId);
+        if (!resumePreflight.ok) return resumePreflight.result;
+        retainedResumeOutput = resumePreflight.batchOutput;
+        previousBatchJobs = resumePreflight.jobs;
+      }
+      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume, keepFrames }, retainedResumeOutput);
       if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
       const { batchOutput, packagesRoot, renderRoot, receiptsRoot, framesRoot } = preparedOutput;
-      const previousBatchJobs = resume ? await readDebugBatchResumeJobs(join(receiptsRoot, "batch-render.receipt.json")) : new Map<string, Record<string, unknown>>();
-
       for (let index = 0; index < expanded.length; index += 1) {
         if (index > 0) await context.batchTestHooks?.beforeNextRow?.();
         await batchOutput.assertCurrent();
@@ -1656,12 +1665,13 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           frameTransport: planJob.frameTransport as ReturnType<typeof planFinalVideoFrameTransport> | undefined,
           packageAssetInputHashes,
           warnings: debugResultWarnings(planJob),
+          callerId: request.callerId,
           actor: context.actor
         });
         Object.assign(planJob, { planReceiptPath });
         await batchOutput.assertCurrent();
 
-        const resumeMatch = request.frameLane === "gpu" ? null : resume ? readDebugBatchResumeMatch(previousBatchJobs, planJob.idempotencyKey, planJob.outputPath) : null;
+        const resumeMatch = request.frameLane === "gpu" ? null : resume ? readDebugBatchResumeMatch(previousBatchJobs, planJob.idempotencyKey, planJob.outputPath, request.callerId) : null;
         if (resumeMatch) {
           const sourceReceiptPath = debugBatchResumeSourceReceiptPath(resumeMatch);
           renderedJobs.push({
@@ -1744,7 +1754,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
           await batchOutput.assertCurrent();
           await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
-          const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: possiblyCommittedPaths.length > 0 ? "warning" : "failed", actor: context.actor });
+          const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: possiblyCommittedPaths.length > 0 ? "warning" : "failed", callerId: request.callerId, actor: context.actor });
           const delivery = debugBatchDeliveryFields(renderedJobs);
           return {
             ok: false,
@@ -1758,7 +1768,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
       await batchOutput.assertCurrent();
       await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
-      const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "passed", actor: context.actor });
+      const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "passed", callerId: request.callerId, actor: context.actor });
       const receiptPath = join(receiptsRoot, "batch-render.receipt.json");
       return {
         ok: true,
@@ -8403,6 +8413,8 @@ async function writeDebugBatchReceipt(input: {
   presets?: MotionExportPreset[];
   quality?: { minUniqueFrameHashes: number };
   qualityManifestPath?: string;
+  /** Authenticated logical owner of this retained batch. */
+  callerId?: string;
   jobs: Array<Record<string, unknown>>;
   status: OperationReceipt["status"];
   /** Transport-observed actor for by-whom attribution; no-op when absent. */
@@ -8417,6 +8429,7 @@ async function writeDebugBatchReceipt(input: {
     quality: input.quality,
     frameLane: input.frameLane,
     qualityManifestPath: input.qualityManifestPath,
+    ...(input.callerId ? { callerId: input.callerId } : {}),
     ...(qualityInputs.length > 0 ? { qualityInputs } : {})
   });
   // Every warning this batch is about to publish, in one place, because the aggregate status is
@@ -8446,6 +8459,7 @@ async function writeDebugBatchReceipt(input: {
     output: {
       dryRun: input.dryRun,
       ...(input.resume ? { resume: true, resumedRows: input.resumedRows ?? 0, renderedRows: input.renderedRows ?? 0 } : {}),
+      ...(input.callerId ? { callerId: input.callerId } : {}),
       preset: input.preset,
       frameLane: input.frameLane,
       ...(input.presets ? { presets: input.presets } : {}),
@@ -8457,6 +8471,7 @@ async function writeDebugBatchReceipt(input: {
         rowHash: job.rowHash,
         rowKey: job.rowKey,
         ...(job.idempotencyKey ? { idempotencyKey: job.idempotencyKey } : {}),
+        ...(typeof job.callerId === "string" ? { callerId: job.callerId } : {}),
         packageId: job.packageId,
         outputPath: job.outputPath,
         preset: job.preset,
@@ -8572,6 +8587,7 @@ function debugBatchJobIdempotencyKey(input: {
   frameLane: "browser" | "native" | "gpu";
   keepFrames?: boolean;
   workflowIdempotencyHash?: string;
+  callerId?: string;
 }): string {
   const digest = hashBuffer(Buffer.from(JSON.stringify({
     packageId: input.packageId,
@@ -8584,7 +8600,8 @@ function debugBatchJobIdempotencyKey(input: {
     qualityInputs: input.qualityInputs,
     frameLane: input.frameLane,
     keepFrames: input.keepFrames,
-    workflowIdempotencyHash: input.workflowIdempotencyHash
+    workflowIdempotencyHash: input.workflowIdempotencyHash,
+    callerId: input.callerId
   }), "utf8")).slice(0, 24);
   return `${input.packageId}:${input.rowId}:${input.preset}:${digest}`;
 }
@@ -8601,25 +8618,6 @@ async function debugBatchWorkflowIdempotencyHash(input: { workflow?: unknown; wo
     ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
     ...(workflowFileHash ? { workflowFileHash } : {})
   }), "utf8"));
-}
-
-async function readDebugBatchResumeJobs(receiptPath: string): Promise<Map<string, Record<string, unknown>>> {
-  try {
-    const parsed = JSON.parse(await readFile(receiptPath, "utf8"));
-    const output = objectRecord(objectRecord(parsed)?.output);
-    const jobs = output?.jobs;
-    if (!Array.isArray(jobs)) return new Map();
-    const byKey = new Map<string, Record<string, unknown>>();
-    for (const job of jobs) {
-      const record = objectRecord(job);
-      const idempotencyKey = record?.idempotencyKey;
-      if (record && typeof idempotencyKey === "string") byKey.set(idempotencyKey, record);
-    }
-    return byKey;
-  } catch (error) {
-    if (objectRecord(error)?.code === "ENOENT") return new Map();
-    throw error;
-  }
 }
 
 async function writeDebugBatchRowPlanReceipt(input: {
@@ -8641,6 +8639,8 @@ async function writeDebugBatchRowPlanReceipt(input: {
   frameTransport?: ReturnType<typeof planFinalVideoFrameTransport>;
   packageAssetInputHashes?: Readonly<Record<string, string>>;
   warnings?: string[];
+  /** Authenticated logical owner of the aggregate batch retained with row-plan evidence. */
+  callerId?: string;
   /** Transport-observed actor for by-whom attribution; no-op when absent. */
   actor?: ReceiptActor;
 }): Promise<string> {
@@ -8673,6 +8673,7 @@ async function writeDebugBatchRowPlanReceipt(input: {
       rowHash: input.row.hash,
       rowKey: input.row.key,
       idempotencyKey: input.idempotencyKey,
+      ...(input.callerId ? { callerId: input.callerId } : {}),
       packageId: input.packageId,
       packageDir: input.packageDir,
       outputPath: input.outputPath,

@@ -5318,6 +5318,7 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
           subcommand,
           inputPath: resolveInputPath(inputPath),
           outputPath: resolveOutputPath(outDir),
+          ...(resolveCallerId(argv, options) ? { callerId: resolveCallerId(argv, options)! } : {}),
           signal: options.signal ?? new AbortController().signal,
           namedCompatibilityOptions: {
             ...(Object.keys(cutPlacement).length > 0 ? { cutPlacement } : {}),

@@ -12,6 +12,7 @@ import {
   validateRuntimeSandboxEvidence,
   type LocalMotionRuntimeSandboxEvidence,
 } from "./runtime-sandbox-evidence";
+import { resolveWindowsSystemExecutable } from "./windows-system-executable";
 
 export type {
   ChromiumRuntimeSandboxEvidence,
@@ -851,7 +852,7 @@ async function windowsProcessTreeRssBytes(pid: number): Promise<number> {
     "$rows=Get-CimInstance Win32_Process | Select-Object @{n='pid';e={[int64]$_.ProcessId}},@{n='parentPid';e={[int64]$_.ParentProcessId}},@{n='rssBytes';e={[int64]$_.WorkingSetSize}}",
     "@($rows) | ConvertTo-Json -Compress"
   ].join("; ");
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+  const { stdout } = await execFileAsync(resolveWindowsSystemExecutable("powershell"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer: 4 * MIB

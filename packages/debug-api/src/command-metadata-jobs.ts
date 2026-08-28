@@ -39,7 +39,7 @@ export const JOB_COMMAND_METADATA: MotionDebugCommandMetadata = {
         descriptorRevision: { type: "number", minimum: 1, description: "Exact descriptor revision observed during discovery." },
         descriptorFingerprint: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$", description: "Exact descriptor fingerprint observed during discovery." },
         requestSchemaId: { type: "string", maxLength: 192, description: "Exact request schema id advertised by the selected descriptor." },
-        request: { type: "object", maxProperties: 16, additionalProperties: true, description: "Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles." }
+        request: { type: "object", maxProperties: 16, additionalProperties: true, description: "Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles, resolved only with the authenticated caller identity." }
       },
       additionalProperties: false
     },

@@ -37,22 +37,140 @@ export interface CanvasFixtureProblem {
 }
 
 /**
- * Every problem found in one Canvas fixture, reported together.
+ * Canvas fixture structural limits. They bound the in-memory adapter projection before it becomes
+ * MotionIR, while leaving ordinary Canvas selections comfortably below every limit.
+ */
+export const MAX_CANVAS_FRAME_COUNT = 128;
+export const MAX_CANVAS_LAYERS_PER_FRAME = 1_024;
+export const MAX_CANVAS_TOTAL_LAYER_COUNT = 4_096;
+export const MAX_CANVAS_IMAGE_EDITOR_OUTPUTS = 1_024;
+export const MAX_CANVAS_SAFE_AREAS_PER_FRAME = 64;
+export const MAX_CANVAS_EDIT_STACK_ENTRIES_PER_OUTPUT = 256;
+
+/** The bounded structured diagnostic surface returned by Canvas import failures. */
+export const MAX_CANVAS_FIXTURE_PROBLEMS = 256;
+/** The plain Error message is a convenience surface, not an unbounded duplicate of problems. */
+export const MAX_CANVAS_FIXTURE_ERROR_MESSAGE_BYTES = 64 * 1024;
+/** Keeps one pathological input value from dominating the bounded structured diagnostic result. */
+export const MAX_CANVAS_FIXTURE_PROBLEM_FIELD_BYTES = 4 * 1024;
+
+/**
+ * Collect unique fixture diagnostics without allowing a malformed array to amplify response size.
+ *
+ * Existing, normally sized invalid selections retain every diagnostic. Once the collection would
+ * exceed its limit, the final retained slot becomes a deterministic summary of omitted entries.
+ */
+export class CanvasFixtureProblemCollector {
+  private readonly entries: CanvasFixtureProblem[] = [];
+  private readonly seen = new Set<string>();
+  private omittedProblemCount = 0;
+
+  add(problem: CanvasFixtureProblem): void {
+    // Once the bounded result has its omission summary, do not retain more unique fingerprints or
+    // format more attacker-controlled fields merely to count omitted diagnostics.
+    if (this.omittedProblemCount > 0) {
+      this.omittedProblemCount += 1;
+      return;
+    }
+    const bounded = boundCanvasFixtureProblem(problem);
+    const key = `${bounded.path}\u0000${bounded.message}\u0000${bounded.correction ?? ""}`;
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
+
+    if (this.entries.length < MAX_CANVAS_FIXTURE_PROBLEMS) {
+      this.entries.push(bounded);
+      return;
+    }
+
+    // Preserve the public array cap and make room for the deterministic truncation summary.
+    this.entries.pop();
+    this.omittedProblemCount = 2;
+  }
+
+  get problems(): CanvasFixtureProblem[] {
+    if (this.omittedProblemCount === 0) return [...this.entries];
+    return [
+      ...this.entries,
+      {
+        path: "fixture",
+        message: `${this.omittedProblemCount} additional Canvas fixture problem${this.omittedProblemCount === 1 ? "" : "s"} omitted after the ${MAX_CANVAS_FIXTURE_PROBLEMS}-problem limit.`
+      }
+    ];
+  }
+
+  get omittedCount(): number {
+    return this.omittedProblemCount;
+  }
+
+  get hasProblems(): boolean {
+    return this.entries.length > 0;
+  }
+}
+
+/**
+ * Canvas fixture problems, reported together up to the explicit collection cap.
  *
  * The parser collects instead of throwing on the first failure so a caller learns the whole
- * contract from a single call. `message` is the joined list (what a plain string error surface
- * shows); `problems` is the structured form the debug API returns as `result.problems`.
+ * contract from a single call. `message` is the bounded joined list (what a plain string error
+ * surface shows); `problems` is the bounded structured form the debug API returns as
+ * `result.problems`. When the collection limit is reached, the final problem and
+ * `omittedProblemCount` carry the deterministic omission summary.
  */
 export class CanvasFixtureError extends Error {
   readonly problems: CanvasFixtureProblem[];
+  readonly omittedProblemCount: number;
 
-  constructor(problems: CanvasFixtureProblem[]) {
-    super(`Canvas fixture has ${problems.length} problem${problems.length === 1 ? "" : "s"}: ${problems
-      .map((problem) => `${problem.path}: ${problem.message}${problem.correction ? ` (${problem.correction})` : ""}`)
-      .join("; ")}`);
+  constructor(problems: CanvasFixtureProblem[], omittedProblemCount = 0) {
+    super(canvasFixtureErrorMessage(problems, omittedProblemCount));
     this.name = "CanvasFixtureError";
-    this.problems = problems;
+    this.problems = [...problems];
+    this.omittedProblemCount = omittedProblemCount;
   }
+}
+
+function boundCanvasFixtureProblem(problem: CanvasFixtureProblem): CanvasFixtureProblem {
+  return {
+    path: takeUtf8Bytes(problem.path, MAX_CANVAS_FIXTURE_PROBLEM_FIELD_BYTES),
+    message: takeUtf8Bytes(problem.message, MAX_CANVAS_FIXTURE_PROBLEM_FIELD_BYTES),
+    ...(problem.correction === undefined
+      ? {}
+      : { correction: takeUtf8Bytes(problem.correction, MAX_CANVAS_FIXTURE_PROBLEM_FIELD_BYTES) })
+  };
+}
+
+function canvasFixtureErrorMessage(problems: CanvasFixtureProblem[], omittedProblemCount: number): string {
+  const totalProblemCount = problems.length - (omittedProblemCount > 0 ? 1 : 0) + omittedProblemCount;
+  const prefix = `Canvas fixture has ${totalProblemCount} problem${totalProblemCount === 1 ? "" : "s"}`
+    + (omittedProblemCount > 0 ? ` (${omittedProblemCount} omitted after the ${MAX_CANVAS_FIXTURE_PROBLEMS}-problem limit)` : "")
+    + ": ";
+  const entries = problems.map((problem) => `${problem.path}: ${problem.message}${problem.correction ? ` (${problem.correction})` : ""}`);
+  let included = 0;
+  let message = prefix;
+
+  for (const entry of entries) {
+    const separator = included === 0 ? "" : "; ";
+    const remaining = entries.length - included;
+    const suffix = remaining > 0 ? `; ${remaining} listed problem${remaining === 1 ? "" : "s"} omitted from the error message after the ${MAX_CANVAS_FIXTURE_ERROR_MESSAGE_BYTES}-byte limit.` : "";
+    if (Buffer.byteLength(message, "utf8") + Buffer.byteLength(separator, "utf8") + Buffer.byteLength(entry, "utf8") + Buffer.byteLength(suffix, "utf8") > MAX_CANVAS_FIXTURE_ERROR_MESSAGE_BYTES) {
+      return takeUtf8Bytes(`${message}${suffix}`, MAX_CANVAS_FIXTURE_ERROR_MESSAGE_BYTES);
+    }
+    message += `${separator}${entry}`;
+    included += 1;
+  }
+
+  return takeUtf8Bytes(message, MAX_CANVAS_FIXTURE_ERROR_MESSAGE_BYTES);
+}
+
+function takeUtf8Bytes(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength <= maxBytes) return value;
+  let end = maxBytes;
+  // UTF-8 code points occupy at most four bytes, so at most three continuation bytes can cross
+  // the boundary. Back up to the start of that code point before decoding the retained prefix.
+  for (let offset = 0; offset < 3 && end > 0 && (bytes[end] & 0b1100_0000) === 0b1000_0000; offset += 1) {
+    end -= 1;
+  }
+  return bytes.subarray(0, end).toString("utf8");
 }
 
 /** Required fields per document level, mirroring what `./fixture-parse` enforces. */

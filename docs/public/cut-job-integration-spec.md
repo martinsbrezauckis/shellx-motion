@@ -83,7 +83,9 @@ The Motion host context must be configured once with a stable authenticated `cal
 `connectorJobReferences` resolver scoped to that caller, and a
 `MotionConnectorJobBindingJournal` stored beside the coordinator. The MCP tool stays discoverable
 without those authorities but fails closed before queueing. The journal contains the exact
-descriptor and opaque/scalar request, never resolved paths, executors or callbacks.
+descriptor and opaque/scalar request, never resolved paths, executors or callbacks. The resolver
+receives the authenticated caller id on every handle resolution; an explicit retry uses the owner
+retained in its journal binding rather than a caller-nominated substitute.
 
 This is the zero-feature-patch boundary: if a later Motion render or scene-orchestration capability
 uses the same catalog major, safe request-field subset, caller/reference authority, job controls and

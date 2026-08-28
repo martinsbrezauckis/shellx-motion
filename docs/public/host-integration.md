@@ -65,7 +65,9 @@ The host must configure three one-time authorities before the generic submit too
 an authenticated stable caller identity, an opaque-reference resolver, and an immutable
 `MotionConnectorJobBindingJournal` beside the persistent coordinator. The tool remains discoverable
 without those services and returns a typed `capability_unavailable` refusal. Motion validates and
-journals the descriptor-bound request before queueing or resolving a handle.
+journals the descriptor-bound request before queueing or resolving a handle. Every resolver call
+receives that authenticated caller id; explicit retry reuses the caller retained in the immutable
+binding, so an opaque handle is never resolved under another workspace's authority.
 
 The returned id is controlled through the existing `motion.job.get/list/events/cancel/retry`
 operations. Cancellation reaches the same connector execution and cannot publish a terminal

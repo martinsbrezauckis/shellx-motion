@@ -75,6 +75,10 @@ const ALWAYS_STRIP: ReadonlySet<string> = new Set([
   "netrc",
   "git_askpass",
   "git_ssh_command",
+  // Internal launch authority. These values are synthesized only for Motion's fixed Windows
+  // provider shim and must never be inherited from the ambient process environment.
+  "shellx_motion_provider_path",
+  "shellx_motion_provider_args",
   // Cluster, container, cloud, and desktop authority locations.  A child that can read one of
   // these paths or talk to the named socket can act with the operator's existing authority.
   "kubeconfig",

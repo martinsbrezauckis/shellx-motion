@@ -5,21 +5,26 @@ import {
   scanMarkupOpenTags,
   scanMarkupTagPairs
 } from "@shellx-motion/core";
-import type { HtmlComposition, HtmlLayerElement } from "./html-snippet-types.js";
+import { MAX_HTML_LAYER_COUNT, type HtmlComposition, type HtmlLayerElement } from "./html-snippet-types.js";
 import {
   collapseWhitespace,
   decodeHtml,
-  parseAttributes,
-  parseStyle,
   readStringAttr,
   stripTags
 } from "./html-snippet-shared.js";
+import {
+  beginHtmlSnippetElementBudget,
+  parseAttributes,
+  parseStyle,
+  type HtmlSnippetParseBudget
+} from "./html-snippet-import-bounds.js";
 
-export function readHtmlComposition(html: string): HtmlComposition {
-  const htmlAttrs = parseAttributes(findHtmlAttrs(html) ?? "");
+export function readHtmlComposition(html: string, budget: HtmlSnippetParseBudget): HtmlComposition {
+  const htmlAttrs = parseAttributes(findHtmlAttrs(html) ?? "", beginHtmlSnippetElementBudget(budget));
   const main = findMainComposition(html);
   if (!main) throw new Error("HTML snippet import requires a <main> composition with data-composition-id or data-shellx-motion-schema metadata.");
-  const mainAttrs = parseAttributes(main.attrs);
+  const mainBudget = beginHtmlSnippetElementBudget(budget);
+  const mainAttrs = parseAttributes(main.attrs, mainBudget);
   const hasCompositionMetadata = Boolean(
     readStringAttr(mainAttrs, "data-composition-id")
       ?? readStringAttr(mainAttrs, "data-shellx-motion-schema")
@@ -33,7 +38,7 @@ export function readHtmlComposition(html: string): HtmlComposition {
     mainAttrs,
     mainInner: main.innerHtml,
     title: readTitle(html) ?? readStringAttr(mainAttrs, "data-composition-id") ?? "HTML Snippet",
-    mainStyle: parseStyle(readStringAttr(mainAttrs, "style") ?? "")
+    mainStyle: parseStyle(readStringAttr(mainAttrs, "style") ?? "", mainBudget)
   };
 }
 
@@ -53,7 +58,7 @@ function readTitle(html: string): string | undefined {
 }
 
 /** Locate every element with `data-layer-id`, preserving the bounded scanner's historical quirks. */
-export function readHtmlLayerElements(html: string): HtmlLayerElement[] {
+export function readHtmlLayerElements(html: string, budget: HtmlSnippetParseBudget): HtmlLayerElement[] {
   const lower = asciiLowerCase(html);
   const lowerIndex = new ForwardIndex(lower);
   const rawIndex = new ForwardIndex(html);
@@ -70,13 +75,14 @@ export function readHtmlLayerElements(html: string): HtmlLayerElement[] {
     }
     const closer = `</${opening.tagName}>`;
     const closeStart = rawIndex.find(closer, opening.bodyStart);
-    const attrs = parseAttributes(opening.attrText);
+    const elementBudget = beginHtmlSnippetElementBudget(budget);
+    const attrs = parseAttributes(opening.attrText, elementBudget);
     if (opening.attrText) {
       elements.push({
         tagName: opening.tagName.toLowerCase(),
         attrs,
         innerHtml: closeStart < 0 ? "" : html.slice(opening.bodyStart, closeStart),
-        style: parseStyle(readStringAttr(attrs, "style") ?? "")
+        style: parseStyle(readStringAttr(attrs, "style") ?? "", elementBudget)
       });
     }
     cursor = closeStart < 0 ? opening.bodyStart : closeStart + closer.length;
@@ -105,6 +111,9 @@ function layerIdCandidates(html: string, lower: string, index: ForwardIndex): La
     if (at === 0 || !isMarkupWordCharCode(html.charCodeAt(at - 1))) {
       const bodyStart = layerIdTagBodyStart(html, index, at + "data-layer-id".length);
       const previousUsable = bodyStart >= 0 ? candidates.length : candidates[candidates.length - 1]?.previousUsable ?? -1;
+      if (candidates.length >= MAX_HTML_LAYER_COUNT) {
+        throw new Error("HTML snippet import exceeds the 1000-layer limit.");
+      }
       candidates.push({ at, bodyStart, previousUsable });
     }
     at = lower.indexOf("data-layer-id", at + 1);

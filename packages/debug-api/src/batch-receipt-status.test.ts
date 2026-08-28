@@ -101,7 +101,7 @@ describe("debug batch receipt status", () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-batch-resume-warning-"));
     try {
       const args = { packageRoot: "../../fixtures/packages/batch-card", outDir, preset: "mp4-h264" as const, dryRun: false };
-      const first = await dispatchDebugCommand("motion.render.batch", args, { tier: "render_motion" });
+      const first = await dispatchDebugCommand("motion.render.batch", args, { tier: "render_motion", callerId: "test:batch-warning-resume" });
       expect(first.ok, `first batch failed: ${JSON.stringify(first, null, 2)}`).toBe(true);
 
       const firstReceipt = JSON.parse(
@@ -117,7 +117,7 @@ describe("debug batch receipt status", () => {
       const second = await dispatchDebugCommand(
         "motion.render.batch",
         { ...args, resume: true },
-        { tier: "render_motion" }
+        { tier: "render_motion", callerId: "test:batch-warning-resume" }
       );
       expect(second.ok, `resume batch failed: ${JSON.stringify(second, null, 2)}`).toBe(true);
 

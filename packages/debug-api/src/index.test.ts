@@ -20014,7 +20014,7 @@ describe("motion debug API", () => {
           preset: "mp4-h264",
           dryRun: false
         },
-        { tier: "render_motion", ffmpegRunner: firstRunner, browserFrameRenderer: frameRenderer }
+        { tier: "render_motion", callerId: "test:batch-resume", ffmpegRunner: firstRunner, browserFrameRenderer: frameRenderer }
       );
       const resumed = await dispatchDebugCommand(
         "motion.render.batch",
@@ -20027,6 +20027,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "render_motion",
+          callerId: "test:batch-resume",
           ffmpegRunner: failOnRender,
           browserFrameRenderer: async () => {
             throw new Error("resume should not render browser frames");
@@ -20167,7 +20168,7 @@ describe("motion debug API", () => {
           dryRun: false,
           workflow: workflowA
         },
-        { tier: "render_motion", ffmpegRunner: firstRunner, browserFrameRenderer: frameRenderer }
+        { tier: "render_motion", callerId: "test:batch-workflow-resume", ffmpegRunner: firstRunner, browserFrameRenderer: frameRenderer }
       );
       const resumed = await dispatchDebugCommand(
         "motion.render.batch",
@@ -20179,7 +20180,7 @@ describe("motion debug API", () => {
           resume: true,
           workflow: workflowB
         },
-        { tier: "render_motion", ffmpegRunner: secondRunner, browserFrameRenderer: frameRenderer }
+        { tier: "render_motion", callerId: "test:batch-workflow-resume", ffmpegRunner: secondRunner, browserFrameRenderer: frameRenderer }
       );
 
       expect(first.ok).toBe(true);

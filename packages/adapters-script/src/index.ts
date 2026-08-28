@@ -14,6 +14,11 @@ import {
   type WriteScriptedMotionPackageOptions,
   type WrittenScriptedMotionPackage
 } from "./scripted-package-publication.js";
+import {
+  assertScriptedVideoArrayEntryLimit,
+  assertScriptedVideoGeneratedWork,
+  assertScriptedVideoMetadataAdmission,
+} from "./scripted-video-admission.js";
 
 export type { WriteScriptedMotionPackageOptions, WrittenScriptedMotionPackage } from "./scripted-package-publication.js";
 
@@ -113,6 +118,7 @@ const MAX_TOTAL_DURATION_MS = 600_000;
 
 export function convertScriptedFramesToMotionPackage(input: unknown, options: ConvertScriptedFramesOptions = {}): ScriptedMotionExport {
   const scripted = parseScriptedVideo(input);
+  assertScriptedVideoGeneratedWork(scripted.frames);
   const slug = slugId(scripted.id);
   const packageId = `pkg_script_${slug}`;
   const motionId = `motion_script_${slug}`;
@@ -795,11 +801,16 @@ function parseScriptedVideo(input: unknown): ScriptedVideo {
     throw new Error(`Unsupported scripted video schema: ${schema}`);
   }
 
-  const frames = expectArray(root, "frames", "scripted video").map((frame, index) => parseFrame(frame, `frames[${index}]`));
-  if (frames.length === 0) {
+  const rawFrames = expectArray(root, "frames", "scripted video");
+  if (rawFrames.length === 0) {
     throw new Error("Scripted video requires at least one frame.");
   }
+  if (rawFrames.length > MAX_FRAME_COUNT) {
+    throw new Error(`Scripted video supports at most ${MAX_FRAME_COUNT} frames.`);
+  }
+  const frames = rawFrames.map((frame, index) => parseFrame(frame, `frames[${index}]`));
   assertScriptedVideoEnvelope(frames);
+  assertScriptedVideoMetadataAdmission(frames);
   assertUniqueFrameSlugs(frames);
   const id = expectString(root, "id", "scripted video");
   const name = expectString(root, "name", "scripted video");
@@ -838,9 +849,9 @@ function parseFrame(input: unknown, path: string): ScriptedFrame {
     accent: optionalString(frame, "accent", path),
     reviewStatus: optionalString(frame, "reviewStatus", path),
     agentNote: optionalString(frame, "agentNote", path),
-    assetRefs: optionalStringArray(frame, "assetRefs", path),
+    assetRefs: optionalStringArray(frame, "assetRefs", path, "assetRefs"),
     sourceRefs: parseSourceRefs(frame.sourceRefs, `${path}.sourceRefs`),
-    tags: optionalStringArray(frame, "tags", path),
+    tags: optionalStringArray(frame, "tags", path, "tags"),
     template: parseTemplateHint(frame.template, `${path}.template`),
     engine: parseEngineHint(frame.engine, `${path}.engine`),
     effects: parseFrameEffects(frame.effects, `${path}.effects`)
@@ -862,6 +873,7 @@ function parseReview(value: unknown, path: string): ScriptedReview | undefined {
 function parseSourceRefs(value: unknown, path: string): ScriptedSourceRef[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`Expected ${path} to be an array.`);
+  assertScriptedVideoArrayEntryLimit(value, path, "sourceRefs");
   return value.map((entry, index) => {
     const record = expectRecord(entry, `${path}[${index}]`);
     const sourceRef: ScriptedSourceRef = {
@@ -905,6 +917,7 @@ function parseEngineHint(value: unknown, path: string): ScriptedEngineHint | und
 function parseFrameEffects(value: unknown, path: string): ScriptedFrameEffect[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`Expected ${path} to be an array.`);
+  assertScriptedVideoArrayEntryLimit(value, path, "effects");
   return value.map((entry, index) => parseFrameEffect(entry, `${path}[${index}]`));
 }
 
@@ -944,9 +957,6 @@ function expectEffectType(input: JsonRecord, path: string): ScriptedFrameEffectT
 }
 
 function assertScriptedVideoEnvelope(frames: ScriptedFrame[]): void {
-  if (frames.length > MAX_FRAME_COUNT) {
-    throw new Error(`Scripted video supports at most ${MAX_FRAME_COUNT} frames.`);
-  }
   const totalDurationMs = frames.reduce((total, frame) => total + frame.durationMs, 0);
   if (totalDurationMs > MAX_TOTAL_DURATION_MS) {
     throw new Error(`Scripted video total duration must be at most ${MAX_TOTAL_DURATION_MS}ms.`);
@@ -1066,10 +1076,11 @@ function optionalRecord(input: JsonRecord, key: string, path: string): JsonRecor
   return expectRecord(input[key], `${path}.${key}`);
 }
 
-function optionalStringArray(input: JsonRecord, key: string, path: string): string[] {
+function optionalStringArray(input: JsonRecord, key: string, path: string, collection: "assetRefs" | "tags"): string[] {
   if (!(key in input)) return [];
   const value = input[key];
   if (!Array.isArray(value)) throw new Error(`Expected ${path}.${key} to be an array.`);
+  assertScriptedVideoArrayEntryLimit(value, `${path}.${key}`, collection);
   return value.map((entry, index) => {
     if (typeof entry === "string") return entry;
     throw new Error(`Expected ${path}.${key}[${index}] to be a string.`);

@@ -161,6 +161,7 @@ export * from "./job-governor";
 export * from "./owned-unix-process-group";
 export * from "./materialized-frame-preflight";
 export * from "./windows-job-object";
+export * from "./windows-system-executable";
 export * from "./sandbox-capability";
 export * from "./untrusted-execution";
 export * from "./agent-script-provenance";

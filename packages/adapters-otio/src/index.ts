@@ -11,7 +11,7 @@ import {
 } from "@shellx-motion/core";
 import { publishOtioExportOutputs, publishOtioImportPackage, readOtioInterchangeInput, serializeBoundedOtioTimeline } from "./otio-interchange";
 import { loadOtioExportInput } from "./otio-export-input.js";
-import { addBoundedOtioTimelineTime, assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission.js";
+import { MAX_OTIO_CHILDREN_PER_TRACK, MAX_OTIO_LOSSINESS_FINDINGS, MAX_OTIO_TIMELINE_CHILDREN, MAX_OTIO_TRACKS, addBoundedOtioTimelineTime, assertBoundedOtioJson, assertBoundedOtioJsonText, assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission.js";
 
 export interface OtioExportOptions {
   packageRoot: string;
@@ -123,7 +123,11 @@ export async function importOtioTimelineToMotionPackage(options: OtioImportOptio
   const otioPath = resolve(options.otioPath);
   const packageDir = resolve(options.packageDir);
   const otioInput = await readOtioInterchangeInput(otioPath);
-  const timeline = parseOtioTimeline(JSON.parse(otioInput.bytes.toString("utf8")));
+  const sourceText = otioInput.bytes.toString("utf8");
+  assertBoundedOtioJsonText(sourceText);
+  const parsed: unknown = JSON.parse(sourceText);
+  assertBoundedOtioJson(parsed);
+  const timeline = parseOtioTimeline(parsed);
   const imported = convertOtioTimelineToMotionPackage(timeline, {
     createdBy: options.createdBy ?? "otio-adapter"
   });
@@ -410,6 +414,9 @@ function convertOtioTimelineToMotionPackage(timeline: OtioTimeline, options: { c
         continue;
       }
       if (schema !== "Clip.2") {
+        if (lossiness.length >= MAX_OTIO_LOSSINESS_FINDINGS) {
+          throw new Error(`OTIO import exceeds the ${MAX_OTIO_LOSSINESS_FINDINGS}-finding lossiness limit.`);
+        }
         lossiness.push({
           path,
           feature: readString(item.OTIO_SCHEMA) ?? "unknown",
@@ -515,7 +522,10 @@ function parseOtioTimeline(input: unknown): OtioTimeline {
   const schema = expectString(root, "OTIO_SCHEMA", "OTIO timeline");
   if (schema !== "Timeline.1") throw new Error(`Unsupported OTIO timeline schema: ${schema}`);
   const tracks = expectRecord(root.tracks, "OTIO timeline.tracks");
-  const children = expectArray(tracks, "children", "OTIO timeline.tracks").map((track, index) => parseOtioTrack(track, `tracks.children[${index}]`));
+  const trackInputs = expectArray(tracks, "children", "OTIO timeline.tracks");
+  if (trackInputs.length > MAX_OTIO_TRACKS) throw new Error(`OTIO timeline exceeds the ${MAX_OTIO_TRACKS}-track limit.`);
+  const budget = { children: 0 };
+  const children = trackInputs.map((track, index) => parseOtioTrack(track, `tracks.children[${index}]`, budget));
   return {
     OTIO_SCHEMA: "Timeline.1",
     name: readString(root.name) ?? "Untitled Timeline",
@@ -527,9 +537,13 @@ function parseOtioTimeline(input: unknown): OtioTimeline {
   };
 }
 
-function parseOtioTrack(input: unknown, path: string): OtioTrack {
+function parseOtioTrack(input: unknown, path: string, budget: { children: number }): OtioTrack {
   const track = expectRecord(input, path);
-  const children = expectArray(track, "children", path).map((item, index) => parseOtioTrackChild(item, `${path}.children[${index}]`));
+  const childInputs = expectArray(track, "children", path);
+  if (childInputs.length > MAX_OTIO_CHILDREN_PER_TRACK) throw new Error(`${path} exceeds the ${MAX_OTIO_CHILDREN_PER_TRACK}-child limit.`);
+  budget.children += childInputs.length;
+  if (budget.children > MAX_OTIO_TIMELINE_CHILDREN) throw new Error(`OTIO timeline exceeds the ${MAX_OTIO_TIMELINE_CHILDREN}-child aggregate limit.`);
+  const children = childInputs.map((item, index) => parseOtioTrackChild(item, `${path}.children[${index}]`));
   return {
     OTIO_SCHEMA: "Track.1",
     name: readString(track.name) ?? "",
