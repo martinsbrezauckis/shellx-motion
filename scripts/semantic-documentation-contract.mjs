@@ -48,11 +48,6 @@ const ASSERTION_MATRIX = [
     forbidden: []
   },
   {
-    path: "README.md",
-    required: [GROUP_TIMELINE_ASSERTION],
-    forbidden: [/\bprecomposition\b/i]
-  },
-  {
     path: "docs/public/FEATURES.md",
     required: [MOTION_VALIDATION_ASSERTION, "Motion document validation"],
     forbidden: []
@@ -158,6 +153,7 @@ assertEnforcedUntrustedAuthority();
 assertActiveVideoPreviewAuthority();
 assertHdrPublicBoundary();
 assertPublishedSurfaceCounts();
+assertReadmeProductBoundary();
 for (const assertion of ASSERTION_MATRIX) assertDocumentation(assertion);
 
 if (failures.length > 0) {
@@ -489,15 +485,48 @@ function assertPublishedSurfaceCounts() {
     failures.push(`schemas/actions.json actionCount ${actionsSchema.actionCount} does not match ${actions} actions.`);
   }
 
-  const readme = read("README.md");
+  const debugGuide = read("docs/public/DEBUG_API.md");
   const requiredMatrixClaims = [
-    `**${debugCommands}** typed commands; MCP exposes the full registry.`,
+    `**${debugCommands}** typed commands; MCP publishes the full registry.`,
     `**${actions} discoverable actions**.`
   ];
   for (const claim of requiredMatrixClaims) {
-    if (!readme.includes(claim)) {
-      failures.push(`README.md must publish the source-backed surface-matrix claim: ${claim}`);
+    if (!debugGuide.includes(claim)) {
+      failures.push(`docs/public/DEBUG_API.md must publish the source-backed surface-matrix claim: ${claim}`);
     }
+  }
+}
+
+/**
+ * Keep the repository root useful as a stable public product landing page. Exact inventory counts
+ * and release-qualification evidence belong in their generated or detailed public references;
+ * forcing them into README.md turns an introduction into a release ledger and makes normal source
+ * growth look like product copy drift.
+ */
+function assertReadmeProductBoundary() {
+  const readme = read("README.md");
+  for (const heading of [
+    "# ShellX Motion",
+    "## What Motion produces",
+    "## Core capabilities",
+    "## Quick start",
+    "## Packages, trust, and external tools",
+    "## Documentation",
+    "## License"
+  ]) {
+    if (!readme.includes(heading)) failures.push(`README.md must retain its public product section: ${heading}`);
+  }
+  for (const forbidden of [
+    /\*\*\d+\*\* typed commands/i,
+    /\*\*\d+ discoverable actions\*\*/i,
+    /withheld pending/i,
+    /release-blocking/i,
+    /native linux rtx \d+ rig/i,
+    /runtime commit `[0-9a-f]{7,40}`/i,
+    /costs you a session/i,
+    /receipts, not vibes/i
+  ]) {
+    if (forbidden.test(readme)) failures.push(`README.md contains release-ledger or conversational text matching ${forbidden}.`);
   }
 }
 
