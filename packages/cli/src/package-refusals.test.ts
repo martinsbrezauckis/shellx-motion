@@ -1,7 +1,7 @@
 /**
  * `validate` must actually validate.
  *
- * No `validate` door may skip the schema validator. The CLI, Debug API/MCP, and SDK must not only
+ * No `validate` door may skip structural JSON Schema or runtime semantic validation. The CLI, Debug API/MCP, and SDK must not only
  * load the package and report
  * metadata, so `shellx-motion validate` answered `ok: true` for a document `core.validateDocument`
  * rejects outright.
@@ -51,13 +51,14 @@ function packageAround(motion: MotionDocument): MotionPackage {
     manifest: {
       id: "pkg_test",
       name: "Test",
+      assets: [],
       compatibility: { hosts: ["motion"], lanes: ["browser"] }
     },
     motion
   } as unknown as MotionPackage;
 }
 
-describe("shellx-motion validate runs the schema validator", () => {
+describe("shellx-motion validate runs the two-stage contract", () => {
   it("refuses a document the schema validator rejects, naming the offending path", async () => {
     // The exact shape that shipped past validate: an 8-digit hex where the engine takes #RRGGBB.
     const motion = soundDocument() as unknown as Record<string, unknown>;
@@ -96,7 +97,13 @@ describe("shellx-motion validate runs the schema validator", () => {
     // The caller must be able to act on this without guessing which layer is wrong.
     const errors = refusal?.schemaErrors as Array<{ path: string; message: string }>;
     expect(errors.some((error) => error.path.includes("backgroundColor"))).toBe(true);
-    expect(errors.some((error) => /#RRGGBB/.test(error.message))).toBe(true);
+    expect(errors.some((error) => /\^#\[0-9A-Fa-f\]\{6\}\$/.test(error.message))).toBe(true);
+    expect(refusal?.validation).toEqual({
+      contract: "shellx-motion/motion-validation@1",
+      structural: "failed",
+      semantic: "not_run",
+      renderability: "not_proven",
+    });
   });
 
   it("does not refuse a document the schema validator accepts", async () => {
@@ -108,13 +115,17 @@ describe("shellx-motion validate runs the schema validator", () => {
     expect(result.ok).toBe(true);
     expect(result.packageId).toBe("pkg_test");
     expect(result.layers).toBe(1);
+    expect(result.validation).toEqual({
+      contract: "shellx-motion/motion-validation@1",
+      structural: "passed",
+      semantic: "passed",
+      renderability: "not_proven",
+    });
   });
 
-  it("lets the specialised verdict win, so a general checker never shadows a specific one", async () => {
-    // A document that is BOTH schema-invalid and carries an unrenderable layer type must lead with the
-    // SPECIFIC verdict. The first version of this code ran schema-first and replaced "no lane can
-    // render layer type X" with "N error(s)" — a strictly worse answer about the same defect. The
-    // schema check is the catch-all behind the specialised ones, not in front of them.
+  it("stops after structural failure before considering semantic renderability", async () => {
+    // A document that is both structurally invalid and has an unrenderable layer type cannot make a
+    // renderer claim. The public order is structural first, semantic second.
     const motion = soundDocument() as unknown as Record<string, unknown>;
     (motion as { fps: unknown }).fps = "thirty";
     (motion.layers as Record<string, unknown>[]).push({
@@ -128,10 +139,11 @@ describe("shellx-motion validate runs the schema validator", () => {
     const refusal = await packageValidationRefusal(motion as unknown as MotionDocument, "validate");
 
     expect(refusal).not.toBeNull();
-    expect((refusal?.error as { code: string }).code).not.toBe("invalid_motion_document");
+    expect((refusal?.error as { code: string }).code).toBe("invalid_motion_document");
+    expect(refusal?.validation).toMatchObject({ structural: "failed", semantic: "not_run", renderability: "not_proven" });
   });
 
-  it("still catches a schema defect that no specialised verdict covers", async () => {
+  it("catches a structural defect before rendering", async () => {
     // Grok's actual case: renderable layers, readable keyframes, and an environment colour the
     // engine refuses at preview. Nothing but the schema check sees this one.
     const motion = soundDocument() as unknown as Record<string, unknown>;

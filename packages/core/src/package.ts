@@ -19,26 +19,25 @@ import type {
   TemplateStory,
   TemplateSuitability
 } from "./types";
-
+import { PACKAGE_MANIFEST_MAX_BYTES, PACKAGE_MOTION_MAX_BYTES, PACKAGE_TEMPLATE_MAX_BYTES, readStablePackageJson, rememberLoadedPackageHashes } from "./package-loaded-inputs"; import { readMotionScene3DAnimationDocumentRoot } from "./motion-scene3d-animation-document"; import { readMotionLayoutGapAnimationDocumentRoot } from "./motion-layout-gap-animation-document"; import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
 export async function loadMotionPackage(root: string): Promise<MotionPackage> {
   const packageRoot = resolve(root);
-  const manifest = readPackageManifest(await readJson(resolve(packageRoot, "manifest.json")));
+  const manifestFile = await readStablePackageJson(resolve(packageRoot, "manifest.json"), packageRoot, PACKAGE_MANIFEST_MAX_BYTES, "Package manifest"); const manifest = readPackageManifest(manifestFile.value);
   const motionPath = resolvePackageAsset({ root: packageRoot }, manifest.motion);
-  const motion = readMotionDocument(await readJson(motionPath));
-  const template = manifest.template
-    ? readTemplateDocument(await readJson(resolvePackageAsset({ root: packageRoot }, manifest.template)))
-    : undefined;
-
+  const motionFile = await readStablePackageJson(motionPath, packageRoot, PACKAGE_MOTION_MAX_BYTES, "Motion document"); const motion = readMotionDocument(motionFile.value);
+  const templateFile = manifest.template ? await readStablePackageJson(resolvePackageAsset({ root: packageRoot }, manifest.template), packageRoot, PACKAGE_TEMPLATE_MAX_BYTES, "Template document") : undefined;
+  const template = templateFile ? readTemplateDocument(templateFile.value) : undefined;
   if (template) assertTemplatePackageSemantics(template, motion, packageRoot);
-
-  return {
-    root: packageRoot,
-    manifest,
-    motion,
-    ...(template ? { template } : {})
+  const pkg: MotionPackage = {
+    root: packageRoot, manifest, motion, ...(template ? { template } : {}),
   };
+  rememberLoadedPackageHashes(pkg, {
+      "manifest.json": manifestFile.sha256,
+      [manifest.motion]: motionFile.sha256,
+      ...(manifest.template && templateFile ? { [manifest.template]: templateFile.sha256 } : {}),
+  });
+  return pkg;
 }
-
 export function resolvePackageAsset(pkg: Pick<MotionPackage, "root">, assetRef: string): string {
   const resolved = resolve(pkg.root, assetRef);
   assertPathInsidePackageRoot(pkg.root, resolved, assetRef);
@@ -53,11 +52,6 @@ export function resolvePackageAsset(pkg: Pick<MotionPackage, "root">, assetRef: 
 export async function hashPackageFile(path: string): Promise<string> {
   return hashBuffer(await readFile(path));
 }
-
-async function readJson(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
 function assertPathInsidePackageRoot(root: string, candidate: string, assetRef: string): void {
   const normalizedRoot = resolve(root);
   const normalizedCandidate = resolve(candidate);
@@ -66,8 +60,7 @@ function assertPathInsidePackageRoot(root: string, candidate: string, assetRef: 
     throw new Error(`Asset path escapes package root: ${assetRef}`);
   }
 }
-
-function readPackageManifest(value: unknown): PackageManifest {
+export function readPackageManifest(value: unknown): PackageManifest {
   const record = readRecord(value);
   if (!record) throw new Error("Package manifest must be an object.");
   const compatibility = readRecord(record.compatibility);
@@ -77,7 +70,7 @@ function readPackageManifest(value: unknown): PackageManifest {
     id: readPathSafeId(record.id, "manifest.id"),
     name: readRequiredString(record.name, "manifest.name"),
     motion: readRequiredString(record.motion, "manifest.motion"),
-    template: typeof record.template === "string" ? record.template : undefined,
+    ...(typeof record.template === "string" ? { template: record.template } : {}),
     assets: Array.isArray(record.assets) ? record.assets.map(String) : [],
     sourceApp: readRequiredString(record.sourceApp, "manifest.sourceApp"),
     compatibility: {
@@ -86,8 +79,7 @@ function readPackageManifest(value: unknown): PackageManifest {
     }
   };
 }
-
-function readTemplateDocument(value: unknown): TemplateDocument {
+export function readTemplateDocument(value: unknown): TemplateDocument {
   const record = readRecord(value);
   if (!record) throw new Error("Template document must be an object.");
   if (!Array.isArray(record.params)) throw new Error("Template document params must be an array.");
@@ -101,9 +93,9 @@ function readTemplateDocument(value: unknown): TemplateDocument {
     name: readRequiredString(record.name, "template.name"),
     motion: readRequiredString(record.motion, "template.motion"),
     compatibleLanes: record.compatibleLanes.map(String),
-    compatibleHosts: Array.isArray(record.compatibleHosts) ? record.compatibleHosts.map(String) : undefined,
+    ...(Array.isArray(record.compatibleHosts) ? { compatibleHosts: record.compatibleHosts.map(String) } : {}),
     ...(record.metadata !== undefined ? { metadata: readTemplateMetadata(record.metadata) } : {}),
-    groups: Array.isArray(record.groups) ? readRecordArray<NonNullable<TemplateDocument["groups"]>[number]>(record.groups) : undefined,
+    ...(Array.isArray(record.groups) ? { groups: readRecordArray<NonNullable<TemplateDocument["groups"]>[number]>(record.groups) } : {}),
     params: readRecordArray<TemplateDocument["params"][number]>(record.params),
     controls: readRecordArray<TemplateDocument["controls"][number]>(record.controls),
     bindings: readRecordArray<TemplateDocument["bindings"][number]>(record.bindings)
@@ -342,14 +334,15 @@ function readTemplatePerformance(value: unknown): TemplatePerformance {
   if (notes !== undefined) performance.notes = notes;
   return performance;
 }
-
-function readMotionDocument(value: unknown): MotionDocument {
+export function readMotionDocument(value: unknown): MotionDocument {
+  const rootProblem = motionDocumentRootPreflight(value); if (rootProblem) throw new Error(`Motion document root is invalid: ${rootProblem.message}`);
   const record = readRecord(value);
   if (!record) throw new Error("Motion document must be an object.");
   const provenance = readRecord(record.provenance);
   if (!provenance) throw new Error("Motion document provenance must be an object.");
   if (!Array.isArray(record.layers)) throw new Error("Motion document layers must be an array.");
-  return {
+  const layers = record.layers.map((layer, index) => readMotionLayer(layer, index)); const scene3dAnimation = readMotionScene3DAnimationDocumentRoot(record.scene3dAnimation, { durationMs: record.durationMs, layers });
+  const document = {
     ...record,
     schema: readMotionSchema(record.schema),
     id: readRequiredString(record.id, "motion.id"),
@@ -358,15 +351,18 @@ function readMotionDocument(value: unknown): MotionDocument {
     fps: readRequiredNumber(record.fps, "motion.fps"),
     width: readRequiredNumber(record.width, "motion.width"),
     height: readRequiredNumber(record.height, "motion.height"),
-    background: typeof record.background === "string" ? record.background : undefined,
-    layers: record.layers.map((layer, index) => readMotionLayer(layer, index)),
+    ...(typeof record.background === "string" ? { background: record.background } : {}),
+    layers,
+    ...(scene3dAnimation ? { scene3dAnimation } : {}),
     assets: Array.isArray(record.assets) ? record.assets : [],
     provenance: {
       ...provenance,
       sourceApp: readRequiredString(provenance.sourceApp, "motion.provenance.sourceApp"),
       createdBy: readRequiredString(provenance.createdBy, "motion.provenance.createdBy")
     }
-  };
+  } as MotionDocument;
+  const layoutGapAnimation = readMotionLayoutGapAnimationDocumentRoot(record.layoutGapAnimation, document);
+  return { ...document, ...(layoutGapAnimation ? { layoutGapAnimation } : {}) };
 }
 
 function readMotionLayer(value: unknown, index: number): MotionDocument["layers"][number] {
@@ -483,7 +479,12 @@ function readOptionalTemplateMediaFit(value: unknown, path: string): TemplateMed
   throw new Error(`${path} must be cover, contain, or fill.`);
 }
 
-function assertTemplatePackageSemantics(template: TemplateDocument, motion: MotionDocument, packageRoot: string): void {
+export function assertTemplatePackageSemantics(
+  template: TemplateDocument,
+  motion: MotionDocument,
+  packageRoot: string,
+  options?: { hasPackageFile?: (path: string) => boolean }
+): void {
   const paramsById = new Map(template.params.map((param) => [param.id, param]));
   const layerIds = new Set(motion.layers.map((layer) => layer.id));
   const mediaSlotParamIds = new Set<string>();
@@ -522,7 +523,8 @@ function assertTemplatePackageSemantics(template: TemplateDocument, motion: Moti
     if (quality.manifest && (!quality.manifest.startsWith("quality/") || quality.manifest.includes("..") || quality.manifest.startsWith("/"))) {
       throw new Error("template.metadata.qualityTargets.manifest must be a package-local quality/ path.");
     }
-    if (quality.manifest && !existsSync(resolvePackageAsset({ root: packageRoot }, quality.manifest))) {
+    const manifestPath = quality.manifest ? resolvePackageAsset({ root: packageRoot }, quality.manifest) : undefined;
+    if (quality.manifest && !(options?.hasPackageFile?.(manifestPath!) ?? existsSync(manifestPath!))) {
       throw new Error(`template.metadata.qualityTargets.manifest does not exist: ${quality.manifest}.`);
     }
     const distinctFrames = new Set(quality.representativeFramesMs);
@@ -550,6 +552,4 @@ function readRecordArray<T>(values: unknown[]): T[] {
   return values.map((value) => ({ ...(readRecord(value) ?? {}) }) as unknown as T);
 }
 
-function hashBuffer(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
-}
+function hashBuffer(buffer: Buffer): string { return createHash("sha256").update(buffer).digest("hex"); }

@@ -21,6 +21,7 @@ describe("procedural SDK over authenticated loopback HTTP", () => {
       context: {
         authoringInputRoots: [sourceRoot, outputRoot],
         authoringOutputRoots: [outputRoot],
+        renderPackageRoots: [sourceRoot, outputRoot],
       },
     });
     const sdk = createMotionSdk(createMotionSdkHttpTransport({

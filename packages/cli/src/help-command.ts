@@ -23,9 +23,14 @@ export function helpCommand(): CliResult {
         purpose: "Publish or negotiate the versioned Motion/Cut/Canvas integration contract."
       },
       {
+        name: "runtime-probe",
+        usage: "shellx-motion runtime-probe",
+        purpose: "Read the project-free, provider-free runtime and unqualified distribution identity."
+      },
+      {
         name: "validate",
-        usage: "shellx-motion validate <package>",
-        purpose: "Validate a Motion package through the core loader."
+        usage: "shellx-motion validate <package> [--receipts-root <host-store>]",
+        purpose: "Validate a Motion package through the core loader; an explicit governed store retains the validation receipt outside the package."
       },
       {
         name: "inspect",
@@ -59,13 +64,13 @@ export function helpCommand(): CliResult {
       },
       {
         name: "preview",
-        usage: "shellx-motion preview <package> --lane native|browser --out <dir>",
-        purpose: "Render a deterministic preview frame and receipt."
+        usage: "shellx-motion preview <package> --lane native|browser|gpu --out <dir>",
+        purpose: "Render a deterministic preview frame and receipt. gpu is the strict general hardware WebGPU PNG lane, with no CPU/browser fallback."
       },
       {
         name: "capture-browser",
         usage: "shellx-motion capture-browser <package> --out <dir> [--workflow <json>]",
-        purpose: "Capture deterministic browser-lane frames and workflow traces."
+        purpose: "Publish a deterministic browser capture as one new directory bundle of frame, receipt, and requested evidence."
       },
       {
         name: "package-create",
@@ -84,8 +89,8 @@ export function helpCommand(): CliResult {
       },
       {
         name: "render",
-        usage: "shellx-motion render <package> --lane ffmpeg|native --out <file-or-dir> [--force] [--job-id <id>] [--caller-id <id>]",
-        purpose: "Render final media, image sequences, or still frames. --force replaces a non-empty image-sequence --out directory."
+        usage: "shellx-motion render <package> --lane ffmpeg|native --out <file-or-dir> [--frame-lane browser|native|gpu] [--segment-frames <n> --resume-segments] [--keep-frames] [--force] [--job-id <id>] [--caller-id <id>]",
+        purpose: "Render final media, image sequences, or still frames. GPU is strict raw-RGBA FFmpeg final-video delivery, either directly streamed or durably segmented, and never falls back. File videos stream by default; --segment-frames opts into restartable derived-store delivery, while --keep-frames retains source frames only for ordinary final-video FFmpeg delivery."
       },
       {
         name: "html-snippet-import",
@@ -104,8 +109,8 @@ export function helpCommand(): CliResult {
       },
       {
         name: "connector",
-        usage: "shellx-motion connector canvas-bridge-export|canvas-to-cut|canvas-to-mp4|script-to-cut|source-to-cut|cut-generate-to-cut|template-to-cut <input> --out <dir>",
-        purpose: "Run Design Studio, Cut Generate, TemplateIR, and Cut handoff connectors."
+        usage: "shellx-motion connector catalog | describe <capability-id> | canvas-bridge-export|canvas-to-cut|canvas-to-mp4|script-to-cut|source-to-cut|cut-generate-to-cut|template-to-cut <input> --out <dir>",
+        purpose: "Read the closed MCI-1 catalog or run named compatibility connectors. Catalog discovery does not admit generic submit. Canvas/Script/Source-to-Cut P2B is Linux-only real Browser-to-FFmpeg H.264 rendered_media to an absent or empty --out; no dry-run, force, native, GPU, audio, or alternate-mode flags."
       },
       {
         name: "plan-import",
@@ -158,7 +163,7 @@ export function helpCommand(): CliResult {
       "shellx-motion debug state --package fixtures/packages/lower-third",
       "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --execute-agent-commands --receipts-root .scratch/receipts",
       "shellx-motion prompt run \"edit title and preview\" --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
-      "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero --dry-run-render",
+      "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero",
       "shellx-motion render-batch fixtures/packages/batch-card --out .scratch/batch-card-real"
     ]
   };

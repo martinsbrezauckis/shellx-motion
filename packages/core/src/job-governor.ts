@@ -1,4 +1,4 @@
-import { MotionJobLeaseDirectory, LEASE_HEARTBEAT_INTERVAL_MS, UNATTRIBUTED_CALLER_ID } from "./job-lease";
+import { MotionJobLeaseDirectory, LEASE_HEARTBEAT_INTERVAL_MS, type MotionJobLeaseRun, UNATTRIBUTED_CALLER_ID } from "./job-lease";
 import type { MotionJobRegistry } from "./job-registry";
 import { currentMotionHostJob } from "./host-job";
 import { assertMotionJobId, mintMotionJobId } from "./job-registry";
@@ -7,6 +7,17 @@ import { lstat, mkdir, readFile, realpath, statfs } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { defaultMotionHostRenderCapacity, resolveMotionHostRenderCapacity, type MotionHostRenderCapacity } from "./host-render-capacity";
+import {
+  validateRuntimeSandboxEvidence,
+  type LocalMotionRuntimeSandboxEvidence,
+} from "./runtime-sandbox-evidence";
+
+export type {
+  ChromiumRuntimeSandboxEvidence,
+  LinuxBubblewrapRuntimeSandboxEvidence,
+  LocalMotionRuntimeSandboxEvidence,
+} from "./runtime-sandbox-evidence";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,8 +33,9 @@ const MAX_RENDER_FRAMES = 216_000;
  * `MAX_RENDER_FRAMES` above is an allocation guard: it stops a frame list from becoming an
  * input-controlled memory exhaustion path. It is not the budget a delivery render passes. Every
  * non-still render walks a materialised frame sequence, and the CLI refuses that sequence above
- * 36,000 frames or 80e9 pixel-frames (`renderFrameSequenceBudgetError` in
- * `packages/cli/src/main.ts`) — which is reached long before 216,000 frames.
+ * 36,000 frames or 80e9 pixel-frames (`materializedFrameSequenceStaticRefusal` in
+ * `packages/core/src/materialized-frame-preflight.ts`) — which is reached long before 216,000
+ * frames.
  *
  * Authoring paths therefore bound documents by THIS pair. Bounding by the looser allocation guard
  * would let an authoring command accept a document the very next render refuses, which is the
@@ -47,7 +59,7 @@ const MIN_DOCUMENT_FPS = 1;
 const MAX_DOCUMENT_FPS = 120;
 
 /** Expensive local execution families governed by one workstation-wide policy. */
-export type LocalMotionJobLane = "ffmpeg" | "browser" | "native" | "batch" | "connector" | "agent" | "analysis" | "quality" | "other";
+export type LocalMotionJobLane = "ffmpeg" | "browser" | "gpu" | "native" | "batch" | "connector" | "agent" | "analysis" | "quality" | "other";
 
 export interface LocalMotionJobPolicy {
   maxConcurrentJobs: number;
@@ -125,15 +137,6 @@ export interface LocalMotionProcessContainmentEvidence {
     sha256: string;
   };
   reasonCode?: "native_helper_missing" | "native_setup_failed" | "worker_process_unavailable" | "unsupported_platform";
-}
-
-/** Runtime launch-policy evidence. `requested` deliberately does not claim kernel enforcement. */
-export interface LocalMotionRuntimeSandboxEvidence {
-  schema: "shellx-motion/runtime-sandbox@1";
-  provider: "chromium";
-  status: "requested" | "disabled";
-  scope: "browser-process";
-  reasonCode?: "trusted_host_opt_out";
 }
 
 export interface LocalMotionJobContext {
@@ -274,19 +277,17 @@ export class LocalMotionJobGovernor {
     // as `pending` rather than answering `job_unknown` while it waits.
     // "internal": this is a resource admission, not the thing a host asked for. It counts against
     // capacity and is deliberately absent from motion.job.list. See host-job.ts.
-    await this.leases?.announce({ jobId, lane: request.lane, operation: operationId, callerId, visibility: "internal" });
+    const leaseRun = await this.leases?.announce({ jobId, lane: request.lane, operation: operationId, callerId, visibility: "internal" }) ?? null;
     const leases = this.leases;
     // Deliberately unref'd: refreshing a lease must not be the reason a process stays alive.
-    const leaseHeartbeat: NodeJS.Timeout | undefined = leases
-      ? setInterval(() => { void leases.heartbeat(jobId); }, LEASE_HEARTBEAT_INTERVAL_MS)
-      : undefined;
+    const leaseHeartbeat: NodeJS.Timeout | undefined = leases && leaseRun ? setInterval(() => { void leases.heartbeat(leaseRun); }, LEASE_HEARTBEAT_INTERVAL_MS) : undefined;
     leaseHeartbeat?.unref?.();
 
     try {
-      return await this.runAnnounced(request, operation, { jobId, callerId, operationId, policy, queuedAtMs });
+      return await this.runAnnounced(request, operation, { jobId, operationId, policy, queuedAtMs, leaseRun });
     } finally {
       if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-      await this.leases?.release(jobId);
+      if (leaseRun) await this.leases?.release(leaseRun);
     }
   }
 
@@ -294,21 +295,21 @@ export class LocalMotionJobGovernor {
   private async runAnnounced<T>(
     request: LocalMotionJobRequest,
     operation: (context: LocalMotionJobContext) => Promise<T>,
-    identity: { jobId: string; callerId: string; operationId: string; policy: LocalMotionJobPolicy; queuedAtMs: number }
+    identity: { jobId: string; operationId: string; policy: LocalMotionJobPolicy; queuedAtMs: number; leaseRun: MotionJobLeaseRun | null }
   ): Promise<LocalMotionJobExecution<T>> {
-    const { jobId, operationId, policy, queuedAtMs } = identity;
+    const { jobId, operationId, policy, queuedAtMs, leaseRun } = identity;
     await this.acquireSlot(request.signal, policy.maxQueueWaitMs);
     const startedAtMs = this.now();
     // Machine-wide admission happens after the in-process slot so the local queue still bounds
     // how many claims one process can have outstanding.
-    let leaseHeld = false;
     try {
-      leaseHeld = await this.acquireLease({
+      await this.acquireLease({
         jobId,
         lane: request.lane,
         operation: operationId,
         limit: policy.maxConcurrentJobs,
         callerId: request.callerId,
+        ...(leaseRun ? { run: leaseRun } : {}),
         signal: request.signal,
         deadlineAtMs: queuedAtMs + policy.maxQueueWaitMs
       });
@@ -316,7 +317,6 @@ export class LocalMotionJobGovernor {
       this.releaseSlot();
       throw error;
     }
-    void leaseHeld;
     // The moment real capacity is held, the host job that asked for this work stops waiting and
     // starts working. Without this the wrapper reports "running" from the outset, so a caller shows
     // "rendering..." over a queue — the exact confusion the pending/running split exists to prevent.
@@ -497,6 +497,7 @@ export class LocalMotionJobGovernor {
     operation: string;
     limit: number;
     callerId: string | undefined;
+    run?: MotionJobLeaseRun;
     signal: AbortSignal | undefined;
     deadlineAtMs: number;
   }): Promise<boolean> {
@@ -511,6 +512,7 @@ export class LocalMotionJobGovernor {
         // Forwarding this is what makes per-owner visibility real. Omitting it type-checked
         // silently, because claim treats callerId as optional and defaults to "unattributed".
         ...(input.callerId ? { callerId: input.callerId } : {}),
+        ...(input.run ? { run: input.run } : {}),
         // A losing claim keeps its announced lease, so the job stays observable as `pending` for
         // the whole time it waits instead of blinking out of existence between retries.
         retainPending: true
@@ -700,15 +702,20 @@ export function motionDocumentBudgetError(document: {
   return undefined;
 }
 
-export function localMotionJobPolicyFromEnvironment(env: NodeJS.ProcessEnv = process.env): LocalMotionJobPolicy {
+export function localMotionJobPolicyFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  hostCapacity: MotionHostRenderCapacity = env === process.env
+    ? defaultMotionHostRenderCapacity
+    : resolveMotionHostRenderCapacity({ env }),
+): LocalMotionJobPolicy {
   return {
-    maxConcurrentJobs: boundedEnvInteger(env.SHELLX_MOTION_MAX_CONCURRENT_JOBS, 2, 1, 16),
+    maxConcurrentJobs: hostCapacity.jobs.maxConcurrentJobs,
     maxQueueDepth: boundedEnvInteger(env.SHELLX_MOTION_MAX_QUEUE_DEPTH, 64, 0, 1_024),
     maxQueueWaitMs: boundedEnvInteger(env.SHELLX_MOTION_MAX_QUEUE_WAIT_MS, 5 * 60_000, 100, 60 * 60_000),
     maxWallClockMs: boundedEnvInteger(env.SHELLX_MOTION_MAX_JOB_MS, 30 * 60_000, 100, 24 * 60 * 60_000),
     minFreeScratchBytes: boundedEnvInteger(env.SHELLX_MOTION_MIN_FREE_SCRATCH_BYTES, 256 * MIB, 0, 16 * 1024 * GIB),
     scratchReservationBytes: boundedEnvInteger(env.SHELLX_MOTION_SCRATCH_RESERVATION_BYTES, 64 * MIB, 0, 16 * 1024 * GIB),
-    maxProcessTreeRssBytes: boundedEnvInteger(env.SHELLX_MOTION_MAX_JOB_RSS_BYTES, 6 * GIB, 64 * MIB, 1024 * GIB),
+    maxProcessTreeRssBytes: hostCapacity.jobs.maxProcessTreeRssBytes,
     rssPollIntervalMs: boundedEnvInteger(env.SHELLX_MOTION_RSS_POLL_MS, 1_000, 25, 60_000),
   };
 }
@@ -992,24 +999,6 @@ function validateProcessContainmentEvidence(evidence: LocalMotionProcessContainm
     ...evidence,
     ...(evidence.launcher ? { launcher: { ...evidence.launcher } } : {}),
   };
-}
-
-function validateRuntimeSandboxEvidence(evidence: LocalMotionRuntimeSandboxEvidence): LocalMotionRuntimeSandboxEvidence {
-  if (
-    evidence.schema !== "shellx-motion/runtime-sandbox@1"
-    || evidence.provider !== "chromium"
-    || evidence.scope !== "browser-process"
-    || !["requested", "disabled"].includes(evidence.status)
-  ) {
-    throw new Error("Motion runtime sandbox evidence is invalid.");
-  }
-  if (evidence.status === "requested" && evidence.reasonCode !== undefined) {
-    throw new Error("Requested runtime sandbox evidence must not include an opt-out reason.");
-  }
-  if (evidence.status === "disabled" && evidence.reasonCode !== "trusted_host_opt_out") {
-    throw new Error("Disabled runtime sandbox evidence requires the trusted host opt-out reason.");
-  }
-  return { ...evidence };
 }
 
 function safeBigIntToNumber(value: bigint): number {

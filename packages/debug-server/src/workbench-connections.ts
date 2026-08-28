@@ -1,5 +1,10 @@
 import { execFile } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import { delimiter, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
+import { untrustedExecutableFileReason } from "@shellx-motion/core";
+import { workbenchChildEnvironment } from "./workbench-child-environment.js";
+import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,11 +26,26 @@ export type MotionAgentConfigurator = (
   bridge: MotionAgentBridge
 ) => Promise<MotionAgentConfigurationResult>;
 
+export interface MotionAgentProviderLaunch {
+  executable: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+/** Test seam for the bounded provider child. Production always uses {@link runMotionAgentProvider}. */
+export interface MotionAgentConfigurationDependencies {
+  source?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  run?: (launch: MotionAgentProviderLaunch) => Promise<void>;
+}
+
 const PROVIDER_ARGS: Record<MotionAgentProvider, (bridge: MotionAgentBridge) => string[]> = {
   codex: (bridge) => ["mcp", "add", "shellx-motion", "--", bridge.command, ...bridge.args],
   claude: (bridge) => ["mcp", "add", "--scope", "user", "shellx-motion", "--", bridge.command, ...bridge.args],
   grok: (bridge) => ["mcp", "add", "--scope", "user", "shellx-motion", "--", bridge.command, ...bridge.args]
 };
+
+class ProviderExecutableUnavailableError extends Error {}
 
 export function readMotionAgentProvider(value: unknown): MotionAgentProvider | null {
   return value === "codex" || value === "claude" || value === "grok" ? value : null;
@@ -68,16 +88,32 @@ export async function runMotionAgentConfiguration(
   }
 }
 
-export const configureMotionAgent: MotionAgentConfigurator = async (provider, bridge) => {
+/**
+ * Configure an allowlisted provider without reading, copying, or otherwise touching its credential
+ * material. The provider CLI performs its own documented configuration operation in place; Motion
+ * only selects a trusted executable and passes the non-secret MCP bridge arguments.
+ */
+export async function configureMotionAgent(
+  provider: MotionAgentProvider,
+  bridge: MotionAgentBridge,
+  dependencies: MotionAgentConfigurationDependencies = {}
+): Promise<MotionAgentConfigurationResult> {
+  const source = dependencies.source ?? process.env;
+  const platform = dependencies.platform ?? process.platform;
+  const environment = workbenchChildEnvironment(source);
   const args = PROVIDER_ARGS[provider](bridge);
   try {
-    if (process.platform === "win32") await runWindowsProvider(provider, args);
-    else await execFileAsync(provider, args, { encoding: "utf8", windowsHide: true, timeout: 30_000, maxBuffer: 1_000_000 });
+    const executable = await resolveMotionAgentProviderExecutable(provider, environment, platform);
+    // Resolve and inspect once to select the host-approved binary, then repeat the full policy
+    // immediately before execution. A changed link/file/path between those steps fails closed.
+    await revalidateMotionAgentProviderExecutable(executable, platform);
+    const launch = { executable, args, env: environment };
+    await (dependencies.run ?? ((value) => runMotionAgentProvider(value, platform)))(launch);
     return { provider, configured: true, alreadyConfigured: false };
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error ? error.code : null;
-    if (code === "ENOENT") {
-      throw new Error(`${providerLabel(provider)} is not installed or is not available on PATH.`);
+    if (error instanceof ProviderExecutableUnavailableError
+      || (error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+      throw new Error(`${providerLabel(provider)} is not installed or cannot be approved by the local host policy.`);
     }
     const stderr = error && typeof error === "object" && "stderr" in error && typeof error.stderr === "string"
       ? cleanProviderMessage(error.stderr)
@@ -87,26 +123,98 @@ export const configureMotionAgent: MotionAgentConfigurator = async (provider, br
     }
     throw new Error(stderr || `${providerLabel(provider)} could not add the ShellX Motion MCP connection.`);
   }
-};
+}
 
-async function runWindowsProvider(provider: MotionAgentProvider, args: string[]): Promise<void> {
+/**
+ * Select the first canonical, absolute and host-approved provider executable from the filtered
+ * host PATH. A bare provider name is never passed to a child process, avoiding a second implicit
+ * PATH lookup in a potentially different environment.
+ */
+export async function resolveMotionAgentProviderExecutable(
+  provider: MotionAgentProvider,
+  environment: NodeJS.ProcessEnv = workbenchChildEnvironment(),
+  platform: NodeJS.Platform = process.platform
+): Promise<string> {
+  const pathValue = environment.PATH ?? environment.Path ?? environment.path ?? "";
+  const extensions = platform === "win32"
+    ? [".exe", ".com", ".cmd", ".bat", ".ps1"]
+    : [""];
+  for (const rawDirectory of pathValue.split(delimiter)) {
+    const directory = rawDirectory.trim().replace(/^"|"$/g, "");
+    if (!directory || !isAbsolute(directory)) continue;
+    for (const extension of extensions) {
+      const candidate = join(directory, `${provider}${extension}`);
+      try {
+        // A launcher may be a trusted package-manager symlink. It is never executed by that name:
+        // resolve it to a canonical target, validate that target, then execute the target directly.
+        const original = await lstat(candidate);
+        if (!original.isFile() && !original.isSymbolicLink()) continue;
+        const canonical = await realpath(candidate);
+        if (!isAbsolute(canonical)) continue;
+        await revalidateMotionAgentProviderExecutable(canonical, platform);
+        return canonical;
+      } catch {
+        // Search the next host PATH candidate. The public Workbench state intentionally does not
+        // expose absolute executable locations or filesystem-policy diagnostics.
+      }
+    }
+  }
+  throw new ProviderExecutableUnavailableError();
+}
+
+async function revalidateMotionAgentProviderExecutable(executable: string, platform: NodeJS.Platform): Promise<void> {
+  if (!isAbsolute(executable)) throw new ProviderExecutableUnavailableError();
+  const original = await lstat(executable);
+  if (!original.isFile() || original.isSymbolicLink()) throw new ProviderExecutableUnavailableError();
+  const canonical = await realpath(executable);
+  if (canonical !== executable) throw new ProviderExecutableUnavailableError();
+  if (platform !== "win32") {
+    const reason = untrustedExecutableFileReason(executable);
+    if (reason) throw new ProviderExecutableUnavailableError();
+  }
+}
+
+async function runMotionAgentProvider(launch: MotionAgentProviderLaunch, platform: NodeJS.Platform): Promise<void> {
+  if (platform === "win32") {
+    await runWindowsProvider(launch);
+    return;
+  }
+  await execFileAsync(launch.executable, launch.args, {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 1_000_000,
+    env: launch.env
+  });
+}
+
+async function runWindowsProvider(launch: MotionAgentProviderLaunch): Promise<void> {
+  const powershell = await resolveWindowsPowerShellExecutable();
   const script = [
-    "$command = Get-Command -Name $env:SHELLX_MOTION_PROVIDER -ErrorAction Stop",
     "$arguments = @(ConvertFrom-Json -InputObject $env:SHELLX_MOTION_PROVIDER_ARGS)",
-    "& $command.Source @arguments",
+    "& $env:SHELLX_MOTION_PROVIDER_PATH @arguments",
     "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
   ].join("; ");
-  await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+  await execFileAsync(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 1_000_000,
     env: {
-      ...process.env,
-      SHELLX_MOTION_PROVIDER: provider,
-      SHELLX_MOTION_PROVIDER_ARGS: JSON.stringify(args)
+      ...launch.env,
+      SHELLX_MOTION_PROVIDER_PATH: launch.executable,
+      SHELLX_MOTION_PROVIDER_ARGS: JSON.stringify(launch.args)
     }
   });
+}
+
+/** Resolve the fixed Windows PowerShell host used only to launch an admitted provider executable. */
+export async function resolveWindowsPowerShellExecutable(): Promise<string> {
+  try {
+    return await resolveWorkbenchSystemExecutable("windows-powershell");
+  } catch {
+    throw new ProviderExecutableUnavailableError();
+  }
 }
 
 function providerLabel(provider: MotionAgentProvider): string {

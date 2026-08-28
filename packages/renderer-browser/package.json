@@ -1,13 +1,22 @@
 {
   "name": "@shellx-motion/renderer-browser",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal/effect-modules": "./src/effect-module-registry.ts",
+    "./internal/private-output-publication": "./src/private-output-publication.ts",
+    "./internal/checkpoint-storyboard-terminal-boundary": "./src/checkpoint-storyboard-terminal-boundary.ts",
+    "./internal/checkpoint-storyboard-retained-trace-preview": "./src/gpu-checkpoint-storyboard-retained-trace-preview.ts",
+    "./internal/scene3d-gltf-pbr-final": "./src/gpu-scene3d-gltf-pbr-final.ts",
+    "./internal/scene3d-gltf-pbr-hdr10": "./src/gpu-scene3d-gltf-pbr-hdr10-session.ts",
+    "./internal/scene3d-gltf-pbr-hdr10-streaming": "./src/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.ts",
+    "./internal/gltf-object-retained-render": "./src/gpu-gltf-object-retained-session.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin/enforced-untrusted-browser-launcher.mjs"
   ],
   "publishConfig": {
     "main": "./dist/index.js",
@@ -16,6 +25,34 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./internal/effect-modules": {
+        "types": "./dist/effect-module-registry.d.ts",
+        "default": "./dist/effect-module-registry.js"
+      },
+      "./internal/private-output-publication": {
+        "types": "./dist/private-output-publication.d.ts",
+        "default": "./dist/private-output-publication.js"
+      },
+      "./internal/checkpoint-storyboard-terminal-boundary": {
+        "types": "./dist/checkpoint-storyboard-terminal-boundary.d.ts",
+        "default": "./dist/checkpoint-storyboard-terminal-boundary.js"
+      },
+      "./internal/checkpoint-storyboard-retained-trace-preview": {
+        "types": "./dist/gpu-checkpoint-storyboard-retained-trace-preview.d.ts",
+        "default": "./dist/gpu-checkpoint-storyboard-retained-trace-preview.js"
+      },
+      "./internal/gltf-object-retained-render": {
+        "types": "./dist/gpu-gltf-object-retained-session.d.ts",
+        "default": "./dist/gpu-gltf-object-retained-session.js"
+      },
+      "./internal/scene3d-gltf-pbr-final": {
+        "types": "./dist/gpu-scene3d-gltf-pbr-final.d.ts",
+        "default": "./dist/gpu-scene3d-gltf-pbr-final.js"
+      },
+      "./internal/scene3d-gltf-pbr-hdr10-streaming": {
+        "types": "./dist/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.d.ts",
+        "default": "./dist/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.js"
       }
     }
   },

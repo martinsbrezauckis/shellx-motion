@@ -51,10 +51,11 @@
  * Debug API and `package-create` in the CLI.
  */
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { isSupportedMotionColorString, supportedMotionColorAdvice } from "./color";
 import { motionDocumentBudgetError } from "./job-governor";
+import { OutputDirectoryTransaction } from "./output-directory-transaction";
 
 export interface MotionPackageCreateInput {
   /** Directory to create the package in. Created if absent; must be empty if it exists. */
@@ -120,20 +121,11 @@ export interface MotionPackageCreateServices {
    * in an id shape production would refuse.
    */
   uniqueSuffix?: () => string;
+  /** Runs after the complete package is written to the private stage, immediately before commit. */
+  beforeCommit?: (stagingPath: string) => Promise<void>;
 }
 
 const DEFAULTS = { width: 1920, height: 1080, fps: 30, durationMs: 5000, background: "#0b1020" };
-
-/**
- * Prefix for staging directories, beside the target and inside the same parent so the publishing
- * `rename` stays on one filesystem (a cross-device rename fails with `EXDEV`). Dot-prefixed because
- * an interrupted process cannot clean up after itself, and a leftover must be obviously not a
- * package.
- */
-const STAGING_PREFIX = ".shellx-motion-package-";
-
-/** Guidance shared by both refusals, so a caller sees one instruction whichever race it lost. */
-const NOT_EMPTY_ADVICE = "Choose an empty directory, or edit the existing package instead of creating one over it.";
 
 /**
  * Longest accepted human name.
@@ -246,10 +238,6 @@ export async function createMotionPackage(
   }
   const { packageId, motionId } = packageIdentity(idToken(name), services);
 
-  // Answer the common mistake — "you pointed this at an existing package" — before doing any work,
-  // so the caller gets that message rather than the narrower race message from the publish step.
-  await assertPublishableTarget(packageRoot);
-
   // One centred, visible layer. An empty document renders a blank frame, which an agent cannot
   // distinguish from a failed render — so the default start is something it can see, then replace.
   const layers = input.empty ? [] : [{
@@ -296,16 +284,17 @@ export async function createMotionPackage(
   };
 
   const write = services.writeFile ?? ((path: string, contents: string) => writeFile(path, contents, "utf8"));
-  const staging = await mkdtemp(join(dirname(packageRoot), STAGING_PREFIX));
+  const transaction = await OutputDirectoryTransaction.create(packageRoot);
   try {
-    await mkdir(join(staging, "assets"), { recursive: true });
-    await write(join(staging, "motion.json"), `${JSON.stringify(motion, null, 2)}\n`);
-    await write(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-    await publishStagedPackage(staging, packageRoot);
+    await mkdir(join(transaction.stagingPath, "assets"), { recursive: true });
+    await write(join(transaction.stagingPath, "motion.json"), `${JSON.stringify(motion, null, 2)}\n`);
+    await write(join(transaction.stagingPath, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    await services.beforeCommit?.(transaction.stagingPath);
+    await transaction.commit();
   } catch (error) {
-    // Own the staging directory completely: nothing partial survives a failure, whether the failure
-    // was a write or a lost publication race.
-    await rm(staging, { recursive: true, force: true });
+    // The transaction removes only its identity-bound private stage. A retargeted path is preserved
+    // for recovery instead of recursively deleting a caller-controlled replacement.
+    await transaction.abort();
     throw error;
   }
 
@@ -338,61 +327,4 @@ export async function createMotionPackage(
       "motion.render.final — encode the video"
     ]
   };
-}
-
-/**
- * Refuse early when the target cannot receive a package, and make sure its parent exists.
- *
- * This is advisory, not a lock: between this check and the publishing rename another process can
- * still claim the path, which is exactly why `publishStagedPackage` re-decides atomically. What this
- * buys is the *right message* for the overwhelmingly common case — a human or agent pointing the
- * command at a directory that already holds a package.
- *
- * @param packageRoot resolved target directory
- * @throws when the target exists as a file, or as a directory with any entry in it
- */
-async function assertPublishableTarget(packageRoot: string): Promise<void> {
-  await mkdir(dirname(packageRoot), { recursive: true });
-  let target;
-  try {
-    target = await stat(packageRoot);
-  } catch {
-    return; // Absent is the happy path: the rename creates it.
-  }
-  if (!target.isDirectory()) {
-    throw new Error(`Motion package path already exists and is not a directory: ${packageRoot}. ${NOT_EMPTY_ADVICE}`);
-  }
-  const existing = await readdir(packageRoot);
-  if (existing.length > 0) {
-    throw new Error(`Motion package directory is not empty: ${packageRoot}. ${NOT_EMPTY_ADVICE}`);
-  }
-}
-
-/**
- * Publish a fully staged package to its final path in one filesystem operation.
- *
- * The `rmdir` handles the documented case of a caller that created the target directory itself and
- * left it empty. It is safe under concurrency precisely because a published package always contains
- * `motion.json`, `manifest.json` and `assets/`: `rmdir` can only ever succeed on an EMPTY directory,
- * so it can never delete someone else's package. If a rival publishes between the `rmdir` and the
- * `rename`, the rename lands on a non-empty directory and fails — on POSIX with `ENOTEMPTY`, on
- * Windows because renaming onto any existing directory fails — and this call loses the race
- * cleanly rather than merging two packages into one directory.
- *
- * @param staging directory holding the complete package
- * @param packageRoot resolved target directory
- * @throws when the target is claimed by another creator or is otherwise unusable
- */
-async function publishStagedPackage(staging: string, packageRoot: string): Promise<void> {
-  try {
-    await rmdir(packageRoot);
-  } catch {
-    // Absent, non-empty, or not a directory. The rename below is the authority on all three.
-  }
-  try {
-    await rename(staging, packageRoot);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Motion package directory could not be published to ${packageRoot}: it was claimed by another creator or is not empty (${reason}). ${NOT_EMPTY_ADVICE}`);
-  }
 }

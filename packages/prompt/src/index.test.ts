@@ -7,7 +7,6 @@ import {
   type PromptRunReceipt
 } from "./index";
 import { createFakePromptRuntime } from "./index.test-support";
-
 describe("Motion prompt workflow", () => {
   it("plans a prompt, runs the selected local agent, and records debug command evidence", async () => {
     const calls: unknown[] = [];
@@ -2306,6 +2305,7 @@ describe("Motion prompt workflow", () => {
       }
     });
     if (result.receipt) expect(JSON.stringify(result.receipt)).not.toContain("preview current package");
+    if (!result.ok) expect(result.agent).toBeUndefined();
   });
 
   it("provides a fake local runtime for deterministic smoke tests", async () => {

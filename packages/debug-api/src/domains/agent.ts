@@ -6,7 +6,7 @@ import { annotatePlanWithArgumentContracts } from "./agent-plan-arguments.js";
 import { nonNegativeIntegerArg, stringArg } from "./args.js";
 import { dispatchAgentRevisionCommand, type AgentRevisionServices } from "./agent-revision.js";
 import { dispatchAgentPromptLifecycleCommand, type AgentPromptLifecycleServices } from "./agent-prompt-lifecycle.js";
-import { dispatchAgentPromptRunCommand, type AgentPromptRunServices } from "./agent-prompt-run.js";
+import { dispatchAgentPromptRunCommand, type AgentPromptRunServices } from "./agent-prompt-run.js"; import { dispatchMotionAgentSnapshot, type AgentSnapshotServices } from "./agent-snapshot.js";
 
 const TIER_ORDER: MotionPermissionTier[] = ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"];
 
@@ -62,7 +62,9 @@ export async function dispatchAgentCommand(
     };
   }
   if (command === "motion.agent.health") {
-    const agents = await (services.agentRuntime ?? buildAgentRuntime()).health();
+    const agentRuntime = services.agentRuntime;
+    if (!agentRuntime) return capabilityUnavailable("Agent health is unavailable because this host did not inject an agent runtime.");
+    const agents = await agentRuntime.health();
     const availableCount = agents.filter((agent) => agent.available).length;
     return {
       ok: true,
@@ -71,7 +73,7 @@ export async function dispatchAgentCommand(
       warnings: []
     };
   }
-  if (command === "motion.agent.transcript") return agentTranscript(args, services);
+  if (command === "motion.agent.snapshot") return await dispatchMotionAgentSnapshot(command, args, services); if (command === "motion.agent.transcript") return agentTranscript(args, services);
   const revision = await dispatchAgentRevisionCommand(command, args, services);
   if (revision) return revision;
   const promptLifecycle = await dispatchAgentPromptLifecycleCommand(command, args, services);
@@ -85,7 +87,7 @@ interface AgentTranscriptSession {
   transcript: { messageCount: number };
 }
 
-export interface AgentDomainServices extends AgentRevisionServices, AgentPromptLifecycleServices, AgentPromptRunServices {
+export interface AgentDomainServices extends AgentRevisionServices, AgentPromptLifecycleServices, AgentPromptRunServices, AgentSnapshotServices {
   agentRuntime?: Pick<AgentRuntime, "health">;
   receiptsRoot?: string;
   isAgentReceiptPathInsideRoot?: (root: string, path: string) => Promise<boolean>;
@@ -404,8 +406,7 @@ function buildAgentPanel(): AgentPanel {
 
 function agentPanelAdapter(adapter: AgentAdapter, defaultAgentId: string): AgentPanelAdapter {
   const probe = adapter.probeCommand();
-  const prompt = adapter.promptCommand({ prompt: "" });
-  const redactedPromptIndexes = new Set(prompt.redactedArgIndexes ?? []);
+  const prompt = adapter.promptCommand({ prompt: "" }); const redactedPromptIndexes = new Set(prompt.redactedArgIndexes ?? []);
   return {
     agentId: adapter.id,
     label: adapter.label,
@@ -416,8 +417,7 @@ function agentPanelAdapter(adapter: AgentAdapter, defaultAgentId: string): Agent
     prompt: {
       executable: prompt.executable,
       args: prompt.args.map((arg, index) => redactedPromptIndexes.has(index) ? "<prompt>" : arg),
-      shell: false,
-      stdin: "prompt"
+      shell: false, stdin: "prompt"
     },
     setup: describeAgentSetup(adapter)
   };

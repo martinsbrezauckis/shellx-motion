@@ -1,5 +1,6 @@
 /** Export and platform-verification read surfaces. */
 import { hashBuffer, type MotionPackage } from "@shellx-motion/core";
+import { assessGpuHardwareReadiness, type GpuActiveHardwareProbeResult } from "@shellx-motion/renderer-browser";
 import {
   checkMotionPlatformRequirements,
   listMotionExportPresets,
@@ -11,6 +12,7 @@ import {
   type MotionRequirementOperation
 } from "@shellx-motion/renderer-ffmpeg";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
+import { runGovernedDebugGpuHardwareProbe } from "../gpu-hardware-probe-governance.js";
 import { booleanArg, objectArg, stringArg, stringArrayArg } from "./args.js";
 
 export interface PlatformVerificationView {
@@ -42,6 +44,7 @@ export interface ExportPlanView {
 
 export interface SurfaceExportServices {
   receiptsRoot?: string;
+  isPathInsideTrustedRoot?: (root: string, candidate: string) => Promise<boolean>;
   /**
    * The runner Motion RENDERS with, so readiness describes the executable that would actually do
    * the work.
@@ -54,7 +57,13 @@ export interface SurfaceExportServices {
    * rather than a pre-built answer on purpose: a per-host, differently-shaped readiness object is
    * what let the CLI and MCP surfaces disagree in the first place.
    */
-  ffmpegRunner?: FfmpegRunner;
+  platformRequirementsRunner?: FfmpegRunner;
+  /** Host-owned active WebGPU proof; never populated from debug command arguments. */
+  gpuHardwareProof?: unknown;
+  /** Test/host seam for the explicit hardware operation; never caller-provided. */
+  gpuHardwareProbeRunner?: () => Promise<GpuActiveHardwareProbeResult>;
+  /** Host-owned parent scratch from MotionDebugContext; command arguments cannot set it. */
+  gpuHardwareProbeScratchRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   listPlatformReceiptEntries?: (root: string) => Promise<unknown[]>;
   summarizePlatformVerification?: (entries: unknown[], requiredHosts?: string[]) => PlatformVerificationView;
@@ -82,8 +91,41 @@ export async function dispatchSurfaceExportCommand(
   if (command === "motion.export.panel") return panel(args, services);
   if (command === "motion.export.plan") return plan(args, services);
   if (command === "motion.platform.requirements") return await platformRequirements(services, args);
+  if (command === "motion.platform.gpu.probe") return await gpuHardwareProbe(args, services);
   if (command === "motion.platform.verification.panel") return platformPanel(args, services);
   return null;
+}
+
+async function gpuHardwareProbe(args: unknown, services: SurfaceExportServices): Promise<MotionDebugResult> {
+  const record = objectArg(args);
+  const names = record ? Object.getOwnPropertyNames(record) : [];
+  if (!record || names.length !== 1 || names[0] !== "confirm" || booleanArg(args, "confirm") !== true) {
+    return invalidArgs("motion.platform.gpu.probe requires exactly { confirm: true }; it opens a pre-contained Chromium WebGPU session for one bounded hardware frame/readback.");
+  }
+  if (!services.gpuHardwareProbeRunner && !services.gpuHardwareProbeScratchRoot) {
+    return capabilityUnavailable("GPU hardware proof requires a host-owned scratch root in the Motion Debug context.");
+  }
+  const result = await (services.gpuHardwareProbeRunner ?? (() => runGovernedDebugGpuHardwareProbe(services.gpuHardwareProbeScratchRoot!)))();
+  if (!result.ok) return {
+    ok: false,
+    error: { code: result.failure.code, message: result.failure.message },
+    warnings: ["GPU hardware proof was not issued; ordinary platform requirements remain source-only."]
+  };
+  return {
+    ok: true,
+    visibleState: {
+      panel: "platform",
+      operation: "gpu.hardware.probe",
+      gpuProofStatus: "passed",
+      adapterFingerprint: result.proof.runtime.adapterFingerprint,
+      frameWidth: result.frame.width,
+      frameHeight: result.frame.height
+    },
+    // `proof` is intentionally the canonical typed receipt for this operation.
+    // It is host-owned evidence, never reconstructed from a preview/final receipt.
+    result: { ok: true, proof: result.proof, frame: result.frame },
+    warnings: []
+  };
 }
 
 function presets(): MotionDebugResult {
@@ -97,20 +139,18 @@ function presets(): MotionDebugResult {
 }
 
 async function panel(args: unknown, services: SurfaceExportServices): Promise<MotionDebugResult> {
-  const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
+  const receiptsRoot = await optionalTrustedPlatformReceiptsRoot(args, "motion.export.panel", services);
+  if (receiptsRoot !== undefined && typeof receiptsRoot !== "string") return receiptsRoot;
   const requiredHosts = requiredHostsArg(args, "motion.export.panel");
   if (isResult(requiredHosts)) return requiredHosts;
   if (!services.buildExportPanel) return capabilityUnavailable("Export panel construction is unavailable.");
-  let verification: (PlatformVerificationView & { receiptsRoot: string }) | undefined;
-  if (receiptsRoot) {
-    if (!services.listPlatformReceiptEntries || !services.summarizePlatformVerification) {
-      return capabilityUnavailable("Platform verification receipt reading is unavailable.");
-    }
-    verification = {
-      receiptsRoot,
-      ...services.summarizePlatformVerification(await services.listPlatformReceiptEntries(receiptsRoot), requiredHosts ?? undefined)
-    };
+  if (receiptsRoot && (!services.listPlatformReceiptEntries || !services.summarizePlatformVerification)) {
+    return capabilityUnavailable("Platform verification receipt reading is unavailable.");
   }
+  const verification = receiptsRoot ? {
+    receiptsRoot,
+    ...services.summarizePlatformVerification!(await services.listPlatformReceiptEntries!(receiptsRoot), requiredHosts ?? undefined)
+  } : undefined;
   const result = services.buildExportPanel(verification);
   const verifiedAlphaPresetCount = verification
     ? result.cards.filter((card) => card.supportsAlpha && card.verification?.status === "passed").length
@@ -134,7 +174,8 @@ async function plan(args: unknown, services: SurfaceExportServices): Promise<Mot
   const presetArg = stringArg(args, "preset");
   const outputPath = stringArg(args, "outputPath") ?? stringArg(args, "out") ?? undefined;
   const qualityManifestPath = stringArg(args, "qualityManifestPath") ?? stringArg(args, "manifestPath") ?? undefined;
-  const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
+  const receiptsRoot = await optionalTrustedPlatformReceiptsRoot(args, "motion.export.plan", services);
+  if (receiptsRoot !== undefined && typeof receiptsRoot !== "string") return receiptsRoot;
   const requiredHosts = requiredHostsArg(args, "motion.export.plan");
   const needsAlpha = booleanArg(args, "needsAlpha") ?? false;
   const needsAudio = booleanArg(args, "needsAudio") ?? false;
@@ -177,9 +218,9 @@ async function plan(args: unknown, services: SurfaceExportServices): Promise<Mot
 }
 
 async function platformPanel(args: unknown, services: SurfaceExportServices): Promise<MotionDebugResult> {
-  const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
+  const receiptsRoot = await trustedPlatformReceiptsRoot(args, "motion.platform.verification.panel", services);
+  if (typeof receiptsRoot !== "string") return receiptsRoot;
   const requiredHosts = requiredHostsArg(args, "motion.platform.verification.panel");
-  if (!receiptsRoot) return invalidArgs("motion.platform.verification.panel requires receiptsRoot.");
   if (isResult(requiredHosts)) return requiredHosts;
   if (!services.listPlatformReceiptEntries || !services.summarizePlatformVerification) {
     return capabilityUnavailable("Platform verification receipt reading is unavailable.");
@@ -197,6 +238,18 @@ async function platformPanel(args: unknown, services: SurfaceExportServices): Pr
   };
 }
 
+async function trustedPlatformReceiptsRoot(args: unknown, command: string, services: SurfaceExportServices): Promise<string | MotionDebugResult> {
+  const requested = stringArg(args, "receiptsRoot"), configured = services.receiptsRoot;
+  if (!configured) return capabilityUnavailable(`${command} requires a host-configured receipt authority.`);
+  if (!requested) return configured;
+  if (!services.isPathInsideTrustedRoot) return capabilityUnavailable("Host receipt-root admission is unavailable.");
+  if (!await services.isPathInsideTrustedRoot(configured, requested)) return invalidArgs(`${command} receiptsRoot must be inside the configured host receipt authority.`);
+  return requested;
+}
+
+async function optionalTrustedPlatformReceiptsRoot(args: unknown, command: string, services: SurfaceExportServices): Promise<string | undefined | MotionDebugResult> {
+  return stringArg(args, "receiptsRoot") || services.receiptsRoot ? await trustedPlatformReceiptsRoot(args, command, services) : undefined;
+}
 function requiredHostsArg(args: unknown, command: string): string[] | null | MotionDebugResult {
   const record = objectArg(args);
   const values = stringArrayArg(args, "requiredHosts");
@@ -243,11 +296,18 @@ async function platformRequirements(services: SurfaceExportServices, args: unkno
   // through an injected one is the second half of the same defect: the readiness answer would then
   // describe an executable that has nothing to do with the render it is gating.
   const requirements = await checkMotionPlatformRequirements(
-    services.ffmpegRunner ? { runner: services.ffmpegRunner } : {}
+    services.platformRequirementsRunner ? { runner: services.platformRequirementsRunner } : {}
   );
   const scoped = operation ? motionOperationReadiness(requirements, operation) : undefined;
   const satisfied = scoped ? scoped.satisfied : requirements.satisfied;
   const blocking = requirements.tools.filter((tool) => tool.status !== "ready");
+  const chromium = requirements.tools.find((tool) => tool.tool === "chromium");
+  // This is a source-only assessment. It does not open Chromium or request an
+  // adapter while a `read_motion` caller asks for platform facts.
+  const gpu = await assessGpuHardwareReadiness({
+    chromium: chromium ?? { status: "unverified", source: "path" },
+    ...(services.gpuHardwareProof !== undefined ? { activeHostProof: services.gpuHardwareProof } : {})
+  });
   return {
     // `ok` says the probe ran. `satisfied` says the machine is ready — two different questions.
     ok: true,
@@ -256,6 +316,7 @@ async function platformRequirements(services: SurfaceExportServices, args: unkno
       operation: "platform.requirements",
       missingCount: requirements.missingCount,
       satisfied,
+      gpuStatus: gpu.status,
       ...(scoped ? { requestedOperation: scoped.operation } : {})
     },
     result: {
@@ -263,13 +324,17 @@ async function platformRequirements(services: SurfaceExportServices, args: unkno
       // `satisfied` is the single boolean a host branches on before offering a render.
       satisfied,
       missingCount: requirements.missingCount,
+      gpu,
       ...(scoped ? { operation: scoped } : {}),
       // The shared result verbatim. `requirements` keeps its historical name so a host pinned to
       // the previous field keeps reading a tool array; `platform` is the whole typed answer.
       requirements: requirements.tools,
       platform: requirements
     },
-    warnings: blocking.map((tool) => `${tool.tool} is not available (${tool.status}): ${tool.problem ?? "not found"}`)
+    warnings: [
+      ...blocking.map((tool) => `${tool.tool} is not available (${tool.status}): ${tool.problem ?? "not found"}`),
+      ...gpu.refusals.map((refusal) => `GPU hardware ${refusal.code}: ${refusal.message}`)
+    ]
   };
 }
 

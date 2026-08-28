@@ -1,12 +1,28 @@
 import { hashBuffer } from "./receipts";
 import { scanMarkupAttributes, scanMarkupOpenTags, scanMarkupTagPairs } from "./bounded-markup";
 import { parseBoundedLottieJson } from "./lottie-json";
+import {
+  motionAffineMatrix,
+  multiplyMotionAffineMatrices,
+  transformMotionAffinePoint,
+  transformMotionAffineVector,
+  type MotionAffineMatrix
+} from "./motion-transform-matrix";
 import type { MotionBlendMode, MotionDocument, MotionGradient, MotionLayer, OperationReceipt } from "./types";
 import {
   prepareLottieLoweringAssets,
   type LottieBundledFontAsset,
   type LottieBundledImageAsset
 } from "./lottie-lowering-assets";
+import { tryLowerStaticLottieGpuPrecomps } from "./lottie-precomp-adapter-lowering";
+import {
+  lottieColor,
+  lottieStrokeLinecap,
+  staticLottieScalar,
+  staticLottieStrokeWidth,
+  staticLottieVector,
+  staticPositiveLottieScalar
+} from "./lottie-static-values";
 
 export type { LottieBundledFontAsset, LottieBundledImageAsset } from "./lottie-lowering-assets";
 
@@ -70,6 +86,8 @@ export function lowerStaticLottieToMotion(input: AdapterDiagnosticInput & {
   bundledImages?: LottieBundledImageAsset[];
   bundledFonts?: LottieBundledFontAsset[];
 }): LottieLoweringResult {
+  const gpuPrecomp = tryLowerStaticLottieGpuPrecomps(input, (context) => lowerStaticLottieLayer(context));
+  if (gpuPrecomp) return gpuPrecomp;
   const diagnostics = diagnoseAdapterImport({ ...input, adapterId: "adapter.lottie" });
   if (diagnostics.unsupportedFeatures.length > 0) {
     throw new Error(`Lottie lowering refused unsupported features: ${summarizeAdapterFeatures(diagnostics.unsupportedFeatures)}.`);
@@ -187,6 +205,13 @@ function diagnoseLottieAdapterImport(input: AdapterDiagnosticInput): AdapterDiag
   const unsupportedFeatures: AdapterDiagnosticFeature[] = [];
   const layers = Array.isArray(document.layers) ? document.layers : [];
   const assets = Array.isArray(document.assets) ? document.assets : [];
+  // Preserve first-match semantics while keeping large image-layer and asset inventories linear.
+  const assetsById = new Map<string, Record<string, unknown>>();
+  for (const value of assets) {
+    const asset = readJsonRecord(value);
+    const assetId = readJsonString(asset.id);
+    if (assetId && !assetsById.has(assetId)) assetsById.set(assetId, asset);
+  }
   layers.forEach((value, index) => {
     const layer = readJsonRecord(value);
     const path = `lottie.layers[${index}]#${lottieLayerId(layer, index)}`;
@@ -203,7 +228,7 @@ function diagnoseLottieAdapterImport(input: AdapterDiagnosticInput): AdapterDiag
       );
     } else if (type === 2) {
       const assetId = readJsonString(layer.refId);
-      const asset = assets.map(readJsonRecord).find((candidate) => readJsonString(candidate.id) === assetId);
+      const asset = assetId ? assetsById.get(assetId) : undefined;
       if (assetId && asset && readJsonString(asset.p)) {
         supportedFeatures.push(feature(path, "lottie.image.asset", "supported", "Image asset references can map to Motion image assets after package staging."));
       } else {
@@ -370,18 +395,24 @@ function lowerStaticLottieLayer(input: {
   width: number;
   height: number;
   bundledImages: Map<string, LottieBundledImageAsset>;
+  exactTiming?: true;
 }): MotionLayer[] {
   const type = readJsonNumber(input.layer.ty);
   const layerId = safeMotionId(lottieLayerId(input.layer, input.index), `layer-${input.index + 1}`);
-  const inFrame = readJsonNumber(input.layer.ip) ?? input.compositionInFrame;
-  const outFrame = readJsonNumber(input.layer.op) ?? input.compositionInFrame + ((input.compositionDurationMs / 1000) * input.fps);
+  const suppliedInFrame = readJsonNumber(input.layer.ip);
+  const suppliedOutFrame = readJsonNumber(input.layer.op);
+  if (input.exactTiming === true && ((input.layer.ip !== undefined && suppliedInFrame === null) || (input.layer.op !== undefined && suppliedOutFrame === null))) {
+    throw new Error(`Lottie lowering requires finite exact layer timing on ${layerId}.`);
+  }
+  const inFrame = suppliedInFrame ?? input.compositionInFrame;
+  const outFrame = suppliedOutFrame ?? input.compositionInFrame + ((input.compositionDurationMs / 1000) * input.fps);
   const compositionOutFrame = input.compositionInFrame + ((input.compositionDurationMs / 1000) * input.fps);
   const visibleInFrame = Math.max(input.compositionInFrame, inFrame);
   const visibleOutFrame = Math.min(compositionOutFrame, outFrame);
   if (visibleOutFrame <= visibleInFrame) return [];
-  const startMs = Math.max(0, Math.round(((visibleInFrame - input.compositionInFrame) / input.fps) * 1000));
-  const durationMs = Math.max(1, Math.round(((visibleOutFrame - visibleInFrame) / input.fps) * 1000));
-  const transform = lottieStaticTransform(input.layer.ks);
+  const startMs = input.exactTiming ? exactLottieFrameMs(visibleInFrame - input.compositionInFrame, input.fps) : Math.max(0, Math.round(((visibleInFrame - input.compositionInFrame) / input.fps) * 1000));
+  const durationMs = input.exactTiming ? exactLottieFrameMs(visibleOutFrame - visibleInFrame, input.fps) : Math.max(1, Math.round(((visibleOutFrame - visibleInFrame) / input.fps) * 1000));
+  const transform = lottieStaticTransform(input.layer.ks, input.exactTiming === true);
   if (type === 2) {
     const assetId = readJsonString(input.layer.refId);
     const asset = assetId ? input.bundledImages.get(assetId) : undefined;
@@ -411,10 +442,13 @@ function lowerStaticLottieLayer(input: {
   if (type === 5) {
     const text = lottieTextValue(input.layer);
     if (text === null) throw new Error(`Lottie lowering requires static text on ${layerId}.`);
+    if (input.exactTiming === true && Math.abs(transform.scaleX - transform.scaleY) > 1e-9) {
+      throw new Error(`Lottie lowering text layer ${layerId} requires uniform static scale.`);
+    }
     const documentData = readJsonRecord(readJsonRecord(input.layer.t).d);
     const keys = Array.isArray(documentData.k) ? documentData.k : [];
     const textStyle = readJsonRecord(readJsonRecord(keys[0]).s);
-    const fontSize = positiveOr(readJsonNumber(textStyle.s), 32);
+    const fontSize = staticPositiveLottieScalar(textStyle.s, 32, "text font size", input.exactTiming === true);
     return applyFixtureBackedLottieEffects(input.layer, [{
       id: layerId,
       name: readJsonString(input.layer.nm) ?? layerId,
@@ -434,7 +468,7 @@ function lowerStaticLottieLayer(input: {
       style: {
         fontSize,
         fontFamily: readJsonString(textStyle.f) ?? "sans-serif",
-        color: lottieColor(textStyle.fc, "#ffffff"),
+        color: lottieColor(textStyle.fc, "#ffffff", input.exactTiming === true),
         ...(containsComplexText(text) ? { direction: "auto", textAlign: "start" } : {})
       }
     }]);
@@ -464,7 +498,7 @@ function lowerStaticLottieLayer(input: {
     }]);
   }
   if (type !== 4) throw new Error(`Lottie lowering does not support layer type ${type ?? "unknown"} on ${layerId}.`);
-  const paths = collectStaticLottiePaths(input.layer.shapes, layerId, transform);
+  const paths = collectStaticLottiePaths(input.layer.shapes, layerId, transform, input.exactTiming === true);
   return applyFixtureBackedLottieEffects(input.layer, paths.map((path, pathIndex) => {
     const transformedPath = transformLottiePath(path);
     const boundsPoints = transformedPath.vertices.flatMap((point, index) => [
@@ -476,8 +510,13 @@ function lowerStaticLottieLayer(input: {
     const maxX = Math.max(...boundsPoints.map((point) => point[0]));
     const minY = Math.min(...boundsPoints.map((point) => point[1]));
     const maxY = Math.max(...boundsPoints.map((point) => point[1]));
-    const sourceWidth = Math.max(1, maxX - minX);
-    const sourceHeight = Math.max(1, maxY - minY);
+    const rawSourceWidth = maxX - minX;
+    const rawSourceHeight = maxY - minY;
+    if (input.exactTiming === true && (rawSourceWidth <= 0 || rawSourceHeight <= 0)) {
+      throw new Error(`Lottie lowering requires non-degenerate path bounds on ${layerId}.`);
+    }
+    const sourceWidth = Math.max(1, rawSourceWidth);
+    const sourceHeight = Math.max(1, rawSourceHeight);
     const baseLayer = {
       id: paths.length === 1 ? layerId : `${layerId}-path-${pathIndex + 1}`,
       name: path.name,
@@ -688,7 +727,7 @@ interface StaticLottieTransform {
   scaleY: number;
   rotation: number;
   opacity: number;
-  matrix: [number, number, number, number, number, number];
+  matrix: MotionAffineMatrix;
 }
 
 interface StaticLottiePath {
@@ -706,13 +745,13 @@ interface StaticLottiePath {
   gradient?: MotionGradient;
 }
 
-function collectStaticLottiePaths(value: unknown, layerId: string, initialTransform: StaticLottieTransform): StaticLottiePath[] {
+function collectStaticLottiePaths(value: unknown, layerId: string, initialTransform: StaticLottieTransform, strict = false): StaticLottiePath[] {
   if (!Array.isArray(value)) throw new Error(`Lottie lowering requires a shapes array on ${layerId}.`);
   const paths: StaticLottiePath[] = [];
   const visit = (items: unknown[], inheritedTransform: StaticLottieTransform): void => {
     const records = items.map(readJsonRecord);
     const localTransform = records.find((item) => readJsonString(item.ty) === "tr");
-    const transform = combineLottieTransforms(inheritedTransform, lottieStaticTransform(localTransform));
+    const transform = combineLottieTransforms(inheritedTransform, lottieStaticTransform(localTransform, strict));
     const fillItem = records.find((item) => readJsonString(item.ty) === "fl");
     const gradientItem = records.find((item) => readJsonString(item.ty) === "gf");
     const strokeItem = records.find((item) => readJsonString(item.ty) === "st");
@@ -737,25 +776,25 @@ function collectStaticLottiePaths(value: unknown, layerId: string, initialTransf
           inTangents,
           outTangents,
           closed: shape.c === true,
-          fill: fillItem ? lottieColor(readJsonRecord(fillItem.c).k, "transparent") : "transparent",
-          stroke: strokeItem ? lottieColor(readJsonRecord(strokeItem.c).k, "transparent") : "transparent",
-          strokeWidth: strokeItem ? Math.max(0, staticLottieScalar(strokeItem.w, 0)) : 0,
-          strokeLinecap: lottieStrokeLinecap(readJsonNumber(strokeItem?.lc)),
+          fill: fillItem ? lottieColor(readJsonRecord(fillItem.c).k, "transparent", strict) : "transparent",
+          stroke: strokeItem ? lottieColor(readJsonRecord(strokeItem.c).k, "transparent", strict) : "transparent",
+          strokeWidth: staticLottieStrokeWidth(strokeItem, strict),
+          strokeLinecap: lottieStrokeLinecap(readJsonNumber(strokeItem?.lc), strict),
           transform
         });
       } else if (type === "rc" || type === "el") {
-        const primitive = staticLottiePrimitivePath(item, type, layerId);
+        const primitive = staticLottiePrimitivePath(item, type, layerId, strict);
         if (gradientItem && type !== "rc") throw new Error(`Lottie lowering supports gradient fills only on one static zero-radius rectangle on ${layerId}.`);
         paths.push({
           name: readJsonString(item.nm) ?? layerId,
           primitive: type === "rc" ? "rectangle" : "ellipse",
           ...primitive,
-          fill: fillItem ? lottieColor(readJsonRecord(fillItem.c).k, "transparent") : "transparent",
-          stroke: strokeItem ? lottieColor(readJsonRecord(strokeItem.c).k, "transparent") : "transparent",
-          strokeWidth: strokeItem ? Math.max(0, staticLottieScalar(strokeItem.w, 0)) : 0,
-          strokeLinecap: lottieStrokeLinecap(readJsonNumber(strokeItem?.lc)),
+          fill: fillItem ? lottieColor(readJsonRecord(fillItem.c).k, "transparent", strict) : "transparent",
+          stroke: strokeItem ? lottieColor(readJsonRecord(strokeItem.c).k, "transparent", strict) : "transparent",
+          strokeWidth: staticLottieStrokeWidth(strokeItem, strict),
+          strokeLinecap: lottieStrokeLinecap(readJsonNumber(strokeItem?.lc), strict),
           transform,
-          ...(gradientItem ? { gradient: lottieStaticLinearGradient(gradientItem, transform, layerId, item) } : {})
+          ...(gradientItem ? { gradient: lottieStaticLinearGradient(gradientItem, transform, layerId, item, strict) } : {})
         });
       } else if (type && !["tr", "fl", "gf", "st"].includes(type)) {
         throw new Error(`Lottie lowering does not implement shape operator ${type} on ${layerId}.`);
@@ -771,13 +810,14 @@ function lottieStaticLinearGradient(
   item: Record<string, unknown>,
   transform: StaticLottieTransform,
   layerId: string,
-  rectangle: Record<string, unknown>
+  rectangle: Record<string, unknown>,
+  strict = false,
 ): MotionGradient {
   if (readJsonNumber(item.t) !== 1) throw new Error(`Lottie lowering requires a linear gradient fill on ${layerId}.`);
   if (!lottiePropertyIsStatic(item.o) || !lottiePropertyIsStatic(item.s) || !lottiePropertyIsStatic(item.e)) {
     throw new Error(`Lottie lowering requires static gradient opacity and endpoints on ${layerId}.`);
   }
-  if (staticLottieScalar(item.o, 100) !== 100) {
+  if (staticLottieScalar(item.o, 100, strict) !== 100) {
     throw new Error(`Lottie lowering requires 100 percent gradient fill opacity on ${layerId}.`);
   }
   const gradient = readJsonRecord(item.g);
@@ -803,14 +843,14 @@ function lottieStaticLinearGradient(
   if (stops.some((stop, index) => index > 0 && stop.offset < stops[index - 1].offset)) {
     throw new Error(`Lottie lowering requires ordered gradient color stops on ${layerId}.`);
   }
-  const start = staticLottieVector(item.s, [0, 0]);
-  const end = staticLottieVector(item.e, [0, 0]);
+  const start = staticLottieVector(item.s, [0, 0], strict);
+  const end = staticLottieVector(item.e, [0, 0], strict);
   const localX = end[0] - start[0];
   const localY = end[1] - start[1];
   if (!lottieTransformPreservesAxisAlignedRectangle(transform)) {
     throw new Error(`Lottie lowering requires gradient rectangle transforms in 90-degree increments on ${layerId}.`);
   }
-  assertLottieGradientSpansRectangle(start, end, rectangle, transform, layerId);
+  assertLottieGradientSpansRectangle(start, end, rectangle, transform, layerId, strict);
   const deltaX = (transform.matrix[0] * localX) + (transform.matrix[2] * localY);
   const deltaY = (transform.matrix[1] * localX) + (transform.matrix[3] * localY);
   if (Math.hypot(deltaX, deltaY) <= 1e-9) throw new Error(`Lottie lowering requires distinct gradient endpoints on ${layerId}.`);
@@ -826,10 +866,11 @@ function assertLottieGradientSpansRectangle(
   end: number[],
   rectangle: Record<string, unknown>,
   transform: StaticLottieTransform,
-  layerId: string
+  layerId: string,
+  strict = false,
 ): void {
-  const [centerX, centerY] = staticLottieVector(rectangle.p, [0, 0]);
-  const [width, height] = staticLottieVector(rectangle.s, [0, 0]);
+  const [centerX, centerY] = staticLottieVector(rectangle.p, [0, 0], strict);
+  const [width, height] = staticLottieVector(rectangle.s, [0, 0], strict);
   const point = (value: number[]): [number, number] => [
     (transform.matrix[0] * value[0]) + (transform.matrix[2] * value[1]) + transform.matrix[4],
     (transform.matrix[1] * value[0]) + (transform.matrix[3] * value[1]) + transform.matrix[5]
@@ -878,18 +919,19 @@ function lottieTransformPreservesAxisAlignedRectangle(transform: StaticLottieTra
 function staticLottiePrimitivePath(
   item: Record<string, unknown>,
   type: "rc" | "el",
-  layerId: string
+  layerId: string,
+  strict = false,
 ): Pick<StaticLottiePath, "vertices" | "inTangents" | "outTangents" | "closed"> {
   if (!lottiePropertyIsStatic(item.p) || !lottiePropertyIsStatic(item.s)) {
     throw new Error(`Lottie lowering requires static ${type === "rc" ? "rectangle" : "ellipse"} position and size on ${layerId}.`);
   }
-  const [cx, cy] = staticLottieVector(item.p, [0, 0]);
-  const [width, height] = staticLottieVector(item.s, [0, 0]);
+  const [cx, cy] = staticLottieVector(item.p, [0, 0], strict);
+  const [width, height] = staticLottieVector(item.s, [0, 0], strict);
   if (width <= 0 || height <= 0) throw new Error(`Lottie lowering requires positive primitive size on ${layerId}.`);
   const halfWidth = width / 2;
   const halfHeight = height / 2;
   if (type === "rc") {
-    if (!lottiePropertyIsStatic(item.r) || staticLottieScalar(item.r, 0) !== 0) {
+    if (!lottiePropertyIsStatic(item.r) || staticLottieScalar(item.r, 0, strict) !== 0) {
       throw new Error(`Lottie lowering requires a static zero-radius rectangle on ${layerId}.`);
     }
     return {
@@ -912,32 +954,35 @@ function identityLottieTransform(): StaticLottieTransform {
   return { x: 0, y: 0, anchorX: 0, anchorY: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, matrix: [1, 0, 0, 1, 0, 0] };
 }
 
-function lottieStaticTransform(value: unknown): StaticLottieTransform {
+function lottieStaticTransform(value: unknown, strict = false): StaticLottieTransform {
   const transform = readJsonRecord(value);
   if (Object.keys(transform).length === 0) return identityLottieTransform();
+  if (strict && transform.r !== undefined && transform.rz !== undefined) {
+    throw new Error("Lottie lowering requires at most one static transform rotation property.");
+  }
   for (const key of ["p", "s", "r", "rz", "a", "o"]) {
     if (transform[key] !== undefined && !lottiePropertyIsStatic(transform[key])) {
       throw new Error(`Lottie lowering requires static transform property ${key}.`);
     }
   }
   for (const key of ["sk", "sa"]) {
-    if (transform[key] !== undefined && (!lottiePropertyIsStatic(transform[key]) || staticLottieScalar(transform[key], 0) !== 0)) {
+    if (transform[key] !== undefined && (!lottiePropertyIsStatic(transform[key]) || staticLottieScalar(transform[key], 0, strict) !== 0)) {
       throw new Error(`Lottie lowering does not support transform skew property ${key}.`);
     }
   }
-  const position = staticLottieVector(transform.p, [0, 0]);
-  const anchor = staticLottieVector(transform.a, [0, 0]);
-  const scale = staticLottieVector(transform.s, [100, 100]);
-  const scaleX = positiveOr(scale[0], 100) / 100;
-  const scaleY = positiveOr(scale[1], 100) / 100;
-  const rotation = staticLottieScalar(transform.r ?? transform.rz, 0);
-  const radians = rotation * Math.PI / 180;
-  const cosine = Math.cos(radians);
-  const sine = Math.sin(radians);
-  const a = cosine * scaleX;
-  const b = sine * scaleX;
-  const c = -sine * scaleY;
-  const d = cosine * scaleY;
+  const position = staticLottieVector(transform.p, [0, 0], strict);
+  const anchor = staticLottieVector(transform.a, [0, 0], strict);
+  const scale = staticLottieVector(transform.s, [100, 100], strict);
+  if (strict && (scale[0] <= 0 || scale[1] <= 0)) {
+    throw new Error("Lottie lowering requires positive static transform scale values.");
+  }
+  const scaleX = strict ? scale[0] / 100 : positiveOr(scale[0], 100) / 100;
+  const scaleY = strict ? scale[1] / 100 : positiveOr(scale[1], 100) / 100;
+  const rotation = staticLottieScalar(transform.r ?? transform.rz, 0, strict);
+  const opacityPercent = staticLottieScalar(transform.o, 100, strict);
+  if (strict && (opacityPercent < 0 || opacityPercent > 100)) {
+    throw new Error("Lottie lowering requires static transform opacity from 0 through 100 percent.");
+  }
   return {
     x: position[0],
     y: position[1],
@@ -947,8 +992,12 @@ function lottieStaticTransform(value: unknown): StaticLottieTransform {
     scaleX,
     scaleY,
     rotation,
-    opacity: Math.max(0, Math.min(1, staticLottieScalar(transform.o, 100) / 100)),
-    matrix: [a, b, c, d, position[0] - (a * anchor[0]) - (c * anchor[1]), position[1] - (b * anchor[0]) - (d * anchor[1])]
+    opacity: strict ? opacityPercent / 100 : Math.max(0, Math.min(1, opacityPercent / 100)),
+    matrix: motionAffineMatrix({
+      // Lottie position denotes the transformed anchor, whereas Motion x/y denotes the box's
+      // untransformed top-left. Convert before using the shared Motion affine authority.
+      x: position[0] - anchor[0], y: position[1] - anchor[1], originX: anchor[0], originY: anchor[1], scaleX, scaleY, rotation
+    })
   };
 }
 
@@ -963,34 +1012,14 @@ function combineLottieTransforms(parent: StaticLottieTransform, child: StaticLot
     scaleY: parent.scaleY * child.scaleY,
     rotation: parent.rotation + child.rotation,
     opacity: parent.opacity * child.opacity,
-    matrix: multiplyLottieMatrices(parent.matrix, child.matrix)
+    matrix: multiplyMotionAffineMatrices(parent.matrix, child.matrix)
   };
-}
-
-function multiplyLottieMatrices(
-  left: StaticLottieTransform["matrix"],
-  right: StaticLottieTransform["matrix"]
-): StaticLottieTransform["matrix"] {
-  return [
-    (left[0] * right[0]) + (left[2] * right[1]),
-    (left[1] * right[0]) + (left[3] * right[1]),
-    (left[0] * right[2]) + (left[2] * right[3]),
-    (left[1] * right[2]) + (left[3] * right[3]),
-    (left[0] * right[4]) + (left[2] * right[5]) + left[4],
-    (left[1] * right[4]) + (left[3] * right[5]) + left[5]
-  ];
 }
 
 function transformLottiePath(path: StaticLottiePath): StaticLottiePath {
   const matrix = path.transform.matrix;
-  const point = (value: [number, number]): [number, number] => [
-    (matrix[0] * value[0]) + (matrix[2] * value[1]) + matrix[4],
-    (matrix[1] * value[0]) + (matrix[3] * value[1]) + matrix[5]
-  ];
-  const vector = (value: [number, number]): [number, number] => [
-    (matrix[0] * value[0]) + (matrix[2] * value[1]),
-    (matrix[1] * value[0]) + (matrix[3] * value[1])
-  ];
+  const point = (value: [number, number]): [number, number] => transformMotionAffinePoint(matrix, value);
+  const vector = (value: [number, number]): [number, number] => transformMotionAffineVector(matrix, value);
   return {
     ...path,
     vertices: path.vertices.map(point),
@@ -999,21 +1028,6 @@ function transformLottiePath(path: StaticLottiePath): StaticLottiePath {
     strokeWidth: path.strokeWidth * Math.sqrt(Math.abs((matrix[0] * matrix[3]) - (matrix[1] * matrix[2]))),
     transform: { ...identityLottieTransform(), opacity: path.transform.opacity }
   };
-}
-
-function staticLottieVector(value: unknown, fallback: number[]): number[] {
-  const property = readJsonRecord(value);
-  const raw = property.k ?? value;
-  if (!Array.isArray(raw) || raw.length < 2) return [...fallback];
-  const numbers = raw.map((entry) => readJsonNumber(entry));
-  if (numbers.some((entry) => entry === null)) throw new Error("Lottie lowering requires finite static vector values.");
-  return numbers as number[];
-}
-
-function staticLottieScalar(value: unknown, fallback: number): number {
-  const property = readJsonRecord(value);
-  const raw = property.k ?? value;
-  return readJsonNumber(raw) ?? fallback;
 }
 
 function lottiePointList(value: unknown, label: string): Array<[number, number]> {
@@ -1040,21 +1054,6 @@ function lottieBezierPath(path: StaticLottiePath): string {
   }
   if (path.closed) segments.push("Z");
   return segments.join(" ");
-}
-
-function lottieColor(value: unknown, fallback: string): string {
-  if (!Array.isArray(value) || value.length < 3) return fallback;
-  const channels = value.slice(0, 4).map((entry) => readJsonNumber(entry));
-  if (channels.slice(0, 3).some((entry) => entry === null)) return fallback;
-  const normalized = channels.map((entry, index) => {
-    const number = entry ?? (index === 3 ? 1 : 0);
-    return Math.round(Math.max(0, Math.min(1, number)) * 255).toString(16).padStart(2, "0");
-  });
-  return `#${normalized.slice(0, 4).join("")}`;
-}
-
-function lottieStrokeLinecap(value: number | null): "butt" | "round" | "square" {
-  return value === 2 ? "round" : value === 3 ? "square" : "butt";
 }
 
 function safeMotionId(value: string, fallback: string): string {
@@ -1084,6 +1083,7 @@ function finiteLottieNumber(value: unknown, key: string): number {
   if (number === null) throw new Error(`Lottie lowering requires finite ${key}.`);
   return number;
 }
+function exactLottieFrameMs(frames: number, fps: number): number { const microseconds = frames * 1_000_000 / fps; if (!Number.isSafeInteger(microseconds) || microseconds < 0) throw new Error("Lottie GPU precomposition frame time cannot map losslessly to a safe integer microsecond."); return microseconds / 1_000; }
 
 function positiveLottieNumber(value: unknown, key: string): number {
   const number = finiteLottieNumber(value, key);

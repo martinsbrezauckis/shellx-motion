@@ -4,7 +4,6 @@ description: Author, inspect, composite, track, stabilize, keyframe, preview, re
 ---
 
 # ShellX Motion agent skill
-
 Use this skill for local ShellX Motion package work and Motion-owned rendering called from Design Studio or Cut.
 
 ## Operating contract
@@ -21,7 +20,7 @@ Use this skill for local ShellX Motion package work and Motion-owned rendering c
 
 ## Cold-start recipe
 
-When configured as MCP, Motion's bridge reads the private key and live port per call; never put a token in agent config. If stopped, run `pnpm start` (or the Workbench launcher) and retry; remote publishing stays off.
+When configured as MCP, Motion's bridge reads the private key and live port per call; never put a token in agent config. If stopped, ask the host to start Motion with the required authoring roots and separate render package/input/output roots (or use the Workbench launcher and human Browse grants), then retry; request fields never create those authorities and remote publishing stays off.
 
 ```bash
 # Installed form. In a source checkout: pnpm --filter @shellx-motion/cli run cli -- <cmd>
@@ -47,25 +46,42 @@ shellx-motion debug preview-frame \
 
 Use `--value-json` only for typed JSON syntax; rich controls still accept only declared scalar controls and construct-specific bounds.
 
+## Browser path reveals
+
+Use the existing rich setter with `pathReveal.start` or `pathReveal.end` only on a declared,
+single-subpath `shape: "path"`/`"freeform"` layer with a visible positive-width stroke. Both values
+are independent `[0,1]` scalars; `end <= start` is an empty window, not a wrap or reverse. It is a
+browser-only `shape.path.reveal` feature: call `motion.capabilities.match` before choosing native,
+which refuses it. Full contract and pixel-proof matrix: [path-reveals.md](../../docs/public/path-reveals.md).
+
+## Static particles and points trails
+
+Use `effects.trail` only on declared `particles` or ordered `points` layers: static `durationMs` 1..2000 and integer `samples` 2..8.
+Use `layer-create` for the record and `layer-rich-set` only for its scalars; it is not a keyframe target, formula, physics system, persistent history, or GPU effect.
+The active budget is 8,192 trail vertices and renderer stroke work refuses above 2,000,000 pixels. Use `pathReveal` for exact path engraving.
+Use a trail for a moving particle/point accent. Contract, CPU-lane boundaries, and test matrix: [trails.md](../../docs/public/trails.md).
+
 ## Surface facts that trap agents
 
 Each of these is verified current behaviour, not a caveat. Read them before scripting.
 
 1. **`--lane` means different things in `preview` and `render`.** `preview --lane` takes
-   `native|browser`; `render --lane` takes `native|ffmpeg`, while its browser choice is
-   `--frame-lane browser|native`. Invalid cross-use fails with `unsupported_lane`; `render --lane
-   native` writes one PNG still, not video. `motion.render.final` accepts `frameLane: "browser"` only.
+   `native|browser|gpu`; `render --lane` takes `native|ffmpeg`, with frame rasterizer `--frame-lane browser|native|gpu`. Invalid cross-use fails with `unsupported_lane`; `render --lane
+   native` writes one PNG still, not video. `motion.render.final` accepts `frameLane: "browser" | "native" | "gpu"`.
+   GPU is strict with no fallback. V25-B1 accepted implementation admits active-video **visual-only** preview only through a host-owned CFR provider: Core maps the request in integer microseconds; immutable-source/decoded-RGBA identities and stable dynamic-texture replacement are receipted; the completed LRU is capped at 32 entries / 128 MiB and in-flight RGBA at 64 MiB. No command argument configures it, and it proves neither audio nor final staging/encode/mux. Native Linux RTX 5080 rig scrub accepted repeat pixels, retained-resource high water, visual output, and complete cleanup at runtime commit `40b965bb69b02c2bcfc0b0972beaca2a07e4defa`. V25-B2 final video uses governed raw RGBA to FFmpeg directly or through durable segments; the segmented route accepts either a non-hybrid scene or exactly one strict data-only HTML/web/canvas or isolated restricted-GLSL texture whose frozen source/runtime/request/range-ledger/cleanup identities remain host-owned. Native Linux RTX 5080 rig restricted-GLSL interrupted-resume and cold replay matched at runtime commit `77faf57440bc4b7d2f203028664ae1da3995acc0`; strict HTML aliases are not native-qualified. Native also refuses unsupported content; browser workflows require `browser`.
 2. **There is no `motion.screenshot`.** It was removed because Motion is a headless engine with no
    panel of its own: the command could only relay a request to a host and report `ok: true` for
    something it could not verify. Use `debug preview-frame` / `motion.preview.frame` for a real PNG
    plus receipt.
-3. **`validate` emits no receipt.** It returns identity, layer count, hosts, and lanes in the JSON
-   envelope and creates no `receipts/` directory. Do not look for one, and do not report a validate
-   receipt id.
-4. **`render` / `motion.render.final` return the receipt inline AND write it to disk** when a
-   receipts root is known (`--receipts-root`, or `receiptsRoot` on the Debug API). `preview` and
-   `capture-browser` write theirs beside the frame in `--out`; `template apply`, `template
-   media-replace` and `render-batch` write into the output package's `receipts/`.
+3. **`validate` is package-read-only, but it can retain evidence.** CLI writes a passed or failed
+   `package.validate` receipt only with an explicit `--receipts-root` outside the package; Debug
+   API/MCP and SDK use a governed `receiptsRoot` when their host has one. Without that destination,
+   it returns identity, layer count, hosts, and lanes in the JSON envelope and creates no
+   `receipts/` directory.
+4. **CLI `render` returns the receipt inline and writes an output-sidecar copy.** Debug API/MCP
+   `motion.render.final` returns it inline, but persists only under a caller/server-governed `receiptsRoot`; without that root it is envelope-only.
+   `preview` and `capture-browser` write theirs beside the frame in `--out`; `template apply`,
+   `template media-replace` and `render-batch` write into the output package's `receipts/`.
 5. **Renders block, but the job IS observable from another process** — name it with `--job-id` and
    poll `motion.job.get` (see "Watching work you started"). Not live: `motion.render.status` /
    `.queue` summarize receipt files and cannot see work in flight. `motion.render.cancel` writes a
@@ -76,10 +92,12 @@ Each of these is verified current behaviour, not a caveat. Read them before scri
    refuses any `blendMode` but `normal` (`depth planes do not yet support layer blend modes`). Build
    a lighten/screen glow as a `layer.gradient` under `normal`, or keep it out of the depth stack;
    `adjustment` layers are exempt and stay screen-space.
-7. **A long 1080p browser render can hit a per-job 6 GiB memory ceiling and die without JSON.** The governor
-   aborts with `job_rss_limit_exceeded`; through the CLI that is a non-zero exit and stack trace. Peak grows with FRAME COUNT and
+7. **A long 1080p browser render can hit its adaptive per-job memory ceiling.** `doctor` reports the
+   resolved value from total/free RAM and job concurrency (6 GiB is only the no-host-facts fallback). The governor
+   aborts with `job_rss_limit_exceeded`; the CLI returns a structured JSON failure envelope (`ok: false`, with that error code) and exits non-zero. Peak grows with FRAME COUNT and
    `effects.motionBlur.samples` multiplies it — measured, 450 frames at 1080p30 with two environment
-   layers and 3-sample blur peaked at 5.07 GiB of 6. Budget the piece before authoring it.
+   layers and 3-sample blur peaked at 5.07 GiB. More admitted memory also raises bounded CPU point
+   clouds through 8K/16K/32K/65K tiers; a weaker host refuses rather than dropping points.
 8. **MCP supports two protocol eras.** Modern `2026-07-28` clients call `server/discover` without initialize;
    legacy `2025-06-18` clients retain initialize/list/call. Trust the schemas in either mode; the server grant remains the ceiling.
 9. **Discovery reports the shared cached update status.** Startup, periodic, About-page, and agent
@@ -117,24 +135,25 @@ and receipt, so Design Studio can map it to one undo entry. Bake only enabled re
 sample/keyframe/fingerprint evidence, then review the keyframe panel and preview. Never place code,
 callbacks, globals, file/network access, plugin references, or dynamic property lookup in a node.
 
-`kind` is `rain|water|snow|fog`, `quality` is `preview|balanced|cinematic` (there is no
-`"standard"`), `mode` is `scene|overlay`, every colour is `#RRGGBB` with no alpha, and a document
-holds at most four environment layers — `validate` refuses anything else before you render. Footage
-binding (`sceneSourceLayerId`), effect masks, the bounded fog record, and those closed sets in full:
-[references/environments-depth-and-budget.md](references/environments-depth-and-budget.md).
-
-Do not add JavaScript, expressions, external shader URLs, commands, or network sources to a layer.
-Restricted shaders reference validated package-local assets; fixed 3D scenes remain data-only.
-
+`kind` is `rain|water|snow|fog`, `quality` is `preview|balanced|cinematic` (there is no `"standard"`),
+`mode` is `scene|overlay`, colours are `#RRGGBB`, and a document holds at most four environment layers.
+Footage binding, effect masks, fog, and the closed sets are in [the environment reference](references/environments-depth-and-budget.md).
+On the strict GPU lane, a fixed environment may retain bounded 2..8-sample `effects.motionBlur` through
+retained accumulation and one composite. Temporal video, 3D, materials, hybrids, compute, and package shaders still refuse.
+Do not add JavaScript, expressions, external shader URLs, commands, or network sources to a layer; restricted
+shaders reference validated package-local assets, and fixed 3D scenes remain data-only.
 ## glTF and GLB scene import
 
-Use `debug gltf-import` for a local `.gltf` or `.glb`; never embed a model by patching scene JSON.
-The importer preserves the source, accepts only glTF 2.0 static triangles with embedded/GLB buffers,
-and denies external buffers, network access, extensions, animation, skins, textures, and non-uniform
-scale. Read the lowering warnings, preview actual mesh pixels, and inspect `scenes3d` receipt evidence.
-Design Studio may reopen and edit the resulting ordinary Motion package. Cut must receive its rendered-media
-handoff; it does not claim native editable 3D. Trusted programmatic hosts use SDK `gltfImport` with
-host-configured `authoringInputRoots` and `authoringOutputRoots`, never roots supplied by agent input.
+Use `debug gltf-import` for a local `.gltf` or `.glb`; never embed a model by patching scene JSON. The importer preserves glTF 2.0 static triangles with embedded/GLB buffers. Its only textured route is the
+**contained PNG base-color PBR direct-final subset**: exact `TEXCOORD_0`, an sRGB PNG base-color texture, opaque linear base-color/metallic/roughness/emissive factors, canonical immutable scene, and copied hash-bound bytes.
+It is authenticated 1280x720 static GPU-to-FFmpeg direct final only (max 16 primitives/textures, 16 MiB decoded each, 48 MiB GPU, 4 MiB readback); generic browser/Native preview, segmented/resume, and editable-material claims refuse. JPEG, external URIs, samplers, extensions/compression, animation, skins, morph targets, sparse accessors, matrix transforms, and non-uniform scale refuse.
+This is source, not hardware/installed-host proof; untextured packages retain their route. Read receipts; SDK `gltfImport` needs host-configured `authoringInputRoots` and `authoringOutputRoots`, never agent-supplied roots.
+## C5C1C scene3d animation: persisted authoring and one strict preview lowerer
+
+Persisted authoring remains closed Debug API/MCP copy-on-write work: use typed locators and exact integer `atUs`, write to an explicit absent/empty `outDir`, and read the receipt. Never hand-author the store. [The operating guide](references/scene3d-animation.md) gives the six-command workflow; the [generated Debug contract](../../docs/public/DEBUG_API_COMMANDS.md#motiontimelinescene3d-animationinspect) owns exact schemas. O6 adds one renderer exception: the direct `@shellx-motion/renderer-browser` `renderMotionGpuPreview` API lowers accepted persisted data through Core static/frame wrappers to one strict GPU PNG preview. Only visible root Scene3D layers are admitted; assets, companions/nesting, video, fonts, hybrid sources, effect modules, audio, final video, Native, FFmpeg, Cut, CLI, local SDK, generic Action/Debug preview, provider, and Unreal all fail closed before resource/session work. Source tests cover preflight, cancellation, staged-output freshness, receipt identity, and terminal cleanup; installed WebGPU publication/pixels/cleanup are an env-gated exact Node 24 qualified Linux GPU-host proof, not a current claim.
+## C2 layout-gap animation: persisted Core/Debug checkpoint, no renderer
+
+Use only the closed `motion.timeline.layout-gap-animation.*` Debug lifecycle after a trusted static row/column `layout.apply`; exactly one application-bound track, exact application ID/fingerprint/ordered child IDs, integer `atUs`, canonical easing, and successor host authority are mandatory. Remove its final track before `layout.remove`; never hand-author `layoutGapAnimation` or alter static topology/transforms/timing. C2-L1 has no renderer route: Browser, Native, GPU, FFmpeg, Cut, CLI, SDK, Action, provider, and Unreal must pre-resource refuse. [The operating guide](references/layout-gap-animation.md) and [generated Debug contract](../../docs/public/DEBUG_API_COMMANDS.md#motiontimelinelayout-gap-animationinspect) own exact commands.
 
 ## Lottie and dotLottie import
 
@@ -231,16 +250,16 @@ math Cut has not fixture-proven as receiver-exact. Read the exact CLI calls in
 
 ## Media-rich template authoring
 
-Start from `motion.template.plan`, not a guessed package path — it returns the `authoringLoop`
-sequence, declared media slots, and quality targets for that family. Only 5 of the 12 pack families
+Start from `motion.template.plan`, not a guessed package path — it returns the `authoringLoop` sequence, declared media slots, and quality targets for that family. Only 5 of the 12 pack families
 declare `metadata.mediaSlots` / `story.beats`; plan the other seven from `motion.template.controls`.
 No family ships a rendered MP4 as proof — render and read the receipt yourself, and never lower a
 failed quality gate to make a render pass.
 
-Full detail, including the five rich families and Cut's Generate-catalog exceptions:
-[references/media-rich-templates.md](references/media-rich-templates.md).
+Full detail, including the five rich families and Cut's Generate-catalog exceptions: [references/media-rich-templates.md](references/media-rich-templates.md).
 
 ## Connector ownership
+
+Before host handoff, inspect `runtime-probe`, `connector catalog`, then `connector describe <capability-id>`: all are read-only, project/provider/network-free. Source and ordinary packed installs are always `unmanaged`/distribution-`unverified`; never invent an id, clean-host qualification, or managed claim. The current v2 catalog admits P2A Template-to-Cut and P2B Canvas/Script/Source-to-Cut to the single persistent `motion.connector.submit` plus `motion.job.*` lifecycle; they remain Linux Browser-to-FFmpeg H.264 `rendered_media`. The host must supply a stable authenticated caller, caller-scoped opaque-reference authority, and immutable binding journal; never put a path or URL in the request. Legacy named routes remain compatibility-only and Scene3D/C6/C7 remain Cut-refused. Legacy Canvas/Cut filesystem routes also remain inside host authority: Canvas-to-MP4 and Cut Generate-to-Cut are Linux-only because their package publication requires exact descriptor-relative closed-tree proof; Canvas-to-MP4 needs configured authoring input/output roots, Template-to-Cut needs configured input and output roots, Canvas bridge needs an output root, and Cut Generate-to-Cut needs an output root plus an input root for `scriptPath`; request fields never create those grants. Consumers branch on protocol/request/lifecycle/output classes, never capability ids, so a new same-class Motion feature requires no Cut code change. Preserve an unknown future terminal error's bounded code, message, retryable flag, optional remedy/retryAfterMs and suggestedAction rather than translating it to a known code. Retry is explicit and may reopen only a retryable failed durable binding; never auto-resurrect interrupted or cancelled work.
 
 - Design Studio authors and keyframes Motion controls through its path-free Motion session API.
 - Design Studio presents procedural source/target labels, enable/disable, bake, and detach; it never asks
@@ -251,7 +270,7 @@ Full detail, including the five rich families and Cut's Generate-catalog excepti
   mixed easing, transform scale/rotation, or other non-equivalent animation to rendered media.
 - Cut edits, refreshes, relinks, rolls back, or detaches a linked Motion clip. It must not pretend
   to natively edit shaders, particles, 3D, environments, Motion blur, or non-equivalent film math.
-- Unsupported native Cut constructs use an explicit rendered-media fallback with a reason.
+- Unsupported native Cut constructs use an explicit rendered-media fallback with a reason. **Template-to-Cut P2A exception:** only Linux publishes its Browser-to-FFmpeg MP4 with typed values/placement; source is input evidence, never output—never pass `auto`, dry-run, Native, or GPU flags. **Canvas/Script/Source-to-Cut P2B exception:** Linux-only, absent-or-empty output, real Browser-to-FFmpeg H.264 `rendered_media` with an artifact handle and Cut plan; external inputs are evidence only. Never pass force, dry-run, editable/live/auto modes, native/GPU/frame-lane controls, alternate presets, audio, or injected renderer/FFmpeg/clock fields ([contract](../../docs/public/cut-and-design-studio.md#template-to-cut-and-p2b-canvas-script-and-source-to-cut)).
 
 ## Starting from nothing
 
@@ -300,8 +319,13 @@ stop polling when `pollAfterMs` is absent, and never treat a query error (`job_u
 
 ## Source-of-truth references
 
-- Read [references/cli.md](references/cli.md) for exact calls, layer examples, verification, and
-  failure rules.
+- Read [rendering samples for agents](../../docs/public/RENDERING_SAMPLES.md) before choosing a sample or promising a rendering family; it distinguishes checked source/workflow evidence from pre-baked examples and reports release blockers.
+- Read [references/cli.md](references/cli.md) for exact calls, layer examples, verification, and failure rules.
+- Read [render output and frame ownership](references/output-ownership.md) before naming a render
+  destination, passing a frame-directory option, retrying partial work, or retaining source PNGs.
+- Read [agent-authored procedural scripts](references/agent-authored-scripts.md) before proposing
+  package-local `web`, `html`, or `canvas` source. It is the route/permission/budget boundary for
+  trusted local agent-authored scripts; it does not enable script import.
 - Read [environments, depth cameras and the render budget](references/environments-depth-and-budget.md)
   before authoring an environment, a depth camera, or anything longer than a few seconds at 1080p:
   the closed value sets, the exact camera-parallax arithmetic, and the measured memory ceiling.

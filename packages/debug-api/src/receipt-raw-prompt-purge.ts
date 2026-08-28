@@ -14,8 +14,8 @@
  * (a detached `signature`, `parentReceiptId`, any vendor extension) and INVENTED one, because the
  * normalizer merges `output.artifacts` into a top-level `artifacts` array for its callers. A purge
  * is a deletion of one key; anything else is the read path quietly rewriting other people's
- * evidence. Worse, `motion.prompt.cancel|retry` record `inputHashes.targetReceipt = sha256(<file>)`,
- * so a lossy rewrite invalidates a hash already recorded against those exact bytes.
+ * evidence. Prompt/render controls bind their input hash to the stable reader's admitted byte
+ * snapshot, so a lossy rewrite would also make their receipt evidence impossible to explain.
  *
  * So the transform runs TWICE over one instant: once on the projection (that is what the caller
  * receives) and once on the parsed original (that is what lands on disk). `redactExpiredRawPrompt`
@@ -42,8 +42,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { lstat, rename, rm, writeFile } from "node:fs/promises";
-import type { OperationReceipt } from "@shellx-motion/core";
+import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
+import { verifyPairedReceiptOutputIfMarked } from "@shellx-motion/core/internal/paired-output-receipt-verification";
 import { redactExpiredRawPrompt } from "@shellx-motion/prompt";
+import type { StableReceiptEnforcement, StableReceiptLocation, StableReceiptPostPurge } from "./receipt-store-stable-reader.js";
 
 /** Identity of the file the reader actually read, so the purge cannot land on a different one. */
 export interface VerifiedReceiptFile {
@@ -62,24 +64,47 @@ type EnforceableRecord = Record<string, unknown> & { operation: string; output: 
  *   valid receipt (in which case there is nothing to enforce).
  * @param original the same file's PARSED JSON, unnormalized. What gets written back.
  * @param verifiedFile dev/ino of the file the reader read; re-checked before the rename.
- * @returns the projection, redacted when the deadline had passed.
+ * @returns the projection plus whether a safe, exact post-read purge was persisted.
  */
 export async function enforceRawPromptExpiry(
   path: string,
   receipt: OperationReceipt | null,
   original: unknown,
-  verifiedFile?: VerifiedReceiptFile
-): Promise<OperationReceipt | null> {
-  if (!receipt) return null;
+  verifiedFile?: VerifiedReceiptFile,
+  location?: StableReceiptLocation
+): Promise<StableReceiptEnforcement<OperationReceipt>> {
+  if (!receipt) return { receipt: null };
   const now = new Date().toISOString();
   const enforced = redactExpiredRawPrompt(receipt, now);
-  if (!enforced.redacted) return enforced.receipt;
+  if (!enforced.redacted) return { receipt: enforced.receipt };
   const purged = purgedOriginal(original, now);
   // No usable original means no faithful purge is possible. Returning the redacted projection while
   // leaving the file alone is the same posture as a failed write: never rewrite what cannot be
   // rewritten losslessly, never hand back the prompt.
-  if (purged !== null) await persistPurgedReceipt(path, purged, verifiedFile);
-  return enforced.receipt;
+  // A direct, unrooted receipt read is still redacted for the caller but never mutates a pathname.
+  // Only the stable receipt-store reader provides a retained parent capability and current-chain
+  // proof sufficient to make the on-disk purge safe.
+  const postPurge = purged !== null && location
+    ? await persistPurgedReceipt(location.capabilityPath, purged, verifiedFile, location)
+    : { state: "not_persisted" } satisfies StableReceiptPostPurge;
+  return { receipt: enforced.receipt, postPurge };
+}
+
+/**
+ * Apply every receipt-read acceptance rule at the reader boundary.  Legacy receipts preserve the
+ * raw-prompt-only behavior; a versioned paired-delivery marker additionally proves that the
+ * receipt still names its public regular artifact(s) through Core's identity-stable file hash.
+ */
+export async function enforceReceiptReadAcceptance(
+  path: string,
+  receipt: OperationReceipt | null,
+  original: unknown,
+  verifiedFile?: VerifiedReceiptFile,
+  location?: StableReceiptLocation
+): Promise<StableReceiptEnforcement<OperationReceipt>> {
+  const enforced = await enforceRawPromptExpiry(path, receipt, original, verifiedFile, location);
+  if (enforced.receipt) await verifyPairedReceiptOutputIfMarked(path, enforced.receipt);
+  return enforced;
 }
 
 /**
@@ -100,22 +125,35 @@ function purgedOriginal(original: unknown, now: string): EnforceableRecord | nul
 async function persistPurgedReceipt(
   path: string,
   purged: EnforceableRecord,
-  verifiedFile: VerifiedReceiptFile | undefined
-): Promise<void> {
+  verifiedFile: VerifiedReceiptFile | undefined,
+  location: StableReceiptLocation
+): Promise<StableReceiptPostPurge> {
   const pendingPath = `${path}.redacting-${randomUUID()}`;
   try {
-    await writeFile(pendingPath, `${JSON.stringify(purged, null, 2)}\n`, "utf8");
-    if (verifiedFile && !await stillTheVerifiedFile(path, verifiedFile)) {
+    if (!await location.isCurrent()) return { state: "not_persisted" };
+    const content = `${JSON.stringify(purged, null, 2)}\n`;
+    await writeFile(pendingPath, content, "utf8");
+    const staged = await lstat(pendingPath);
+    if (!await location.isCurrent() || (verifiedFile && !await stillTheVerifiedFile(path, verifiedFile))) {
       await rm(pendingPath, { force: true });
-      return;
+      return { state: "not_persisted" };
     }
     // A reader arriving mid-write sees either the old receipt or the purged one, never a truncated
     // file: the bytes are complete before the name is swapped.
     await rename(pendingPath, path);
+    return {
+      state: "purged",
+      snapshot: {
+        sha256: hashBuffer(Buffer.from(content, "utf8")),
+        byteLength: Buffer.byteLength(content, "utf8"),
+        identity: { dev: staged.dev, ino: staged.ino }
+      }
+    };
   } catch {
     // Intentionally swallowed; see the module comment on failure posture. The temp file is removed
     // so a store that cannot be rewritten does not accumulate one orphan per read.
     await rm(pendingPath, { force: true }).catch(() => {});
+    return { state: "not_persisted" };
   }
 }
 

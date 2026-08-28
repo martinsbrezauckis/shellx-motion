@@ -1,0 +1,454 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_v25b2_tideglass_almanac",
+  "name": "Tideglass Almanac — V25-B2 Hybrid Segmented Delivery Fixture",
+  "durationMs": 12000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#08111f",
+  "markers": [
+    {
+      "id": "quartz-wake",
+      "atMs": 0,
+      "label": "Quartz wake"
+    },
+    {
+      "id": "copper-meridian",
+      "atMs": 3000,
+      "label": "Copper meridian"
+    },
+    {
+      "id": "deep-eclipse",
+      "atMs": 6000,
+      "label": "Deep eclipse"
+    },
+    {
+      "id": "returning-tide",
+      "atMs": 9000,
+      "label": "Returning tide"
+    }
+  ],
+  "layers": [
+    {
+      "id": "almanac-camera",
+      "type": "camera",
+      "startMs": 0,
+      "durationMs": 12000,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scale": 1,
+        "rotation": 0,
+        "originX": 960,
+        "originY": 540
+      },
+      "keyframes": {
+        "transform.x": [
+          {
+            "atMs": 0,
+            "value": -12
+          },
+          {
+            "atMs": 3000,
+            "value": 8,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": -5,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 10,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 0,
+            "easing": "ease-in-out"
+          }
+        ],
+        "transform.y": [
+          {
+            "atMs": 0,
+            "value": 7
+          },
+          {
+            "atMs": 3000,
+            "value": -4,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 5,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": -3,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 0,
+            "easing": "ease-in-out"
+          }
+        ],
+        "transform.scale": [
+          {
+            "atMs": 0,
+            "value": 1.015
+          },
+          {
+            "atMs": 3000,
+            "value": 1.045,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 1.025,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 1.055,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 1.02,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "midnight-paper",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 12000,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      },
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.5,
+        "centerY": 0.44,
+        "stops": [
+          {
+            "offset": 0,
+            "color": "#18304a"
+          },
+          {
+            "offset": 0.52,
+            "color": "#0b1729"
+          },
+          {
+            "offset": 1,
+            "color": "#050a13"
+          }
+        ]
+      }
+    },
+    {
+      "id": "tideglass-window",
+      "type": "shader",
+      "startMs": 0,
+      "durationMs": 12000,
+      "opacity": 0.94,
+      "blendMode": "screen",
+      "transform": {
+        "x": 160,
+        "y": 90,
+        "width": 1600,
+        "height": 900,
+        "originX": 800,
+        "originY": 450
+      },
+      "mask": {
+        "type": "rounded-rect",
+        "radius": 86,
+        "featherPx": 2,
+        "inset": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "effects": {
+        "brightness": 1.08,
+        "saturate": 1.18,
+        "glow": {
+          "radius": 24,
+          "color": "#72e4dd"
+        }
+      },
+      "shader": {
+        "schema": "shellx-motion/shader-plugin@1",
+        "language": "glsl-es-100-expression",
+        "fragmentAssetId": "tideglass-fragment",
+        "seed": 20260815,
+        "uniforms": {
+          "u_speed": 0.18,
+          "u_drift": 0.22
+        },
+        "fallbackColor": "#102339"
+      },
+      "keyframes": {
+        "shader.uniforms.u_speed": [
+          {
+            "atMs": 0,
+            "value": 0.18
+          },
+          {
+            "atMs": 3000,
+            "value": 0.34,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 0.56,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 0.26,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 0.42,
+            "easing": "ease-in-out"
+          }
+        ],
+        "shader.uniforms.u_drift": [
+          {
+            "atMs": 0,
+            "value": 0.22
+          },
+          {
+            "atMs": 3000,
+            "value": 0.38,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 0.68,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 0.28,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 0.48,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "brass-orbit-outer",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#00000000",
+      "startMs": 0,
+      "durationMs": 12000,
+      "opacity": 0.72,
+      "transform": {
+        "x": 300,
+        "y": 128,
+        "width": 1320,
+        "height": 824,
+        "originX": 660,
+        "originY": 412
+      },
+      "style": {
+        "stroke": "#e7c384",
+        "strokeWidth": 3
+      },
+      "effects": {
+        "glow": {
+          "radius": 11,
+          "color": "#d49d4b"
+        }
+      },
+      "keyframes": {
+        "transform.rotation": [
+          {
+            "atMs": 0,
+            "value": -7
+          },
+          {
+            "atMs": 3000,
+            "value": 13,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": -15,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 18,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 5,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "brass-orbit-inner",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#00000000",
+      "startMs": 0,
+      "durationMs": 12000,
+      "opacity": 0.42,
+      "transform": {
+        "x": 570,
+        "y": 242,
+        "width": 780,
+        "height": 596,
+        "originX": 390,
+        "originY": 298
+      },
+      "style": {
+        "stroke": "#f4d9a5",
+        "strokeWidth": 2
+      },
+      "effects": {
+        "glow": {
+          "radius": 8,
+          "color": "#f0bd6d"
+        }
+      },
+      "keyframes": {
+        "transform.rotation": [
+          {
+            "atMs": 0,
+            "value": 22
+          },
+          {
+            "atMs": 3000,
+            "value": -11,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 28,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": -18,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 14,
+            "easing": "ease-in-out"
+          }
+        ],
+        "transform.scale": [
+          {
+            "atMs": 0,
+            "value": 0.92
+          },
+          {
+            "atMs": 3000,
+            "value": 1.02,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 0.96,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 9000,
+            "value": 1.04,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 12000,
+            "value": 0.98,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "almanac-frame",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#00000000",
+      "startMs": 0,
+      "durationMs": 12000,
+      "transform": {
+        "x": 118,
+        "y": 54,
+        "width": 1684,
+        "height": 972
+      },
+      "style": {
+        "radius": 112,
+        "stroke": "#f2d6a4",
+        "strokeWidth": 4
+      },
+      "effects": {
+        "glow": {
+          "radius": 15,
+          "color": "#cf9451"
+        }
+      }
+    },
+    {
+      "id": "almanac-finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 12000,
+      "effects": {
+        "vignette": {
+          "amount": 0.68,
+          "softness": 0.7,
+          "color": "#03060c"
+        },
+        "filmGrain": {
+          "amount": 0.08,
+          "size": 2,
+          "seed": 20260815
+        }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "tideglass-fragment",
+      "type": "shader",
+      "source": {
+        "path": "assets/tideglass-almanac.glsl",
+        "mimeType": "text/x-shellx-motion-glsl"
+      }
+    }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "templates/generators/tideglass-almanac/generate.py",
+    "workflow": "v25-b2-original-restricted-shader-hybrid-source-fixture"
+  }
+}

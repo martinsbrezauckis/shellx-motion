@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { expandMotionPackageRows, filterMotionDataRows, loadDataRowsFile, loadMotionPackage, loadPackageDataRows, parseMotionDataRows, parseMotionDataRowsCsv } from "./index";
+import { expandMotionPackageRows, filterMotionDataRows, loadDataRowsFile, loadMotionPackage, loadPackageDataRows, MAX_MOTION_DATA_ROWS_BYTES, parseMotionDataRows, parseMotionDataRowsCsv, type MotionPackage } from "./index";
 
 describe("motion data rows", () => {
   const fixtureRoot = resolve("../../fixtures/packages/batch-card");
@@ -30,6 +30,36 @@ describe("motion data rows", () => {
       dataRowKey: rows[0].key,
       dataRowHash: rows[0].hash
     });
+  });
+
+  it("does not materialize an absent optional background during row expansion", async () => {
+    const pkg: MotionPackage = {
+      root: "/probe",
+      manifest: {
+        schema: "shellx-motion/package-manifest@1",
+        id: "pkg_probe",
+        name: "Probe",
+        motion: "motion.json",
+        assets: [],
+        sourceApp: "shellx-motion",
+        compatibility: { lanes: ["browser"], hosts: ["standalone"] }
+      },
+      motion: {
+        schema: "shellx-motion/motion@1",
+        id: "motion_probe",
+        name: "Probe",
+        durationMs: 1000,
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        layers: [],
+        assets: [],
+        provenance: { sourceApp: "shellx-motion", createdBy: "test" }
+      }
+    };
+    const [job] = expandMotionPackageRows(pkg, parseMotionDataRows({ rows: [{ id: "plain" }] }));
+
+    expect(Object.prototype.hasOwnProperty.call(job.motion, "background")).toBe(false);
   });
 
   it("filters motion data rows by normalized row ID while preserving source order", async () => {
@@ -319,6 +349,24 @@ describe("motion data rows", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: "ada", values: { id: "ada", name: "Ada" } });
+  });
+
+  it("takes row input from a bounded non-symlink snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-data-snapshot-"));
+    tempDirs.push(root);
+    const rowsPath = join(root, "rows.json");
+    const aliasPath = join(root, "rows-link.json");
+    await writeFile(rowsPath, JSON.stringify({ rows: [{ id: "ada", name: "Ada" }] }), "utf8");
+    await expect(loadDataRowsFile(rowsPath)).resolves.toMatchObject([{ id: "ada" }]);
+
+    if (process.platform !== "win32") {
+      await symlink(rowsPath, aliasPath);
+      await expect(loadDataRowsFile(aliasPath)).rejects.toThrow(/non-symlink file|symlinked/i);
+    }
+
+    const oversizedPath = join(root, "oversized.csv");
+    await writeFile(oversizedPath, Buffer.alloc(MAX_MOTION_DATA_ROWS_BYTES + 1, 0x61));
+    await expect(loadDataRowsFile(oversizedPath)).rejects.toThrow(/16[,.]?777[,.]?216-byte|bounded regular/i);
   });
 
   it("rejects empty or malformed row data", () => {

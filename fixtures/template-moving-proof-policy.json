@@ -1,0 +1,136 @@
+{
+  "schema": "shellx-motion/template-moving-proof-policy@2",
+  "calibration": {
+    "capturedAt": "2026-08-26",
+    "command": "pnpm run template-pack:proof -- --calibrate-motion-density --retain-artifacts --out <private-output>",
+    "profile": "full-story-duration, browser frames, MP4 H.264 delivery at 8 fps, rendered or film-grain-stripped complete-sequence density analysis",
+    "note": "Fresh qualified Linux GPU-host calibration rendered all 12 promoted families and five film-grain-stripped diagnostic alternates with zero failures. The retained contact sheet was visually inspected for complete, non-blank layouts; the exact measured density values below are the release caps with no invented headroom. Calibration itself remains not release eligible; an ordinary proof must recheck these policies.",
+    "historicalEvidence": {
+      "identity": "template-product-pack-calibration-e6ae73c-qualified-linux-gpu/evidence.json",
+      "commit": "e6ae73c9c8f0224384f98dc548e0aa033848f6c8",
+      "sha256": "cab468a4129ac9a301698a552366f2d22008767703a0ff45ef7178753e336b65",
+      "scope": "Qualified Linux GPU-host diagnostic calibration of the exact 12-family public catalog, including five film-grain-stripped alternate sequences; 12 primary MP4s, zero failures, and retained path-free evidence.",
+      "reproducibility": "Checkout the identified commit and run the recorded calibration command on an owner-safe host with Browser and FFmpeg. Calibration intentionally exits non-zero with not_release_eligible; templateCount 12, renderedMp4Count 12, failureCount 0, and an empty failures array are the diagnostic acceptance facts."
+    },
+    "resourceEvidence": {
+      "capturedAt": "2026-08-26",
+      "identity": "template-product-pack-calibration-e6ae73c-qualified-linux-gpu/evidence.json",
+      "commit": "e6ae73c9c8f0224384f98dc548e0aa033848f6c8",
+      "sha256": "cab468a4129ac9a301698a552366f2d22008767703a0ff45ef7178753e336b65",
+      "scope": "The same qualified 12-family Linux GPU-host calibration records one watched FFmpeg process tree per primary render at the source-owned 25ms sampling interval; scratch and encode RSS facts are exact per-family measurements.",
+      "reproducibility": "Checkout the identified commit and run the recorded calibration command with the source-owned 25ms proof runner. Inspect each retained render receipt and the path-free evidence resource block.",
+      "samplingIntervalMs": 25,
+      "capRationale": "The 1 GiB ceiling is the next binary resource boundary above the fresh measured 420126720..645947392 byte peaks, leaves at least 66 percent headroom above the maximum measurement, and remains six times below the general 6 GiB job-governor ceiling."
+    }
+  },
+  "delivery": {
+    "preset": "mp4-h264",
+    "fps": 8,
+    "maxDurationDriftFrames": 1,
+    "color": {
+      "profile": "sdr-bt709",
+      "primaries": "bt709",
+      "transfer": "bt709",
+      "matrix": "bt709",
+      "range": "tv"
+    }
+  },
+  "families": {
+    "audio-launch": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 47, "artifactBytes": 185533, "scratchBytes": 4529463, "encodePeakRssBytes": 645947392 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.583333, "longestFrozenMs": 3125, "longestFrozenSpanMs": 3125, "meanFrameDifference": 0.002867, "meanChangedPixelRatio": 0.006686 }, "maxFrozenRatio": 0.583333, "maxLongestFrozenMs": 3125 },
+      "minUniqueFrameHashes": 45,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 16777216,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "cinematic-fog-title": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 1754186, "scratchBytes": 104274125, "encodePeakRssBytes": 621621248 },
+      "motionDensity": { "state": "calibrated", "analysis": "film-grain-stripped", "calibration": { "frozenRatio": 0, "longestFrozenMs": 0, "longestFrozenSpanMs": 0, "meanFrameDifference": 0.003049, "meanChangedPixelRatio": 0.056271 }, "maxFrozenRatio": 0, "maxLongestFrozenMs": 0 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 16777216,
+      "maxScratchBytes": 201326592,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "cinematic-rain-launch": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 4114473, "scratchBytes": 123829061, "encodePeakRssBytes": 626139136 },
+      "motionDensity": { "state": "calibrated", "analysis": "film-grain-stripped", "calibration": { "frozenRatio": 0, "longestFrozenMs": 0, "longestFrozenSpanMs": 0, "meanFrameDifference": 0.018537, "meanChangedPixelRatio": 0.237122 }, "maxFrozenRatio": 0, "maxLongestFrozenMs": 0 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 33554432,
+      "maxScratchBytes": 268435456,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "editorial-liquid-surface": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 1491934, "scratchBytes": 95379915, "encodePeakRssBytes": 616583168 },
+      "motionDensity": { "state": "calibrated", "analysis": "film-grain-stripped", "calibration": { "frozenRatio": 0, "longestFrozenMs": 0, "longestFrozenSpanMs": 0, "meanFrameDifference": 0.002396, "meanChangedPixelRatio": 0.054179 }, "maxFrozenRatio": 0, "maxLongestFrozenMs": 0 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 16777216,
+      "maxScratchBytes": 201326592,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "feature-announcement": {
+      "calibration": { "frameCount": 50, "uniqueFrameHashes": 18, "artifactBytes": 86552, "scratchBytes": 4886611, "encodePeakRssBytes": 583118848 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.697581, "longestFrozenMs": 3625, "longestFrozenSpanMs": 3625, "meanFrameDifference": 0.002458, "meanChangedPixelRatio": 0.005797 }, "maxFrozenRatio": 0.697581, "maxLongestFrozenMs": 3625 },
+      "minUniqueFrameHashes": 16,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 16777216,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "keyed-subject-promo": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 1808608, "scratchBytes": 97432290, "encodePeakRssBytes": 614912000 },
+      "motionDensity": { "state": "calibrated", "analysis": "film-grain-stripped", "calibration": { "frozenRatio": 0, "longestFrozenMs": 0, "longestFrozenSpanMs": 0, "meanFrameDifference": 0.004335, "meanChangedPixelRatio": 0.091048 }, "maxFrozenRatio": 0, "maxLongestFrozenMs": 0 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 25165824,
+      "maxScratchBytes": 201326592,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "kinetic-type": {
+      "calibration": { "frameCount": 42, "uniqueFrameHashes": 17, "artifactBytes": 112332, "scratchBytes": 2712290, "encodePeakRssBytes": 581529600 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.567308, "longestFrozenMs": 2500, "longestFrozenSpanMs": 2500, "meanFrameDifference": 0.00171, "meanChangedPixelRatio": 0.007567 }, "maxFrozenRatio": 0.567308, "maxLongestFrozenMs": 2500 },
+      "minUniqueFrameHashes": 15,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 16777216,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "launch-bumper": {
+      "calibration": { "frameCount": 40, "uniqueFrameHashes": 13, "artifactBytes": 130292, "scratchBytes": 3512618, "encodePeakRssBytes": 581984256 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.725, "longestFrozenMs": 2875, "longestFrozenSpanMs": 2875, "meanFrameDifference": 0.004149, "meanChangedPixelRatio": 0.03959 }, "maxFrozenRatio": 0.725, "maxLongestFrozenMs": 2875 },
+      "minUniqueFrameHashes": 11,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 16777216,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "media-launch": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 657266, "scratchBytes": 33397030, "encodePeakRssBytes": 591495168 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.333333, "longestFrozenMs": 1625, "longestFrozenSpanMs": 1625, "meanFrameDifference": 0.002054, "meanChangedPixelRatio": 0.010418 }, "maxFrozenRatio": 0.333333, "maxLongestFrozenMs": 1625 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 8388608,
+      "maxScratchBytes": 67108864,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "product-metric-card": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 22, "artifactBytes": 217173, "scratchBytes": 7313902, "encodePeakRssBytes": 584978432 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.583333, "longestFrozenMs": 2375, "longestFrozenSpanMs": 2375, "meanFrameDifference": 0.001691, "meanChangedPixelRatio": 0.021102 }, "maxFrozenRatio": 0.583333, "maxLongestFrozenMs": 2375 },
+      "minUniqueFrameHashes": 22,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 33554432,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "social-stat-card": {
+      "calibration": { "frameCount": 42, "uniqueFrameHashes": 14, "artifactBytes": 75041, "scratchBytes": 2623316, "encodePeakRssBytes": 420126720 },
+      "motionDensity": { "state": "calibrated", "analysis": "rendered", "calibration": { "frozenRatio": 0.591346, "longestFrozenMs": 2625, "longestFrozenSpanMs": 2625, "meanFrameDifference": 0.005031, "meanChangedPixelRatio": 0.031262 }, "maxFrozenRatio": 0.591346, "maxLongestFrozenMs": 2625 },
+      "minUniqueFrameHashes": 12,
+      "maxArtifactBytes": 4194304,
+      "maxScratchBytes": 16777216,
+      "maxEncodePeakRssBytes": 1073741824
+    },
+    "tracked-callout-overlay": {
+      "calibration": { "frameCount": 48, "uniqueFrameHashes": 48, "artifactBytes": 1141359, "scratchBytes": 91532420, "encodePeakRssBytes": 614563840 },
+      "motionDensity": { "state": "calibrated", "analysis": "film-grain-stripped", "calibration": { "frozenRatio": 0, "longestFrozenMs": 0, "longestFrozenSpanMs": 0, "meanFrameDifference": 0.003865, "meanChangedPixelRatio": 0.039223 }, "maxFrozenRatio": 0, "maxLongestFrozenMs": 0 },
+      "minUniqueFrameHashes": 46,
+      "maxArtifactBytes": 16777216,
+      "maxScratchBytes": 201326592,
+      "maxEncodePeakRssBytes": 1073741824
+    }
+  }
+}

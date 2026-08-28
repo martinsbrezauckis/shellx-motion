@@ -21,6 +21,8 @@ const MAX_PATCH_VALUE_DEPTH = 64;
 const MAX_PATCH_VALUE_STRING_BYTES = 4 * 1024 * 1024;
 
 export interface WorkspacePackagePatchServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   isUnsafePackageOutputDirectory?: (packageRoot: string, outputRoot: string) => Promise<boolean>;
@@ -48,6 +50,14 @@ export async function dispatchWorkspacePackagePatch(
   if (!packageRoot) return invalidArgs("motion.package.patch requires packageRoot.");
   if (!outDir) return invalidArgs("motion.package.patch requires outDir.");
   if (!patch) return invalidArgs("motion.package.patch requires patch operations.");
+  if (patch.some((operation) => layoutGapAnimationPointer(operation.path))) {
+    return invalidArgs("motion.package.patch reserves /layoutGapAnimation for the typed layout gap animation lifecycle.");
+  }
+  try {
+    for (const operation of patch) jsonPointerTokens(operation.path);
+  } catch (error) {
+    return { ok: false, error: { code: "package_patch_failed", message: error instanceof Error ? error.message : String(error) }, warnings: [] };
+  }
   if (!services.packageLoader || !services.isUnsafePackageOutputDirectory || !services.isEmptyOrAbsentDirectory) {
     return capabilityUnavailable("Atomic Motion package patching is unavailable.");
   }
@@ -108,6 +118,8 @@ export async function dispatchWorkspacePackagePatch(
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg,
       outputRoot: packageOutDir,
+      authoringInputRoots: services.authoringInputRoots!,
+      authoringOutputRoots: services.authoringOutputRoots!,
       patchedMotion,
       receipt,
       receiptFileName: "package-patch.receipt.json",
@@ -236,6 +248,14 @@ function jsonPointerTokens(path: string): string[] {
   const unsafeToken = tokens.find((token) => token === "__proto__" || token === "prototype" || token === "constructor");
   if (unsafeToken) throw new Error(`Patch path contains unsafe segment: ${unsafeToken}`);
   return tokens;
+}
+
+/** Generic JSON patch must never create, edit, test, move, copy, or remove the C2 authority root. */
+function layoutGapAnimationPointer(path: string): boolean {
+  const firstToken = path.slice(1).split("/", 1)[0]!
+    .replace(/~1/g, "/")
+    .replace(/~0/g, "~");
+  return firstToken === "layoutGapAnimation";
 }
 
 function arrayIndexForToken(token: string, length: number, allowAppend: boolean): number {

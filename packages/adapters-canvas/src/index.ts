@@ -46,7 +46,18 @@ export interface ConvertCanvasFrameOptions {
   includeAllFrames?: boolean;
 }
 
+/**
+ * The serializable Canvas -> Motion package envelope advertised by the integration protocol.
+ *
+ * `writeCanvasMotionPackage` still accepts an id-less object produced by older in-process callers,
+ * but every export produced here carries this id.  An external host should use the published JSON
+ * Schema with this id rather than relying on that compatibility path.
+ */
+export const CANVAS_BRIDGE_PACKAGE_SCHEMA = "shellx-motion/canvas-bridge-package@1";
+
 export interface CanvasMotionExport {
+  /** Present on all current exports; optional only while id-less in-process callers are supported. */
+  schema?: typeof CANVAS_BRIDGE_PACKAGE_SCHEMA;
   manifest: PackageManifest;
   motion: MotionDocument;
   receipt: OperationReceipt;
@@ -146,6 +157,7 @@ export function convertCanvasFrameToMotionPackage(input: unknown, options: Conve
   };
 
   return {
+    schema: CANVAS_BRIDGE_PACKAGE_SCHEMA,
     manifest,
     motion,
     integration: selection.negotiation ?? {

@@ -53,6 +53,13 @@ const H264_SDR_OUTPUT_ARGS = [
   "-color_range", "tv",
   "-movflags", "+faststart"
 ];
+const WAV_INPUT_ARGS = (path: string) => ["-protocol_whitelist", "file", "-format_whitelist", "wav", "-i", path];
+const SNAPSHOT_WAV_PATH = expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.wav$/);
+const SNAPSHOT_WAV_INPUT_ARGS = ["-protocol_whitelist", "file", "-format_whitelist", "wav", "-i", SNAPSHOT_WAV_PATH];
+
+async function writeFfmpegTestOutput(command: FfmpegCommand, contents: string): Promise<void> {
+  if (command.args.includes("-frames:v")) await writeFile(command.args.at(-1) as string, contents, "utf8");
+}
 
 /**
  * The runner calls that ENCODED, with the post-encode delivered-colour readback filtered out.
@@ -339,15 +346,17 @@ describe("ffmpeg finalization lane", () => {
   });
 
   it("rejects hostile frame counts before allocating a frame-path list or invoking FFmpeg", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-ffmpeg-hostile-count-"));
+    tempDirs.push(outDir);
     let invoked = false;
     const result = await encodeImageSequence({
       packageId: "pkg_oversized_frame_count",
-      framesDir: ".scratch/frames",
+      framesDir: join(outDir, "frames"),
       fps: 120,
       width: 1_920,
       height: 1_080,
       durationMs: 10_000_000,
-      outputPath: ".scratch/oversized.mp4",
+      outputPath: join(outDir, "oversized.mp4"),
       runner: async () => {
         invoked = true;
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -374,7 +383,7 @@ describe("ffmpeg finalization lane", () => {
         const runner: FfmpegRunner = async (command) => {
           commands.push(command);
           if (command.args[0] !== "-version" && command.executable.includes("ffmpeg")) {
-            await writeFile(outputPath, "fake mp4 bytes", "utf8");
+            await writeFfmpegTestOutput(command, "fake mp4 bytes");
           }
           return {
             exitCode: 0,
@@ -518,7 +527,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.stderr).toContain("wall-clock budget");
   });
 
-  it.skipIf(process.platform === "win32")("terminates encoder descendants with the governed Unix process group", async () => {
+  it.skipIf(process.platform === "win32")("waits for a leader-first signal-resistant encoder descendant before terminal completion", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-ffmpeg-process-tree-"));
     tempDirs.push(outDir);
     const grandchildPidPath = join(outDir, "grandchild.pid");
@@ -526,7 +535,7 @@ describe("ffmpeg finalization lane", () => {
       maxConcurrentJobs: 1,
       maxQueueDepth: 1,
       maxQueueWaitMs: 1_000,
-      maxWallClockMs: 300,
+      maxWallClockMs: 2_000,
       minFreeScratchBytes: 0,
       scratchReservationBytes: 0,
       maxProcessTreeRssBytes: 512 * 1024 * 1024,
@@ -539,9 +548,9 @@ describe("ffmpeg finalization lane", () => {
     const parentCode = [
       "const { spawn } = require('node:child_process')",
       "const { writeFileSync } = require('node:fs')",
-      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])",
+      "const child = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: 'ignore' })",
       "writeFileSync(process.argv[1], String(child.pid))",
-      "setInterval(() => {}, 1000)"
+      "setTimeout(() => process.exit(0), 50)"
     ].join("; ");
 
     const result = await runner({
@@ -550,7 +559,7 @@ describe("ffmpeg finalization lane", () => {
       shell: false,
     });
 
-    expect(result).toMatchObject({ exitCode: 125, resourceErrorCode: "job_deadline_exceeded" });
+    expect(result).toMatchObject({ exitCode: 0 });
     const grandchildPid = Number(await readFile(grandchildPidPath, "utf8"));
     expect(Number.isSafeInteger(grandchildPid)).toBe(true);
     await expectProcessToExit(grandchildPid);
@@ -849,7 +858,7 @@ describe("ffmpeg finalization lane", () => {
           stderr: ""
         };
       }
-      await writeFile(command.args.at(-1) as string, "encoded bytes", "utf8");
+      await writeFfmpegTestOutput(command, "encoded bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -913,7 +922,6 @@ describe("ffmpeg finalization lane", () => {
     let invoked = false;
     const runner: FfmpegRunner = async () => {
       invoked = true;
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1085,7 +1093,7 @@ describe("ffmpeg finalization lane", () => {
       async () => {
         const runner: FfmpegRunner = async (command) => {
           commands.push(command);
-          await writeFile(outputPath, "fake mp4 bytes", "utf8");
+          await writeFfmpegTestOutput(command, "fake mp4 bytes");
           // Routine progress output plus one genuine diagnostic carrying a secret: the receipt
           // must drop the former and keep the latter, redacted.
           return { exitCode: 0, stdout: "", stderr: "frame=30 speed=1x\n[mp4 @ 0x1] Past duration too large SECRET_TOKEN=hidden" };
@@ -1183,21 +1191,15 @@ describe("ffmpeg finalization lane", () => {
           "Rendered video is 1000ms; product review clips should be at least 1500ms.",
           "Rendered frame sequence is static; verify this is intentional before using it as product output.",
           "Rendered motion is static for 100.0% of its duration (1.000s of 1.000s across 1 frozen run,"
-          + " longest 1.000s). Frozen (s): 0.000-1.000. Verify this is intentional; measured as mean"
-          + " absolute frame difference <= 0.003000 over runs of at least 0.300s.",
+          + " longest 1.000s). Frozen (s): 0.000-1.000. Verify this is intentional; measured when reference-frame"
+          + " mean absolute difference <= 0.003000 and adjacent changed-pixel ratio <= 0.001000 over runs of at least 0.300s.",
           "[mp4 @ [address]] Past duration too large SECRET_TOKEN=[redacted]"
         ]);
-        // under the current contract a freeze observation DOES move the receipt to `warning`, under the one
-        // rule every receipt surface now shares (`receiptStatusForWarnings` in
-        // `@shellx-motion/core`). A static title card is still a legitimate deliverable and the
-        // encode still succeeded — `warning` says exactly that, and `failed` would not.
-        //
-        // This does not reopen the success-status invariant, which was about NOISE: routine encoder output
-        // recorded as warnings, so `warnings.length > 0` told a caller nothing. That half is still
-        // enforced below and by the chatter carve-out — the redacted `[mp4 @ [address]]` diagnostic
-        // sits on this receipt without being what escalated it. What escalated it is Motion's own
-        // statement that the output never moves, which is precisely the kind of thing a status is
-        // supposed to be about.
+        // Under the shared rule every retained diagnostic, as well as the static-sequence
+        // observations above, moves the receipt to `warning`. A static title card is still a
+        // legitimate deliverable and the encode still succeeded — `warning` says exactly that,
+        // and `failed` would not. Routine encoder output is filtered before it reaches this
+        // receipt; the redacted `[mp4 @ [address]]` diagnostic intentionally remains actionable.
         expect(result.receipt.status).toBe("warning");
         // Routine progress output is not a warning: recording it made every clean encode look
         // like it had flagged something.
@@ -1216,7 +1218,7 @@ describe("ffmpeg finalization lane", () => {
     await writeContrastFrames(outDir, 2);
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake webm bytes", "utf8");
+      await writeFfmpegTestOutput(command, "fake webm bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1297,7 +1299,7 @@ describe("ffmpeg finalization lane", () => {
     await writeContrastFrames(outDir, 2);
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake webm alpha bytes", "utf8");
+      await writeFfmpegTestOutput(command, "fake webm alpha bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1377,7 +1379,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake gif bytes", "utf8");
+      await writeFfmpegTestOutput(command, "fake gif bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1438,7 +1440,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1469,10 +1471,7 @@ describe("ffmpeg finalization lane", () => {
         "file",
         "-i",
         join(outDir, "%06d.png"),
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        audioPath,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
         "-frames:v",
         "2",
         "-c:v",
@@ -1501,6 +1500,8 @@ describe("ffmpeg finalization lane", () => {
         "1:a:0",
         "-c:a",
         "aac",
+        "-filter:a",
+        "apad=whole_dur=1",
         "-t",
         "1",
         outputPath
@@ -1525,12 +1526,12 @@ describe("ffmpeg finalization lane", () => {
     const audioPath = join(outDir, "voiceover.wav");
     await writeContrastFrames(outDir, 2);
     await writeFile(audioPath, "original voiceover bytes", "utf8");
-    const runner: FfmpegRunner = async () => {
-      await writeFile(outputPath, "fake mp4 bytes with audio", "utf8");
+    const runner: FfmpegRunner = async (command) => {
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
-    const encode = (): ReturnType<typeof encodeImageSequence> =>
+    const encode = (path = outputPath): ReturnType<typeof encodeImageSequence> =>
       encodeImageSequence({
         packageId: "pkg_audio_hash",
         framesDir: outDir,
@@ -1538,7 +1539,7 @@ describe("ffmpeg finalization lane", () => {
         width: 640,
         height: 360,
         durationMs: 1000,
-        outputPath,
+        outputPath: path,
         audioPath,
         runner
       });
@@ -1553,7 +1554,7 @@ describe("ffmpeg finalization lane", () => {
 
     // Change only the audio file; the rendered frames are untouched.
     await writeFile(audioPath, "different voiceover bytes entirely", "utf8");
-    const second = await encode();
+    const second = await encode(join(outDir, "render-second.mp4"));
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
@@ -1572,12 +1573,12 @@ describe("ffmpeg finalization lane", () => {
     await writeContrastFrames(outDir, 2);
     await writeFile(musicPath, "music bytes", "utf8");
     await writeFile(voicePath, "voice bytes", "utf8");
-    const mp4Runner: FfmpegRunner = async () => {
-      await writeFile(mp4Path, "fake mp4 bytes", "utf8");
+    const mp4Runner: FfmpegRunner = async (command) => {
+      await writeFfmpegTestOutput(command, "fake mp4 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
-    const gifRunner: FfmpegRunner = async () => {
-      await writeFile(gifPath, "fake gif bytes", "utf8");
+    const gifRunner: FfmpegRunner = async (command) => {
+      await writeFfmpegTestOutput(command, "fake gif bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1623,11 +1624,12 @@ describe("ffmpeg finalization lane", () => {
       fps: 30,
       durationMs: 2500,
       outputPath: "/tmp/shellx-motion-render.mp4",
-      audioPath: "/tmp/shellx-motion-frames/audio.wav"
+      audio: { path: "/tmp/shellx-motion-frames/audio.wav", durationMs: 1000 }
     });
 
     expect(command.args).not.toContain("-shortest");
     expect(command.args).toEqual(expect.arrayContaining(["-t", "2.5"]));
+    expect(command.args).toEqual(expect.arrayContaining(["-filter:a", "atrim=duration=1,apad=whole_dur=2.5"]));
   });
 
   it("defaults FFmpeg audio inputs to the frame directory trust root", async () => {
@@ -1641,7 +1643,6 @@ describe("ffmpeg finalization lane", () => {
     let invoked = false;
     const runner: FfmpegRunner = async () => {
       invoked = true;
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1718,7 +1719,6 @@ describe("ffmpeg finalization lane", () => {
     let invoked = false;
     const runner: FfmpegRunner = async () => {
       invoked = true;
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1792,12 +1792,7 @@ describe("ffmpeg finalization lane", () => {
       "-i",
       framePattern
     ]);
-    expect(encodeCommand.args.slice(encodeCommand.args.indexOf(audioPath) - 3, encodeCommand.args.indexOf(audioPath) + 1)).toEqual([
-      "-protocol_whitelist",
-      "file",
-      "-i",
-      audioPath
-    ]);
+    expect(encodeCommand.args.slice(encodeCommand.args.indexOf(audioPath) - 5, encodeCommand.args.indexOf(audioPath) + 1)).toEqual(WAV_INPUT_ARGS(audioPath));
 
     await probeMedia(outputPath, { runner });
     await measureAudioLevels(audioPath, { runner });
@@ -1821,7 +1816,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with controlled audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with controlled audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1858,10 +1853,7 @@ describe("ffmpeg finalization lane", () => {
         "file",
         "-i",
         join(outDir, "%06d.png"),
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        audioPath,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
         "-frames:v",
         "3",
         ...H264_SDR_OUTPUT_ARGS,
@@ -1872,7 +1864,7 @@ describe("ffmpeg finalization lane", () => {
         "-c:a",
         "aac",
         "-filter:a",
-        "atrim=start=0.25:duration=0.5,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=24000,volume=0.35",
+        "atrim=start=0.25:duration=0.5,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=24000,volume=0.35,apad=whole_dur=1",
         "-t",
         "1",
         outputPath
@@ -1916,7 +1908,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with panned audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with panned audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1941,7 +1933,7 @@ describe("ffmpeg finalization lane", () => {
     expect(commands[0]).toMatchObject({
       args: expect.arrayContaining([
         "-filter:a",
-        "pan=stereo|c0=0.5*c0|c1=1*c1"
+        "pan=stereo|c0=0.5*c0|c1=1*c1,apad=whole_dur=1"
       ])
     });
     expect(result.receipt.output).toMatchObject({
@@ -1963,7 +1955,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with delayed audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with delayed audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -1989,7 +1981,7 @@ describe("ffmpeg finalization lane", () => {
     expect(commands[0]).toMatchObject({
       args: expect.arrayContaining([
         "-filter:a",
-        "volume=0.5,adelay=750:all=1"
+        "volume=0.5,adelay=750:all=1,apad=whole_dur=1"
       ])
     });
     expect(result.receipt.output).toMatchObject({
@@ -2012,7 +2004,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with faded muted audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with faded muted audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2049,10 +2041,7 @@ describe("ffmpeg finalization lane", () => {
         "file",
         "-i",
         join(outDir, "%06d.png"),
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        audioPath,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
         "-frames:v",
         "2",
         ...H264_SDR_OUTPUT_ARGS,
@@ -2063,7 +2052,7 @@ describe("ffmpeg finalization lane", () => {
         "-c:a",
         "aac",
         "-filter:a",
-        "afade=t=in:st=0:d=0.2,afade=t=out:st=0.7:d=0.3,volume=0",
+        "atrim=duration=1,afade=t=in:st=0:d=0.2,afade=t=out:st=0.7:d=0.3,volume=0,apad=whole_dur=1",
         "-t",
         "1",
         outputPath
@@ -2094,7 +2083,7 @@ describe("ffmpeg finalization lane", () => {
     // and the encode must fall back to single-pass loudnorm.
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with normalized audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with normalized audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2119,9 +2108,11 @@ describe("ffmpeg finalization lane", () => {
     // The encode command (the one that writes frames) still applies single-pass
     // loudnorm; a separate measurement command now precedes it.
     const encodeCommand = commands.find((command) => command.args.includes("-frames:v"));
+    const sourceMeasurement = commands.find((command) => command.args.includes("-af"));
+    expect(sourceMeasurement?.args).toEqual(expect.arrayContaining(SNAPSHOT_WAV_INPUT_ARGS));
     expect(encodeCommand?.args).toEqual(expect.arrayContaining([
       "-filter:a",
-      "loudnorm=I=-16:TP=-1.5:LRA=11"
+      "loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=1"
     ]));
     expect(result.receipt.output).toMatchObject({
       audio: {
@@ -2153,13 +2144,13 @@ describe("ffmpeg finalization lane", () => {
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
       if (command.args.includes("-f") && command.args.includes("null")) {
-        const measuringOutput = command.args.includes(outputPath);
+        const measuringOutput = !command.args.includes("-format_whitelist");
         const summary = measuringOutput
           ? { input_i: "-16.1", input_tp: "-1.7", input_lra: "9.4", input_thresh: "-26.2", target_offset: "0.1" }
           : { input_i: "-23.5", input_tp: "-5.2", input_lra: "7.3", input_thresh: "-33.9", target_offset: "0.4" };
         return { exitCode: 0, stdout: "", stderr: JSON.stringify(summary) };
       }
-      await writeFile(outputPath, "fake mp4 bytes with normalized audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with normalized audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2213,7 +2204,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with automated audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with automated audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2252,10 +2243,7 @@ describe("ffmpeg finalization lane", () => {
         "file",
         "-i",
         join(outDir, "%06d.png"),
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        audioPath,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
         "-frames:v",
         "2",
         ...H264_SDR_OUTPUT_ARGS,
@@ -2266,7 +2254,7 @@ describe("ffmpeg finalization lane", () => {
         "-c:a",
         "aac",
         "-filter:a",
-        "volume='if(lt(t,0),0,if(lt(t,0.5),0+(0.8-0)*((t-0)/(0.5-0)),if(lt(t,1),0.8+(0.2-0.8)*((t-0.5)/(1-0.5)),0.2)))':eval=frame",
+        "volume='if(lt(t,0),0,if(lt(t,0.5),0+(0.8-0)*((t-0)/(0.5-0)),if(lt(t,1),0.8+(0.2-0.8)*((t-0.5)/(1-0.5)),0.2)))':eval=frame,apad=whole_dur=1",
         "-t",
         "1",
         outputPath
@@ -2292,7 +2280,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with automated pan", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with automated pan");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2321,7 +2309,7 @@ describe("ffmpeg finalization lane", () => {
     expect(commands[0]).toMatchObject({
       args: expect.arrayContaining([
         "-filter:a",
-        "aformat=channel_layouts=stereo,channelsplit=channel_layout=stereo[pan_l][pan_r];[pan_l]volume='if(lt(t,0),1,if(lt(t,0.5),1+(0.5-1)*((t-0)/(0.5-0)),0.5))':eval=frame[pan_lv];[pan_r]volume='if(lt(t,0),0,if(lt(t,0.5),0+(1-0)*((t-0)/(0.5-0)),1))':eval=frame[pan_rv];[pan_lv][pan_rv]join=inputs=2:channel_layout=stereo"
+        "aformat=channel_layouts=stereo,channelsplit=channel_layout=stereo[pan_l][pan_r];[pan_l]volume='if(lt(t,0),1,if(lt(t,0.5),1+(0.5-1)*((t-0)/(0.5-0)),0.5))':eval=frame[pan_lv];[pan_r]volume='if(lt(t,0),0,if(lt(t,0.5),0+(1-0)*((t-0)/(0.5-0)),1))':eval=frame[pan_rv];[pan_lv][pan_rv]join=inputs=2:channel_layout=stereo,apad=whole_dur=1"
       ])
     });
     expect(result.receipt.output).toMatchObject({
@@ -2343,7 +2331,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with ducked audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with ducked audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const volumeKeyframes = [
@@ -2406,7 +2394,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(audioPath, "fake wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with eased audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with eased audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2449,7 +2437,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(voicePath, "fake voice wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with mixed audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with mixed audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2483,19 +2471,13 @@ describe("ffmpeg finalization lane", () => {
         "file",
         "-i",
         join(outDir, "%06d.png"),
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        musicPath,
-        "-protocol_whitelist",
-        "file",
-        "-i",
-        voicePath,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
+        ...SNAPSHOT_WAV_INPUT_ARGS,
         "-frames:v",
         "2",
         ...H264_SDR_OUTPUT_ARGS,
         "-filter_complex",
-        "[1:a]atrim=start=0.1:duration=0.25,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=12000,volume=0.4,pan=stereo|c0=1*c0|c1=0.75*c1,adelay=250:all=1[a1];[2:a]volume=0.8,adelay=500:all=1[a2];[a1][a2]amix=inputs=2:duration=longest:dropout_transition=0[mixeda]",
+        "[1:a]atrim=start=0.1:duration=0.25,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=12000,volume=0.4,pan=stereo|c0=1*c0|c1=0.75*c1,adelay=250:all=1[a1];[2:a]volume=0.8,adelay=500:all=1[a2];[a1][a2]amix=inputs=2:duration=longest:dropout_transition=0,apad=whole_dur=1[mixeda]",
         "-map",
         "0:v:0",
         "-map",
@@ -2532,7 +2514,7 @@ describe("ffmpeg finalization lane", () => {
     await writeFile(voicePath, "fake voice wav bytes", "utf8");
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(outputPath, "fake mp4 bytes with sidechain audio", "utf8");
+      await writeFfmpegTestOutput(command, "fake mp4 bytes with sidechain audio");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2568,7 +2550,7 @@ describe("ffmpeg finalization lane", () => {
     // the compressor on the music, which is then heard as [a1_ducked].
     expect(filterGraph).toContain("[a2]asplit=2[a2_main][a2_key_1]");
     expect(filterGraph).toContain("[a1][a2_key_1]sidechaincompress=threshold=0.04:ratio=10:attack=15:release=220[a1_ducked]");
-    expect(filterGraph).toContain("[a1_ducked][a2_main]amix=inputs=2:duration=longest:dropout_transition=0[mixeda]");
+    expect(filterGraph).toContain("[a1_ducked][a2_main]amix=inputs=2:duration=longest:dropout_transition=0,apad=whole_dur=1[mixeda]");
     // Receipt evidence: the ducking mode + compressor params are preserved.
     expect(result.receipt.output).toMatchObject({
       audio: {
@@ -2824,7 +2806,7 @@ describe("ffmpeg finalization lane", () => {
     tempDirs.push(trustedRoot, outsideRoot);
     const outsidePath = join(outsideRoot, "final.mp4");
     await writeFile(outsidePath, "fake mp4 bytes", "utf8");
-    const runner: FfmpegRunner = async () => {
+    const runner: FfmpegRunner = async (command) => {
       throw new Error("ffmpeg must not run for untrusted input paths");
     };
 
@@ -2867,9 +2849,10 @@ describe("ffmpeg finalization lane", () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-ffmpeg-frame-hash-"));
     tempDirs.push(outDir);
     const outputPath = join(outDir, "render.mp4");
+    const secondOutputPath = join(outDir, "render-second.mp4");
     await writeMixedFrames(outDir);
-    const runner: FfmpegRunner = async () => {
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
+    const runner: FfmpegRunner = async (command) => {
+      await writeFfmpegTestOutput(command, "fake mp4 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -2891,7 +2874,7 @@ describe("ffmpeg finalization lane", () => {
       width: 2,
       height: 2,
       durationMs: 1000,
-      outputPath,
+      outputPath: secondOutputPath,
       runner
     });
 
@@ -3037,7 +3020,7 @@ describe("tool identity probe", () => {
         expect(Date.now() - startedAt).toBeLessThan(20_000);
         // Not `missing`: the binary is right there, it just did not answer. Opposite advice.
         expect(probe.status).toBe("broken");
-        expect(probe.detail).toContain("ffmpeg identity probe timed out after 300ms");
+        expect(probe.detail).toBe("ffmpeg identity probe timed out after 300ms.");
       }
     );
   });
@@ -3282,7 +3265,7 @@ describe("hardware encode selection, override and fallback", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(command.args.at(-1) as string, "nvenc bytes", "utf8");
+      await writeFfmpegTestOutput(command, "nvenc bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const result = await encodeImageSequence({
@@ -3295,7 +3278,10 @@ describe("hardware encode selection, override and fallback", () => {
     // default-on under the current contract), asserted here once so this file records that the pair is the
     // expected shape; the remaining hardware cases count encodes only.
     expect(commands).toHaveLength(2);
-    expect(commands[1].args).toEqual(expect.arrayContaining(["-show_streams", outputPath]));
+    expect(commands[1].args).toEqual(expect.arrayContaining([
+      "-show_streams",
+      expect.stringMatching(/\.shellx-motion-final-[a-f0-9]+\.lock\/\.shellx-motion-final-[a-f0-9-]+\.mp4$/)
+    ]));
     const encodes = commandsWithoutColorReadback(commands);
     expect(encodes).toHaveLength(1);
     expect(encodeTail(encodes[0])).toEqual(["-frames:v", "2", ...H264_NVENC_ARGS, outputPath]);
@@ -3321,7 +3307,7 @@ describe("hardware encode selection, override and fallback", () => {
       if (command.args.includes("-encoders")) {
         return { exitCode: 0, stdout: [" V....D libx265 x (codec hevc)", " V..... libsvtav1 y (codec av1)"].join("\n"), stderr: "" };
       }
-      await writeFile(command.args.at(-1) as string, "hw bytes", "utf8");
+      await writeFfmpegTestOutput(command, "hw bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const hevc = await encodeImageSequence({
@@ -3347,7 +3333,7 @@ describe("hardware encode selection, override and fallback", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(command.args.at(-1) as string, "bytes", "utf8");
+      await writeFfmpegTestOutput(command, "bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     // Probe order lists qsv first, but the preset candidate order is nvenc > videotoolbox > qsv, so
@@ -3366,7 +3352,7 @@ describe("hardware encode selection, override and fallback", () => {
     const qsv = await encodeImageSequence({
       packageId: "pkg_order_qsv", framesDir: qsvDir, fps: 2, width: 2, height: 1, durationMs: 1000,
       outputPath: qsvOut, preset: "mp4-h264",
-      runner: async (command) => { qsvCommands.push(command); await writeFile(command.args.at(-1) as string, "b", "utf8"); return { exitCode: 0, stdout: "", stderr: "" }; },
+      runner: async (command) => { qsvCommands.push(command); await writeFfmpegTestOutput(command, "b"); return { exitCode: 0, stdout: "", stderr: "" }; },
       hardwareProbe: usabilityProbe(["h264_qsv"])
     });
     expect(qsv.ok && qsv.receipt.output).toMatchObject({ encoder: "h264_qsv", encoderSource: "hardware" });
@@ -3383,7 +3369,7 @@ describe("hardware encode selection, override and fallback", () => {
       if (command.args.includes("h264_nvenc")) {
         return { exitCode: 1, stdout: "", stderr: "nvenc: no capable devices SECRET_TOKEN=hidden" };
       }
-      await writeFile(command.args.at(-1) as string, "libx264 bytes", "utf8");
+      await writeFfmpegTestOutput(command, "libx264 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const result = await encodeImageSequence({
@@ -3429,7 +3415,7 @@ describe("hardware encode selection, override and fallback", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(command.args.at(-1) as string, "libx264 bytes", "utf8");
+      await writeFfmpegTestOutput(command, "libx264 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const result = await encodeImageSequence({
@@ -3450,7 +3436,7 @@ describe("hardware encode selection, override and fallback", () => {
     await writeContrastFrames(outDir, 2);
     const outputPath = join(outDir, "sw.mp4");
     const runner: FfmpegRunner = async (command) => {
-      await writeFile(command.args.at(-1) as string, "libx264 bytes", "utf8");
+      await writeFfmpegTestOutput(command, "libx264 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     // A compiled-but-unusable candidate whose failure message carries a host path that must be redacted.
@@ -3492,7 +3478,7 @@ describe("hardware encode selection, override and fallback", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(command.args.at(-1) as string, "libx264 bytes", "utf8");
+      await writeFfmpegTestOutput(command, "libx264 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const result = await encodeImageSequence({
@@ -3518,7 +3504,7 @@ describe("hardware encode selection, override and fallback", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      await writeFile(command.args.at(-1) as string, "libx264 bytes", "utf8");
+      await writeFfmpegTestOutput(command, "libx264 bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     // probeHardwareEncode is on, but the env override wins: no `-encoders`, no init probe — just encode.
@@ -3546,7 +3532,7 @@ describe("hardware encode selection, override and fallback", () => {
       if (command.args.includes("-f") && command.args.includes("null")) {
         return { exitCode: 0, stdout: "", stderr: "" }; // init probe success
       }
-      await writeFile(command.args.at(-1) as string, "nvenc bytes", "utf8");
+      await writeFfmpegTestOutput(command, "nvenc bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const result = await encodeImageSequence({
@@ -3618,7 +3604,7 @@ describe("delivered colour readback", () => {
           ? { exitCode: 1, stdout: "", stderr: "ffprobe: could not read file" }
           : { exitCode: 0, stdout: probeStdoutValue, stderr: "" };
       }
-      await writeFile(command.args.at(-1) as string, "encoded bytes", "utf8");
+      await writeFfmpegTestOutput(command, "encoded bytes");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     return { runner, commands };

@@ -1,0 +1,29 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_v25c_second_take",
+  "name": "Second Take — V25-C3 Motion-owned Afterimage Source Fixture",
+  "motion": "motion.json",
+  "assets": [
+    "assets/second-take-subject.svg",
+    "assets/second-take-copy.svg"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "gpu"
+    ],
+    "hosts": [
+      "motion"
+    ]
+  },
+  "workflow": "v25-c3-motion-owned-afterimage-source-fixture",
+  "metadata": {
+    "recipe": "templates/generators/second-take/recipe.json",
+    "v25Batch": "V25-C3",
+    "sourceAssetPolicy": "original-declarative-json-and-authored-transparent-svgs-no-binaries-or-fonts",
+    "effectModule": "motion.afterimage-stack@1.0.0",
+    "effectIntrinsic": "motion.afterimage-stack.v1",
+    "effectModuleInstallManifest": "templates/generators/second-take/effect-module-manifest.json",
+    "acceptance": "source-only-static-admission-proved-c4-native-evidence-pending"
+  }
+}

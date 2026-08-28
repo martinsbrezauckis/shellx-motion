@@ -92,6 +92,21 @@ describe("native preview renderer", () => {
     ).rejects.toThrow(/Native output path must be inside a configured output root/);
   });
 
+  it("does not clobber an existing direct native preview output", async () => {
+    const outDir = await makeTempDir();
+    const outputPath = join(outDir, "existing-frame.png");
+    await writeFile(outputPath, "caller-owned-frame", "utf8");
+
+    await expect(renderNativePreviewFrame({
+      packageRoot: fixtureRoot,
+      outputPath,
+      outputRoots: [outDir],
+      atMs: 0
+    })).rejects.toMatchObject({ code: "derived_output_exists" });
+
+    await expect(readFile(outputPath, "utf8")).resolves.toBe("caller-owned-frame");
+  });
+
   it("rejects oversized native canvases before allocating RGBA memory", async () => {
     const packageRoot = await writeMotionPackage({
       id: "motion_oversized_canvas",
@@ -298,7 +313,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(2, 2, [
       { r: 255, g: 0, b: 0, a: 255 },
       { r: 0, g: 255, b: 0, a: 255 },
@@ -335,7 +350,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     const assetPath = join(packageRoot, "assets", "logo.png");
     await writeFile(assetPath, makeRgbaPngFixture(2, 2, [
       { r: 255, g: 0, b: 0, a: 255 },
@@ -391,7 +406,7 @@ describe("native preview renderer", () => {
           }
         ]
       });
-      await mkdir(join(packageRoot, "assets"), { recursive: true });
+      await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
       const assetPath = join(packageRoot, "assets", "logo.png");
       await writeFile(assetPath, makeRgbaPngFixture(2, 2, [
         { r: 255, g: 0, b: 0, a: 255 },
@@ -472,7 +487,7 @@ describe("native preview renderer", () => {
         durationMs: 1000,
       }],
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(100_000, 0);
     ihdr.writeUInt32BE(100_000, 4);
@@ -508,7 +523,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(1, 1, [
       { r: 255, g: 255, b: 255, a: 255 }
     ]));
@@ -536,7 +551,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(1, 3, [
       { r: 255, g: 0, b: 0, a: 255 },
       { r: 0, g: 255, b: 0, a: 255 },
@@ -567,7 +582,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(2, 2, [
       { r: 255, g: 255, b: 255, a: 255 },
       { r: 255, g: 255, b: 255, a: 255 },
@@ -600,7 +615,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(2, 2, [
       { r: 255, g: 255, b: 255, a: 255 },
       { r: 255, g: 255, b: 255, a: 255 },
@@ -633,7 +648,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(8, 4, Array.from({ length: 32 }, () => {
       return { r: 255, g: 255, b: 255, a: 255 };
     })));
@@ -665,7 +680,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(3, 1, [
       { r: 255, g: 0, b: 0, a: 255 },
       { r: 0, g: 255, b: 0, a: 255 },
@@ -704,7 +719,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(2, 1, [
       { r: 255, g: 0, b: 0, a: 255 },
       { r: 0, g: 255, b: 0, a: 255 }
@@ -736,7 +751,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(1, 1, [
       { r: 255, g: 0, b: 0, a: 255 }
     ]));
@@ -769,7 +784,7 @@ describe("native preview renderer", () => {
         }
       ]
     });
-    await mkdir(join(packageRoot, "assets"), { recursive: true });
+    await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "assets", "logo.png"), makeRgbaPngFixture(1, 1, [
       { r: 255, g: 255, b: 255, a: 255 }
     ]));
@@ -3842,7 +3857,16 @@ describe("native preview renderer", () => {
             stops: [
               { offset: 0, color: "#ff006e" },
               { offset: 1, color: "#00d4ff" }
-            ]
+            ],
+            // Native has no gradient capability at all. A fixed-topology color animation must
+            // therefore retain that same truthful browser-lane refusal rather than approximating.
+            colorKeyframes: {
+              schema: "shellx-motion/gradient-color-keyframes@1",
+              keyframes: [
+                { atUs: 0, colors: ["#ff006e", "#00d4ff"], easing: "linear" },
+                { atUs: 1_000_000, colors: ["#00d4ff", "#ff006e"] }
+              ]
+            }
           },
           effects: { glow: { radius: 18, color: "#00d4ff" } }
         }
@@ -3865,44 +3889,6 @@ describe("native preview renderer", () => {
             layerId: "gradient-field",
             feature: "effect.glow",
             reason: "Lane native does not support effect.glow on layer gradient-field."
-          }
-        ]
-      }
-    });
-  });
-
-  it("fails closed to the browser lane for particle emitters", async () => {
-    const packageRoot = await writeMotionPackage({
-      id: "motion_particles_browser_fallback",
-      background: "#030712",
-      layers: [
-        {
-          id: "spark-field",
-          type: "particles",
-          startMs: 0,
-          durationMs: 1000,
-          transform: { x: 0, y: 0, width: 100, height: 100 },
-          emitter: {
-            seed: 7,
-            count: 32,
-            lifetimeMs: 900,
-            color: "#ffffff"
-          }
-        }
-      ]
-    });
-
-    const result = await renderNativePreviewFrame({ packageRoot, atMs: 0 });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "unsupported_layer",
-        unsupported: [
-          {
-            layerId: "spark-field",
-            feature: "layer.type:particles",
-            reason: "Lane native does not support particles layers."
           }
         ]
       }

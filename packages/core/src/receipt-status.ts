@@ -8,7 +8,7 @@
  *   - preview (`previewReceiptStatus`) escalated on ANY non-empty `warnings` array;
  *   - final render receipts escalated on NOTHING in `warnings` — only frame-lane severity moved
  *     them — so a `passed` receipt could carry an encoder complaint;
- *   - connectors escalated on any warning that was not recognised FFmpeg component chatter.
+ *   - connectors escalated on any warning that was not recognised exact FFmpeg routine chatter.
  *
  * A render receipt must not say `passed`
  * while the connector receipt aggregating the SAME `MOTION_DENSITY` advisory said `warning`, and the
@@ -22,12 +22,12 @@
  *   any ACTIONABLE warning  -> "warning"
  *   otherwise               -> "passed"
  *
- * "Actionable" is every warning that is not FFmpeg's own routine component output. That carve-out is
- * not a softening of the rule: FFmpeg narrates its own components on a completely successful encode
- * ("Duped color: FFDCDDE0" from palettegen, muxing statistics), and escalating on that would make
- * every GIF and every faststart MP4 a warned render forever — warning fatigue, which is how a real
- * warning stops being read. The carve-out is STRUCTURAL (a component prefix), so it can only ever
- * swallow lines FFmpeg itself emitted through its logging API, never a statement Motion made.
+ * "Actionable" is every warning except a narrow set of exact, routine FFmpeg progress notices. That
+ * carve-out is not a softening of the rule: a standalone progress update and the exact MP4/MOV
+ * faststart notice narrate work an encode successfully completed. But FFmpeg emits genuine warnings
+ * through the very same component-prefix API, so treating every `[component @ address]` line as
+ * chatter falsely lets retained diagnostics pass. The carve-out is therefore exact and whole-entry
+ * based: a component prefix by itself can never suppress its diagnostic or a later joined warning.
  *
  * WHAT CHANGED FOR EACH SURFACE:
  *   - preview: slightly MORE permissive — chatter no longer escalates. In practice no preview lane
@@ -56,25 +56,28 @@ export type ReceiptWarningStatus = Extract<OperationReceipt["status"], "passed" 
 /**
  * Whether a warning is FFmpeg's own component chatter rather than something the caller must act on.
  *
- * Two shapes, both anchored at the start of the warning:
- *   - `frame=  123 fps=...` — the progress line, which FFmpeg writes on every encode;
- *   - `[<component> @ <instance>] ...` — anything logged through FFmpeg's component logging API.
+ * Two proven routine shapes:
+ *   - `frame=  123 fps=...` without an embedded component message — FFmpeg's progress entry;
+ *   - `[mp4|mov|ipod @ <instance>] Starting second pass: moving the moov atom to the beginning of
+ *     the file` — the exact faststart notice Motion requests for those containers.
  *
  * The instance alternative accepts a hex pointer (`0x641500efbe80`, and the bare `641500efbe80` a
  * Windows build prints) AND the literal `[address]`, because `summarizeSuccessfulEncodeStderr`
  * normalises the run-varying pointer before the warning reaches a receipt — the address changes
  * every run, which made two renders of the same package produce receipts differing only in noise.
  *
- * Missing that normalised form is not cosmetic: this predicate decides `passed` vs `warning`, so a
- * normalised diagnostic that stops matching here silently escalates a clean export. That is exactly
- * what happened when normalisation was introduced, and it is why the two must be changed together.
+ * A normalized address still has to be recognized for the exact faststart notice. It must not turn
+ * every normalized component diagnostic into chatter: retained diagnostics are precisely what a
+ * `warning` receipt must surface.
  *
  * @param warning One entry from a receipt's `warnings` array.
- * @returns True when the line is FFmpeg narrating itself, false for anything Motion said.
+ * @returns True only for known routine FFmpeg chatter; false for a warning a reader must act on.
  */
 export function isEncoderChatterWarning(warning: string): boolean {
   const text = warning.trim();
-  return /^frame=\s*\d+/i.test(text) || /^\[[^\]]+ @ (?:\[address\]|(?:0x)?[0-9a-f]+)\]/i.test(text);
+  const progress = /^frame=\s*\d+(?:\s+(?:fps|q|L?size|time|bitrate|speed|dup|drop)=\s*\S+)+\s*$/i;
+  const faststart = /^\[(?:mp4|mov|ipod) @ (?:\[address\]|(?:0x)?[0-9a-f]+)\] Starting second pass: moving the moov atom to the beginning of the file$/i;
+  return progress.test(text) || faststart.test(text);
 }
 
 /**

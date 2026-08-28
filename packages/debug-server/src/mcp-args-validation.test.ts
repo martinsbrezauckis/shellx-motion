@@ -34,7 +34,7 @@ type ToolPayload = {
  * @param grantedTier - the server's authenticated grant. Argument validation runs only for calls the
  *   permission gate admits, so a render tool needs render_motion here to reach the shape check.
  */
-async function mcpClient(grantedTier: "read_motion" | "render_motion" = "read_motion") {
+async function mcpClient(grantedTier: "read_motion" | "render_motion" | "edit_motion" = "read_motion") {
   const handle = await startMotionDebugServer({ host: "127.0.0.1", port: 0, grantedTier });
   servers.push(handle);
   const rpc = async (method: string, params: unknown) => {
@@ -172,6 +172,122 @@ describe("the argument schema an MCP tool advertises is the one it enforces", ()
 
     expect(payload.error?.code).toBe("invalid_args");
     expect(payload.error?.message).toMatch(/argument limit must be >= 1, received number \(0\)/);
+  }, 45_000);
+
+  it("publishes and refuses malformed or unknown nested document-master controls on the real MCP wire", async () => {
+    const { callTool, rpc } = await mcpClient("edit_motion");
+    const invalid = await callTool("motion_audio_master_set", {
+      args: {
+        packageRoot: "/tmp/audio-master-source",
+        outDir: "/tmp/audio-master-output",
+        master: {
+          loudness: {
+            integratedLufs: -16,
+            toleranceLufs: 1,
+            maxTruePeakDbtp: "-1",
+            arbitraryFilter: "aformat=unsafe",
+          },
+        },
+      },
+    });
+    expect(invalid.payload.error?.code).toBe("invalid_args");
+    expect(invalid.payload.error?.detail).toMatchObject({
+      violations: expect.arrayContaining([
+        expect.objectContaining({ argument: "master.loudness.maxTruePeakDbtp", kind: "wrong_type", expectedType: "number" }),
+        expect.objectContaining({ argument: "master.loudness.arbitraryFilter", kind: "unknown_property" }),
+      ]),
+    });
+
+    const body = await rpc("tools/list", {}) as unknown as { result: { tools: Array<{ name: string; inputSchema: { properties: { args: { properties: Record<string, any> } } } }> } };
+    const master = body.result.tools.find((tool) => tool.name === "motion_audio_master_set")?.inputSchema.properties.args.properties.master;
+    expect(master).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        volume: { minimum: 0, maximum: 4 },
+        loudness: {
+          required: ["integratedLufs", "toleranceLufs", "maxTruePeakDbtp"],
+          additionalProperties: false,
+          properties: { integratedLufs: { minimum: -70, maximum: -5 } },
+        },
+      },
+    });
+  }, 45_000);
+
+  it("publishes the closed typed revision-step union and refuses a nested host receipt path", async () => {
+    const { callTool, rpc } = await mcpClient("edit_motion");
+    const invalid = await callTool("motion_revision_transaction", {
+      args: {
+        packageRoot: "/tmp/revision-source",
+        outDir: "/tmp/revision-output",
+        base: {
+          packageId: "pkg_revision",
+          motionId: "motion_revision",
+          manifestSha256: "a".repeat(64),
+          motionSha256: "b".repeat(64),
+        },
+        steps: [{
+          command: "motion.timeline.layer.text.set",
+          layerId: "title",
+          text: "Atomic title",
+          receiptsRoot: "/tmp/forbidden-host-receipts",
+        }],
+      },
+    });
+    expect(invalid.payload.error?.code).toBe("invalid_args");
+    expect(invalid.payload.error?.detail).toMatchObject({
+      violations: expect.arrayContaining([
+        expect.objectContaining({ argument: "steps[0].receiptsRoot", kind: "unknown_property" }),
+      ]),
+    });
+
+    const body = await rpc("tools/list", {}) as unknown as { result: { tools: Array<{ name: string; inputSchema: { properties: { args: { properties: Record<string, any> } } } }> } };
+    const steps = body.result.tools.find((tool) => tool.name === "motion_revision_transaction")?.inputSchema.properties.args.properties.steps;
+    expect(steps).toMatchObject({
+      type: "array",
+      minItems: 1,
+      maxItems: 32,
+      items: { oneOf: expect.any(Array) },
+    });
+    expect(steps.items.oneOf).toHaveLength(10);
+    expect(steps.items.oneOf.find((entry: any) => entry.properties.command?.enum?.[0] === "motion.timeline.layer.text.set"))
+      .toMatchObject({ additionalProperties: false, required: ["command", "layerId", "text"] });
+  }, 45_000);
+
+  it("publishes a read-only closed revision-plan schema without output or receipt paths", async () => {
+    const { callTool, rpc } = await mcpClient("read_motion");
+    const invalid = await callTool("motion_revision_transaction_plan", {
+      args: {
+        packageRoot: "/tmp/revision-source",
+        outDir: "/tmp/revision-output",
+        base: {
+          packageId: "pkg_revision",
+          motionId: "motion_revision",
+          manifestSha256: "a".repeat(64),
+          motionSha256: "b".repeat(64),
+        },
+        steps: [{ command: "motion.timeline.layer.text.set", layerId: "title", text: "Planned title" }],
+      },
+    });
+    expect(invalid.payload.error?.code).toBe("invalid_args");
+    expect(invalid.payload.error?.detail).toMatchObject({
+      violations: expect.arrayContaining([
+        expect.objectContaining({ argument: "outDir", kind: "unknown_property" }),
+      ]),
+    });
+
+    const body = await rpc("tools/list", {}) as unknown as { result: { tools: Array<{ name: string; inputSchema: { properties: { args: { additionalProperties: boolean; required: string[]; properties: Record<string, any> } } } }> } };
+    const args = body.result.tools.find((tool) => tool.name === "motion_revision_transaction_plan")?.inputSchema.properties.args;
+    expect(args).toMatchObject({
+      additionalProperties: false,
+      required: ["packageRoot", "base", "steps"],
+      properties: {
+        packageRoot: { type: "string", maxLength: 4096 },
+        steps: { type: "array", minItems: 1, maxItems: 32, items: { oneOf: expect.any(Array) } },
+      },
+    });
+    expect(args?.properties).not.toHaveProperty("outDir");
+    expect(args?.properties).not.toHaveProperty("receiptsRoot");
   }, 45_000);
 
   it("still runs a valid call", async () => {

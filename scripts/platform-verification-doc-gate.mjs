@@ -61,13 +61,13 @@ if (requiredCore.length === 0) {
 }
 
 const regions = {
-  "required-commands": fence("bash", requiredCore.map((command) => command.command.join(" "))),
+  "required-commands": fence("bash", requiredCore.map(commandLine)),
   "extended-commands": fence("bash", [
-    ...requiredExtended.map((command) => command.command.join(" ")),
+    ...requiredExtended.map(commandLine),
     "# ...or through the runner, so the host receipt records them alongside the core tier:",
     "pnpm run platform:verify -- --run --include-extended --host-id <id>"
   ]),
-  "optional-commands": optional.map((command) => `- \`${command.id}\` requires ${envList(command.requiresEnv)}.`),
+  "optional-commands": optional.map(optionalCommandLine),
   options: fence("text", helpText)
 };
 
@@ -136,6 +136,22 @@ function envList(values) {
   if (names.length === 0) return "no host environment";
   const quoted = names.map((name) => `\`${name}\``);
   return quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+}
+
+function commandLine(command) {
+  const line = command.command.join(" ");
+  const platforms = Array.isArray(command.platforms) ? command.platforms : [];
+  return platforms.length === 0
+    ? line
+    : `${line} # required on ${platforms.join(", ")}; other declared hosts record platform-inapplicable`;
+}
+
+function optionalCommandLine(command) {
+  const platforms = Array.isArray(command.platforms) ? command.platforms : [];
+  const platformNote = platforms.length === 0
+    ? ""
+    : ` It runs only on ${platforms.join(", ")}; other declared hosts record platform-inapplicable.`;
+  return `- \`${command.id}\` requires ${envList(command.requiresEnv)}.${platformNote}`;
 }
 
 function fence(language, lines) {

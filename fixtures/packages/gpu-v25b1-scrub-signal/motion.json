@@ -1,0 +1,427 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_v25b1_scrub_signal",
+  "name": "Scrub the Signal — V25-B1 GPU Preview Fixture",
+  "durationMs": 6400,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#030612",
+  "safeAreas": {
+    "copy": {
+      "top": 86,
+      "right": 86,
+      "bottom": 86,
+      "left": 100
+    },
+    "caption": {
+      "top": 780,
+      "right": 86,
+      "bottom": 56,
+      "left": 100
+    }
+  },
+  "markers": [
+    {
+      "id": "video-enter",
+      "atMs": 480,
+      "label": "Exact-time video enters"
+    },
+    {
+      "id": "first-loop",
+      "atMs": 1200,
+      "label": "First trimmed loop boundary"
+    },
+    {
+      "id": "signal-hold",
+      "atMs": 2891,
+      "label": "Random-scrub signal hold"
+    }
+  ],
+  "layers": [
+    {
+      "id": "signal-night",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 6400,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      },
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.72,
+        "centerY": 0.33,
+        "stops": [
+          {
+            "offset": 0,
+            "color": "#14304c"
+          },
+          {
+            "offset": 0.44,
+            "color": "#091426"
+          },
+          {
+            "offset": 1,
+            "color": "#030612"
+          }
+        ]
+      }
+    },
+    {
+      "id": "signal-footage",
+      "type": "video",
+      "source": "assets/video/atmosphere-fog-rays.mp4",
+      "assetRef": "assets/video/atmosphere-fog-rays.mp4",
+      "fit": "fill",
+      "includeAudio": false,
+      "trimStartMs": 720,
+      "trimDurationMs": 900,
+      "loop": true,
+      "playbackRate": 1.25,
+      "startMs": 480,
+      "durationMs": 5600,
+      "opacity": 0.76,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      },
+      "effects": {
+        "brightness": 0.72,
+        "contrast": 1.16,
+        "saturate": 1.22
+      }
+    },
+    {
+      "id": "signal-wash",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#03111fcc",
+      "startMs": 0,
+      "durationMs": 6400,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "studio-frame",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#071a2fcc",
+      "startMs": 0,
+      "durationMs": 6400,
+      "transform": {
+        "x": 814,
+        "y": 112,
+        "width": 984,
+        "height": 584
+      },
+      "style": {
+        "radius": 36,
+        "borderWidth": 2,
+        "borderColor": "#2dd4bf"
+      },
+      "effects": {
+        "glow": {
+          "radius": 12,
+          "color": "rgba(45,212,191,0.28)"
+        }
+      }
+    },
+    {
+      "id": "neon-studio",
+      "type": "image",
+      "source": "assets/images/neon-studio.svg",
+      "assetRef": "assets/images/neon-studio.svg",
+      "fit": "cover",
+      "startMs": 0,
+      "durationMs": 6400,
+      "opacity": 0.9,
+      "transform": {
+        "x": 832,
+        "y": 130,
+        "width": 948,
+        "height": 548
+      },
+      "mask": {
+        "type": "rounded-rect",
+        "radius": 28,
+        "featherPx": 1,
+        "inset": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "effects": {
+        "brightness": 1.08,
+        "contrast": 1.12,
+        "saturate": 1.18,
+        "glow": {
+          "radius": 9,
+          "color": "rgba(34,211,238,0.22)"
+        }
+      },
+      "keyframes": {
+        "transform.x": [
+          {
+            "atMs": 0,
+            "value": 856
+          },
+          {
+            "atMs": 480,
+            "value": 832,
+            "easing": "ease-out"
+          },
+          {
+            "atMs": 6400,
+            "value": 808,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "signal-line",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#2dd4bf",
+      "startMs": 480,
+      "durationMs": 5600,
+      "transform": {
+        "x": 100,
+        "y": 502,
+        "width": 558,
+        "height": 8
+      },
+      "effects": {
+        "glow": {
+          "radius": 16,
+          "color": "rgba(45,212,191,0.72)"
+        }
+      },
+      "keyframes": {
+        "transform.width": [
+          {
+            "atMs": 480,
+            "value": 2
+          },
+          {
+            "atMs": 960,
+            "value": 558,
+            "easing": "ease-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "V25-B1 / EXACT-TIME GPU PREVIEW",
+      "startMs": 480,
+      "durationMs": 5600,
+      "transform": {
+        "x": 100,
+        "y": 302,
+        "width": 620,
+        "height": 36
+      },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 21,
+        "fontWeight": 600,
+        "letterSpacing": 3.2,
+        "lineHeight": 1,
+        "color": "#99f6e4"
+      },
+      "textFit": {
+        "policy": "safe",
+        "safeAreaId": "copy"
+      }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "SCRUB THE\nSIGNAL.",
+      "startMs": 480,
+      "durationMs": 5600,
+      "transform": {
+        "x": 100,
+        "y": 352,
+        "width": 690,
+        "height": 210
+      },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 94,
+        "fontWeight": 900,
+        "letterSpacing": -3,
+        "lineHeight": 0.9,
+        "color": "#f0fdfa",
+        "textShadow": {
+          "x": 0,
+          "y": 14,
+          "blur": 34,
+          "color": "rgba(0,0,0,0.62)"
+        }
+      },
+      "textFit": {
+        "policy": "auto-fit",
+        "safeAreaId": "copy",
+        "minFontSize": 58
+      },
+      "keyframes": {
+        "opacity": [
+          {
+            "atMs": 480,
+            "value": 0
+          },
+          {
+            "atMs": 960,
+            "value": 1,
+            "easing": "ease-out"
+          }
+        ],
+        "transform.y": [
+          {
+            "atMs": 480,
+            "value": 396
+          },
+          {
+            "atMs": 960,
+            "value": 352,
+            "easing": "ease-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "trace-card",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#0b2638e6",
+      "startMs": 960,
+      "durationMs": 5120,
+      "transform": {
+        "x": 100,
+        "y": 794,
+        "width": 1052,
+        "height": 142
+      },
+      "style": {
+        "radius": 24,
+        "borderWidth": 1,
+        "borderColor": "#2dd4bf"
+      }
+    },
+    {
+      "id": "trace-copy",
+      "type": "text",
+      "text": "FORWARD / BACKWARD / RANDOM\nONE PLAYHEAD. ONE EXACT SOURCE FRAME.",
+      "startMs": 960,
+      "durationMs": 5120,
+      "transform": {
+        "x": 136,
+        "y": 824,
+        "width": 980,
+        "height": 80
+      },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 23,
+        "fontWeight": 600,
+        "letterSpacing": 1.2,
+        "lineHeight": 1.22,
+        "color": "#ccfbf1"
+      },
+      "textFit": {
+        "policy": "auto-fit",
+        "safeAreaId": "caption",
+        "minFontSize": 17
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 6400,
+      "effects": {
+        "vignette": {
+          "amount": 0.42,
+          "softness": 0.74,
+          "color": "#020617"
+        },
+        "filmGrain": {
+          "amount": 0.055,
+          "size": 2,
+          "seed": 20260815
+        }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "signal-footage",
+      "kind": "video",
+      "source": {
+        "path": "assets/video/atmosphere-fog-rays.mp4",
+        "mimeType": "video/mp4"
+      },
+      "size": {
+        "width": 736,
+        "height": 400
+      },
+      "durationMs": 6042
+    },
+    {
+      "schema": "shellx-motion/asset@1",
+      "id": "neon-studio",
+      "kind": "image",
+      "source": {
+        "path": "assets/images/neon-studio.svg",
+        "mimeType": "image/svg+xml"
+      },
+      "size": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "id": "font_inter_600",
+      "type": "font",
+      "family": "Inter",
+      "source": {
+        "path": "assets/fonts/inter-latin-600-normal.woff2",
+        "mimeType": "font/woff2"
+      },
+      "weight": 600,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_900",
+      "type": "font",
+      "family": "Inter",
+      "source": {
+        "path": "assets/fonts/inter-latin-900-normal.woff2",
+        "mimeType": "font/woff2"
+      },
+      "weight": 900,
+      "style": "normal"
+    }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "templates/generators/scrub-signal/generate.py",
+    "workflow": "v25-b1-visual-only-exact-time-scrub"
+  }
+}

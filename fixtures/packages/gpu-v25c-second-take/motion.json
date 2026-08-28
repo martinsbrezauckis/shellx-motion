@@ -1,0 +1,441 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_v25c_second_take",
+  "name": "Second Take — V25-C3 Motion-owned Afterimage Source Fixture",
+  "durationMs": 8000,
+  "fps": 30,
+  "width": 1080,
+  "height": 1920,
+  "background": "#090D1D",
+  "safeAreas": {
+    "vertical-copy": {
+      "top": 120,
+      "right": 72,
+      "bottom": 132,
+      "left": 72
+    }
+  },
+  "markers": [
+    {
+      "id": "first-mark",
+      "atMs": 0,
+      "label": "First mark"
+    },
+    {
+      "id": "orbit",
+      "atMs": 2000,
+      "label": "Orbit"
+    },
+    {
+      "id": "second-take",
+      "atMs": 4000,
+      "label": "Second take"
+    },
+    {
+      "id": "hold-frame",
+      "atMs": 6000,
+      "label": "Hold frame"
+    }
+  ],
+  "layers": [
+    {
+      "id": "night-paper",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 1920
+      },
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.52,
+        "centerY": 0.48,
+        "stops": [
+          {
+            "offset": 0,
+            "color": "#263F7B"
+          },
+          {
+            "offset": 0.42,
+            "color": "#151D43"
+          },
+          {
+            "offset": 1,
+            "color": "#090D1D"
+          }
+        ]
+      }
+    },
+    {
+      "id": "subject-aura",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#5E7DFF",
+      "opacity": 0.17,
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 138,
+        "y": 466,
+        "width": 804,
+        "height": 932,
+        "originX": 402,
+        "originY": 466
+      },
+      "effects": {
+        "glow": {
+          "radius": 76,
+          "color": "#5E7DFF"
+        }
+      },
+      "keyframes": {
+        "transform.scale": [
+          {
+            "atMs": 0,
+            "value": 0.92
+          },
+          {
+            "atMs": 2000,
+            "value": 1.03,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 4000,
+            "value": 0.96,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 1.06,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 8000,
+            "value": 0.98,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "subject-card",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#101937D9",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 156,
+        "y": 502,
+        "width": 768,
+        "height": 1008
+      },
+      "style": {
+        "radius": 72,
+        "stroke": "#FFE1A866",
+        "strokeWidth": 2
+      },
+      "effects": {
+        "glow": {
+          "radius": 24,
+          "color": "#FF746C"
+        }
+      }
+    },
+    {
+      "id": "subject-stage",
+      "type": "group",
+      "startMs": 0,
+      "durationMs": 8000,
+      "childLayerIds": [
+        "subject-vector",
+        "subject-afterimage"
+      ]
+    },
+    {
+      "id": "subject-vector",
+      "type": "image",
+      "assetId": "second-take-subject",
+      "assetRef": "assets/second-take-subject.svg",
+      "startMs": 0,
+      "durationMs": 8000,
+      "fit": "contain",
+      "transform": {
+        "x": 180,
+        "y": 476,
+        "width": 720,
+        "height": 1080,
+        "originX": 360,
+        "originY": 540
+      },
+      "keyframes": {
+        "transform.x": [
+          {
+            "atMs": 0,
+            "value": 174
+          },
+          {
+            "atMs": 2000,
+            "value": 188,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 4000,
+            "value": 170,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 190,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 8000,
+            "value": 180,
+            "easing": "ease-in-out"
+          }
+        ],
+        "transform.scale": [
+          {
+            "atMs": 0,
+            "value": 0.96
+          },
+          {
+            "atMs": 2000,
+            "value": 1.02,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 4000,
+            "value": 0.98,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 6000,
+            "value": 1.04,
+            "easing": "ease-in-out"
+          },
+          {
+            "atMs": 8000,
+            "value": 1,
+            "easing": "ease-in-out"
+          }
+        ]
+      }
+    },
+    {
+      "id": "subject-keyline",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#00000000",
+      "startMs": 0,
+      "durationMs": 8000,
+      "opacity": 0.8,
+      "transform": {
+        "x": 156,
+        "y": 502,
+        "width": 768,
+        "height": 1008
+      },
+      "style": {
+        "radius": 72,
+        "stroke": "#C6D1FF",
+        "strokeWidth": 3
+      },
+      "effects": {
+        "glow": {
+          "radius": 12,
+          "color": "#C6D1FF"
+        }
+      }
+    },
+    {
+      "id": "signal-particles",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 84,
+        "y": 1296,
+        "width": 912,
+        "height": 420
+      },
+      "emitter": {
+        "seed": 20260815,
+        "count": 240,
+        "lifetimeMs": 2600,
+        "shape": "circle",
+        "color": "#FFE1A8",
+        "secondaryColor": "#5E7DFF",
+        "minSize": 1,
+        "maxSize": 4,
+        "minSpeed": 8,
+        "maxSpeed": 44,
+        "direction": -90,
+        "spread": 130,
+        "gravity": -3,
+        "fadeOut": true
+      },
+      "effects": {
+        "glow": {
+          "radius": 6,
+          "color": "#FF746C"
+        }
+      }
+    },
+    {
+      "id": "pill-raw",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#1B2850E6",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 78,
+        "y": 1644,
+        "width": 242,
+        "height": 84
+      },
+      "style": {
+        "radius": 42,
+        "stroke": "#5E7DFF99",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "pill-echo",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#3A243EE6",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 338,
+        "y": 1644,
+        "width": 300,
+        "height": 84
+      },
+      "style": {
+        "radius": 42,
+        "stroke": "#FF746C99",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "pill-live",
+      "type": "shape",
+      "shape": "rounded-rect",
+      "fill": "#3A3422E6",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 656,
+        "y": 1644,
+        "width": 252,
+        "height": 84
+      },
+      "style": {
+        "radius": 42,
+        "stroke": "#FFE1A899",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "footer-rule",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#FFE1A8",
+      "opacity": 0.72,
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": {
+        "x": 78,
+        "y": 1804,
+        "width": 924,
+        "height": 2
+      }
+    },
+    {
+      "id": "copy-overlay",
+      "type": "image",
+      "assetId": "second-take-copy",
+      "assetRef": "assets/second-take-copy.svg",
+      "startMs": 0,
+      "durationMs": 8000,
+      "fit": "contain",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "id": "subject-afterimage",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 8000,
+      "effectModule": {
+        "schema": "shellx-motion/effect-module-ref@1",
+        "moduleId": "motion.afterimage-stack",
+        "version": "1.0.0",
+        "parameters": {
+          "echoes": [
+            {
+              "dxPx": -34,
+              "dyPx": 18,
+              "color": "#FF746CB8",
+              "opacityQ16": 32768
+            },
+            {
+              "dxPx": 28,
+              "dyPx": -16,
+              "color": "#5E7DFFAA",
+              "opacityQ16": 28672
+            },
+            {
+              "dxPx": 14,
+              "dyPx": 42,
+              "color": "#FFE1A8B4",
+              "opacityQ16": 24576
+            },
+            {
+              "dxPx": -52,
+              "dyPx": -24,
+              "color": "#FF8A70A0",
+              "opacityQ16": 18432
+            }
+          ],
+          "amountQ16": 47104
+        }
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "second-take-subject",
+      "type": "image",
+      "source": {
+        "path": "assets/second-take-subject.svg",
+        "mimeType": "image/svg+xml"
+      }
+    },
+    {
+      "id": "second-take-copy",
+      "type": "image",
+      "source": {
+        "path": "assets/second-take-copy.svg",
+        "mimeType": "image/svg+xml"
+      }
+    }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "templates/generators/second-take/recipe.json",
+    "method": "Original vertical creator composition with an authored transparent subject SVG in an isolated group plus a separate original vector-path copy overlay and a closed Motion-owned afterimage module reference; the crisp root copy, data pills, and bounded particles are deliberately outside the group."
+  }
+}

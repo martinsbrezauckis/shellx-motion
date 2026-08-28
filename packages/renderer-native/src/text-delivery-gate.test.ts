@@ -13,6 +13,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { nativeBlockGlyphRepertoire } from "@shellx-motion/core";
 import {
   caseFoldedCharacters,
   createNativeRenderSession,
@@ -146,6 +147,7 @@ describe("native text delivery gate", () => {
 
   it("keeps the glyph repertoire consistent with the core charset rule", () => {
     const repertoire = nativeGlyphRepertoire();
+    expect(repertoire).toEqual(nativeBlockGlyphRepertoire());
     // Core declares `text.charset.non-ascii` for anything outside printable ASCII and the native card
     // does not support it. That is only sound while the font itself is pure ASCII — if a non-ASCII
     // bitmap were ever added here, core would refuse text this lane can actually draw.

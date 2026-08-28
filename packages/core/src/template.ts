@@ -1,3 +1,4 @@
+import { isImportablePackageAssetRef } from "./package-asset-references";
 import type {
   MotionDocument,
   MotionPackage,
@@ -173,7 +174,7 @@ export function replaceTemplateMedia(pkg: MotionPackage, input: TemplateMediaRep
     errors.push({ paramId: input.paramId, message: "template param is not a media slot" });
   }
 
-  if (!isPackageAssetRef(input.assetRef)) {
+  if (!isImportablePackageAssetRef(input.assetRef)) {
     errors.push({ paramId: input.paramId, message: "assetRef must be a package-local assets/ path" });
   }
 
@@ -305,13 +306,4 @@ function isUnsafeJsonPointerSegment(value: string): boolean {
 function readArrayIndex(value: string): number | null {
   if (!/^(0|[1-9]\d*)$/.test(value)) return null;
   return Number(value);
-}
-
-function isPackageAssetRef(assetRef: string): boolean {
-  return typeof assetRef === "string"
-    && /^assets\/[^/].*/.test(assetRef)
-    && !assetRef.includes("..")
-    && !assetRef.startsWith("/")
-    && !/^[a-z][a-z0-9+.-]*:/i.test(assetRef)
-    && !assetRef.endsWith("/");
 }

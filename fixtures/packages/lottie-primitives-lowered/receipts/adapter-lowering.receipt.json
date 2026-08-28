@@ -1,0 +1,30 @@
+{
+  "schema": "shellx-motion/receipt@1",
+  "id": "adapter-lowering-lottie-815b54773dbe6c53",
+  "operation": "adapter.lower",
+  "status": "passed",
+  "packageId": "pkg_lottie_3c9fe1f3ffd55847",
+  "inputHashes": {
+    "source": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d"
+  },
+  "createdAt": "2026-08-26T00:00:00.000Z",
+  "lane": "adapter",
+  "output": {
+    "adapterId": "adapter.lottie",
+    "format": "lottie",
+    "motionId": "motion_lottie_3c9fe1f3ffd55847",
+    "motionSha256": "815b54773dbe6c53d69e538d0a775915494d835c7e4346f33ad46bec6c433e13",
+    "layerCount": 2,
+    "bundledImageCount": 0,
+    "bundledFontCount": 0,
+    "lossiness": {
+      "level": "none",
+      "budget": "No unsupported feature loss detected by the current diagnostic parser.",
+      "unsupportedCount": 0,
+      "warningCount": 0,
+      "supportedCount": 11
+    },
+    "acceptedWarningFeatures": []
+  },
+  "warnings": []
+}

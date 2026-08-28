@@ -1,15 +1,19 @@
-import { buildActionMatch, nearestActions, type MotionActionMatch, type MotionActionSummary } from "./catalog-find.js";
+import { AUDIO_ACTIONS } from "./catalog-audio.js";
+import { purposeForCall } from "./catalog-purpose.js";
+import { AGENT_SCRIPT_ACTION } from "./catalog-agent-script.js"; import { buildActionMatch, nearestActions, type MotionActionMatch, type MotionActionSummary } from "./catalog-find.js";
+import { actionPlanDetails, relatedActions, type MotionActionPlanExample } from "./catalog-action-details.js";
 import { MODULAR_ACTIONS } from "./catalog-modular.js";
-// The static surface-to-command-id table lives in ./catalog-surface-commands to satisfy the module-size gate.
-import { SURFACE_COMMANDS } from "./catalog-surface-commands.js";
-// Multi-phase request handling lives in ./catalog-workflows (module-size gate).
+import { RENDER_CACHE_PLAN_ACTIONS } from "./catalog-render-cache-plan.js"; import { AGENT_SNAPSHOT_ACTION } from "./catalog-agent-snapshot.js"; import { REVISION_TRANSACTION_ACTION, REVISION_TRANSACTION_PLAN_ACTION } from "./catalog-revision-transaction.js";
+import { TRANSITION_PRESET_ACTIONS } from "./catalog-transition-presets.js";
+import { PACKAGE_ASSET_IMPORT_ACTION } from "./catalog-package-asset-import.js";
+import { SURFACE_COMMANDS } from "./catalog-surface-commands.js"; // Size-gated surface data; workflow handling is also modular.
 import { buildWorkflowPlan, detectMotionWorkflow, normalizeRequest, type MotionWorkflow } from "./catalog-workflows.js";
-
 export { nearestActions, type MotionActionMatch, type MotionActionSummary } from "./catalog-find.js";
+export { purposeForCall };
+export { PARTICLE_STRUCTURAL_PURPOSES } from "./catalog-particle-structural-purposes.js";
+export { SHAPE_GEOMETRY_PURPOSES } from "./catalog-shape-geometry-purposes.js";
 export type { MotionWorkflow, MotionWorkflowPhase, MotionWorkflowPhaseId } from "./catalog-workflows.js";
-export { debugServerGrantHint, requestedTierRefusal, tierRefusal, trustedRootRefusal,
-  type MotionTierRefusal, type MotionTierRefusalDetail, type TierRefusalInput } from "./permission-refusal.js";
-
+export { debugServerGrantHint, requestedTierRefusal, tierRefusal, trustedRootRefusal, type MotionTierRefusal, type MotionTierRefusalDetail, type TierRefusalInput } from "./permission-refusal.js";
 export type MotionPermissionTier =
   | "read_motion"
   | "draft_motion"
@@ -17,7 +21,6 @@ export type MotionPermissionTier =
   | "edit_motion"
   | "write_local"
   | "push_remote";
-
 export interface MotionAction {
   id: string;
   aliases: string[];
@@ -27,12 +30,13 @@ export interface MotionAction {
   verify: string[];
   surfaces: string[];
 }
-
 export interface MotionActionPlanStep {
   order: number;
   call: string;
   purpose: string;
 }
+
+export type { MotionActionPlanExample } from "./catalog-action-details.js";
 
 export interface MotionActionPlan {
   ok: true;
@@ -41,6 +45,7 @@ export interface MotionActionPlan {
   steps: MotionActionPlanStep[];
   verify: string[];
   cautions: string[];
+  examples: MotionActionPlanExample[];
   related: MotionAction[];
   /**
    * Present when the request named more than one pipeline phase, e.g. "create a package with
@@ -149,6 +154,7 @@ export const ACTIONS: MotionAction[] = [
     verify: ["Agent health returns local CLI subscription adapter readiness, transport, billing mode, and unavailable reasons without mutating packages."],
     surfaces: ["prompt"]
   },
+  AGENT_SNAPSHOT_ACTION,
   {
     id: "motion.agent.transcript",
     aliases: [
@@ -337,18 +343,31 @@ export const ACTIONS: MotionAction[] = [
     permission: "read_motion",
     mutates: false,
     calls: ["motion.audio.panel"],
-    verify: ["Audio panel returns resolved audio inputs, automation counts, track controls, ducking, and export-preset compatibility warnings."],
+    verify: ["Audio panel returns resolved audio inputs, automation counts, track controls, document-master declaration, ducking, and export-preset compatibility warnings."],
     surfaces: ["timeline", "prompt"]
   },
+  ...AUDIO_ACTIONS,
   {
     id: "motion.package.patch",
-    aliases: ["edit package", "change template", "update motion"],
+    aliases: [
+      "edit package",
+      "patch package",
+      "apply json patch",
+      "apply json patch to package",
+      "bulk edit package",
+      "bulk package edit",
+      "change template",
+      "update motion"
+    ],
     permission: "edit_motion",
     mutates: true,
     calls: ["motion.state", "motion.package.patch", "motion.receipts.read"],
-    verify: ["Package diff receipt includes changed paths and input hashes."],
+    verify: ["Package diff receipt includes changed paths and input hashes; read the returned receipt before treating the copied package as verified."],
     surfaces: ["timeline", "templateInspector", "prompt"]
   },
+  PACKAGE_ASSET_IMPORT_ACTION,
+  REVISION_TRANSACTION_PLAN_ACTION,
+  REVISION_TRANSACTION_ACTION,
   {
     id: "motion.template.plan",
     aliases: [
@@ -460,18 +479,18 @@ export const ACTIONS: MotionAction[] = [
   },
   {
     id: "motion.preview.frame",
-    aliases: ["preview", "show frame", "render still", "preview it"],
+    aliases: ["preview", "show frame", "render still", "preview it", "strict hardware gpu preview"],
     permission: "render_motion",
-    mutates: false,
+    mutates: true,
     calls: ["motion.preview.frame", "motion.receipts.read"],
-    verify: ["Preview receipt includes output frame hash."],
+    verify: ["Preview receipt includes output frame hash.", "When the caller selects lane gpu, Motion either emits a general strict hardware WebGPU PNG receipt for admitted content or returns an explicit refusal; it never falls back."],
     surfaces: ["preview", "receipts", "prompt"]
   },
   {
     id: "motion.preview.playhead",
     aliases: ["preview current playhead", "preview playhead", "render playhead", "show playhead frame", "preview timeline playhead"],
     permission: "render_motion",
-    mutates: false,
+    mutates: true,
     calls: ["motion.preview.playhead", "motion.receipts.read"],
     verify: ["Playhead preview receipt includes timeline state, output frame hash, timestamp, and artifact path."],
     surfaces: ["preview", "receipts", "prompt"]
@@ -480,7 +499,7 @@ export const ACTIONS: MotionAction[] = [
     id: "motion.preview.strip",
     aliases: ["preview strip", "show preview strip", "thumbnail strip", "show timeline thumbnail strip", "storyboard strip", "show timeline thumbnails"],
     permission: "render_motion",
-    mutates: false,
+    mutates: true,
     calls: ["motion.preview.strip", "motion.receipts.read"],
     verify: ["Preview strip receipt includes per-frame output hashes, timestamps, and artifact paths."],
     surfaces: ["preview", "receipts", "prompt"]
@@ -788,6 +807,7 @@ export const ACTIONS: MotionAction[] = [
     ],
     surfaces: ["timeline", "preview", "receipts", "prompt"]
   },
+  ...TRANSITION_PRESET_ACTIONS,
   {
     id: "motion.timeline.easing.presets",
     aliases: [
@@ -1079,6 +1099,10 @@ export const ACTIONS: MotionAction[] = [
       "create shape layer",
       "add environment layer",
       "create environment layer",
+      "add points layer",
+      "create points layer",
+      "create a bounded point cloud",
+      "add a drone swarm layer", "add a particle trail", "add a point trail", "add a spark trail", "add a drone trail",
       "add rain environment layer",
       "create rain environment",
       "add water environment layer",
@@ -1244,7 +1268,12 @@ export const ACTIONS: MotionAction[] = [
       "change 3d scene parameter",
       "set camera depth control",
       "set motion blur shutter",
-      "set film grain control"
+      "set film grain control",
+      "draw path",
+      "reveal line",
+      "set laser trail", "set particle trail duration", "set point trail duration", "set spark trail samples", "set drone trail samples",
+      "engrave path",
+      "grow path"
     ],
     permission: "edit_motion",
     mutates: true,
@@ -1902,7 +1931,7 @@ export const ACTIONS: MotionAction[] = [
     ],
     surfaces: ["prompt", "preview", "receipts"]
   },
-  ...MODULAR_ACTIONS,
+  AGENT_SCRIPT_ACTION, ...MODULAR_ACTIONS,
   {
     id: "motion.canvas.package",
     aliases: [
@@ -1912,7 +1941,7 @@ export const ACTIONS: MotionAction[] = [
       "create motion package from canvas",
       "convert canvas frame to motion package"
     ],
-    permission: "render_motion",
+    permission: "write_local",
     mutates: true,
     calls: ["motion.canvas.package", "motion.receipts.read"],
     verify: ["Canvas package receipt includes source frame hash and resource catalog path."],
@@ -1943,13 +1972,28 @@ export const ACTIONS: MotionAction[] = [
       "canvas independent mp4",
       "canvas export without cut"
     ],
-    permission: "render_motion",
+    permission: "write_local",
     mutates: true,
     calls: ["motion.connector.canvas_to_mp4", "motion.receipts.read"],
     verify: [
       "Canvas MP4 connector receipt includes package, render, and resource catalog paths."
     ],
     surfaces: ["prompt", "preview", "receipts"]
+  },
+  {
+    id: "motion.connector.catalog",
+    aliases: [
+      "connector catalog",
+      "discover connector catalog",
+      "inspect generic connector descriptors",
+      "list immutable connector capabilities",
+      "prepare generic connector submit"
+    ],
+    permission: "read_motion",
+    mutates: false,
+    calls: ["motion.connector.catalog"],
+    verify: ["Connector catalog returns the canonical v2 descriptor inventory, fingerprints, and closed request-field definitions required to prepare generic submit without granting runtime authority."],
+    surfaces: ["prompt"]
   },
   {
     id: "motion.connector.panel",
@@ -2017,7 +2061,7 @@ export const ACTIONS: MotionAction[] = [
       "visual quality check"
     ],
     permission: "render_motion",
-    mutates: false,
+    mutates: true,
     calls: ["motion.quality.check", "motion.receipts.read"],
     verify: ["Quality check receipt includes representative-frame visual and alpha facts."],
     surfaces: ["preview", "receipts", "prompt"]
@@ -2035,7 +2079,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "write_local",
     mutates: true,
     calls: ["motion.connector.canvas_to_cut", "motion.receipts.read"],
-    verify: ["Connector receipt includes package, render, and Cut import plan paths."],
+    verify: ["Committed P2B connector receipt binds the package, rendered media artifact handle, render receipt, and Cut import plan."],
     surfaces: ["prompt", "receipts"]
   },
   {
@@ -2051,13 +2095,10 @@ export const ACTIONS: MotionAction[] = [
     ],
     permission: "write_local",
     mutates: true,
-    calls: [
-      "motion.connector.script_to_cut",
-      "motion.quality.check",
-      "motion.receipts.read"
-    ],
+    calls: ["motion.connector.script_to_cut", "motion.quality.check", "motion.receipts.read"],
     verify: [
-      "Script-to-Cut connector receipt includes script, render, quality, and Cut import plan evidence."
+      "Committed P2B Script-to-Cut receipt binds rendered media, artifact handle, render receipt, and Cut import plan evidence.",
+      "Separate quality check receipt includes representative-frame visual and alpha facts."
     ],
     surfaces: ["prompt", "receipts"]
   },
@@ -2073,14 +2114,10 @@ export const ACTIONS: MotionAction[] = [
     ],
     permission: "write_local",
     mutates: true,
-    calls: [
-      "motion.connector.source_to_cut",
-      "motion.quality.check",
-      "motion.receipts.read"
-    ],
+    calls: ["motion.connector.source_to_cut", "motion.quality.check", "motion.receipts.read"],
     verify: [
-      "Source-to-Cut connector receipt includes source Markdown, source refs, storyboard, render evidence, and Cut import plan path.",
-      "Quality check receipt includes representative-frame visual and alpha facts."
+      "Committed P2B Source-to-Cut receipt binds derived storyboard, rendered media, artifact handle, render evidence, and Cut import plan path.",
+      "Separate quality check receipt includes representative-frame visual and alpha facts."
     ],
     surfaces: ["prompt", "receipts"]
   },
@@ -2109,12 +2146,12 @@ export const ACTIONS: MotionAction[] = [
   {
     id: "motion.connector.template_to_cut",
     aliases: [
-      "apply editable template to cut timeline",
       "template to cut",
       "send template to cut",
       "apply template controls to cut",
       "template rendered video to cut timeline",
-      "editable template lower third to cut"
+      "rendered template media to cut",
+      "linux template rendered media to cut"
     ],
     permission: "write_local",
     mutates: true,
@@ -2123,41 +2160,10 @@ export const ACTIONS: MotionAction[] = [
       "motion.connector.template_to_cut",
       "motion.receipts.read"
     ],
-    verify: ["Template-to-Cut connector receipt includes changed params, render evidence, and Cut import plan path."],
+    verify: ["Linux-only Template-to-Cut P2A receipt binds changed params, a Browser-to-FFmpeg MP4, artifact handle, and Cut import plan; the template source is input evidence, not output."],
     surfaces: ["prompt", "templateInspector", "receipts"]
   },
-  {
-    id: "motion.render.final",
-    aliases: [
-      "render mp4",
-      "export video",
-      "final render",
-      "render this lower third as mp4",
-      "export png sequence frames",
-      "render image sequence",
-      "export frame sequence",
-      "png sequence export",
-      "export current frame as png still",
-      "export still frame",
-      "render png frame",
-      "jpeg frame export",
-      "export jpg frame",
-      "render final mp4 with a quality manifest",
-      "render with quality manifest",
-      "quality manifest render"
-    ],
-    permission: "render_motion",
-    mutates: true,
-    calls: ["motion.render.final", "motion.render.status", "motion.receipts.read"],
-    verify: [
-      "Render receipt includes output file hash, codec, duration, and dimensions.",
-      "Image-sequence render receipts include output frame directory, frame pattern, frame count, and PNG codec facts.",
-      "Still-frame render receipts include output image path, timestamp, codec, and image artifact evidence.",
-      "Optional quality manifests gate final renders and record quality-check status in render receipts.",
-      "Render status returns queue-style job state and progress derived from host receipts."
-    ],
-    surfaces: ["preview", "receipts", "prompt"]
-  },
+  ...RENDER_CACHE_PLAN_ACTIONS,
   {
     id: "motion.render.batch",
     aliases: [
@@ -2175,8 +2181,8 @@ export const ACTIONS: MotionAction[] = [
     verify: [
       "Batch render receipt includes per-row output paths, preset, and statuses.",
       "Each row render receipt includes final media facts for the selected preset.",
-      "Render status returns queue-style job state and progress derived from host receipts.",
-      "Render status and queue rows expose compact quality-manifest gate status when present."
+      "Historical render status summarizes completed receipt evidence; it is neither a live queue nor live progress.",
+      "Historical render status and receipt-history rows expose compact quality-manifest gate status when present."
     ],
     surfaces: ["preview", "receipts", "prompt"]
   },
@@ -2187,9 +2193,9 @@ export const ACTIONS: MotionAction[] = [
     mutates: false,
     calls: ["motion.render.queue", "motion.receipts.read"],
     verify: [
-      "Render queue panel returns job state, progress, control receipts, and available cancel/retry actions.",
-      "Queued and running render queue rows include render-job handoff metadata for future leased runners.",
-      "Render status and queue rows expose compact quality-manifest gate status when present."
+      "Historical render receipt rows expose persisted state, progress, and control annotations; they are not a live coordinator queue.",
+      "Rows preserve receipt-embedded handoff metadata where present; that metadata does not prove a queued or running worker.",
+      "Historical render status and receipt-history rows expose compact quality-manifest gate status when present."
     ],
     surfaces: ["preview", "receipts", "prompt"]
   },
@@ -2277,6 +2283,52 @@ export const ACTIONS: MotionAction[] = [
     surfaces: ["preview", "receipts", "prompt"]
   },
   {
+    id: "motion.job.submit",
+    aliases: ["submit render job", "start render in background", "render asynchronously", "start persistent render job"],
+    permission: "render_motion",
+    mutates: true,
+    calls: ["motion.job.submit"],
+    verify: [
+      "Submission returns a durable job id before expensive work starts.",
+      "Only ordinary streamed or closed segmented final-video routes are admitted, so cancellation reaches their producer and FFmpeg worker.",
+      "Poll motion.job.get or motion.job.events; pending means waiting, not rendering."
+    ],
+    surfaces: ["preview", "receipts", "prompt"]
+  },
+  {
+    id: "motion.job.cancel",
+    aliases: ["cancel render job", "stop render job", "abort running render", "cancel export"],
+    permission: "render_motion",
+    mutates: true,
+    calls: ["motion.job.cancel", "motion.job.get"],
+    verify: [
+      "Cancellation acknowledgement sets cancelRequested while work is still pending or running.",
+      "Only the settled worker reports terminal cancelled; it never carries an error."
+    ],
+    surfaces: ["preview", "receipts", "prompt"]
+  },
+  {
+    id: "motion.job.retry",
+    aliases: ["retry render job", "retry failed render", "rerun retryable job"],
+    permission: "render_motion",
+    mutates: true,
+    calls: ["motion.job.retry"],
+    verify: [
+      "Retry creates a new linked job rather than changing terminal source evidence.",
+      "Cancelled jobs are never retried automatically."
+    ],
+    surfaces: ["preview", "receipts", "prompt"]
+  },
+  {
+    id: "motion.job.events",
+    aliases: ["render job events", "watch render progress", "job progress events"],
+    permission: "read_motion",
+    mutates: false,
+    calls: ["motion.job.events"],
+    verify: ["Events are durable, ordered per job, and filtered by the caller visibility boundary."],
+    surfaces: ["preview", "receipts", "prompt"]
+  },
+  {
     id: "motion.prompt.queue",
     aliases: ["show prompt queue", "prompt queue panel", "prompt queue", "agent job queue", "show agent queue", "local agent queue"],
     permission: "read_motion",
@@ -2312,7 +2364,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "render_motion",
     mutates: true,
     calls: ["motion.render.cancel", "motion.render.status", "motion.receipts.read"],
-    verify: ["Render cancel receipt references the target job and render status marks it cancelled."],
+    verify: ["Historical cancel annotation references the target receipt and makes no claim about a live worker."],
     surfaces: ["preview", "receipts", "prompt"]
   },
   {
@@ -2321,7 +2373,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "render_motion",
     mutates: true,
     calls: ["motion.render.retry", "motion.render.status", "motion.receipts.read"],
-    verify: ["Render retry receipt references the source job and render status exposes the retry as queued."],
+    verify: ["Historical retry annotation references the source receipt and does not create a worker."],
     surfaces: ["preview", "receipts", "prompt"]
   },
   {
@@ -2330,7 +2382,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "read_motion",
     mutates: false,
     calls: ["motion.render.status"],
-    verify: ["Render status returns queue-style job state and progress derived from host receipts."],
+    verify: ["Historical render status summarizes completed receipt evidence; it is neither a live queue nor live progress."],
     surfaces: ["preview", "receipts", "prompt"]
   },
   {
@@ -2345,7 +2397,7 @@ export const ACTIONS: MotionAction[] = [
       "share review html"
     ],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.review.html.bundle", "motion.receipts.list"],
     verify: ["Review HTML bundle includes public-safe artifact links and quality-gate summaries; its receipt records HTML path, copied artifacts, receipt count, and quality-gate counts."],
     surfaces: ["receipts", "preview", "prompt"]
@@ -2365,7 +2417,7 @@ export const ACTIONS: MotionAction[] = [
       "turn link into storyboard source"
     ],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.source.import", "motion.receipts.read"],
     verify: ["Source import receipt includes public URL, kind, Markdown path, source hash, truncation evidence, and safe-fetch policy."],
     surfaces: ["receipts", "prompt"]
@@ -2383,7 +2435,7 @@ export const ACTIONS: MotionAction[] = [
       "source storyboard for script to cut"
     ],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.source.import", "motion.source.to_scripted_video", "motion.script.compile", "motion.receipts.read"],
     verify: ["Source-to-scripted-video emits deterministic scripted-video JSON, source refs, review-required storyboard metadata, and receipt artifacts before Script-to-Cut."],
     surfaces: ["receipts", "prompt"]
@@ -2468,7 +2520,7 @@ export const ACTIONS: MotionAction[] = [
       "create shellxmotion archive"
     ],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.package.archive", "motion.receipts.read"],
     verify: ["Package archive receipt includes archive path, file count, deterministic hash, and archived package file hashes."],
     surfaces: ["receipts", "prompt"]
@@ -2484,7 +2536,7 @@ export const ACTIONS: MotionAction[] = [
       "unpack motion package archive"
     ],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.package.extract", "motion.receipts.read"],
     verify: ["Package extract receipt includes package root, extracted file count, archive hash, and validation result."],
     surfaces: ["receipts", "prompt"]
@@ -2493,7 +2545,7 @@ export const ACTIONS: MotionAction[] = [
     id: "motion.support.bundle",
     aliases: ["support bundle", "debug bundle", "collect diagnostics", "export support data"],
     permission: "write_local",
-    mutates: false,
+    mutates: true,
     calls: ["motion.support.bundle", "motion.receipts.list"],
     verify: ["Support bundle lists diagnostics, receipts, and platform verification summaries without secret material."],
     surfaces: ["receipts", "prompt"]
@@ -2535,7 +2587,6 @@ export function findAction(request: string): MotionAction | null {
 
   return best?.action ?? null;
 }
-
 /**
  * `findAction` plus the answer for the miss case.
  *
@@ -2546,7 +2597,6 @@ export function findAction(request: string): MotionAction | null {
 export function findActionMatch(request: string): MotionActionMatch {
   return buildActionMatch(request, findAction(request), ACTIONS);
 }
-
 export function guideAction(request: string): MotionActionPlan {
   return planAction(request);
 }
@@ -2563,6 +2613,7 @@ export function planAction(request: string): MotionActionPlan {
   const calls = action?.mutates ? action.calls : wantsEdit && wantsPreview
     ? ["motion.state", "motion.package.patch", "motion.preview.frame", "motion.receipts.read"]
     : action?.calls ?? ["motion.actions.find"];
+  const details = action ? actionPlanDetails(action.id) : undefined;
 
   return {
     ok: true,
@@ -2570,8 +2621,9 @@ export function planAction(request: string): MotionActionPlan {
     action,
     steps: calls.map((call, index) => ({ order: index + 1, call, purpose: purposeForCall(call) })),
     verify: verificationForPlan(action, calls),
-    cautions: action ? [] : ["No exact action matched; inspect related actions before mutation."],
-    related: action ? ACTIONS.filter((candidate) => candidate.id !== action.id).slice(0, 3) : ACTIONS.slice(0, 3)
+    cautions: action ? (details?.cautions ?? []) : ["No exact action matched; inspect related actions before mutation."],
+    examples: details?.examples ?? [],
+    related: relatedActions(ACTIONS, action, details?.relatedActionIds)
   };
 }
 
@@ -2595,11 +2647,13 @@ export function actionCoverage(visibleSurfaces: string[]): { ok: boolean; uncove
 function verificationForPlan(action: MotionAction | null, calls: string[]): string[] {
   return [...new Set([...(action?.verify ?? []), ...verificationForCalls(calls)])];
 }
-
 function verificationForCalls(calls: string[]): string[] {
   const verify = new Set<string>();
   for (const call of calls) {
     if (call === "motion.package.patch") verify.add("Package diff receipt includes changed paths and input hashes.");
+    if (call === "motion.package.asset.import") verify.add("Package asset import copies one host-approved regular file into assets/ without replacing an existing source-package file; the receipt binds its target ref and SHA-256.");
+    if (call === "motion.revision.transaction.plan") verify.add("Read-only plan binds the exact base, canonical normalized transaction hash, each typed step hash and changed path, predicted final authored-document hash, and compact passed validation without writing a receipt or package.");
+    if (call === "motion.revision.transaction") verify.add("One aggregate revision.transaction receipt binds the exact base identity, source/final authored-document hashes, canonical transaction hash, every typed step hash and changed path, and validation result.");
     if (call === "motion.preview.frame") verify.add("Preview receipt includes output frame hash.");
     if (call === "motion.preview.panel") verify.add("Preview player panel returns package facts, playhead state, active timeline refs, preview modes, and render follow-ups without rendering.");
     if (call === "motion.preview.playhead") verify.add("Playhead preview receipt includes timeline state, output frame hash, timestamp, and artifact path.");
@@ -2608,13 +2662,14 @@ function verificationForCalls(calls: string[]): string[] {
       verify.add("Render receipt includes output file hash, codec, duration, and dimensions.");
       verify.add("Image-sequence render receipts include output frame directory, frame pattern, frame count, and PNG codec facts.");
     }
+    if (call === "motion.render.cache.plan") verify.add("Plan reports only a verified v2 entry as a hit; it creates no output, lock, descriptor, receipt, artifact, or render authorization.");
     if (call === "motion.render.batch") verify.add("Batch render receipt includes per-row output paths, preset, and statuses.");
-    if (call === "motion.render.cancel") verify.add("Render cancel receipt references the target job and render status marks it cancelled.");
-    if (call === "motion.render.retry") verify.add("Render retry receipt references the source job and render status exposes the retry as queued.");
+    if (call === "motion.render.cancel") verify.add("Historical cancel annotation references the target receipt and makes no claim about a live worker.");
+    if (call === "motion.render.retry") verify.add("Historical retry annotation references the source receipt and does not create a worker.");
     if (call === "motion.render.queue") {
-      verify.add("Render queue panel returns job state, progress, control receipts, and available cancel/retry actions.");
-      verify.add("Queued and running render queue rows include render-job handoff metadata for future leased runners.");
-      verify.add("Render status and queue rows expose compact quality-manifest gate status when present.");
+      verify.add("Historical render receipt rows expose persisted state, progress, and control annotations; they are not a live coordinator queue.");
+      verify.add("Rows preserve receipt-embedded handoff metadata where present; that metadata does not prove a queued or running worker.");
+      verify.add("Historical render status and receipt-history rows expose compact quality-manifest gate status when present.");
     }
     if (call === "motion.prompt.queue") {
       verify.add("Prompt queue panel returns local-agent job state, transcript links, and available cancel/retry actions.");
@@ -2626,6 +2681,7 @@ function verificationForCalls(calls: string[]): string[] {
     if (call === "motion.capabilities.panel") verify.add("Capability panel returns grouped lane cards, support badges, package fit, recommended lane, and follow-up match/export actions.");
     if (call === "motion.agent.panel") verify.add("Agent panel returns default local CLI selection policy, adapter command shapes, safety guarantees, receipt coverage, and prompt follow-ups without probing or mutating packages.");
     if (call === "motion.agent.health") verify.add("Agent health returns local CLI subscription adapter readiness, transport, billing mode, and unavailable reasons without mutating packages.");
+    if (call === "motion.agent.snapshot") verify.add("Agent snapshot returns a bounded path-free package, action, receipt, warning, and own-job summary without creating a receipt or mutating Motion.");
     if (call === "motion.packages.browse") verify.add("Package browser returns package cards, template availability, asset counts, brand provenance, and skipped-package warnings.");
     if (call === "motion.export.presets") verify.add("Export preset response includes extensions, MIME types, codec choices, and audio/alpha support.");
     if (call === "motion.export.panel") verify.add("Export panel groups presets with recommendations, badges, and suggested render arguments.");
@@ -2650,6 +2706,8 @@ function verificationForCalls(calls: string[]): string[] {
     if (call === "motion.timeline.easing.presets") verify.add("Easing preset response includes named and cubic-bezier presets usable by keyframes and transitions.");
     if (call === "motion.timeline.animation.presets") verify.add("Animation preset response includes entrance and exit presets with target keyframe coverage.");
     if (call === "motion.timeline.animation.preset.apply") verify.add("Animation preset apply receipt includes layer id or layer ids, preset id, timing or staggered per-layer timings, affected targets, changed paths, validation result, and preview evidence.");
+    if (call === "motion.timeline.transition.presets") verify.add("Transition preset response includes stable ids, compatible lanes, ShellX surfaces, default duration, and best-for guidance.");
+    if (call === "motion.timeline.transition.preset.apply") verify.add("Transition preset receipt includes layer id, preset id, resolved transitions, changed paths, validation result, and preview evidence.");
     if (call === "motion.timeline.keyframe.upsert") verify.add("Timeline keyframe receipt includes layer id, target, timestamp, easing, changed path, target-specific value validation, and validation result.");
     if (call === "motion.timeline.keyframe.delete") verify.add("Timeline keyframe delete receipt includes layer id, target, timestamp, removed value, changed path, and validation result.");
     if (call === "motion.timeline.keyframe.move") verify.add("Timeline keyframe move receipt includes layer id, target, old/new timestamps, moved keyframe value/easing, changed paths, and validation result.");
@@ -2697,7 +2755,7 @@ function verificationForCalls(calls: string[]): string[] {
     if (call === "motion.timeline.caption.upsert") verify.add("Caption upsert receipt includes layer id, timing, text, track ref, changed paths, and validation result.");
     if (call === "motion.timeline.transition.upsert") verify.add("Timeline transition receipt includes layer id, edge, transition type, duration, easing, changed path, and validation result.");
     if (call === "motion.timeline.transition.delete") verify.add("Timeline transition delete receipt includes layer id, edge, removed transition, changed path, and validation result.");
-    if (call === "motion.script.compile") verify.add("Script compile receipt includes source storyboard hash.");
+    if (call === "motion.script.compile") verify.add("Script compile receipt includes source storyboard hash."); if (call === "motion.package.script.author") verify.add("Approved-agent-entry host receipt records requested/active mode, resolver version, source hashes, and non-secret attestation evidence.");
     if (call === "motion.analysis.tracking.request") verify.add("Tracking request receipt includes package-local source identity, solver settings, confidence/lost spans, contained media resources, lifecycle path, and output package evidence.");
     if (call === "motion.analysis.tracking.inspect") verify.add("Tracking inspection reports lifecycle attempts, last-good analysis, and whether current package-local source bytes match the persisted identity.");
     if (call === "motion.analysis.tracking.apply") verify.add("Tracking apply receipt includes the selected confidence segment, compiled transform keyframes, reversible attachment, validation, source hash, and output package evidence.");
@@ -2709,17 +2767,17 @@ function verificationForCalls(calls: string[]): string[] {
     if (call === "motion.quality.check") verify.add("Quality check receipt includes representative-frame visual and alpha facts.");
     if (call === "motion.connector.panel") verify.add("Connector panel lists Canvas, Cut Generate, scripted-video, source, and template connector workflows with required inputs, render behavior, receipts, quality gates, and Cut handoff support.");
     if (call === "motion.connector.canvas_to_mp4") verify.add("Canvas MP4 connector receipt includes package, render, and resource catalog paths.");
-    if (call === "motion.connector.canvas_to_cut") verify.add("Connector receipt includes package, render, and Cut import plan paths.");
-    if (call === "motion.connector.script_to_cut") verify.add("Script-to-Cut connector receipt includes script, render, quality, and Cut import plan evidence.");
-    if (call === "motion.connector.source_to_cut") verify.add("Source-to-Cut connector receipt includes source Markdown, source refs, storyboard, render evidence, and Cut import plan path.");
+    if (call === "motion.connector.canvas_to_cut") verify.add("Committed P2B connector receipt binds package, rendered-media artifact handle, render evidence, and Cut import plan.");
+    if (call === "motion.connector.script_to_cut") verify.add("Committed P2B Script-to-Cut receipt binds rendered media, artifact handle, render evidence, and Cut import plan.");
+    if (call === "motion.connector.source_to_cut") verify.add("Committed P2B Source-to-Cut receipt binds the derived storyboard, rendered media, artifact handle, render evidence, and Cut import plan.");
     if (call === "motion.connector.cut_generate_to_cut") verify.add("Cut Generate connector receipt includes script, render, quality, and Cut import plan evidence.");
-    if (call === "motion.connector.template_to_cut") verify.add("Template-to-Cut connector receipt includes changed params, render evidence, and Cut import plan path.");
+    if (call === "motion.connector.template_to_cut") verify.add("Linux Template-to-Cut P2A receipt binds changed params, Browser-rendered media, artifact handle, and Cut import plan.");
     if (call === "motion.template.catalog") verify.add("Template catalog returns package ids, template ids, compatible hosts/lanes, control counts, suitability metadata, and suggested follow-up actions.");
     if (call === "motion.template.panel") verify.add("Template panel returns grouped controls, bindings, current values, suitability metadata, control type counts, and follow-up actions.");
     if (call === "motion.template.media.replace") verify.add("Template media replace receipt includes param id, copied asset ref, changed bindings, manifest asset refs, and validation result.");
     if (call === "motion.render.status") {
-      verify.add("Render status returns queue-style job state and progress derived from host receipts.");
-      verify.add("Render status and queue rows expose compact quality-manifest gate status when present.");
+      verify.add("Historical render status summarizes completed receipt evidence; it is neither a live queue nor live progress.");
+      verify.add("Historical render status and receipt-history rows expose compact quality-manifest gate status when present.");
     }
     if (call === "motion.review.html.bundle") verify.add("Review HTML bundle includes public-safe artifact links and quality-gate summaries; its receipt records HTML path, copied artifacts, receipt count, and quality-gate counts.");
     if (call === "motion.source.import") verify.add("Source import receipt includes public URL, kind, Markdown path, source hash, truncation evidence, and safe-fetch policy.");
@@ -2741,164 +2799,16 @@ function verificationForCalls(calls: string[]): string[] {
     }
     if (call === "motion.assets.panel") verify.add("Asset panel returns declared assets, layer references, missing assets, hashes, and usage counts.");
     if (call === "motion.brand.panel") verify.add("Brand panel returns design-token groups, color tokens, typography tokens, and source provenance.");
-    if (call === "motion.audio.panel") verify.add("Audio panel returns resolved audio inputs, automation counts, track controls, ducking, and export-preset compatibility warnings.");
+    if (call === "motion.audio.panel") verify.add("Audio panel returns resolved audio inputs, automation counts, track controls, document-master declaration, ducking, and export-preset compatibility warnings.");
+    if (call === "motion.audio.master.set") verify.add("Audio master receipt includes prior and persisted bounded controls, changed paths, and validation result.");
+    if (call === "motion.audio.crossfade.set") verify.add("Audio crossfade receipt includes both layer ids, duration, matched curve, changed paths, and validation result.");
+    if (call === "motion.procedural.audio-envelope.produce") verify.add("Audio-envelope producer receipt binds source asset identity, source layer, bounded sample evidence, copied-package validation, and any genuinely reported governed-decoder resources.");
     if (call === "motion.media.panel") verify.add("Media panel returns image, video, audio, and web layer source readiness, trim/loop/playback controls, and export-preset compatibility warnings.");
     if (call === "motion.receipts.read") verify.add("Receipt read returns host-owned evidence.");
   }
   return [...verify];
 }
 
-/**
- * One line saying what a command is FOR.
- *
- * Exported because the MCP tool listing needs it: a tool described only as
- * "debug command motion.render.final. permission=render_motion. mutates=true." tells an agent
- * nothing about when to reach for it. An independent agent tester called the bare listings
- * "near-useless" and had to fall back on actions.guide for every decision.
- */
-export function purposeForCall(call: string): string {
-  const purposes: Record<string, string> = {
-    "motion.state": "Read current package and UI state before mutation.",
-    "motion.package.patch": "Apply a validated Motion package patch.",
-    "motion.preview.frame": "Render a deterministic preview frame.",
-    "motion.preview.panel": "Show a read-only preview player with playhead state, active timeline refs, preview modes, and render follow-ups.",
-    "motion.preview.playhead": "Render the current timeline playhead as a deterministic preview frame.",
-    "motion.preview.strip": "Render a deterministic timeline preview strip with per-frame evidence.",
-    "motion.render.status": "Read render job state and progress from host receipt files, which only describe work that has finished writing evidence.",
-    "motion.package.create": "Create a new, valid, renderable Motion package from nothing. The first step when building something original rather than importing it.",
-    "motion.package.validate": "Check a package is structurally valid without rendering it — identity, layers, dimensions, hosts and lanes.",
-    "motion.platform.requirements": "Check whether the external tools Motion needs (FFmpeg) are installed, and get the exact command to install them.",
-    "motion.job.get": "Ask what one job is doing right now: pending, running, or ended with an outcome. Answers live work the receipt views cannot see.",
-    "motion.job.list": "List this caller's jobs, live work first and finished work newest first.",
-    "motion.render.cancel": "Write a host-owned cancellation receipt for a queued or running render job.",
-    "motion.render.retry": "Queue a retry receipt for a failed or cancelled render job.",
-    "motion.render.queue": "Show render queue rows with state, progress, control receipts, available actions, and leased-runner handoff metadata.",
-    "motion.prompt.queue": "Show prompt queue rows with local-agent job state, transcript links, available actions, and prompt-job handoff metadata.",
-    "motion.prompt.cancel": "Write a host-owned cancellation receipt for a queued or running prompt job.",
-    "motion.prompt.retry": "Queue a retry receipt for a failed or cancelled prompt job.",
-    "motion.actions.panel": "Show grouped actions, permission tiers, prompt commands, and suggested prompt-run follow-ups.",
-    "motion.agent.panel": "Show local CLI agent selection policy, adapter command shapes, safety guarantees, and prompt follow-ups.",
-    "motion.agent.health": "Probe local CLI subscription agent readiness without mutating packages.",
-    "motion.packages.browse": "Browse local Motion packages with package metadata, template availability, asset counts, and suggested follow-up actions.",
-    "motion.media.panel": "Show media layer source readiness, trim/loop/playback controls, and export-preset compatibility warnings.",
-    "motion.audio.panel": "Show resolved audio mix inputs, automation, track controls, ducking, and export-preset compatibility warnings.",
-    "motion.analysis.tracking.request": "Run contained point or planar analysis for a manifest-declared package video and persist its retryable lifecycle in a copied package.",
-    "motion.analysis.tracking.inspect": "Inspect tracking confidence, lifecycle attempts, last-good data, and current source identity without mutation.",
-    "motion.analysis.tracking.apply": "Compile a current tracking result into reversible ordinary transform keyframes in a copied package.",
-    "motion.analysis.tracking.detach": "Restore the exact transform keyframes that existed before tracking stabilization was attached.",
-    "motion.analysis.tracking.verify": "Verify attachment identity, source bytes, and generated stabilization keyframes without mutation.",
-    "motion.render.final": "Render final media through the selected renderer lane.",
-    "motion.render.batch": "Render data rows into per-row media outputs with the selected export preset.",
-    "motion.export.presets": "List supported export presets with codecs, extensions, MIME types, and audio/alpha support.",
-    "motion.export.panel": "Show export presets as grouped UI cards with recommended choices and render arguments.",
-    "motion.export.plan": "Plan the export preset, feature impact, deterministic capture preflight, quality gates, and render follow-up arguments.",
-    "motion.timeline.panel": "Show the timeline as panel-ready playhead controls, layer rows, scenes, tracks, markers, and suggested actions.",
-    "motion.timeline.keyframes.panel": "Show animated layers, keyframe target ranges, easing usage, preset counts, and suggested keyframe actions.",
-    "motion.timeline.transitions.panel": "Show enter and exit transitions with timing windows, easing usage, type counts, and suggested transition actions.",
-    "motion.timeline.inspect": "Inspect timeline scenes, tracks, markers, and layer track refs.",
-    "motion.timeline.playhead.set": "Move the timeline playhead as durable editor state without mutating MotionIR.",
-    "motion.timeline.range.select": "Select an in/out timeline range as durable editor state without mutating MotionIR.",
-    "motion.timeline.viewport.set": "Set timeline viewport range, zoom, and pixels-per-second as durable editor state.",
-    "motion.timeline.duration.policy": "Read package duration policy and protected intro/outro regions.",
-    "motion.timeline.duration.policy.set": "Set package duration policy metadata for protected regions, min/max duration, and resize behavior.",
-    "motion.timeline.marker.upsert": "Insert or replace a timeline marker and optionally attach it to a scene.",
-    "motion.timeline.marker.delete": "Remove a timeline marker and prune stale scene marker refs.",
-    "motion.timeline.scene.create": "Create a storyboard scene with timing, optional display name, and optional track or marker refs.",
-    "motion.timeline.scene.delete": "Remove a storyboard scene while preserving referenced timeline content and package duration.",
-    "motion.timeline.scene.reorder": "Reorder storyboard scene rows while preserving timing, refs, and package duration.",
-    "motion.timeline.scene.resize": "Resize a scene duration and optionally ripple later scenes, layers, and markers.",
-    "motion.timeline.scene.name.set": "Set a timeline scene display name without renaming stable scene ids or hand-authoring JSON pointer patches.",
-    "motion.timeline.easing.panel": "Inspect sampled easing curves and package usage across keyframes and transitions.",
-    "motion.timeline.easing.presets": "List named and cubic-bezier easing presets available for keyframes and transitions.",
-    "motion.timeline.animation.presets": "List reusable entrance and exit animation presets available for layer keyframes.",
-    "motion.timeline.animation.preset.apply": "Apply a reusable animation preset to one or more layers as deterministic keyframes with receipt evidence.",
-    "motion.timeline.keyframe.upsert": "Insert or replace a typed timeline keyframe without hand-authoring JSON pointer patches.",
-    "motion.timeline.keyframe.delete": "Remove a typed timeline keyframe without hand-authoring JSON pointer patches.",
-    "motion.timeline.keyframe.move": "Move an existing typed timeline keyframe to a new timestamp while preserving its value and easing.",
-    "motion.timeline.keyframe.easing.apply": "Apply an easing preset to one keyframe or a selected keyframe time range.",
-    "motion.timeline.keyframe.shift": "Shift a selected typed keyframe range by a positive or negative delta while preserving values and easing.",
-    "motion.timeline.keyframe.scale": "Stretch or compress a selected typed keyframe range around an origin while preserving values and easing.",
-    "motion.timeline.keyframe.duplicate": "Copy a selected typed keyframe range by a positive or negative offset while preserving original keyframes, values, and easing.",
-    "motion.timeline.keyframe.distribute": "Space three or more typed keyframes evenly between the first and last selected timestamps while preserving values and easing.",
-    "motion.timeline.keyframe.range.delete": "Remove a selected typed keyframe range while preserving other targets and pruning empty keyframe containers.",
-    "motion.timeline.keyframe.reverse": "Reverse a selected typed keyframe range in time while preserving values and easing.",
-    "motion.timeline.keyframe.snap": "Snap a selected typed keyframe range to the package frame grid while preserving values and easing.",
-    "motion.timeline.layer.create": "Create a typed text, shape, media, environment, or other bounded data-only layer with stack and optional track placement evidence.",
-    "motion.timeline.layer.trim": "Update layer start, duration, and optional media source trim fields without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.split": "Split a layer at an absolute timeline timestamp while preserving segment timing, media trim, keyframes, transitions, and track order.",
-    "motion.timeline.layer.text.set": "Set text on an existing text or caption layer without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.style.set": "Set a supported top-level layer style property without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.transform.set": "Set a supported static layer transform or opacity value without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.effect.set": "Set a supported static layer visual effect value without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.rich.set": "Set one inspector-exposed, allow-listed environment, shader, particle, 3D, camera/depth, motion-blur, or film control.",
-    "motion.timeline.layer.blend.set": "Set a supported static layer blend mode without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.crop.set": "Set a static image or video source crop rectangle without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.mask.set": "Set a static visual-layer rectangular or rounded mask without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.fit.set": "Set a static image or video media fit mode without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.media.set": "Set a media layer source and canonicalize stale direct source aliases without hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.name.set": "Set a timeline layer display name without renaming stable layer ids or hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.visibility.set": "Hide or show a timeline layer without deleting it or hand-authoring JSON pointer patches.",
-    "motion.timeline.layer.lock": "Lock or unlock a timeline layer with receipt evidence so later edit commands can honor layer protection.",
-    "motion.timeline.layer.delete": "Delete a layer while removing stale track refs and preserving receipt evidence.",
-    "motion.timeline.layer.duplicate": "Duplicate a layer while preserving animation, transitions, timing, and track order evidence.",
-    "motion.timeline.layer.reorder": "Reorder a layer in the global timeline stack while syncing track layer order evidence.",
-    "motion.timeline.cleanup": "Remove stale or duplicate track, scene, and marker refs while normalizing package duration with receipt evidence.",
-    "motion.timeline.track.create": "Create a timeline track and optionally attach existing untracked layers with receipt evidence.",
-    "motion.timeline.track.reorder": "Reorder timeline tracks with old/new stack index and track-order receipt evidence.",
-    "motion.timeline.track.delete": "Delete a timeline track while preserving layers, optionally detaching layer refs, and pruning scene refs.",
-    "motion.timeline.track.rename": "Rename a timeline track with old/new name and changed-path receipt evidence.",
-    "motion.timeline.track.lock": "Lock or unlock a timeline track with receipt evidence so later edit commands can honor track protection.",
-    "motion.timeline.track.mute": "Mute or unmute a timeline track with receipt evidence so final renders can honor track audio state.",
-    "motion.timeline.track.solo": "Solo or unsolo a timeline track with receipt evidence so final renders can isolate track audio state.",
-    "motion.timeline.track.volume": "Set timeline track gain with receipt evidence so final renders can honor track audio level.",
-    "motion.timeline.track.fade": "Set timeline track fade-in and fade-out defaults with receipt evidence so final renders can honor track audio fades.",
-    "motion.timeline.track.pan": "Set timeline track stereo balance with receipt evidence so final renders can honor track audio pan.",
-    "motion.timeline.layer.ducking.set": "Set ducking on an audio layer so final renders lower it under trigger layers. Default mode 'timed' lowers the layer across each trigger's time window (level-independent); mode 'sidechain' uses true level-dependent FFmpeg sidechaincompress (threshold/ratio/attack/release) so it only ducks while the trigger audio is actually loud.",
-    "motion.timeline.layer.track.assign": "Assign or reorder a layer on a timeline track while keeping layer track refs and track layer order consistent.",
-    "motion.timeline.caption.import": "Parse SRT, VTT, or plain captions into typed caption layers on a timeline caption track.",
-    "motion.timeline.caption.upsert": "Insert or replace one caption layer with text, timing, style, and caption track evidence.",
-    "motion.timeline.transition.upsert": "Insert or replace a layer enter or exit transition without hand-authoring JSON pointer patches.",
-    "motion.timeline.transition.delete": "Remove a layer enter or exit transition without hand-authoring JSON pointer patches.",
-    "motion.script.compile": "Compile a structured scripted-video storyboard into a local Motion package.",
-    "motion.capabilities.match": "Match the package and requested output against renderer lane capability cards before rendering.",
-    "motion.capabilities.panel": "Show grouped renderer lane cards with support badges, package fit, recommended lane, and follow-up match or export-plan actions.",
-    "motion.template.catalog": "List available Motion templates from explicit package roots.",
-    "motion.template.panel": "Show grouped TemplateIR controls with current bound Motion values and follow-up actions.",
-    "motion.template.controls": "List host-editable template controls for the current package.",
-    "motion.template.apply": "Apply host-editable template values through declared bindings.",
-    "motion.template.media.replace": "Replace a TemplateIR media slot with a copied package-local asset and bound MotionIR refs.",
-    "motion.canvas.package": "Convert the selected Canvas frame into a local Motion package and resource catalog.",
-    "motion.canvas.bridge_export": "Export a Canvas checkout frame selection through the trusted Canvas bridge.",
-    "motion.quality.panel": "Show quality-manifest samples, baselines, regions, audio policy, and suggested quality follow-up commands.",
-    "motion.quality.check": "Inspect final media dimensions plus representative-frame visual and alpha quality.",
-    "motion.connector.panel": "Show connector workflow readiness for Canvas, Cut Generate, scripted-video, source, and template handoffs.",
-    "motion.connector.canvas_to_cut": "Run the Canvas-to-Cut connector harness.",
-    "motion.connector.canvas_to_mp4": "Run the Canvas-to-MP4 connector harness.",
-    "motion.connector.script_to_cut": "Run the Script-to-Cut scripted-video connector workflow without requiring Canvas.",
-    "motion.connector.source_to_cut": "Run imported source Markdown through storyboard planning, Script-to-Cut, and Cut import planning.",
-    "motion.connector.cut_generate_to_cut": "Run the Cut Generate scripted-video-to-Cut connector workflow.",
-    "motion.connector.template_to_cut": "Apply TemplateIR values, render if needed, and create a Cut import plan.",
-    "motion.review.html.bundle": "Collect render, preview, quality, and receipt evidence into a portable local HTML review bundle.",
-    "motion.source.import": "Fetch or accept a pre-fetched public prompt source into Markdown with safe-fetch policy and receipt evidence.",
-    "motion.source.to_scripted_video": "Lower imported source Markdown into deterministic scripted-video JSON with source refs and review-required storyboard metadata.",
-    "motion.storyboard.panel": "Review scripted-video storyboard metadata, readiness diagnostics, source refs, frame timings, and follow-up compile or Cut handoff actions.",
-    "motion.storyboard.graph": "Review scripted-video source, asset, template, engine, review, sequence graph facts, and readiness diagnostics before compile or Cut handoff.",
-    "motion.html.snippet.export": "Export a standalone HTML/CSS composition artifact with ShellX timing metadata and adapter lossiness diagnostics.",
-    "motion.html.snippet.import": "Import a bounded inert ShellX/HyperFrames-style HTML composition, stage verified local media, and record discarded HTML/CSS behavior in a receipt.",
-    "motion.otio.export": "Export the current Motion package to an OpenTimelineIO editorial interchange timeline.",
-    "motion.otio.import": "Import an OpenTimelineIO editorial interchange timeline into a local Motion package.",
-    "motion.package.archive": "Export the current Motion package as a deterministic portable .shellxmotion archive with receipt evidence.",
-    "motion.package.extract": "Extract a portable .shellxmotion archive into a local Motion package with receipt evidence.",
-    "motion.support.bundle": "Collect local diagnostics for support handoff.",
-    "motion.platform.verification.panel": "Summarize Linux, Windows, macOS, and aggregate platform verification receipts.",
-    "motion.agent.transcript": "Read prompt and agent receipt transcripts as panel-ready redacted evidence.",
-    "motion.receipts.panel": "Summarize host-owned receipts for a panel with recent activity, warnings, failures, and artifacts.",
-    "motion.assets.panel": "Summarize package assets, MotionIR asset refs, layer usage, hashes, and missing local files.",
-    "motion.brand.panel": "Summarize design-token groups and brand provenance for package handoff.",
-    "motion.receipts.read": "Read host-owned evidence for the operation."
-  };
-  return purposes[call] ?? `Run ${call}.`;
-}
 
 function aliasScore(request: string, alias: string): number {
   const aliasWords = wordsForMatch(alias);

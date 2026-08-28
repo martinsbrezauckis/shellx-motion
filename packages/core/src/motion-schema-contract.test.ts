@@ -1,24 +1,36 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadSchema, validateDocument } from "./validate";
+import {
+  buildMotionPublicSchema,
+  MOTION_DOCUMENT_REQUIRED,
+  MOTION_DOCUMENT_SCHEMA
+} from "./motion-public-schema";
+import {
+  MOTION_VALIDATION_CONTRACT,
+  MOTION_VALIDATION_STAGE_ORDER,
+  motionValidationSchemaComment,
+  renderMotionValidationGuide,
+} from "./motion-validation-contract";
+import { validateMotionDocumentInStages } from "./motion-validation";
 import { validateAgainstPublishedSchema, type JsonSchemaDocument } from "./published-schema-check";
-import { NAMED_EASINGS_LIST } from "./timeline";
+import { loadSchema, validateDocument } from "./validate";
 
 /**
- * Engine-review A4: the published schemas/motion.schema.json validated `layers` as a bare array and
- * `provenance` as a bare object while the real contract lived in the hand-written validator
- * (validate.ts). This suite pins the published schema to that validator (verify direction — no JSON
- * Schema evaluator dependency is added): the published schema must not accept documents validate.ts
- * rejects at the structural level, its required lists and easing enum are pinned to the validator's
- * constants, and real fixtures must not be false-rejected.
+ * Differential corpus for the published Motion document schema.
+ *
+ * The generated JSON Schema intentionally covers portable structural rules while
+ * `validate.ts` remains the authority for reference integrity, ordering, budget,
+ * and renderer-semantic checks. This suite makes that boundary executable: every
+ * shipped valid document must be accepted by both, while representative static
+ * failures from the runtime validator must be refused by the public schema too.
  */
 const publishedSchema = JSON.parse(
   readFileSync(resolve("../../schemas/motion.schema.json"), "utf8")
-) as JsonSchemaDocument & { required: string[]; $defs: Record<string, any> };
+) as JsonSchemaDocument & { required: string[]; $defs: Record<string, unknown> };
 
 const baseMotion = {
-  schema: "shellx-motion/motion@1",
+  schema: MOTION_DOCUMENT_SCHEMA,
   id: "p",
   name: "P",
   durationMs: 1000,
@@ -30,52 +42,194 @@ const baseMotion = {
   provenance: {}
 };
 
-function schemaAccepts(doc: unknown): boolean {
-  return validateAgainstPublishedSchema(publishedSchema, doc).length === 0;
+function schemaErrors(doc: unknown): Array<{ path: string; message: string }> {
+  return validateAgainstPublishedSchema(publishedSchema, doc);
 }
 
-async function validatorAccepts(doc: unknown): Promise<boolean> {
-  return (await validateDocument(await loadSchema("motion"), doc)).ok;
+async function runtimeErrors(doc: unknown): Promise<Array<{ path: string; message: string }>> {
+  const result = await validateDocument(await loadSchema("motion"), doc);
+  return result.ok ? [] : result.errors;
 }
 
-describe("published motion schema contract", () => {
-  it("agrees with validate.ts on document-level structural accept/reject", async () => {
-    const cases: Array<{ label: string; doc: unknown }> = [
-      { label: "valid empty document", doc: baseMotion },
-      { label: "valid text layer", doc: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0, durationMs: 100 }] } },
-      { label: "layers contains a non-object", doc: { ...baseMotion, layers: [42] } },
-      { label: "layer missing durationMs", doc: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0 }] } },
-      { label: "layer missing id", doc: { ...baseMotion, layers: [{ type: "text", startMs: 0, durationMs: 100 }] } },
-      { label: "layer negative startMs", doc: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: -5, durationMs: 100 }] } },
-      { label: "missing composition field fps", doc: (() => { const c: any = { ...baseMotion }; delete c.fps; return c; })() },
-      { label: "provenance is not an object", doc: { ...baseMotion, provenance: [] } }
-    ];
-    for (const { label, doc } of cases) {
+function shippedMotionFixturePaths(directory = resolve("../../fixtures")): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .flatMap((entry) => {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) return shippedMotionFixturePaths(path);
+      return entry.isFile() && entry.name === "motion.json" ? [path] : [];
+    })
+    .sort();
+}
+
+describe("generated published motion schema contract", () => {
+  it("publishes the code-owned two-stage vocabulary and ordering", () => {
+    expect(MOTION_VALIDATION_CONTRACT).toBe("shellx-motion/motion-validation@1");
+    expect(MOTION_VALIDATION_STAGE_ORDER).toEqual(["structural", "semantic"]);
+    expect(publishedSchema.$comment).toContain(motionValidationSchemaComment());
+    const guide = renderMotionValidationGuide();
+    expect(guide).toContain(MOTION_VALIDATION_CONTRACT);
+    expect(guide.indexOf("**structural**")).toBeLessThan(guide.indexOf("**semantic**"));
+    expect(guide).toContain("not** proof that a package is renderable");
+  });
+
+  it("fails closed when stage-one encounters a future JSON Schema keyword", async () => {
+    const futureSchema = { ...buildMotionPublicSchema(), unevaluatedProperties: false };
+    await expect(validateMotionDocumentInStages(baseMotion, futureSchema))
+      .rejects.toThrow("Unsupported JSON Schema keyword 'unevaluatedProperties'");
+  });
+
+  it("is emitted byte-for-byte from the canonical document-contract source", () => {
+    expect(publishedSchema).toEqual(buildMotionPublicSchema());
+    expect(publishedSchema.$id).toBe(MOTION_DOCUMENT_SCHEMA);
+    expect(publishedSchema.required).toEqual([...MOTION_DOCUMENT_REQUIRED]);
+  });
+
+  it("accepts every valid shipped Motion fixture in both the runtime and public schema", async () => {
+    const paths = shippedMotionFixturePaths();
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      const document = JSON.parse(readFileSync(path, "utf8"));
       // eslint-disable-next-line no-await-in-loop
-      const validator = await validatorAccepts(doc);
-      expect(schemaAccepts(doc), `${label}: schema accept=${schemaAccepts(doc)} vs validator accept=${validator}`).toBe(validator);
+      const runtime = await runtimeErrors(document);
+      const schema = schemaErrors(document);
+      expect(runtime, `${path} must be accepted by validate.ts`).toEqual([]);
+      expect(schema, `${path} must be accepted by the published schema`).toEqual([]);
     }
   });
 
-  it("rejects the exact structural gaps A4 flagged (previously accepted by the bare-array schema)", () => {
-    expect(schemaAccepts({ ...baseMotion, layers: [42] })).toBe(false);
-    expect(schemaAccepts({ ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0 }] })).toBe(false);
-    expect(schemaAccepts({ ...baseMotion, provenance: [] })).toBe(false);
-  });
+  it("refuses representative runtime structural failures in the public schema too", async () => {
+    const rainWithoutGround = {
+      schema: "shellx-motion/environment@1",
+      kind: "rain",
+      seed: 1,
+      quality: "preview",
+      mode: "scene",
+      intensity: 0.5,
+      wind: 0,
+      dropSpeed: 1,
+      dropLength: 1,
+      depthLayers: 1,
+      color: "#ffffff",
+      backgroundColor: "#000000",
+      lightColor: "#ffffff",
+      accentColor: "#ffffff",
+      atmosphere: { mist: 0.2, lensDroplets: 0.2 }
+    };
+    const cases: Array<{ label: string; document: unknown }> = [
+      {
+        label: "missing required document field",
+        document: (() => {
+          const document: Record<string, unknown> = { ...baseMotion };
+          delete document.fps;
+          return document;
+        })()
+      },
+      { label: "layer is not an object", document: { ...baseMotion, layers: [42] } },
+      { label: "layer misses duration", document: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0 }] } },
+      { label: "keyframe misses value", document: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0, durationMs: 100, keyframes: { opacity: [{ atMs: 0 }] } }] } },
+      { label: "crop is on a text layer", document: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0, durationMs: 100, crop: { x: 0, y: 0, width: 10, height: 10 } }] } },
+      { label: "safe text-fit misses safe-area id", document: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0, durationMs: 100, textFit: { policy: "safe" } }] } },
+      { label: "unsupported transition", document: { ...baseMotion, layers: [{ id: "l", type: "text", startMs: 0, durationMs: 100, transitions: { in: { type: "spin", durationMs: 100 } } }] } },
+      { label: "particle layer misses emitter", document: { ...baseMotion, layers: [{ id: "l", type: "particles", startMs: 0, durationMs: 100 }] } },
+      { label: "shader layer misses shader", document: { ...baseMotion, layers: [{ id: "l", type: "shader", startMs: 0, durationMs: 100 }] } },
+      { label: "shader asset has an unsupported MIME type", document: { ...baseMotion, assets: [{ type: "shader", id: "shader", source: { path: "shader.glsl", mimeType: "text/plain" } }] } },
+      { label: "environment layer misses its rain ground", document: { ...baseMotion, layers: [{ id: "l", type: "environment", startMs: 0, durationMs: 100, environment: rainWithoutGround }] } },
+      { label: "glow exceeds runtime maximum", document: { ...baseMotion, layers: [{ id: "l", type: "shape", startMs: 0, durationMs: 100, effects: { glow: { radius: 129, color: "#ffffff" } } }] } }
+    ];
 
-  it("does not false-reject shipped motion fixtures", () => {
-    for (const fixture of ["lower-third", "keyframed-lower-third"]) {
-      const doc = JSON.parse(readFileSync(resolve(`../../fixtures/packages/${fixture}/motion.json`), "utf8"));
-      expect(validateAgainstPublishedSchema(publishedSchema, doc)).toEqual([]);
+    for (const { label, document } of cases) {
+      // eslint-disable-next-line no-await-in-loop
+      expect(await runtimeErrors(document), `${label}: validate.ts must refuse it`).not.toEqual([]);
+      expect(schemaErrors(document), `${label}: public schema must refuse it`).not.toEqual([]);
     }
   });
 
-  it("pins the schema's required lists and easing enum to the validator's constants", async () => {
-    // Top-level required is pinned to the validator's own SCHEMAS.motion.required (loadSchema).
-    expect(publishedSchema.required).toEqual((await loadSchema("motion")).required);
-    // Layer-level required mirrors validateMotionLayers.
-    expect(publishedSchema.$defs.layer.required).toEqual(["id", "type", "startMs", "durationMs"]);
-    // Easing named enum is pinned to the validator's NAMED_EASINGS set.
-    expect(publishedSchema.$defs.easing.anyOf[0].enum).toEqual([...NAMED_EASINGS_LIST]);
+  it("publishes bounded scene3d mesh source identity", () => {
+    const source = {
+      format: "gltf",
+      meshIndex: 0,
+      primitiveIndex: 0,
+      geometrySha256: "a".repeat(64)
+    };
+    const document = {
+      ...baseMotion,
+      layers: [{
+        id: "mesh",
+        type: "scene3d",
+        startMs: 0,
+        durationMs: 100,
+        scene3d: { objects: [{ primitive: "mesh", source }] }
+      }]
+    };
+
+    expect(schemaErrors(document)).toEqual([]);
+
+    const missingHash = structuredClone(document);
+    delete (missingHash.layers[0] as { scene3d: { objects: Array<{ source: { geometrySha256?: string } }> } }).scene3d.objects[0].source.geometrySha256;
+    expect(schemaErrors(missingHash)).toContainEqual({ path: "/layers/0/scene3d/objects/0/source/geometrySha256", message: "required" });
+
+    const upperCaseHash = structuredClone(document);
+    upperCaseHash.layers[0].scene3d.objects[0].source.geometrySha256 = "A".repeat(64);
+    expect(schemaErrors(upperCaseHash)).toContainEqual({ path: "/layers/0/scene3d/objects/0/source/geometrySha256", message: "must match pattern ^[a-f0-9]{64}$" });
+  });
+
+  it("keeps host layer types and x-* nested extension namespaces open", async () => {
+    const extensionDocument = {
+      ...baseMotion,
+      "x-host-document": { revision: 1 },
+      layers: [{
+        id: "host-layer",
+        type: "host-custom-layer",
+        startMs: 0,
+        durationMs: 100,
+        "x-host-layer": { opaque: true },
+        transform: { "x-host-transform": "opaque" }
+      }]
+    };
+    expect(await runtimeErrors(extensionDocument)).toEqual([]);
+    expect(schemaErrors(extensionDocument)).toEqual([]);
+  });
+
+  it("leaves graph, cross-reference, and budget invariants to semantic stage two", async () => {
+    const graphFailure = {
+      ...baseMotion,
+      compositing: { schema: "shellx-motion/compositing-graph@1", id: "graph", nodes: [], edges: [] },
+    };
+    const crossReferenceFailure = {
+      ...baseMotion,
+      layers: [{
+        id: "title",
+        type: "text",
+        startMs: 0,
+        durationMs: 100,
+        textFit: { policy: "safe", safeAreaId: "missing" },
+      }],
+    };
+    const budgetFailure = {
+      ...baseMotion,
+      layers: Array.from({ length: 9 }, (_, index) => ({
+        id: `blur-${index}`,
+        type: "shape",
+        startMs: 0,
+        durationMs: 100,
+        effects: { motionBlur: { samples: 8, shutterAngle: 180 } },
+      })),
+    };
+
+    for (const [label, document] of Object.entries({ graphFailure, crossReferenceFailure, budgetFailure })) {
+      expect(schemaErrors(document), `${label}: structural JSON Schema remains intentionally portable`).toEqual([]);
+      // eslint-disable-next-line no-await-in-loop
+      await expect(validateMotionDocumentInStages(document), `${label}: runtime semantics must run after structural validation`)
+        .resolves.toMatchObject({
+          ok: false,
+          stage: "semantic",
+          report: {
+            contract: MOTION_VALIDATION_CONTRACT,
+            structural: "passed",
+            semantic: "failed",
+            renderability: "not_proven",
+          },
+        });
+    }
   });
 });

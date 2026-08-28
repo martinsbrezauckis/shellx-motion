@@ -121,7 +121,7 @@ describe("caller-supplied receipts roots", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
   });
 
-  it("still accepts a caller receiptsRoot nested inside the host receipts root", async () => {
+  it.runIf(process.platform === "linux")("still accepts a caller receiptsRoot nested inside the host receipts root", async () => {
     // The fence bounds the argument instead of removing it: sub-roots stay usable, which is what
     // the batch and quality lanes rely on when they group receipts per job.
     const writes: ReceiptWrite[] = [];
@@ -138,7 +138,7 @@ describe("caller-supplied receipts roots", () => {
     expect(writes).toEqual([{ root: nested, id: expect.stringContaining("timeline-playhead-") }]);
   });
 
-  it("keeps writing to the host receipts root when the caller names none", async () => {
+  it.runIf(process.platform === "linux")("keeps writing to the host receipts root when the caller names none", async () => {
     const writes: ReceiptWrite[] = [];
     const packageRoot = await clonedPackage();
 

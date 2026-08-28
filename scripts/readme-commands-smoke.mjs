@@ -18,10 +18,10 @@
  *
  * WHAT IT CHECKS
  * --------------
- *   commands   every command in a ```bash fence in README.md either RUNS with exit code 0, or is on
- *              an explicit not-executed list and is proved to NAME something real (a declared
- *              workspace script, or a program on `PATH`). There is no third outcome: a command the
- *              policy does not recognise fails the gate rather than being skipped quietly.
+ *   commands   every command in a ```bash fence in README.md either RUNS with exit code 0, is on an
+ *              explicit not-executed list and is proved to NAME something real, or is an exact
+ *              platform-inapplicable command from an explicitly labelled README block. A command
+ *              the policy does not recognise fails the gate rather than being skipped quietly.
  *   spelling   no `motion <cli-verb>` shell spelling in README.md, `skill/**` or `docs/public/**`.
  *              Matches only where it reads as a command — line start, after a backtick, or after a
  *              `$ ` prompt — so ordinary prose ("motion blur", "a motion job") is untouched, and
@@ -63,6 +63,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describeRefusal, tokenizeCommand } from "./readme-command-tokenize.mjs";
+import { platformInapplicableReason } from "./readme-command-platform.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const README = join(ROOT, "README.md");
@@ -79,6 +80,7 @@ const COMMAND_TIMEOUT_MS = 120_000;
 const NOT_EXECUTED = new Map([
   ["pnpm install", "pnpm builtin; running it would rewrite node_modules underneath the caller"],
   ["pnpm build", "full workspace build, minutes; exercised by `pnpm run build:verify`"],
+  ["pnpm test", "full public test contract; exercised directly by CI and public-export qualification"],
   ["pnpm start", "starts the long-lived human Workbench; its plan and installed bin are exercised by `pnpm run build:verify`"],
   [
     "pnpm --filter @shellx-motion/debug-server run serve -- --tier render_motion --trusted-local-tier",
@@ -171,11 +173,12 @@ function findWorkspacePackage(name) {
  * after the script name can be smuggled past a prefix match.
  *
  * Recognised shapes, in order:
- *   1. `pnpm --filter <pkg> run <script> [-- args]` — the workspace package must declare `<script>`.
- *   2. `pnpm [run] <script> [args]`                 — the root manifest must declare `<script>`.
- *   3. `pnpm <builtin>`                             — only when listed in NOT_EXECUTED; `pnpm` must
+ *   1. exact platform-inapplicable command          — only for the current host platform.
+ *   2. `pnpm --filter <pkg> run <script> [-- args]` — the workspace package must declare `<script>`.
+ *   3. `pnpm [run] <script> [args]`                 — the root manifest must declare `<script>`.
+ *   4. `pnpm <builtin>`                             — only when listed in NOT_EXECUTED; `pnpm` must
  *                                                     be on `PATH`.
- *   4. anything else                                — a bare program, which must resolve on `PATH`.
+ *   5. anything else                                — a bare program, which must resolve on `PATH`.
  *      This is the shape that catches `shellx-motion doctor` and `motion doctor` in a source tree.
  *      It resolves but never executes: `exec` is null, because the program a README names is chosen
  *      by whoever edited the README.
@@ -190,6 +193,16 @@ export function resolveCommand(command) {
   const tokens = tokenizeCommand(command);
   if (!tokens.ok) return { ok: false, detail: describeRefusal(command, tokens) };
   const argv = tokens.argv;
+
+  const inapplicableReason = platformInapplicableReason(command);
+  if (inapplicableReason !== null) {
+    return {
+      ok: true,
+      kind: "platform-inapplicable",
+      detail: inapplicableReason,
+      exec: null
+    };
+  }
 
   if (argv[0] === "pnpm" && argv[1] === "--filter" && argv[3] === "run" && argv.length >= 5) {
     const packageName = argv[2];
@@ -358,6 +371,11 @@ for (const { command, line } of commands) {
   if (!resolved.ok) {
     failures.push(`README.md:${line}  ${command}\n      ${resolved.detail}`);
     console.log(`  [FAIL] README.md:${line} ${command}\n         ${resolved.detail}`);
+    continue;
+  }
+  if (resolved.kind === "platform-inapplicable") {
+    console.log(`  [INAPPLICABLE] README.md:${line} ${command}\n         ${resolved.detail}`);
+    notes.push(command);
     continue;
   }
   const reason = NOT_EXECUTED.get(command);

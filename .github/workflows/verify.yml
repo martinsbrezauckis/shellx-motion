@@ -36,6 +36,9 @@ jobs:
       # `actionlint` cannot help here: it checks YAML and expression syntax, not supply-chain
       # identity, so a syntactically perfect mutable tag passes it.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # This workflow never pushes. Do not leave a read token in .git/config for project tests.
+          persist-credentials: false
 
       # v4.3.0, not v4.4.0, deliberately: this is the commit the upstream `v4` tag itself points
       # at. v4.4.0 is a breaking change that moves the action onto the Node 24 runner runtime, and
@@ -55,6 +58,11 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # Checks the repository-owned CI invariants that a YAML syntax checker cannot express:
+      # immutable action identities, least-privilege jobs, host coverage, and no PR-target trigger.
+      - name: CI configuration contract
+        run: node scripts/ci-workflow-contract.mjs
 
       # No NUL bytes, one job status vocabulary, and consistent shipping imports and determinism.
       - name: Source hygiene
@@ -95,6 +103,14 @@ jobs:
           }
           /usr/bin/google-chrome --version
 
+      # This is a bounded, per-file coverage floor for the paths that decide network access,
+      # output containment, redirects, job admission, and permission refusals. It is separate from
+      # debug:coverage, which measures the actions package's command surface.
+      - name: Trust-boundary coverage
+        env:
+          SHELLX_MOTION_BROWSER: /usr/bin/google-chrome
+        run: pnpm run trust:coverage
+
       # Same reasoning as the browser guard above, for the other external program Motion does not
       # ship — except this one stopped being hypothetical. The step used to only CONFIRM, on the
       # reasoning that the runner image "happens to carry FFmpeg today, and 'happens to' is the
@@ -134,7 +150,11 @@ jobs:
       - name: Test
         env:
           SHELLX_MOTION_BROWSER: /usr/bin/google-chrome
-        run: pnpm run test
+        # The default test contract is runnable in the generated public source
+        # release. CI is the implementation tree, so it also retains generator,
+        # Git-index, and Git-bound native-qualification contract coverage through
+        # the explicit implementation gate.
+        run: pnpm run test:implementation
 
       # Proves the packed artifact is installable and its bin actually runs — the failure mode a
       # workspace-only test cannot see, because in-workspace exports point at TypeScript sources.

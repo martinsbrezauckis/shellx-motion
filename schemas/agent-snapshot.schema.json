@@ -1,0 +1,901 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/agent-snapshot@1",
+  "title": "ShellX Motion compact agent snapshot",
+  "description": "A read-only, path-free, private no-cache agent context. Serialized UTF-8 output must not exceed 12288 bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "snapshotId",
+    "observedAt",
+    "freshness",
+    "identity",
+    "state",
+    "selection",
+    "actions",
+    "receipts",
+    "jobs",
+    "warnings",
+    "truncation"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shellx-motion/agent-snapshot@1"
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "observedAt": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "freshness": {
+      "$ref": "#/$defs/freshness"
+    },
+    "identity": {
+      "$ref": "#/$defs/identity"
+    },
+    "state": {
+      "$ref": "#/$defs/state"
+    },
+    "selection": {
+      "$ref": "#/$defs/selection"
+    },
+    "actions": {
+      "$ref": "#/$defs/actions"
+    },
+    "receipts": {
+      "$ref": "#/$defs/receipts"
+    },
+    "jobs": {
+      "$ref": "#/$defs/jobs"
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/warning"
+      }
+    },
+    "truncation": {
+      "$ref": "#/$defs/truncation"
+    }
+  },
+  "$defs": {
+    "sourceFreshness": {
+      "type": "object",
+      "required": [
+        "available",
+        "complete",
+        "observedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "observedAt": {
+          "type": "string",
+          "maxLength": 40
+        }
+      }
+    },
+    "cacheFreshness": {
+      "type": "object",
+      "required": [
+        "scope",
+        "mode",
+        "maxAgeMs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "const": "private"
+        },
+        "mode": {
+          "const": "none"
+        },
+        "maxAgeMs": {
+          "const": 0
+        }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "required": [
+        "cache",
+        "package",
+        "timeline",
+        "receipts",
+        "jobs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/cacheFreshness"
+        },
+        "package": {
+          "$ref": "#/$defs/sourceFreshness"
+        },
+        "timeline": {
+          "$ref": "#/$defs/sourceFreshness"
+        },
+        "receipts": {
+          "$ref": "#/$defs/sourceFreshness"
+        },
+        "jobs": {
+          "type": "object",
+          "required": [
+            "available",
+            "complete",
+            "observedAt",
+            "scope"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "available": {
+              "type": "boolean"
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "observedAt": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "scope": {
+              "const": "own"
+            }
+          }
+        }
+      }
+    },
+    "packageIdentity": {
+      "type": "object",
+      "required": [
+        "id",
+        "motionId",
+        "fingerprint"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "motionId": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "fingerprint": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "engineVersion"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "engineVersion": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "package": {
+          "$ref": "#/$defs/packageIdentity"
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "required": [
+        "startMs",
+        "endMs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "startMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "viewport": {
+      "type": "object",
+      "required": [
+        "startMs",
+        "endMs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "startMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "endMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "zoom": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pixelsPerSecond": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": [
+        "playheadMs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "playheadMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "selectedRange": {
+          "$ref": "#/$defs/range"
+        },
+        "viewport": {
+          "$ref": "#/$defs/viewport"
+        }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "required": [
+        "durationMs",
+        "fps",
+        "width",
+        "height",
+        "layerCount",
+        "assetCount",
+        "sceneCount",
+        "trackCount",
+        "markerCount",
+        "keyframeCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fps": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "layerCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "assetCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sceneCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "trackCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "markerCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "keyframeCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "required": [
+        "packageOpen"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "packageOpen": {
+          "type": "boolean"
+        },
+        "motion": {
+          "$ref": "#/$defs/motion"
+        },
+        "timeline": {
+          "$ref": "#/$defs/timeline"
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "status",
+        "persisted",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "const": "unavailable"
+        },
+        "persisted": {
+          "const": false
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 160
+        }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "required": [
+        "command",
+        "permission",
+        "mutates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "permission": {
+          "const": "read_motion"
+        },
+        "mutates": {
+          "const": false
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "id",
+        "alias",
+        "permission",
+        "mutates",
+        "callCount",
+        "calls"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "alias": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "permission": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "mutates": {
+          "type": "boolean"
+        },
+        "callCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "calls": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "maxLength": 96
+          }
+        }
+      }
+    },
+    "planStep": {
+      "type": "object",
+      "required": [
+        "order",
+        "command",
+        "permission",
+        "mutates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "permission": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "mutates": {
+          "type": "boolean"
+        },
+        "requiredArgs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "requiredArgGroups": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "mode",
+              "alternatives"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "enum": [
+                  "anyOf",
+                  "oneOf"
+                ]
+              },
+              "alternatives": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "actionFind": {
+      "type": "object",
+      "required": [
+        "matched",
+        "nearest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "matched": {
+          "type": "boolean"
+        },
+        "action": {
+          "$ref": "#/$defs/action"
+        },
+        "nearest": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/action"
+          }
+        }
+      }
+    },
+    "actionPlan": {
+      "type": "object",
+      "required": [
+        "steps",
+        "cautionCount",
+        "cautions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/planStep"
+          }
+        },
+        "cautionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cautions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "maxLength": 160
+          }
+        }
+      }
+    },
+    "requestActions": {
+      "type": "object",
+      "required": [
+        "find",
+        "guide",
+        "plan"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "find": {
+          "$ref": "#/$defs/actionFind"
+        },
+        "guide": {
+          "type": "object",
+          "required": [
+            "equivalentTo"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "equivalentTo": {
+              "const": "plan"
+            }
+          }
+        },
+        "plan": {
+          "$ref": "#/$defs/actionPlan"
+        }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "required": [
+        "entrypoints"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entrypoints": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/entrypoint"
+          }
+        },
+        "request": {
+          "$ref": "#/$defs/requestActions"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "required": [
+        "id",
+        "operation",
+        "status",
+        "createdAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "warning",
+            "not_run",
+            "other"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "packageId": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "lane": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+    "receiptCounts": {
+      "type": "object",
+      "required": [
+        "passed",
+        "failed",
+        "warning",
+        "notRun",
+        "other"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "warning": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "notRun": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "other": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "required": [
+        "count",
+        "countExact",
+        "statusCounts",
+        "statusCountsExact",
+        "recent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "countExact": {
+          "type": "boolean"
+        },
+        "statusCounts": {
+          "$ref": "#/$defs/receiptCounts"
+        },
+        "statusCountsExact": {
+          "type": "boolean"
+        },
+        "recent": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/receipt"
+          }
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "required": [
+        "id",
+        "state",
+        "lifecycle",
+        "operation",
+        "lane",
+        "createdAtMs",
+        "warningCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "skipped"
+          ]
+        },
+        "lifecycle": {
+          "enum": [
+            "pending",
+            "running",
+            "ended"
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "lane": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "outcome": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled",
+            "skipped"
+          ]
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pollAfterMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "warningCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "required": [
+        "count",
+        "countExact",
+        "recent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "countExact": {
+          "type": "boolean"
+        },
+        "recent": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/job"
+          }
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "source",
+        "message"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "package",
+            "timeline",
+            "receipts",
+            "jobs"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 240
+        }
+      }
+    },
+    "countTruncation": {
+      "type": "object",
+      "required": [
+        "omitted",
+        "exact"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "exact": {
+          "type": "boolean"
+        }
+      }
+    },
+    "truncation": {
+      "type": "object",
+      "required": [
+        "valuesTruncated",
+        "warningsTruncated",
+        "receiptRows",
+        "jobRows",
+        "nearestActions",
+        "planSteps",
+        "receiptDiscoveryIncomplete"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "valuesTruncated": {
+          "type": "boolean"
+        },
+        "warningsTruncated": {
+          "type": "boolean"
+        },
+        "receiptRows": {
+          "$ref": "#/$defs/countTruncation"
+        },
+        "jobRows": {
+          "$ref": "#/$defs/countTruncation"
+        },
+        "nearestActions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "planSteps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "receiptDiscoveryIncomplete": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

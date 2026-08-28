@@ -40,8 +40,12 @@ export function validateMotionProceduralGraph(value: unknown, context: MotionPro
   const envelopes = validateEnvelopes(graph.audioEnvelopes, context, layerIds, issues);
   const values = Array.isArray(graph.relationships) ? graph.relationships : [];
   if (!Array.isArray(graph.relationships)) issues.push(issue("/relationships/relationships", "graph.relationships", "must be an array"));
-  if (values.length < 1 || values.length > MAX_PROCEDURAL_RELATIONSHIPS) {
-    issues.push(issue("/relationships/relationships", "graph.relationship_budget", `must contain 1..${MAX_PROCEDURAL_RELATIONSHIPS} relationships`));
+  // An analyzed envelope can be authored before an agent connects it to a
+  // relationship.  It is still bounded and inert until a relationship names
+  // an audio-envelope node, so accepting that staging state does not make an
+  // executable graph more permissive.
+  if ((values.length < 1 && envelopes.ids.size === 0) || values.length > MAX_PROCEDURAL_RELATIONSHIPS) {
+    issues.push(issue("/relationships/relationships", "graph.relationship_budget", `must contain 1..${MAX_PROCEDURAL_RELATIONSHIPS} relationships unless a bounded audio envelope is present`));
   }
 
   const records = new Map<string, RelationshipRecord>();

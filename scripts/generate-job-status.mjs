@@ -110,6 +110,13 @@ function validate(input) {
       throw new Error(`Job error code ${entry.code} references unknown remedy kind ${entry.remedy}.`);
     }
   }
+  if (input.unknownErrorCodes?.policy !== "preserve"
+    || input.unknownErrorCodes.pattern !== "^[a-z][a-z0-9_.:-]{0,95}$"
+    || input.unknownErrorCodes.maxLength !== 96
+    || typeof input.unknownErrorCodes.meaning !== "string"
+    || typeof input.unknownErrorCodes.agentGuidance !== "string") {
+    throw new Error("schemas/job-status.json must declare the bounded unknown-error preservation policy.");
+  }
   // Lifecycle and outcome share the `state` projection, so a name in both would make the
   // projection ambiguous.
   const overlap = input.lifecycle
@@ -233,8 +240,15 @@ export const RESERVED_NON_JOB_STATE_WORDS: readonly string[] = Object.freeze([${
 export const RESERVED_NON_RECEIPT_STATUS_WORDS: readonly string[] = Object.freeze([${(contract.reservedWords?.neverInReceiptStatus ?? []).map((n) => JSON.stringify(n)).join(", ")}]);
 
 /** The whole authored contract, frozen, for runtime checks and documentation surfaces. */
-export const JOB_STATUS_CONTRACT = Object.freeze(${JSON.stringify(contract, null, 2).split("\n").join("\n")} as const);
+export const JOB_STATUS_CONTRACT = Object.freeze(${compactErrorCodes(contract)} as const);
 `;
+}
+
+/** Keep the runtime contract complete while its generic error-code vocabulary remains one source line. */
+function compactErrorCodes(input) {
+  const marker = "__shellx_motion_generated_error_codes__";
+  const formatted = JSON.stringify({ ...input, errorCodes: marker }, null, 2);
+  return formatted.replace(`  "errorCodes": ${JSON.stringify(marker)}`, `  "errorCodes": ${JSON.stringify(input.errorCodes)}`);
 }
 
 function facetList(values) {
@@ -292,15 +306,22 @@ function buildDocs() {
   lines.push("");
   lines.push("## Failure codes");
   lines.push("");
-  lines.push("`retryable` is what separates \"try again\" from \"change approach\". It is a property of");
-  lines.push("the code, declared once here, never decided per throw site. Never parse `message` — it");
-  lines.push("is for humans.");
+  lines.push("`retryable` is what separates \"try again\" from \"change approach\". For the shared core");
+  lines.push("codes below it is declared once here, never decided per throw site. Never parse `message`");
+  lines.push("— it is for humans.");
   lines.push("");
   lines.push("| code | retryable | remedy | means |");
   lines.push("|---|---|---|---|");
   for (const entry of contract.errorCodes) {
     lines.push(`| \`${entry.code}\` | ${entry.retryable ? "yes" : "no"} | \`${entry.remedy}\` | ${entry.meaning} |`);
   }
+  lines.push("");
+  lines.push("### Future capability-owned codes");
+  lines.push("");
+  lines.push(contract.unknownErrorCodes.meaning);
+  lines.push("");
+  lines.push(`- **Bound:** ${contract.unknownErrorCodes.maxLength} characters matching \`${contract.unknownErrorCodes.pattern}\`.`);
+  lines.push(`- **Consumer rule:** ${contract.unknownErrorCodes.agentGuidance}`);
   lines.push("");
   lines.push("### Remedies");
   lines.push("");

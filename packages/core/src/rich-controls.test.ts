@@ -4,15 +4,22 @@ import { validateScene3DLayers } from "./scene-3d-validate";
 import type { MotionDocument } from "./types";
 
 describe("rich Motion controls", () => {
-  it("edits every supported rich family without mutating the source document", () => {
+  it("edits every supported rich family, including an analytic particle field, without mutating the source document", () => {
     const motion = richMotion();
     const shader = setTimelineLayerRichControl(motion, { layerId: "shader", path: "shader.uniforms.u_speed", value: 1.25 });
     expect(shader.layer.shader?.uniforms?.u_speed).toBe(1.25);
     expect(motion.layers[0].shader?.uniforms?.u_speed).toBe(0.5);
     expect(shader.changedPaths).toEqual(["/layers/shader/shader/uniforms/u_speed"]);
+    const gpuMotion=structuredClone(motion);const gpuLayer=gpuMotion.layers.find((layer)=>layer.id==="shader");
+    if(!gpuLayer?.shader)throw new Error("Expected shader fixture.");gpuLayer.shader.gpuMaterial={preset:"plasma",colors:["#000000","#00ffff","#ffffff"]};
+    expect(()=>setTimelineLayerRichControl(gpuMotion,{layerId:"shader",path:"shader.uniforms.u_speed",value:4.1})).toThrow("must be between -4 and 4");
+    expect(setTimelineLayerRichControl(gpuMotion,{layerId:"shader",path:"shader.uniforms.u_speed",value:-4}).newValue).toBe(-4);
 
     const particles = setTimelineLayerRichControl(motion, { layerId: "particles", path: "emitter.count", value: 320 });
     expect(particles.layer.emitter?.count).toBe(320);
+    const particleField = setTimelineLayerRichControl(motion, { layerId: "particles", path: "emitter.field.sources.0.strength", value: -0.35 });
+    const editedField = particleField.layer.emitter?.field;
+    expect(editedField?.schema === "shellx-motion/particle-field@1" && editedField.sources[0]?.strength).toBe(-0.35);
 
     const scene = setTimelineLayerRichControl(motion, { layerId: "stage", path: "scene3d.objects.hero.rotationDeg.y", value: 45 });
     expect(scene.layer.scene3d?.objects[0].rotationDeg).toEqual([0, 45, 0]);
@@ -60,6 +67,8 @@ describe("rich Motion controls", () => {
     expect(() => setTimelineLayerRichControl(motion, { layerId: "shader", path: "shader.fragmentAssetId", value: "other" })).toThrow("Unsupported rich control path");
     expect(() => setTimelineLayerRichControl(motion, { layerId: "shader", path: "shader.uniforms.u_missing", value: 1 })).toThrow("not declared");
     expect(() => setTimelineLayerRichControl(motion, { layerId: "particles", path: "emitter.count", value: 2.5 })).toThrow("must be an integer");
+    expect(() => setTimelineLayerRichControl(motion, { layerId: "particles", path: "emitter.field.sources.3.strength", value: 0.2 })).toThrow("must name an existing source");
+    expect(() => setTimelineLayerRichControl(motion, { layerId: "particles", path: "emitter.field.sources.0.formula", value: 0.2 })).toThrow("Unsupported rich control path");
     expect(() => setTimelineLayerRichControl(motion, { layerId: "stage", path: "scene3d.objects.hero.color", value: "url(https://evil.example)" })).toThrow("must be a hex color");
     expect(() => setTimelineLayerRichControl(motion, { layerId: "depth", path: "effects.motionBlur.samples", value: 9 })).toThrow("must be between 2 and 8");
     expect(() => setTimelineLayerRichControl(motion, { layerId: "rain", path: "environment.ground.horizon", value: 1 })).toThrow("must be between 0.15 and 0.9");
@@ -136,7 +145,10 @@ function richMotion(): MotionDocument {
       shader: { schema: "shellx-motion/shader-plugin@1", language: "glsl-es-100-expression", fragmentAssetId: "plasma", seed: 1, fallbackColor: "#000000", uniforms: { u_speed: 0.5 } }
     }, {
       id: "particles", type: "particles", startMs: 0, durationMs: 2000,
-      emitter: { seed: 1, count: 120, lifetimeMs: 1000, shape: "circle", color: "#FFFFFF", minSize: 2, maxSize: 8, minSpeed: 20, maxSpeed: 80, direction: -90, spread: 45, gravity: 100, fadeOut: true }
+      emitter: {
+        seed: 1, count: 120, lifetimeMs: 1000, shape: "circle", color: "#FFFFFF", minSize: 2, maxSize: 8, minSpeed: 20, maxSpeed: 80, direction: -90, spread: 45, gravity: 100, fadeOut: true,
+        field: { schema: "shellx-motion/particle-field@1", sources: [{ kind: "radial", centerX: 0.5, centerY: 0.5, strength: 0.4, softening: 0.2 }] }
+      }
     }, {
       id: "stage", type: "scene3d", startMs: 0, durationMs: 2000,
       scene3d: {

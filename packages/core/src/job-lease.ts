@@ -7,10 +7,10 @@
  * of callers rather than holding. This module makes the cap hold across processes.
  *
  * How it works, and why there is no lock file:
- *   1. A process that wants a slot writes its own lease file (exclusive create; the job id is
- *      unique, so this never contends).
- *   2. It then lists every live lease and sorts them by (admitted, startedAt, jobId) — a total
- *      order every process computes identically from the same directory.
+ *   1. A process that wants a slot mints a per-run nonce and publishes its own lease directory.
+ *      `jobId` is caller-facing and may repeat, while the nonce makes the mutable lease unique.
+ *   2. It then lists every live lease and sorts them by (admitted, startedAt, jobId, runNonce) —
+ *      a total order every process computes identically from the same directory.
  *   3. It admits itself only if its own rank is below the concurrency limit; otherwise it removes
  *      its lease and retries. On success it marks its own lease admitted before returning.
  * Two processes racing therefore reach the same conclusion about who goes first without ever
@@ -31,11 +31,25 @@
  *
  * Dependencies: node:fs only. Primary caller: `LocalMotionJobGovernor` in job-governor.ts.
  */
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
-import { motionJobFileKey } from "./job-id-file";
+import {
+  compareMotionJobLeaseRunNonce,
+  isMotionJobLeaseRunNonce,
+  mintMotionJobLeaseRun,
+  MotionJobLeaseRunStorage,
+  readMotionJobLeaseRecord,
+  type MotionJobLeaseRun,
+  writeMotionJobLeaseJsonAtomic
+} from "./job-lease-run-storage";
+import { visibleMotionJobLease, visibleMotionJobLeases } from "./job-lease-visibility";
+import type { MotionJobFrameLane } from "./job-frame-lane";
+import type { MotionJobLeaseRecord } from "./job-lease-types";
+
+export type { MotionJobLeaseRun } from "./job-lease-run-storage";
+export type { MotionJobLeaseRecord } from "./job-lease-types";
 
 /** Owner recorded for work whose caller supplied no identity. */
 export const UNATTRIBUTED_CALLER_ID = "unattributed";
@@ -45,57 +59,6 @@ export const LEASE_STALE_AFTER_MS = 30_000;
 
 /** How often a holder should refresh, comfortably inside LEASE_STALE_AFTER_MS. */
 export const LEASE_HEARTBEAT_INTERVAL_MS = 5_000;
-
-export interface MotionJobLeaseRecord {
-  schema: "shellx-motion/job-lease@1";
-  jobId: string;
-  pid: number;
-  lane: string;
-  operation: string;
-  /**
-   * Who this work belongs to. Assigned at creation and enforced on read.
-   *
-   * Host-chosen and stable across processes, which is what a process id or session id cannot be:
-   * a fresh CLI process would otherwise be unable to see the job it started a second ago.
-   */
-  callerId: string;
-  /**
-   * Whether a host asked for this work, or Motion took it on to do that work.
-   *
-   * One `shellx-motion render` runs six governed operations: a browser frame pass, two ffmpeg capability
-   * probes and three encodes. All six need capacity, so all six hold leases. None of them is what
-   * the host asked for — it asked for one render — and listing them as jobs shows an operator
-   * "ffmpeg.version" as work in progress.
-   *
-   * Capacity counts every lease. `motion.job.*` reports only the host ones. Defaults to "internal"
-   * so a lease written by an older build is never mistaken for something a host is waiting on.
-   */
-  visibility?: "host" | "internal";
-  /**
-   * When this job asked for capacity — not when it began running.
-   *
-   * This is the queue-order key: ties in the admission order break on jobId. A job that is
-   * announced and then waits keeps its original value, which is what makes waiting first-come
-   * rather than a repeated race between retrying processes.
-   */
-  startedAtMs: number;
-  /**
-   * When this job was actually admitted, present only once it holds a slot.
-   *
-   * Separate from `startedAtMs` because the gap between the two is exactly the queue wait a caller
-   * asks about, and because "pending" and "running" are different answers to "what is my job doing".
-   */
-  admittedAtMs?: number;
-  heartbeatAtMs: number;
-  /**
-   * Whether this lease currently holds a slot.
-   *
-   * Load-bearing for convergence: an admitted lease always sorts ahead of a pending one, so a
-   * later claimant can never displace a holder that is already running. Without it, a claim
-   * whose jobId happened to sort lower would out-rank live work and both would run.
-   */
-  admitted: boolean;
-}
 
 export interface MotionJobLeaseServices {
   now?: () => number;
@@ -115,6 +78,8 @@ export interface LeaseClaimResult {
   observed: number;
   /** This caller's position in the machine-wide admission order, or null when uncoordinated. */
   rank: number | null;
+  /** The per-run capability for lifecycle operations, or null when coordination is unavailable. */
+  run: MotionJobLeaseRun | null;
 }
 
 /**
@@ -148,24 +113,6 @@ function safeUserToken(): string {
 
 
 /**
- * Write a lease so a concurrent reader never sees it half-written.
- *
- * `writeFile` truncates and then fills, so a reader polling during a heartbeat can read an empty or
- * partial file. That is not theoretical: a live render polled every 3s intermittently reported
- * `job_unknown`, because an unparseable lease is treated as corrupt and DELETED — so a torn read
- * did not merely blip, it destroyed the lease and dropped the job's slot.
- *
- * Writing to a sibling temp file and renaming makes the swap atomic on POSIX and on Windows, so a
- * reader sees either the previous content or the new content and never a mixture.
- */
-async function writeJsonAtomic(path: string, value: unknown, pid: number): Promise<void> {
-  // The pid keeps two processes from colliding on one temp name.
-  const temporary = `${path}.${pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "w" });
-  await rename(temporary, path);
-}
-
-/**
  * Coordinates admission across every Motion process belonging to one user.
  *
  * Instances are cheap and hold no open handles; the directory is the shared state.
@@ -175,6 +122,7 @@ export class MotionJobLeaseDirectory {
   private readonly now: () => number;
   private readonly isProcessAlive: (pid: number) => boolean;
   private readonly pid: number;
+  private readonly runs: MotionJobLeaseRunStorage;
   /** Latches once a filesystem operation fails, so a broken directory is not retried per job. */
   private degraded = false;
 
@@ -183,6 +131,7 @@ export class MotionJobLeaseDirectory {
     this.now = services.now ?? Date.now;
     this.isProcessAlive = services.isProcessAlive ?? defaultIsProcessAlive;
     this.pid = services.pid ?? process.pid;
+    this.runs = new MotionJobLeaseRunStorage(this.root, this.pid);
   }
 
   /** True once coordination has failed and process-local counting is the only bound in force. */
@@ -200,9 +149,22 @@ export class MotionJobLeaseDirectory {
    *
    * Best-effort like everything else here: a failure degrades to process-local admission.
    */
-  async announce(input: { jobId: string; lane: string; operation: string; callerId?: string; visibility?: "host" | "internal"; admitted?: boolean }): Promise<void> {
-    if (this.degraded) return;
+  async announce(input: {
+    jobId: string;
+    lane: string;
+    frameLane?: MotionJobFrameLane;
+    operation: string;
+    callerId?: string;
+    visibility?: "host" | "internal";
+    admitted?: boolean;
+    cancelRequested?: { requestedBy: string; reason?: string; requestedAtMs: number };
+    /** Reuse the capability returned by the first announce when promoting or retrying this run. */
+    run?: MotionJobLeaseRun;
+  }): Promise<MotionJobLeaseRun | null> {
+    if (this.degraded) return null;
     const now = this.now();
+    const run = input.run ?? mintMotionJobLeaseRun(input.jobId);
+    if (run.jobId !== input.jobId || !isMotionJobLeaseRunNonce(run.runNonce)) return null;
     try {
       await mkdir(this.root, { recursive: true });
       // Re-announcing a job (pending -> running) must NOT reset its request time. `startedAtMs` is
@@ -211,15 +173,20 @@ export class MotionJobLeaseDirectory {
       // createdAtMs seconds later than the truth, while the terminal record — built from a different
       // source — reported the real wait. The live view is the one a caller polls, so it was the
       // wrong one to be lying. Preserving admittedAtMs likewise keeps first-admission, not latest.
-      const existing = await this.readLease(this.leasePath(input.jobId));
+      const existing = input.run ? await this.readRunLease(run) : null;
+      // A supplied capability may update only its own live directory. In particular, a delayed
+      // promotion must not recreate a run that has already ended.
+      if (input.run && (!existing || existing.jobId !== input.jobId || existing.runNonce !== run.runNonce)) return null;
       const carried = existing?.jobId === input.jobId ? existing : null;
       const startedAtMs = carried?.startedAtMs ?? now;
       const admittedAtMs = carried?.admittedAtMs ?? now;
-      await writeJsonAtomic(this.leasePath(input.jobId), {
+      const record: MotionJobLeaseRecord = {
         schema: "shellx-motion/job-lease@1",
         jobId: input.jobId,
+        runNonce: run.runNonce,
         pid: this.pid,
         lane: input.lane,
+        ...(input.frameLane ? { frameLane: input.frameLane } : {}),
         operation: input.operation,
         callerId: input.callerId ?? UNATTRIBUTED_CALLER_ID,
         visibility: input.visibility ?? "internal",
@@ -228,10 +195,20 @@ export class MotionJobLeaseDirectory {
         // A host job is not queued by the machine cap — the governed operations it performs are.
         // Marking it admitted is what makes it report "running" rather than "pending" forever.
         ...(input.admitted ? { admittedAtMs } : {}),
+        ...(input.cancelRequested ?? carried?.cancelRequested
+          ? { cancelRequested: input.cancelRequested ?? carried?.cancelRequested }
+          : {}),
         admitted: input.admitted === true
-      } satisfies MotionJobLeaseRecord, this.pid);
+      };
+      if (input.run) {
+        await writeMotionJobLeaseJsonAtomic(this.runs.recordPath(run), record, this.pid);
+      } else {
+        await this.runs.publish(run, record);
+      }
+      return run;
     } catch {
       this.degraded = true;
+      return null;
     }
   }
 
@@ -246,40 +223,39 @@ export class MotionJobLeaseDirectory {
    * so capacity is unchanged either way. Callers that do not pass it get the original behaviour,
    * where a rejected claim leaves nothing behind at all.
    */
-  async claim(input: { jobId: string; lane: string; operation: string; limit: number; callerId?: string; retainPending?: boolean }): Promise<LeaseClaimResult> {
-    if (this.degraded) return { admitted: true, machineWide: false, observed: 0, rank: null };
-    const announced = input.retainPending ? await this.readLease(this.leasePath(input.jobId)) : null;
-    const now = this.now();
-    // Reusing the announced request time is what preserves queue position across retries; minting
-    // a fresh one would send a waiting job to the back of the line every time it lost.
-    const startedAtMs = announced?.startedAtMs ?? now;
-    const record: MotionJobLeaseRecord = {
-      schema: "shellx-motion/job-lease@1",
+  async claim(input: {
+    jobId: string;
+    lane: string;
+    operation: string;
+    limit: number;
+    callerId?: string;
+    retainPending?: boolean;
+    /** Capability returned by `announce` for this exact run. */
+    run?: MotionJobLeaseRun;
+  }): Promise<LeaseClaimResult> {
+    if (this.degraded) return { admitted: true, machineWide: false, observed: 0, rank: null, run: null };
+    const run = input.run ?? await this.announce({
       jobId: input.jobId,
-      pid: this.pid,
       lane: input.lane,
       operation: input.operation,
-      callerId: input.callerId ?? UNATTRIBUTED_CALLER_ID,
-      // Always an admission. A host job never claims — it announces once and is reported, never
-      // ranked, which is what keeps a progress record from occupying a rendering slot.
-      visibility: announced?.visibility === "host" ? "host" : "internal",
-      startedAtMs,
-      heartbeatAtMs: now,
-      admitted: false
-    };
-    try {
-      await mkdir(this.root, { recursive: true });
-      await writeJsonAtomic(this.leasePath(input.jobId), record, this.pid);
-    } catch {
-      this.degraded = true;
-      return { admitted: true, machineWide: false, observed: 0, rank: null };
+      ...(input.callerId ? { callerId: input.callerId } : {})
+    });
+    if (!run) {
+      return this.degraded
+        ? { admitted: true, machineWide: false, observed: 0, rank: null, run: null }
+        : { admitted: false, machineWide: true, observed: 0, rank: null, run: null };
     }
+    const record = await this.readRunLease(run);
+    if (!record || record.jobId !== input.jobId || record.runNonce !== run.runNonce) {
+      return { admitted: false, machineWide: true, observed: 0, rank: null, run };
+    }
+    const now = this.now();
     let allLive: MotionJobLeaseRecord[];
     try {
       allLive = await this.readLiveLeases();
     } catch {
       this.degraded = true;
-      return { admitted: true, machineWide: false, observed: 0, rank: null };
+      return { admitted: true, machineWide: false, observed: 0, rank: null, run: null };
     }
     // Host jobs are reporting records, not admissions: one `shellx-motion render` is a host job PLUS the
     // several governed operations it performs, and counting the reporting record against capacity
@@ -287,16 +263,17 @@ export class MotionJobLeaseDirectory {
     // jobs filled a cap of two, and every real render then waited out its queue deadline.
     const live = allLive.filter((entry) => entry.visibility !== "host");
     // The total order every process derives identically from the same directory. Holders first,
-    // then oldest request, then jobId — the last two break ties without a coordinator.
+    // then oldest request, jobId and run nonce — the last three break ties without a coordinator.
     live.sort((left, right) =>
       Number(right.admitted) - Number(left.admitted)
       || left.startedAtMs - right.startedAtMs
-      || (left.jobId < right.jobId ? -1 : left.jobId > right.jobId ? 1 : 0));
-    const rank = live.findIndex((entry) => entry.jobId === input.jobId);
+      || (left.jobId < right.jobId ? -1 : left.jobId > right.jobId ? 1 : 0)
+      || compareMotionJobLeaseRunNonce(left.runNonce, right.runNonce));
+    const rank = live.findIndex((entry) => entry.jobId === run.jobId && entry.runNonce === run.runNonce);
     // A missing own lease means someone reaped it as stale mid-claim; treat as not admitted.
     if (rank < 0) {
-      await this.release(input.jobId);
-      return { admitted: false, machineWide: true, observed: live.length, rank: null };
+      await this.release(run);
+      return { admitted: false, machineWide: true, observed: live.length, rank: null, run };
     }
     if (rank < input.limit) {
       // Publish the promotion before returning, so any process reading next sees a holder rather
@@ -304,27 +281,33 @@ export class MotionJobLeaseDirectory {
       record.admitted = true;
       record.admittedAtMs = now;
       try {
-        await writeJsonAtomic(this.leasePath(input.jobId), record, this.pid);
+        await writeMotionJobLeaseJsonAtomic(this.runs.recordPath(run), record, this.pid);
       } catch {
         this.degraded = true;
-        return { admitted: true, machineWide: false, observed: live.length, rank };
+        return { admitted: true, machineWide: false, observed: live.length, rank, run: null };
       }
-      return { admitted: true, machineWide: true, observed: live.length, rank };
+      return { admitted: true, machineWide: true, observed: live.length, rank, run };
     }
     // The lease stays only when the caller asked to remain visible while waiting. It holds no slot
     // either way; the difference is whether a host can see that the job still exists.
-    if (!input.retainPending) await this.release(input.jobId);
-    return { admitted: false, machineWide: true, observed: live.length, rank };
+    if (!input.retainPending) await this.release(run);
+    return { admitted: false, machineWide: true, observed: live.length, rank, run };
   }
 
   /** Refresh a held lease so other processes do not reap it as abandoned. */
-  async heartbeat(jobId: string): Promise<void> {
+  async heartbeat(run: MotionJobLeaseRun | string): Promise<void> {
     if (this.degraded) return;
     try {
-      const record = await this.readLease(this.leasePath(jobId));
+      const record = typeof run === "string"
+        ? await this.readLegacyLease(run)
+        : await this.readRunLease(run);
       if (!record) return;
       record.heartbeatAtMs = this.now();
-      await writeJsonAtomic(this.leasePath(jobId), record, this.pid);
+      await writeMotionJobLeaseJsonAtomic(
+        typeof run === "string" ? this.runs.legacyRecordPath(run) : this.runs.recordPath(run),
+        record,
+        this.pid
+      );
     } catch {
       // A failed heartbeat is survivable: the lease ages out and other processes proceed.
     }
@@ -338,13 +321,20 @@ export class MotionJobLeaseDirectory {
    * lease file written by an older build under the old folded name, which a release must not take
    * with it.
    */
-  async release(jobId: string): Promise<void> {
+  async release(run: MotionJobLeaseRun | string): Promise<void> {
     if (this.degraded) return;
     try {
-      const path = this.leasePath(jobId);
-      const existing = await this.readLease(path);
-      if (existing && existing.jobId !== jobId) return;
-      await rm(path, { force: true });
+      if (typeof run === "string") {
+        const existing = await this.readLegacyLease(run);
+        if (!existing || existing.jobId !== run) return;
+        await rm(this.runs.legacyRecordPath(run), { force: true });
+        return;
+      }
+      const existing = await this.readRunLease(run);
+      if (!existing || existing.jobId !== run.jobId || existing.runNonce !== run.runNonce) return;
+      // The directory is the no-recreate boundary: a heartbeat which started before this removal
+      // cannot atomically rename its update back into existence because its parent is gone.
+      await this.runs.release(run);
     } catch {
       // Leaving the file behind is survivable: it ages out via the staleness rule.
     }
@@ -352,28 +342,8 @@ export class MotionJobLeaseDirectory {
 
   /** Live leases held anywhere on this machine by this user, newest reap applied. */
   async readLiveLeases(): Promise<MotionJobLeaseRecord[]> {
-    const entries = await readdir(this.root).catch(() => [] as string[]);
     const cutoff = this.now() - LEASE_STALE_AFTER_MS;
-    const live: MotionJobLeaseRecord[] = [];
-    for (const entry of entries) {
-      // `.tmp` siblings are in-flight atomic writes, not leases.
-      if (!entry.endsWith(".lease.json")) continue;
-      const path = join(this.root, entry);
-      const record = await this.readLease(path);
-      // An unreadable or malformed lease is not evidence of running work; drop it rather than
-      // let a corrupt file permanently consume a slot.
-      if (!record) {
-        await rm(path, { force: true }).catch(() => {});
-        continue;
-      }
-      const abandoned = record.heartbeatAtMs < cutoff || !this.isProcessAlive(record.pid);
-      if (abandoned) {
-        await rm(path, { force: true }).catch(() => {});
-        continue;
-      }
-      live.push(record);
-    }
-    return live;
+    return this.runs.readLive((path) => readMotionJobLeaseRecord(path, UNATTRIBUTED_CALLER_ID), (record) => record.heartbeatAtMs < cutoff || !this.isProcessAlive(record.pid));
   }
 
   /**
@@ -390,12 +360,7 @@ export class MotionJobLeaseDirectory {
    * this module's.
    */
   async readVisibleLeases(input: { callerId: string; scope?: "own" | "all" }): Promise<MotionJobLeaseRecord[]> {
-    const live = await this.readLiveLeases();
-    // Internal admissions are filtered here rather than at the call site so no reporting surface
-    // can accidentally show an ffmpeg capability probe as a job a host is waiting on.
-    const host = live.filter((entry) => entry.visibility === "host");
-    if (input.scope === "all") return host;
-    return host.filter((entry) => entry.callerId === input.callerId);
+    return visibleMotionJobLeases(await this.readLiveLeases(), input);
   }
 
   /**
@@ -407,39 +372,19 @@ export class MotionJobLeaseDirectory {
   async readVisibleLease(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<
     { ok: true; lease: MotionJobLeaseRecord } | { ok: false; code: "job_unknown" | "job_not_visible" }
   > {
-    const live = await this.readLiveLeases();
-    const found = live.find((entry) => entry.jobId === input.jobId && entry.visibility === "host");
-    if (!found) return { ok: false, code: "job_unknown" };
-    if (input.scope !== "all" && found.callerId !== input.callerId) return { ok: false, code: "job_not_visible" };
-    return { ok: true, lease: found };
+    return visibleMotionJobLease(await this.readLiveLeases(), input);
   }
 
-  /**
-   * The one file that belongs to this job.
-   *
-   * Uses the injective encoding rather than folding disallowed characters to `-`: the folding form
-   * mapped `cut:render-42` and `cut-render-42` — both legal, and the first is the id this product
-   * documents to Cut — onto one file, so one caller's write destroyed another caller's live lease.
-   * See `job-id-file.ts` for the full reasoning.
-   */
-  private leasePath(jobId: string): string {
-    return join(this.root, `${motionJobFileKey(jobId)}.lease.json`);
+  private async readRunLease(run: MotionJobLeaseRun): Promise<MotionJobLeaseRecord | null> {
+    if (!isMotionJobLeaseRunNonce(run.runNonce)) return null;
+    const record = await readMotionJobLeaseRecord(this.runs.recordPath(run), UNATTRIBUTED_CALLER_ID);
+    return record?.jobId === run.jobId && record.runNonce === run.runNonce ? record : null;
   }
 
-  private async readLease(path: string): Promise<MotionJobLeaseRecord | null> {
-    try {
-      const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<MotionJobLeaseRecord>;
-      if (parsed?.schema !== "shellx-motion/job-lease@1") return null;
-      if (typeof parsed.jobId !== "string" || typeof parsed.pid !== "number") return null;
-      if (typeof parsed.startedAtMs !== "number" || typeof parsed.heartbeatAtMs !== "number") return null;
-      if (typeof parsed.admitted !== "boolean") return null;
-      // Older leases predate owner attribution; treat them as unattributed rather than dropping
-      // them, since they still represent real work holding real capacity.
-      if (typeof parsed.callerId !== "string") parsed.callerId = UNATTRIBUTED_CALLER_ID;
-      return parsed as MotionJobLeaseRecord;
-    } catch {
-      return null;
-    }
+  /** Old callers with only a job id can touch old flat records, never a nonce-protected run. */
+  private async readLegacyLease(jobId: string): Promise<MotionJobLeaseRecord | null> {
+    const record = await readMotionJobLeaseRecord(this.runs.legacyRecordPath(jobId), UNATTRIBUTED_CALLER_ID);
+    return record?.jobId === jobId && record.runNonce === undefined ? record : null;
   }
 }
 

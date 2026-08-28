@@ -18,7 +18,7 @@
  * Primary caller: served at /workbench/docs by the Motion debug server.
  */
 import { createWorkbenchSession } from "/workbench-session.js";
-import { renderMarkdown } from "/markdown.js";
+import { renderMarkdown, resolveIndexedDocumentationLink } from "/markdown.js";
 
 (() => {
   "use strict";
@@ -43,15 +43,26 @@ import { renderMarkdown } from "/markdown.js";
     statusDetail: $("#statusDetail")
   };
 
-  const store = { pages: [], activePageId: "" };
+  // This in-memory view is populated only from the authenticated, human-filtered
+  // documentation index. It is the sole authority for Docs-reader navigation.
+  const store = {
+    pages: [],
+    activePageId: "",
+    loadingPageId: "",
+    pageLoadSequence: 0,
+    indexLoadSequence: 0,
+    sessionSequence: 0
+  };
 
   const session = createWorkbenchSession({
     ui,
-    // Documentation is authenticated like the rest of the Workbench. A fresh connection loads
-    // the index; a disconnected page renders its local connect state without deliberately making
-    // a request the server must reject.
-    onConnected: () => { void loadIndex(); },
-    onDisconnected: () => showDisconnectedDocs()
+    // Documentation is authenticated like the rest of the Workbench. Every connection gets a
+    // distinct sequence so an earlier index/page response cannot repopulate a later session.
+    onConnected: () => {
+      const sessionId = beginDocsSession();
+      void loadIndex(sessionId);
+    },
+    onDisconnected: () => showDisconnectedDocsAfterTeardown()
   });
 
   function el(tag, className, textContent) {
@@ -85,34 +96,84 @@ import { renderMarkdown } from "/markdown.js";
     setStatus("Motion is disconnected.", "Start Motion to continue");
   }
 
+  /**
+   * A disconnected session may still have index/page promises in flight. Invalidate both kinds
+   * before clearing the authenticated navigation so no earlier response can restore it.
+   */
+  function invalidateDocsRequests() {
+    store.indexLoadSequence += 1;
+    store.pageLoadSequence += 1;
+    store.pages = [];
+    store.activePageId = "";
+    store.loadingPageId = "";
+  }
+
+  function beginDocsSession() {
+    store.sessionSequence += 1;
+    invalidateDocsRequests();
+    return store.sessionSequence;
+  }
+
+  function showDisconnectedDocsAfterTeardown() {
+    store.sessionSequence += 1;
+    invalidateDocsRequests();
+    showDisconnectedDocs();
+  }
+
+  function isCurrentDocsSession(sessionId) {
+    return session.state.connected && store.sessionSequence === sessionId;
+  }
+
+  function startIndexLoad(sessionId) {
+    if (!isCurrentDocsSession(sessionId)) return 0;
+    store.indexLoadSequence += 1;
+    return store.indexLoadSequence;
+  }
+
+  function isCurrentIndexLoad(sessionId, requestId) {
+    return requestId !== 0
+      && isCurrentDocsSession(sessionId)
+      && store.indexLoadSequence === requestId;
+  }
+
+  /** Keep direct Docs-endpoint 401s on the same token/chrome teardown path as Debug API calls. */
+  function disconnectForUnauthorizedDocs() {
+    session.disconnect("The local access key was rejected.");
+  }
+
   // ----- index -----
-  async function loadIndex() {
+  async function loadIndex(sessionId) {
+    const requestId = startIndexLoad(sessionId);
+    if (!isCurrentIndexLoad(sessionId, requestId)) return;
     setStatus("Loading documentation…", "Preparing Motion guides and references");
     try {
       const response = await fetch("/workbench/docs/index.json", { headers: authHeaders() });
+      if (!isCurrentIndexLoad(sessionId, requestId)) return;
       if (response.status === 404) {
         degraded("Documentation unavailable in this build", "This Motion build does not include the documentation reader content.");
         setStatus("Documentation unavailable.", "Not included in this build");
         return;
       }
       if (response.status === 401) {
-        degraded("Connect to read the documentation", "Start Motion normally to connect automatically, or use Connect for a manual Debug API session.");
-        setStatus("Motion is disconnected.", "Start Motion to continue");
+        disconnectForUnauthorizedDocs();
         return;
       }
       const body = await response.json().catch(() => ({}));
+      if (!isCurrentIndexLoad(sessionId, requestId)) return;
       if (!response.ok) {
         degraded("Could not load the documentation", text(object(body.error).message, "The documentation could not be read."));
         return;
       }
-      renderNav(object(body));
+      renderNav(object(body), sessionId);
     } catch (error) {
+      if (!isCurrentIndexLoad(sessionId, requestId)) return;
       degraded("Could not reach the documentation index", error instanceof Error ? error.message : String(error));
     }
   }
 
   /** Render the nav tree (sections → pages) and open the first page. */
-  function renderNav(index) {
+  function renderNav(index, sessionId) {
+    if (!isCurrentDocsSession(sessionId)) return;
     const sections = list(index.sections);
     store.pages = [];
     ui.docsNav.replaceChildren();
@@ -129,7 +190,8 @@ import { renderMarkdown } from "/markdown.js";
         const id = text(page.id);
         if (!id) continue;
         const title = text(page.title, id);
-        store.pages.push({ id, title });
+        const file = text(page.file);
+        store.pages.push({ id, title, file });
         const link = el("button", "docs-nav-link", title);
         link.type = "button";
         link.dataset.pageId = id;
@@ -138,51 +200,140 @@ import { renderMarkdown } from "/markdown.js";
       }
     }
     setStatus(`${store.pages.length} documentation pages.`, "Ready to read");
-    const first = new URLSearchParams(location.search).get("page") || (store.pages[0] && store.pages[0].id);
-    if (first) void openPage(first);
+    const requested = new URLSearchParams(location.search).get("page");
+    const first = pageForId(requested)?.id || (store.pages[0] && store.pages[0].id);
+    if (first) void openPage(first, "", sessionId);
     else degraded("No documentation pages", "The documentation index has sections but no pages.");
   }
 
   // ----- page -----
-  async function openPage(id) {
+  async function openPage(id, anchor = "", sessionId = store.sessionSequence) {
+    if (!isCurrentDocsSession(sessionId)) return;
+    const page = pageForId(id);
+    if (!page) {
+      showPageError("Page not found", "The selected documentation page is not present in this authenticated index.");
+      return;
+    }
+    if (store.activePageId === page.id && ui.docsContent.querySelector(".docs-article")) {
+      const anchorFound = scrollToAnchor(ui.docsContent.querySelector(".docs-article"), anchor);
+      if (anchor && !anchorFound) setStatus(page.title, `Anchor #${anchor} is unavailable in this page.`);
+      return;
+    }
+    if (store.loadingPageId === page.id) return;
+    // A loading or error article is not a rendered page. Clearing the current selection
+    // before the request means a transient failure leaves the same nav item retryable.
+    const requestId = startPageLoad(page.id);
+    clearActivePage();
+    const article = el("div", "docs-article");
+    article.append(el("div", "empty-copy", "Loading…"));
+    ui.docsContent.replaceChildren(article);
+    setStatus(`Loading ${page.title}…`, "Opening guide");
+    try {
+      const response = await fetch(`/workbench/docs/page?id=${encodeURIComponent(page.id)}`, { headers: authHeaders() });
+      // A 401 is session state, rather than page state. An earlier page request from this
+      // still-current session must tear the shared session down before page-generation
+      // suppression discards ordinary stale responses.
+      if (!isCurrentDocsSession(sessionId)) return;
+      if (response.status === 401) {
+        disconnectForUnauthorizedDocs();
+        return;
+      }
+      if (!isCurrentPageLoad(page.id, requestId, sessionId)) return;
+      if (response.status === 404) {
+        finishPageLoad(page.id, requestId);
+        showPageError("Page not found", `The documentation page "${id}" is not available in this build.`);
+        return;
+      }
+      if (!response.ok) {
+        finishPageLoad(page.id, requestId);
+        showPageError("Could not load page", "The selected documentation page could not be read.");
+        return;
+      }
+      const markdown = await response.text();
+      if (!isCurrentPageLoad(page.id, requestId, sessionId)) return;
+      const rendered = el("article", "docs-article");
+      // renderMarkdown escapes all source before emitting a whitelisted tag set,
+      // so assigning its output via innerHTML is safe by construction. The Docs
+      // resolver can emit an internal link only when its relative file maps back
+      // to this authenticated index; it never returns a filesystem path or URL.
+      rendered.innerHTML = renderMarkdown(markdown, {
+        headingIds: true,
+        documentationLinkResolver: (href) => resolveIndexedDocumentationLink(href, {
+          currentPageId: page.id,
+          pages: store.pages
+        })
+      });
+      rendered.addEventListener("click", (event) => {
+        const link = event.target instanceof Element ? event.target.closest("a[data-doc-page-id]") : null;
+        if (!link || !rendered.contains(link)) return;
+        const targetId = text(link.dataset.docPageId);
+        const targetAnchor = text(link.dataset.docAnchor);
+        if (!pageForId(targetId)) return;
+        event.preventDefault();
+        void openPage(targetId, targetAnchor);
+      });
+      ui.docsContent.replaceChildren(rendered);
+      const anchorFound = scrollToAnchor(rendered, anchor);
+      finishPageLoad(page.id, requestId);
+      setActivePage(page.id);
+      setStatus(page.title, anchor && !anchorFound ? `Anchor #${anchor} is unavailable in this page.` : anchor ? `Opened #${anchor}` : "Ready to read");
+    } catch (error) {
+      if (!isCurrentPageLoad(page.id, requestId, sessionId)) return;
+      finishPageLoad(page.id, requestId);
+      showPageError("Could not load the page", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function pageForId(id) {
+    return typeof id === "string" ? store.pages.find((entry) => entry.id === id) || null : null;
+  }
+
+  function scrollToAnchor(article, anchor) {
+    if (!anchor) {
+      ui.docsContent.scrollTop = 0;
+      return true;
+    }
+    const target = [...article.querySelectorAll("[id]")].find((element) => element.id === anchor);
+    if (!target) {
+      ui.docsContent.scrollTop = 0;
+      return false;
+    }
+    target.scrollIntoView({ block: "start" });
+    return true;
+  }
+
+  function setActivePage(id) {
     store.activePageId = id;
     document.querySelectorAll(".docs-nav-link").forEach((link) => {
       if (link.dataset.pageId === id) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     });
-    const article = el("div", "docs-article");
-    article.append(el("div", "empty-copy", "Loading…"));
-    ui.docsContent.replaceChildren(article);
-    setStatus(`Loading ${pageTitle(id)}…`, "Opening guide");
-    try {
-      const response = await fetch(`/workbench/docs/page?id=${encodeURIComponent(id)}`, { headers: authHeaders() });
-      if (response.status === 404) {
-        showPageError("Page not found", `The documentation page "${id}" is not available in this build.`);
-        return;
-      }
-      if (!response.ok) {
-        showPageError("Could not load page", "The selected documentation page could not be read.");
-        return;
-      }
-      const markdown = await response.text();
-      const rendered = el("article", "docs-article");
-      // renderMarkdown escapes all source before emitting a whitelisted tag set,
-      // so assigning its output via innerHTML is safe by construction.
-      rendered.innerHTML = renderMarkdown(markdown);
-      ui.docsContent.replaceChildren(rendered);
-      ui.docsContent.scrollTop = 0;
-      setStatus(pageTitle(id), "Ready to read");
-    } catch (error) {
-      showPageError("Could not load the page", error instanceof Error ? error.message : String(error));
-    }
   }
 
-  function pageTitle(id) {
-    const page = store.pages.find((entry) => entry.id === id);
-    return page ? page.title : id;
+  function startPageLoad(id) {
+    store.pageLoadSequence += 1;
+    store.loadingPageId = id;
+    return store.pageLoadSequence;
+  }
+
+  function isCurrentPageLoad(id, requestId, sessionId = store.sessionSequence) {
+    return isCurrentDocsSession(sessionId)
+      && store.loadingPageId === id
+      && store.pageLoadSequence === requestId;
+  }
+
+  function finishPageLoad(id, requestId) {
+    if (!isCurrentPageLoad(id, requestId)) return;
+    store.loadingPageId = "";
+  }
+
+  function clearActivePage() {
+    store.activePageId = "";
+    document.querySelectorAll(".docs-nav-link").forEach((link) => link.removeAttribute("aria-current"));
   }
 
   function showPageError(title, detail) {
+    clearActivePage();
     const article = el("div", "docs-article");
     const box = el("div", "empty-state danger");
     box.append(el("strong", "", title), el("span", "", detail));
@@ -202,9 +353,9 @@ import { renderMarkdown } from "/markdown.js";
     try {
       await session.boot({ autoPrompt: false });
     } catch {
-      showDisconnectedDocs();
+      showDisconnectedDocsAfterTeardown();
       return;
     }
-    if (!session.state.connected) showDisconnectedDocs();
+    if (!session.state.connected) showDisconnectedDocsAfterTeardown();
   }
 })();

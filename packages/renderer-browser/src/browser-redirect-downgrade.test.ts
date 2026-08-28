@@ -2,7 +2,7 @@
  * browser-redirect-downgrade.test.ts — regression coverage for the browser lane's
  * HTTPS->HTTP redirect-downgrade refusal and per-hop redirect revalidation.
  *
- * Finding (Codex security review, pre-0.1.0): browser redirect authorization did not track or
+ * Previously observed failure mode, fixed before 0.1.0: browser redirect authorization did not track or
  * reject an HTTPS-to-HTTP scheme downgrade. Investigating the fix exposed the deeper mechanism:
  * Playwright only routes the FIRST request of a redirect chain — it auto-continues every
  * subsequent hop at the CDP layer — so the route handler's origin check never ran for redirect
@@ -22,8 +22,8 @@
  * 3. WIRING — live-Chromium tests prove the guard is attached on the shipped render path: a
  *    redirect from an approved origin to an unapproved origin is refused PRE-EGRESS (the target
  *    server's hit counter stays at zero) and receipted, while an approved HTTP->HTTP redirect
- *    still renders warning-free (the downgrade rule does not false-positive on redirects that
- *    never left cleartext).
+ *    adds no network-policy warning (the downgrade rule does not false-positive on redirects
+ *    that never left cleartext). Browser HTML typography retains its separate unverified warning.
  */
 import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -33,17 +33,24 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadMotionPackage } from "@shellx-motion/core";
 import { canonicalPathForBrowserSafety } from "./browser-package-safety";
+import { htmlTypographyWarning } from "./typography-attestation";
 import {
   authorizeBrowserRedirectHop,
   authorizeBrowserRouteRequest,
+  createHostBoundBrowserFrameRenderer,
   createBrowserDocumentSchemeMemory,
-  renderBrowserFrame,
   type BrowserFrameNetworkState,
   type BrowserRoutePolicy,
   type RoutedBrowserRequest
 } from "./index";
+import { TEST_APPROVED_AGENT_SCRIPT_AUTHORITY } from "./test-support/approved-agent-script-authority";
 
 const tempDirs: string[] = [];
+const hostBoundBrowserFrameRenderer = createHostBoundBrowserFrameRenderer({ agentScriptAuthority: TEST_APPROVED_AGENT_SCRIPT_AUTHORITY });
+
+function renderBrowserFrame(pkg: Parameters<typeof hostBoundBrowserFrameRenderer>[0], options: Parameters<typeof hostBoundBrowserFrameRenderer>[1]) {
+  return hostBoundBrowserFrameRenderer(pkg, options);
+}
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -394,6 +401,28 @@ describe("browser route redirect-downgrade refusal (defense in depth)", () => {
     expect(outsideVerdict).toBe("abort");
     expect(outsideState.blockedExternalFileRequest).toBe(true);
   });
+
+  it("remembers an approved HTTPS document before refusing its later cleartext navigation", async () => {
+    // A failed navigation leaves Chromium on chrome-error://, so frame.url() no longer proves that
+    // it was secure. The per-frame memory must retain the prior approved document origin rather
+    // than allowing a retry to reach an otherwise approved cleartext destination.
+    const state = freshNetworkState();
+    const frame = frameOn("chrome-error://chromewebdata/");
+    const policy = remotePolicy("https://secure.example", "http://cleartext.example");
+
+    await expect(authorizeBrowserRouteRequest(
+      framedRequest("https://secure.example/first-document", frame),
+      policy,
+      state
+    )).resolves.toBe("continue");
+
+    await expect(authorizeBrowserRouteRequest(
+      framedRequest("http://cleartext.example/retry", frame),
+      policy,
+      state
+    )).resolves.toBe("abort");
+    expect(state.blockedDowngradeRedirects).toEqual(["https://secure.example -> http://cleartext.example"]);
+  });
 });
 
 describe("browser redirect revalidation wiring (live Chromium)", () => {
@@ -436,7 +465,7 @@ describe("browser redirect revalidation wiring (live Chromium)", () => {
     }
   }, 45_000);
 
-  it("follows an approved cross-origin HTTP redirect without warnings", async () => {
+  it("follows an approved cross-origin HTTP redirect without network warnings", async () => {
     // False-positive check on the real path: an approved HTTP->HTTP redirect never left
     // cleartext, so the response-stage guard must continue it and the frame must render clean —
     // both hops origin-approved, no downgrade, no warnings.
@@ -462,8 +491,8 @@ describe("browser redirect revalidation wiring (live Chromium)", () => {
         networkAccess: { approvedOrigins: [sourceOrigin, targetOrigin], allowPrivateNetwork: true }
       });
 
-      expect(result.receipt.status).toBe("passed");
-      expect(result.receipt.warnings).toEqual([]);
+      expect(result.receipt.status).toBe("warning");
+      expect(result.receipt.warnings).toEqual([htmlTypographyWarning()]);
     } finally {
       await closeServer(redirector);
       await closeServer(redirectTarget);

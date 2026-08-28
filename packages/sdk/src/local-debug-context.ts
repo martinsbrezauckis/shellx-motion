@@ -18,7 +18,10 @@
  * Primary caller: `./local.ts`.
  */
 import type { MotionDebugContext, ReceiptActor } from "@shellx-motion/debug-api";
+import type { MotionJobCoordinator } from "@shellx-motion/core";
+import { dirname, resolve } from "node:path";
 import type { LocalMotionSdkOptions } from "./local";
+import type { MotionSdkRenderRequest } from "./types";
 
 /**
  * Build the dispatch context for one local SDK operation.
@@ -30,7 +33,7 @@ import type { LocalMotionSdkOptions } from "./local";
  */
 export function localDebugContext(
   tier: MotionDebugContext["tier"],
-  options: LocalMotionSdkOptions,
+  options: LocalMotionSdkOptions & { jobCoordinator?: MotionJobCoordinator },
   scratchRoot?: string,
   qualityInputRoots?: string[]
 ): MotionDebugContext {
@@ -38,13 +41,50 @@ export function localDebugContext(
   return {
     tier,
     actor: sdkActor(tier, options),
+    ...(options.callerId?.trim() ? { callerId: options.callerId.trim() } : {}),
     ...(resolvedScratchRoot ? { scratchRoot: resolvedScratchRoot } : {}),
     ...(options.receiptsRoot ? { receiptsRoot: options.receiptsRoot } : {}),
+    ...(options.attestedRenderReuseProducerAuthority
+      ? { attestedRenderReuseProducerAuthority: options.attestedRenderReuseProducerAuthority }
+      : {}),
     ...(qualityInputRoots ? { qualityInputRoots } : {}),
     ...(options.authoringInputRoots ? { authoringInputRoots: options.authoringInputRoots } : {}),
     ...(options.authoringOutputRoots ? { authoringOutputRoots: options.authoringOutputRoots } : {}),
+    ...(options.renderPackageRoots ? { renderPackageRoots: options.renderPackageRoots } : {}),
+    ...(options.renderInputRoots ? { renderInputRoots: options.renderInputRoots } : {}),
+    ...(options.renderOutputRoots ? { renderOutputRoots: options.renderOutputRoots } : {}),
+    ...(options.enforceRenderRoots === true ? { enforceRenderRoots: true } : {}),
     ...(options.ffmpegRunner ? { ffmpegRunner: options.ffmpegRunner } : {}),
-    ...(options.browserFrameRenderer ? { browserFrameRenderer: options.browserFrameRenderer } : {})
+    ...(options.browserFrameRenderer ? { browserFrameRenderer: options.browserFrameRenderer } : {}),
+    ...(options.streamingFinalRenderer ? { streamingFinalRenderer: options.streamingFinalRenderer } : {}),
+    ...(options.jobCoordinator ? { jobCoordinator: options.jobCoordinator } : {}),
+    ...(typeof options.gpuFinalExecutionAvailable === "boolean" ? { gpuFinalExecutionAvailable: options.gpuFinalExecutionAvailable } : {}),
+    ...(options.materializedFrameSequencePreflight
+      ? { materializedFrameSequencePreflight: options.materializedFrameSequencePreflight }
+      : {})
+  };
+}
+
+/** Derive narrow roots only for a direct in-process SDK host. */
+export function localRenderOptions(
+  options: LocalMotionSdkOptions,
+  input: MotionSdkRenderRequest,
+  packageRoot: string,
+  artifactRoot: string,
+): LocalMotionSdkOptions {
+  if (options.renderPackageRoots !== undefined
+    || options.renderInputRoots !== undefined
+    || options.renderOutputRoots !== undefined
+    || options.enforceRenderRoots) return options;
+  return {
+    ...options,
+    renderPackageRoots: [packageRoot],
+    renderInputRoots: [
+      packageRoot,
+      ...(input.workflowPath ? [dirname(resolve(input.workflowPath))] : []),
+      ...(input.qualityManifestPath ? [dirname(resolve(input.qualityManifestPath))] : [])
+    ],
+    renderOutputRoots: [artifactRoot]
   };
 }
 

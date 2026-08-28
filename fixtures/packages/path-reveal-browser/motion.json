@@ -1,0 +1,38 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_path_reveal_browser",
+  "name": "Browser Path Reveal Sample",
+  "durationMs": 1000,
+  "fps": 30,
+  "width": 640,
+  "height": 360,
+  "background": "#07111f",
+  "layers": [
+    {
+      "id": "reveal-stroke",
+      "type": "shape",
+      "shape": "path",
+      "startMs": 0,
+      "durationMs": 1000,
+      "transform": { "x": 0, "y": 0, "width": 640, "height": 360 },
+      "x-path": "M 64 180 C 160 40 480 40 576 180",
+      "x-path-viewBox": "0 0 640 360",
+      "pathReveal": { "start": 0, "end": 0 },
+      "style": {
+        "fill": "transparent",
+        "stroke": "#8dfcff",
+        "strokeWidth": 8,
+        "strokeLinecap": "round"
+      },
+      "keyframes": {
+        "pathReveal.end": [
+          { "atMs": 0, "value": 0, "easing": "ease-out" },
+          { "atMs": 800, "value": 0.85, "easing": "ease-in-out" },
+          { "atMs": 1000, "value": 1, "easing": "ease-in" }
+        ]
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "r5-sample-catalog" }
+}

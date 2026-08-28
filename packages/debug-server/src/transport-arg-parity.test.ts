@@ -115,6 +115,10 @@ const HANDLER_HONOURED_CALLS: Array<{ command: string; args: Record<string, unkn
   { command: "motion.prompt.cancel", args: { receiptsRoot: ".scratch/parity-receipts", id: "receipt-abc" } },
   { command: "motion.package.extract", args: { inPath: "/tmp/motion-parity.zip", outDir: "/tmp/motion-parity-out" } },
   { command: "motion.keying.remove", args: { packageRoot: "fixtures/packages/lower-third", packageDir: "/tmp/motion-parity-keying", layerId: "lower-third" } },
+  // All transports must pass the same valid closed nested master record to the mutator.
+  // The package may still reject the copy destination on its own terms; this pins only that the
+  // advertised document-master contract itself does not differ by transport.
+  { command: "motion.audio.master.set", args: { packageRoot: "fixtures/packages/lower-third", outDir: "/tmp/motion-parity-audio-master", master: { volume: 0.8, loudness: { integratedLufs: -16, toleranceLufs: 1, maxTruePeakDbtp: -1 } } } },
   { command: "motion.agent.revision.plan", args: { packageId: "pkg-parity", contactSheetFile: "/tmp/motion-parity-sheet.json" } },
   { command: "motion.timeline.keyframes.panel", args: { packageRoot: "fixtures/packages/lower-third", layer: "lower-third" } },
   { command: "motion.source.to_scripted_video", args: { source: "/tmp/motion-parity.md", outDir: "/tmp/motion-parity-script" } }
@@ -154,6 +158,26 @@ describe("every transport enforces the same argument contract", () => {
     }
   }, 45_000);
 
+  it("publishes the B2/B3 identity-only commands and keeps malformed, extra, and authority-free calls transport-identical", async () => {
+    const { mcp, jsonRpc, http, toolsList } = await transports();
+    const identity = { id: `checkpoint_storyboard_${"a".repeat(32)}`, sha256: "a".repeat(64), revision: 1 };
+    for (const command of ["motion.timeline.checkpoint-storyboard.behavior.resolve", "motion.timeline.checkpoint-storyboard.behavior.detach", "motion.timeline.checkpoint-storyboard.relation.resolve", "motion.timeline.checkpoint-storyboard.relation.detach"]) {
+      const malformed = { identity: { ...identity, revision: 0 } };
+      const extra = { identity, outputPackageRoot: "/forbidden" };
+      const valid = { identity };
+      const [malformedMcp, malformedRpc, malformedHttp, extraMcp, extraRpc, extraHttp, validMcp, validRpc, validHttp] = await Promise.all([
+        mcp(command, malformed), jsonRpc(command, malformed), http(command, malformed),
+        mcp(command, extra), jsonRpc(command, extra), http(command, extra),
+        mcp(command, valid), jsonRpc(command, valid), http(command, valid),
+      ]);
+      for (const verdict of [malformedMcp, malformedRpc, malformedHttp]) expect(verdict.shapeRejected).toBe(true);
+      for (const verdict of [extraMcp, extraRpc, extraHttp]) expect(verdict.violations).toEqual(expect.arrayContaining([expect.objectContaining({ argument: "outputPackageRoot", kind: "unknown_property" })]));
+      for (const verdict of [validMcp, validRpc, validHttp]) expect(verdict).toMatchObject({ shapeRejected: false, code: "capability_unavailable" });
+      const tool = (await toolsList()).find((entry) => entry.name === command.replace(/\./g, "_"));
+      expect((tool?.inputSchema as { properties?: { args?: { additionalProperties?: boolean; required?: string[] } } })?.properties?.args).toMatchObject({ additionalProperties: false, required: ["identity"] });
+    }
+  }, 45_000);
+
   it("enforces an enumRef value set, not just advertises it", async () => {
     const { mcp, jsonRpc, http, toolsList } = await transports();
 
@@ -178,6 +202,32 @@ describe("every transport enforces the same argument contract", () => {
       ?.properties?.args?.properties?.preset?.enum;
     const enforced = viaMcp.violations.find((violation) => violation.argument === "preset")?.allowedValues;
     expect(enforced).toEqual(published);
+  }, 45_000);
+
+  it("publishes and enforces B1c's exact opaque handle grammar on every transport", async () => {
+    const { mcp, jsonRpc, http, toolsList } = await transports();
+    const command = "motion.timeline.checkpoint-storyboard.creative-review.bind";
+    const args = {
+      identity: { id: `checkpoint_storyboard_${"a".repeat(32)}`, sha256: "a".repeat(64), revision: 1 },
+      preview: {
+        previewHandle: `checkpoint_storyboard_preview_${"b".repeat(32)}`,
+        receiptHandle: `checkpoint_storyboard_preview_receipt_${"c".repeat(32)}`,
+      },
+      creativeReviewHandle: `checkpoint_storyboard_creative_review_handle_${"D".repeat(32)}`,
+    };
+    const [viaMcp, viaJsonRpc, viaHttp] = await Promise.all([
+      mcp(command, args), jsonRpc(command, args), http(command, args)
+    ]);
+    for (const verdict of [viaMcp, viaJsonRpc, viaHttp]) {
+      expect(verdict.shapeRejected).toBe(true);
+      expect(verdict.violations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ argument: "creativeReviewHandle", kind: "bad_pattern", pattern: "^checkpoint_storyboard_creative_review_handle_[a-f0-9]{32}$" }),
+      ]));
+    }
+    const tool = (await toolsList()).find((entry) => entry.name === command.replace(/\./g, "_"));
+    const published = (tool?.inputSchema as { properties?: { args?: { properties?: Record<string, Record<string, unknown>> } } })
+      ?.properties?.args?.properties?.creativeReviewHandle;
+    expect(published).toMatchObject({ minLength: 77, maxLength: 77, pattern: "^checkpoint_storyboard_creative_review_handle_[a-f0-9]{32}$" });
   }, 45_000);
 
   it("publishes no unresolved enumRef on any tool, so every advertised value set is enforceable", async () => {

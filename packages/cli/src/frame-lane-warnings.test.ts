@@ -117,6 +117,81 @@ describe("FrameLaneWarnings", () => {
     expect(accumulator.list()).toEqual(["font fallback for text layer headline"]);
   });
 
+  it("carries bounded all-frame browser typography evidence into the final receipt", () => {
+    const accumulator = new FrameLaneWarnings();
+    const browserTypography = {
+      schema: "shellx-motion/browser-typography@1",
+      authority: "chromium",
+      attestation: "verified",
+      fontProbe: "canvas-metric",
+      scopes: [{ kind: "motion-ir", attestation: "verified", layerIds: ["headline"] }],
+      layers: [{
+        layerId: "headline",
+        direction: "ltr",
+        lang: "en",
+        requestedFontFamily: "Brand Sans",
+        resolvedFontFamily: "Brand Sans",
+        primaryFontAvailable: true,
+        fontProvenance: "manifest-bound"
+      }],
+      fontAssets: [{
+        id: "font-brand-sans",
+        family: "Brand Sans",
+        sha256: "a".repeat(64)
+      }],
+      fallbackLayerIds: []
+    };
+    accumulator.observe({ status: "passed", output: { typography: browserTypography } });
+    accumulator.observe({ status: "passed", output: { typography: browserTypography } });
+    const delivered = receipt("passed");
+
+    accumulator.applyTo(delivered);
+
+    expect((delivered.output as any).typography).toEqual({
+      schema: "shellx-motion/browser-typography-delivery@1",
+      authority: "chromium",
+      coverage: "all-rasterized-frames",
+      rasterizedFrameCount: 2,
+      evidenceFrameCount: 2,
+      attestation: "verified",
+      fontProbe: "canvas-metric",
+      scopes: browserTypography.scopes,
+      layers: browserTypography.layers,
+      fontAssets: browserTypography.fontAssets,
+      fallbackLayerIds: []
+    });
+  });
+
+  it("fails closed when only part of the rasterized sequence supplied typography evidence", () => {
+    const accumulator = new FrameLaneWarnings();
+    accumulator.observe({
+      status: "passed",
+      output: {
+        typography: {
+          schema: "shellx-motion/browser-typography@1",
+          authority: "chromium",
+          attestation: "verified",
+          fontProbe: "canvas-metric",
+          scopes: [],
+          layers: [],
+          fontAssets: [],
+          fallbackLayerIds: []
+        }
+      }
+    });
+    accumulator.observe({ status: "passed", output: {} });
+    const delivered = receipt("passed");
+
+    accumulator.applyTo(delivered);
+
+    expect((delivered.output as any).typography).toMatchObject({
+      coverage: "partial",
+      rasterizedFrameCount: 2,
+      evidenceFrameCount: 1,
+      attestation: "unverified"
+    });
+  });
+
   it("escalates a passed receipt to warning and puts frame warnings first", () => {
     const accumulator = new FrameLaneWarnings();
     accumulator.observe({ status: "warning", warnings: ["font fallback"] });

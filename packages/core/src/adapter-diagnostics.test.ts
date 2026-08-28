@@ -120,6 +120,55 @@ describe("adapter diagnostics", () => {
     });
   });
 
+  it("keeps first-match Lottie image asset semantics while indexing malformed and duplicate declarations once", () => {
+    const diagnostics = diagnoseAdapterImport({
+      adapterId: "adapter.lottie",
+      sourcePath: "duplicate-assets.json",
+      sourceText: JSON.stringify({
+        w: 32, h: 32, fr: 30, ip: 0, op: 30,
+        layers: [
+          { ty: 2, nm: "Hero", refId: "hero" },
+          { ty: 2, nm: "Empty id", refId: "" },
+          { ty: 2, nm: "Malformed id", refId: 7 },
+          { ty: 2, nm: "Missing id" }
+        ],
+        assets: [
+          { id: "hero", p: "first.png" },
+          null,
+          { id: "hero" },
+          { id: "", p: "empty.png" },
+          { id: 7, p: "malformed.png" }
+        ]
+      }),
+      normalizedPackagePath: "packages/duplicate-assets"
+    });
+
+    expect(diagnostics.supportedFeatures).toContainEqual(expect.objectContaining({ feature: "lottie.image.asset", status: "supported" }));
+    expect(diagnostics.unsupportedFeatures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "lottie.layers[1]#Empty id", feature: "lottie.image.asset", status: "unsupported" }),
+      expect.objectContaining({ path: "lottie.layers[2]#Malformed id", feature: "lottie.image.asset", status: "unsupported" }),
+      expect.objectContaining({ path: "lottie.layers[3]#Missing id", feature: "lottie.image.asset", status: "unsupported" })
+    ]));
+  });
+
+  it("bounds Lottie image diagnostics to linear asset lookup work", () => {
+    const count = 10_000;
+    const sourceText = JSON.stringify({
+      w: 32, h: 32, fr: 30, ip: 0, op: 30,
+      layers: Array.from({ length: count }, () => ({ ty: 2, refId: "last" })),
+      assets: [...Array.from({ length: count - 1 }, () => ({})), { id: "last", p: "last.png" }]
+    });
+    const started = process.hrtime.bigint();
+    expect(() => diagnoseAdapterImport({
+      adapterId: "adapter.lottie",
+      sourcePath: "bounded-image-assets.json",
+      sourceText,
+      normalizedPackagePath: "packages/bounded-image-assets"
+    })).toThrow(/4096-feature output limit/);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    expect(elapsedMs, `completed in ${elapsedMs.toFixed(1)} ms`).toBeLessThan(3_000);
+  });
+
   it("lowers the proven static Lottie subset into a validated, source-bound Motion document", async () => {
     const sourcePath = resolve("../../fixtures/imports/lottie-static-shape/input.json");
     const sourceText = await readFile(sourcePath, "utf8");

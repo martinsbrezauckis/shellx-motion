@@ -24,6 +24,7 @@ import {
   unacceptedKeys,
   violatesIdentityTransform
 } from "./editable-receiver-allowlist.js";
+import { cutRootStoreRefusalInput, cutRootStoreRefusalInputHashes, cutRootStoreUnsupported, type CutRootStoreRefusalInput } from "./scene3d-animation-admission.js";
 
 export type CutImportMode = "rendered_media" | "live_overlay" | "editable_lowering";
 export type CutLowerableLayerType = "text" | "shape" | "caption" | "image" | "video" | "audio";
@@ -134,7 +135,6 @@ export interface CutImportPlan {
   timeline?: CutTimelineMetadata;
   receipt: OperationReceipt;
 }
-
 export interface CutRenderedMediaPlacement {
   startMs?: number;
   durationMs?: number;
@@ -142,6 +142,7 @@ export interface CutRenderedMediaPlacement {
 }
 
 export function planCutImport(pkg: MotionPackage, targetCapabilities: CutTargetCapabilities): CutImportPlan {
+  const rootStoreUnsupported = cutRootStoreUnsupported(pkg); if (rootStoreUnsupported) { const refusalInput = cutRootStoreRefusalInput(pkg); return buildPlan(refusalInput.pkg, targetCapabilities, null, [], rootStoreUnsupported, refusalInput); }
   if (hasWebLayer(pkg)) {
     const requirements = webLayerRequirements(pkg);
     return targetCapabilities.modes.includes("rendered_media")
@@ -177,7 +178,6 @@ export function planCutImport(pkg: MotionPackage, targetCapabilities: CutTargetC
     }
   ]);
 }
-
 export function attachRenderedMediaToCutPlan(plan: CutImportPlan, artifact: RenderedMediaArtifact): CutImportPlan {
   if (!artifact.dryRun && artifact.handle.packageLineage) validatePackageRenderLineage(artifact.handle.packageLineage);
   const operations = plan.operations.map((operation): CutImportOperation => {
@@ -214,7 +214,6 @@ export function attachRenderedMediaToCutPlan(plan: CutImportPlan, artifact: Rend
     }
   };
 }
-
 function attachedRenderedMediaReceiptId(plan: CutImportPlan, handle: AttestedArtifactHandleReference): string {
   const lineage = handle.packageLineage;
   const commitment = {
@@ -925,7 +924,8 @@ function buildPlan(
   targetCapabilities: CutTargetCapabilities,
   mode: CutImportMode | null,
   operations: CutImportOperation[],
-  unsupported: CutUnsupportedFeature[]
+  unsupported: CutUnsupportedFeature[],
+  refusalInput?: CutRootStoreRefusalInput,
 ): CutImportPlan {
   // `unsupported` describes features that could not be represented by the preferred editable
   // lowering. A selected rendered-media/live-overlay operation still imports the whole package
@@ -942,7 +942,6 @@ function buildPlan(
     document,
     ...(timelineOutput ? { timeline: timelineOutput } : {})
   };
-
   return {
     schema: "shellx-motion/cut-import-plan@1",
     integration: createIntegrationEnvelope({
@@ -968,7 +967,7 @@ function buildPlan(
       status: ok ? "passed" : "failed",
       packageId: pkg.manifest.id,
       inputHashes: {
-        motion: hashBuffer(Buffer.from(JSON.stringify(pkg.motion))),
+        ...(refusalInput?.rootDescriptorEvidence ? cutRootStoreRefusalInputHashes(refusalInput.rootDescriptorEvidence) : { motion: hashBuffer(Buffer.from(JSON.stringify(pkg.motion))) }),
         targetCapabilities: hashBuffer(Buffer.from(JSON.stringify(targetCapabilities)))
       },
       createdAt: new Date().toISOString(),

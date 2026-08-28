@@ -3,11 +3,12 @@
  *
  * Role: stand in for ShellX Cut or Design Studio running Motion on a shared machine. It runs one
  * governed job under a caller id and job id supplied on the command line, holds the job open for a
- * fixed time, and prints the resulting evidence as JSON.
+ * fixed time or a parent-created release signal, and prints the resulting evidence as JSON.
  *
  * It runs a governed job rather than a real render on purpose: the subject under test is job
  * identity and cross-process visibility, and a real encode would add minutes and an ffmpeg
- * dependency without exercising one additional line of it.
+ * dependency without exercising one additional line of it. The release signal makes an observed
+ * running state independent of scheduler speed without weakening the real cross-process boundary.
  *
  * This is a fixture, not a test — it is a real file in the package rather than a script written to
  * a temp directory because Node resolves `@shellx-motion/core` by walking up from the importing
@@ -15,9 +16,9 @@
  * outside the package tree cannot resolve it, and a plain `node` child cannot load it. Run with
  * `tsx`.
  *
- * Usage: tsx job-host.fixture.ts <leaseRoot> <recordRoot> <callerId> <jobId> <holdMs> <scratchRoot>
+ * Usage: tsx job-host.fixture.ts <leaseRoot> <recordRoot> <callerId> <jobId> <holdMs> <scratchRoot> [readyPath] [releasePath]
  */
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import {
   LocalMotionJobGovernor,
   MotionHostJob,
@@ -27,7 +28,19 @@ import {
   type LocalMotionJobPolicy
 } from "@shellx-motion/core";
 
-const [leaseRoot, recordRoot, callerId, jobId, holdMs, scratchRoot, readyPath] = process.argv.slice(2);
+const [leaseRoot, recordRoot, callerId, jobId, holdMs, scratchRoot, readyPath, releasePath] = process.argv.slice(2);
+
+async function waitForRelease(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error("Parent did not release the admitted fixture job.");
+}
 
 /** One slot, so two of these processes must take turns — which is the point of the cap test. */
 const POLICY: LocalMotionJobPolicy = {
@@ -62,7 +75,8 @@ try {
       // Signal that the work is genuinely admitted and running, so the test observes a live job
       // instead of racing process startup.
       if (readyPath) await writeFile(readyPath, "running");
-      await new Promise((resolve) => setTimeout(resolve, Number(holdMs)));
+      if (releasePath) await waitForRelease(releasePath);
+      else await new Promise((resolve) => setTimeout(resolve, Number(holdMs)));
     }
   ));
   await job.succeeded();

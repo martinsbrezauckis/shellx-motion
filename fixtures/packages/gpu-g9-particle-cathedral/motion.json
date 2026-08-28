@@ -1,0 +1,158 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_g9_particle_cathedral",
+  "name": "Particle Cathedral — G9 GPU Film",
+  "durationMs": 7200,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#030712",
+  "safeAreas": {
+    "copy": { "top": 84, "right": 112, "bottom": 84, "left": 112 }
+  },
+  "layers": [
+    {
+      "id": "midnight-field",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 7200,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.52,
+        "centerY": 0.46,
+        "stops": [
+          { "offset": 0, "color": "#172554" },
+          { "offset": 0.42, "color": "#081b35" },
+          { "offset": 1, "color": "#030712" }
+        ]
+      }
+    },
+    {
+      "id": "warm-core",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#fbbf24",
+      "opacity": 0.16,
+      "blendMode": "screen",
+      "startMs": 0,
+      "durationMs": 7200,
+      "transform": { "x": 690, "y": 250, "width": 560, "height": 560 },
+      "effects": { "glow": { "radius": 54, "color": "#f59e0b" } },
+      "keyframes": {
+        "transform.scale": [
+          { "atMs": 0, "value": 0.82 },
+          { "atMs": 3600, "value": 1.12, "easing": "ease-in-out" },
+          { "atMs": 7200, "value": 0.9, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "hundred-thousand-lights",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 7200,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "originX": 960, "originY": 540 },
+      "emitter": {
+        "seed": 20260814,
+        "count": 100000,
+        "lifetimeMs": 3600,
+        "shape": "circle",
+        "color": "#fde68a",
+        "secondaryColor": "#67e8f9",
+        "minSize": 1,
+        "maxSize": 3,
+        "minSpeed": 12,
+        "maxSpeed": 88,
+        "direction": -90,
+        "spread": 360,
+        "gravity": 4,
+        "fadeOut": true,
+        "field": {
+          "schema": "shellx-motion/particle-field@1",
+          "sources": [
+            { "kind": "radial", "centerX": 0.5, "centerY": 0.5, "strength": 0.72, "softening": 0.18 },
+            { "kind": "vortex", "centerX": 0.24, "centerY": 0.36, "strength": 0.48, "softening": 0.24 },
+            { "kind": "vortex", "centerX": 0.76, "centerY": 0.64, "strength": -0.4, "softening": 0.3 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "title-rule",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#67e8f9",
+      "startMs": 680,
+      "durationMs": 5700,
+      "transform": { "x": 114, "y": 824, "width": 318, "height": 5 },
+      "effects": { "glow": { "radius": 10, "color": "#22d3ee" } },
+      "transitions": { "in": { "type": "wipe", "direction": "left", "durationMs": 520, "easing": "ease-out" } }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "FIXED COMPUTE FIELD / 100,000 PARTICLES",
+      "startMs": 820,
+      "durationMs": 5400,
+      "transform": { "x": 116, "y": 862, "width": 820, "height": 42 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 21,
+        "fontWeight": 600,
+        "letterSpacing": 3.4,
+        "lineHeight": 1,
+        "color": "#a5f3fc"
+      },
+      "textFit": { "policy": "safe", "safeAreaId": "copy" }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "THE LIGHT\nDOES NOT FALL BACK",
+      "startMs": 960,
+      "durationMs": 5150,
+      "transform": { "x": 120, "y": 572, "width": 1040, "height": 240 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 86,
+        "fontWeight": 900,
+        "letterSpacing": -1.8,
+        "lineHeight": 0.93,
+        "color": "#f8fafc",
+        "textShadow": { "x": 0, "y": 12, "blur": 32, "color": "rgba(0,0,0,0.58)" }
+      },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "copy", "minFontSize": 54 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 960, "value": 0 },
+          { "atMs": 1520, "value": 1, "easing": "ease-out" }
+        ],
+        "transform.y": [
+          { "atMs": 960, "value": 614, "easing": "ease-out" },
+          { "atMs": 1520, "value": 572 }
+        ]
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 7200,
+      "effects": {
+        "vignette": { "amount": 0.78, "softness": 0.58, "color": "#02030b" },
+        "filmGrain": { "amount": 0.12, "size": 2, "seed": 20260814 }
+      }
+    }
+  ],
+  "assets": [
+    { "id": "font_inter_600", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" }, "weight": 600, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "g9-product-film-fixture",
+    "workflow": "fixed-data-only-gpu-compute"
+  }
+}

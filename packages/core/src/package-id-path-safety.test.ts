@@ -29,7 +29,7 @@ const FIXTURE = resolve(import.meta.dirname, "../../../fixtures/packages/lower-t
 async function packageWithId(id: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-pkg-id-"));
   const packageRoot = join(root, "pkg");
-  await mkdir(packageRoot, { recursive: true });
+  await mkdir(packageRoot, { recursive: true, mode: 0o700 });
   for (const name of ["manifest.json", "motion.json"]) {
     const text = await readFile(join(FIXTURE, name), "utf8");
     if (name === "manifest.json") {
@@ -75,7 +75,7 @@ describe("package id path safety", () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-frames-root-"));
     const framesRoot = join(root, "frames");
     const victim = join(root, "victim");
-    await mkdir(framesRoot, { recursive: true });
+    await mkdir(framesRoot, { recursive: true, mode: 0o700 });
     await mkdir(victim, { recursive: true });
     await writeFile(join(victim, "important.txt"), "IRREPLACEABLE", "utf8");
     try {

@@ -34,6 +34,7 @@ State priorities:
 | Empty | unlocked, no package | Browse for a package | folder selection required | package rail placeholder | choose another folder |
 | Loading | command submitted | wait | duplicate command disabled | inline activity and status text | error preserves input |
 | Ready | package commands pass | scrub, select, refresh, render | command tier enforced server-side | preview/timeline/inspector update | reconnect or reopen |
+| GPU strict selected | explicit Preview or final frame-lane selection | check source-only GPU state, then explicitly refresh/submit | the engine owns adapter support and refuses unsupported work | typed refusal remains visible; no lane switch is implied | explicitly select Browser if that is desired |
 | Rendering | final render submitted | inspect progress text | render submit disabled | modal progress, then receipt-backed queue | failure keeps render form values |
 | Error | any command fails | retry relevant action | none | inline concrete API error | no state is silently discarded |
 
@@ -45,6 +46,7 @@ Human/product boundary:
 - Package, receipt, render-output, and quality-manifest locations are read-only displays backed by native Browse actions. Agent/API callers keep path arguments on their own surfaces.
 - Template packages, catalogs, controls, and posters remain available through agent/CLI contracts as reference material. They are not advertised or rendered as a human Gallery.
 - Startup, periodic, About-page, and agent update status share one cached result. About explains the product first and keeps update/privacy behavior inside the update section.
+- GPU readiness is source-only unless the authenticated engine reports a fresh host-owned active adapter/device proof. A Chromium install, prior preview, or prior render is never presented as hardware availability. GPU preview has no browser/CPU fallback; GPU final requests use `frameLane: gpu` raw-RGBA FFmpeg video and expose typed refusals instead of reusing, caching, materializing stills/sequences, or falling back. The UI may expose explicit segmented delivery for an admitted non-hybrid GPU scene or exactly one governed strict HTML/web/canvas or restricted-GLSL texture; the engine owns source/runtime capture authority, its derived checkpoint store, range ledgers, and resume proof.
 
 Post-install connection flow:
 

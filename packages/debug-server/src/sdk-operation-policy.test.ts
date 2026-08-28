@@ -14,11 +14,15 @@ describe("SDK operation policy", () => {
       compositingSet: "edit_motion",
       compositingRemove: "edit_motion",
       gltfImport: "write_local",
+      cutoutRigBake: "edit_motion",
       proceduralInspect: "read_motion",
       proceduralSet: "edit_motion",
       proceduralSetEnabled: "edit_motion",
       proceduralBake: "edit_motion",
       proceduralDetach: "edit_motion",
+      proceduralAudioEnvelopeProduce: "edit_motion",
+      audioMasterSet: "edit_motion",
+      audioCrossfadeSet: "edit_motion",
     });
   });
 

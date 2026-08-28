@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +43,7 @@ describe("contained tracking media analysis", () => {
       id: "package_point_track",
       assetId: "video_plate",
       sourcePath,
+      inputRoot: root,
       mode: "point",
       model: "translation",
       reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
@@ -56,6 +58,11 @@ describe("contained tracking media analysis", () => {
     if (!result.ok) return;
     expect(contexts).toEqual(["analysis.media.probe", "analysis.media.decode"]);
     expect(commands.every((command) => command.shell === false)).toBe(true);
+    const subprocessInputs = commands.map((command) => command.args[command.args.indexOf("-i") + 1]);
+    expect(subprocessInputs[0]).toBe(subprocessInputs[1]);
+    expect(subprocessInputs[0]).not.toBe(sourcePath);
+    expect(commands.every((command) => command.args.includes("-protocol_whitelist") && command.args.includes("-format_whitelist"))).toBe(true);
+    expect(commands.every((command) => command.args.includes("-enable_drefs") && command.args.includes("-use_absolute_path"))).toBe(true);
     expect(commands[1].args).toEqual(expect.arrayContaining([
       "-nostdin", "-vf", "fps=1000/100", "-frames:v", "3", "-pix_fmt", "gray", "-f", "rawvideo",
     ]));
@@ -70,6 +77,78 @@ describe("contained tracking media analysis", () => {
       receipt: { operation: "analysis.tracking.request", status: "passed", lane: "analysis" },
     });
     expect(await fileExists(commands[1].args.at(-1)!)).toBe(false);
+    expect(await fileExists(subprocessInputs[0]!)).toBe(false);
+  });
+
+  it("uses one immutable snapshot when the caller replaces the original media after probe", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "shellx-motion-analysis-tracking-swap-")));
+    roots.push(root);
+    const sourcePath = join(root, "swap.mp4");
+    const admitted = Buffer.from("admitted-media-bytes");
+    await writeFile(sourcePath, admitted);
+    const subprocessInputs: string[] = [];
+    const decoded = Buffer.concat([
+      syntheticFrame(32, 24, 10, 10),
+      syntheticFrame(32, 24, 13, 12),
+      syntheticFrame(32, 24, 16, 14),
+    ]);
+    const result = await analyzeTrackingMedia({
+      id: "swapped_track",
+      assetId: "video_plate",
+      sourcePath,
+      inputRoot: root,
+      mode: "point",
+      model: "translation",
+      reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
+      settings: settings(),
+      scratchRoot: root,
+      packageId: "pkg_tracking",
+      runCommand: async (command, context) => {
+        const subprocessInput = command.args[command.args.indexOf("-i") + 1]!;
+        subprocessInputs.push(subprocessInput);
+        await expect(readFile(subprocessInput)).resolves.toEqual(admitted);
+        if (context.operation === "analysis.media.probe") {
+          await writeFile(sourcePath, Buffer.from("replacement-media-bytes"));
+          return { exitCode: 0, stdout: JSON.stringify({ streams: [{ width: 32, height: 24 }], format: { duration: "0.2" } }), stderr: "" };
+        }
+        await writeFile(command.args.at(-1)!, decoded);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      source: { sha256: createHash("sha256").update(admitted).digest("hex"), byteLength: admitted.byteLength },
+    });
+    expect(new Set(subprocessInputs).size).toBe(1);
+    expect(await fileExists(subprocessInputs[0]!)).toBe(false);
+  });
+
+  it("refuses playlist and unknown tracking formats before a subprocess can open them", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "shellx-motion-analysis-tracking-playlist-")));
+    roots.push(root);
+    const sourcePath = join(root, "attack.m3u8");
+    await writeFile(sourcePath, "#EXTM3U\nfile:///etc/passwd\n");
+    let runnerCalls = 0;
+    const result = await analyzeTrackingMedia({
+      id: "playlist_track",
+      assetId: "video_plate",
+      sourcePath,
+      inputRoot: root,
+      mode: "point",
+      model: "translation",
+      reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
+      settings: settings(),
+      scratchRoot: root,
+      packageId: "pkg_tracking",
+      runCommand: async () => {
+        runnerCalls += 1;
+        return { exitCode: 1, stdout: "", stderr: "must not run" };
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "tracking_probe_failed", message: expect.stringContaining("MP4, MOV, Matroska, or WebM") } });
+    expect(runnerCalls).toBe(0);
   });
 
   it("fails closed when decoded bytes do not match probed dimensions", async () => {
@@ -88,6 +167,7 @@ describe("contained tracking media analysis", () => {
       id: "short_decode",
       assetId: "video_plate",
       sourcePath,
+      inputRoot: root,
       mode: "point",
       model: "translation",
       reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
@@ -117,6 +197,7 @@ describe("contained tracking media analysis", () => {
       id: "cancelled_track",
       assetId: "video_plate",
       sourcePath,
+      inputRoot: root,
       mode: "point",
       model: "translation",
       reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
@@ -152,6 +233,7 @@ describe("contained tracking media analysis", () => {
       id: "retry_track",
       assetId: "video_plate",
       sourcePath,
+      inputRoot: root,
       mode: "point",
       model: "translation",
       reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },
@@ -167,6 +249,7 @@ describe("contained tracking media analysis", () => {
       id: "retry_track",
       assetId: "video_plate",
       sourcePath,
+      inputRoot: root,
       mode: "point",
       model: "translation",
       reference: { atMs: 0, bounds: { x: 6, y: 6, width: 8, height: 8 }, points: [{ x: 10, y: 10 }] },

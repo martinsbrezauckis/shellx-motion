@@ -1,13 +1,16 @@
 /** Caption import/upsert with bounded source reads and atomic package commits. */
 import {
+  DEFAULT_HOST_INTERCHANGE_LIMITS,
   hashBuffer,
   importTimelineCaptions,
+  readBoundedStableFile,
   upsertTimelineCaption
 } from "@shellx-motion/core";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { unsupportedEnumValue } from "./enum-error.js";
 import { nonNegativeNumberArg, positiveNumberArg, recordArg, stringArg } from "./args.js";
+import { assertConfiguredAuthoringInputFile } from "./authoring-root-policy.js";
 import {
   commitAtomicTimelineMutation,
   isTimelineCommonEditResult,
@@ -16,8 +19,8 @@ import {
 } from "./timeline-package-edit.js";
 
 export interface TimelineCaptionsServices extends TimelinePackageEditServices {
-  readText?: (path: string) => Promise<string>;
-  hashInputFile?: (path: string) => Promise<string>;
+  authoringInputRoots?: string[];
+  readCaptionSource?: (path: string, roots: string[] | undefined) => Promise<{ text: string; sha256: string }>;
 }
 
 export async function dispatchTimelineCaptionsCommand(
@@ -43,14 +46,14 @@ async function importCaptions(args: unknown, services: TimelineCaptionsServices)
   const style = recordArg(args, "style") ?? undefined;
   if (!captionsPathArg && !captionsText) return invalidArgs("motion.timeline.caption.import requires captionsPath or captionsText.");
   if (format === false) return unsupportedEnumValue("format", stringArg(args, "format"), "captionFormat");
-  const captionsPath = captionsPathArg ? resolve(captionsPathArg) : undefined;
-  if (captionsPath && (!services.readText || !services.hashInputFile)) {
+  const captionsPath = captionsText === null && captionsPathArg ? resolve(captionsPathArg) : undefined;
+  if (captionsPath && !services.readCaptionSource) {
     return capabilityUnavailable("Caption source file reading is unavailable.");
   }
-  let sourcePromise: Promise<string> | undefined;
+  let sourcePromise: Promise<{ text: string; sha256: string }> | undefined;
   const source = () => sourcePromise ??= captionsText !== null
-    ? Promise.resolve(captionsText)
-    : services.readText!(captionsPath!);
+    ? Promise.resolve({ text: captionsText, sha256: hashBuffer(Buffer.from(captionsText, "utf8")) })
+    : services.readCaptionSource!(captionsPath!, services.authoringInputRoots);
   return commitAtomicTimelineMutation({
     ...common,
     command: "motion.timeline.caption.import",
@@ -60,11 +63,11 @@ async function importCaptions(args: unknown, services: TimelineCaptionsServices)
     failureCode: "timeline_caption_import_failed",
     services,
     additionalInputHashes: async () => ({
-      ...(captionsPath ? { [captionsPath]: await services.hashInputFile!(captionsPath) } : {}),
-      ...(captionsText ? { captionsText: hashBuffer(Buffer.from(captionsText, "utf8")) } : {})
+      ...(captionsPath ? { [captionsPath]: (await source()).sha256 } : {}),
+      ...(captionsText ? { captionsText: (await source()).sha256 } : {})
     }),
     mutate: async (pkg) => importTimelineCaptions(pkg.motion, {
-      source: await source(),
+      source: (await source()).text,
       ...(format ? { format } : {}), ...(trackId ? { trackId } : {}),
       ...(trackName ? { trackName } : {}), ...(layerPrefix ? { layerPrefix } : {}),
       ...(transform ? { transform } : {}), ...(style ? { style } : {})
@@ -84,6 +87,25 @@ async function importCaptions(args: unknown, services: TimelineCaptionsServices)
       insertedLayerIds: result.insertedLayerIds, replacedLayerIds: result.replacedLayerIds
     })
   });
+}
+
+export async function readApprovedCaptionSource(
+  path: string,
+  roots: string[] | undefined,
+): Promise<{ text: string; sha256: string }> {
+  await assertConfiguredAuthoringInputFile(path, roots, "Caption source");
+  const lexical = resolve(path);
+  const approvedRoot = roots?.map((root) => resolve(root)).find((root) => {
+    const relation = relative(root, lexical);
+    return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
+  });
+  if (!approvedRoot) throw new Error("Caption source must be inside an approved authoring input root.");
+  const snapshot = await readBoundedStableFile(lexical, {
+    label: "Caption source",
+    maxBytes: DEFAULT_HOST_INTERCHANGE_LIMITS.maxFileBytes,
+    withinRoot: approvedRoot,
+  });
+  return { text: snapshot.bytes.toString("utf8"), sha256: snapshot.sha256 };
 }
 
 async function upsertCaption(args: unknown, services: TimelineCaptionsServices): Promise<MotionDebugResult> {

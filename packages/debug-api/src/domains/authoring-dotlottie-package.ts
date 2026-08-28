@@ -1,7 +1,6 @@
 /** Atomic dotLottie wrapper preserving the archive and selected animation. */
 import {
   applyStaticDotLottieTheme,
-  flattenStaticLottiePrecomps,
   hashBuffer,
   lowerSelectedDotLottieToMotion,
   selectDotLottieAnimation,
@@ -80,15 +79,13 @@ export async function writeStaticDotLottiePackage(options: WriteStaticDotLottieP
       resourcePaths = selected.bundledResources.map(dotLottieResourcePackagePath);
       const selectedBytes = Buffer.from(selected.animationText, "utf8");
       const selectedPath = "source/selected-animation.json";
-      precomposition = flattenStaticLottiePrecomps(appliedTheme?.animationText ?? selected.animationText);
-      const loweringText = precomposition.animationText;
-      loweringPath = appliedTheme && precomposition.changed
-        ? "source/selected-animation-themed-flattened.json"
-        : appliedTheme
-          ? "source/selected-animation-themed.json"
-          : precomposition.changed
-            ? "source/selected-animation-flattened.json"
-            : selectedPath;
+      // Keep a selected or statically-themed `ty:0` source intact for Core's
+      // exact GPU precomposition lowering branch. Legacy flattening cannot
+      // preserve transformed/clipped wrappers. No-precomp selected source
+      // bytes retain the pre-existing lowering path and fingerprints.
+      const loweringText = appliedTheme?.animationText ?? selected.animationText;
+      precomposition = unflattenedPrecomposition(loweringText);
+      loweringPath = appliedTheme ? "source/selected-animation-themed.json" : selectedPath;
       const loweringBytes = Buffer.from(loweringText, "utf8");
       return {
         primaryPath: "source/input.lottie",
@@ -242,4 +239,16 @@ function publicAppliedTheme(theme: AppliedDotLottieTheme): Omit<AppliedDotLottie
 function publicPrecomposition(value: FlattenedLottiePrecomps): Omit<FlattenedLottiePrecomps, "animationText"> {
   const { animationText: _animationText, ...evidence } = value;
   return evidence;
+}
+
+function unflattenedPrecomposition(animationText: string): FlattenedLottiePrecomps {
+  return {
+    schema: "shellx-motion/lottie-precomp-flattening@1",
+    animationText,
+    flattenedPrecompCount: 0,
+    flattenedLayerCount: 0,
+    maxDepth: 0,
+    changed: false,
+    policy: "full-frame-identity-static"
+  };
 }

@@ -3,20 +3,29 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  bindFinalRenderReceiptLineage,
   derivePackageRenderLineage,
   hashBuffer,
+  loadStableRenderPackage,
   lowerGltfToMotion,
+  MAX_PACKAGE_SOURCE_BYTES,
   packageRenderLineageInputHashes,
   parseGltfContainer,
   validatePackageRenderLineage,
+  type OperationReceipt,
   type PackageManifest,
 } from "./index";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 
 const roots: string[] = [];
 
 describe("package render lineage", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  it("publishes the shared 64 MiB package-source ceiling for bounded PNG and preserved-source readers", () => {
+    expect(MAX_PACKAGE_SOURCE_BYTES).toBe(64 * 1024 * 1024);
   });
 
   it("derives a path-free two-hash lineage for ordinary Motion packages", async () => {
@@ -38,6 +47,44 @@ describe("package render lineage", () => {
     expect(packageRenderLineageInputHashes(lineage)).toEqual({
       manifestSha256: hashBuffer(manifestBytes),
       motionSha256: hashBuffer(motionBytes),
+    });
+  });
+
+  it("binds the exact loaded package revision and refuses a same-id source mutation before receipt release", async () => {
+    const root = await stableTempRoot();
+    const manifest = manifestFor("pkg_same_id", "motion.json");
+    const motion = motionFor("motion_same_id", "first revision");
+    await writeFile(join(root, "manifest.json"), jsonBytes(manifest));
+    await writeFile(join(root, "motion.json"), jsonBytes(motion));
+
+    await withinWorkspace(resolve(".scratch"), async () => {
+      const loaded = await loadStableRenderPackage(root);
+      const receipt: OperationReceipt = {
+        schema: "shellx-motion/receipt@1",
+        id: "final-same-id",
+        operation: "render.final",
+        status: "passed",
+        packageId: manifest.id,
+        inputHashes: { frames: "f".repeat(64) },
+        createdAt: "2026-08-26T00:00:00.000Z",
+        lane: "ffmpeg",
+        output: { path: "out.mp4" },
+        warnings: [],
+      };
+
+      await bindFinalRenderReceiptLineage(receipt, loaded.pkg, loaded.lineage);
+      expect(receipt.inputHashes).toEqual({
+        frames: "f".repeat(64),
+        ...packageRenderLineageInputHashes(loaded.lineage),
+      });
+
+      await writeFile(join(root, "motion.json"), jsonBytes(motionFor("motion_same_id", "second revision")));
+      await expect(bindFinalRenderReceiptLineage(receipt, loaded.pkg, loaded.lineage))
+        .rejects.toThrow("changed during the final render");
+
+      const revised = await loadStableRenderPackage(root);
+      expect(revised.pkg.manifest.id).toBe(loaded.pkg.manifest.id);
+      expect(revised.lineage.motionSha256).not.toBe(loaded.lineage.motionSha256);
     });
   });
 
@@ -227,10 +274,38 @@ function manifestFor(id: string, motion: string): PackageManifest {
   };
 }
 
+function motionFor(id: string, name: string) {
+  return {
+    schema: "shellx-motion/motion@1",
+    id,
+    name,
+    durationMs: 1_000,
+    fps: 30,
+    width: 16,
+    height: 16,
+    layers: [],
+    assets: [],
+    provenance: { sourceApp: "test", createdBy: "test" },
+  };
+}
+
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-render-lineage-"));
   roots.push(root);
   return root;
+}
+
+async function stableTempRoot(): Promise<string> {
+  const parent = resolve(".scratch");
+  await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, "shellx-motion-render-lineage-"));
+  roots.push(root);
+  return root;
+}
+
+async function withinWorkspace<T>(root: string, action: () => Promise<T>): Promise<T> {
+  if (process.platform === "win32") return await action();
+  return await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), action);
 }
 
 function jsonBytes(value: unknown): Buffer {

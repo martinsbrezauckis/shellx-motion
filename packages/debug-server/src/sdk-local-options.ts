@@ -39,7 +39,15 @@ export function localSdkOptionsFromDebugContext(
     ...(context?.browserFrameRenderer ? { browserFrameRenderer: context.browserFrameRenderer } : {}),
     ...(context?.authoringInputRoots ? { authoringInputRoots: context.authoringInputRoots } : {}),
     ...(context?.authoringOutputRoots ? { authoringOutputRoots: context.authoringOutputRoots } : {}),
+    ...(context?.renderPackageRoots ? { renderPackageRoots: context.renderPackageRoots } : {}),
+    ...(context?.renderInputRoots ? { renderInputRoots: context.renderInputRoots } : {}),
+    ...(context?.renderOutputRoots ? { renderOutputRoots: context.renderOutputRoots } : {}),
+    ...(context?.enforceRenderRoots === true ? { enforceRenderRoots: true } : {}),
     ...(context?.receiptsRoot ? { receiptsRoot: context.receiptsRoot } : {}),
+    ...(context?.attestedRenderReuseProducerAuthority
+      ? { attestedRenderReuseProducerAuthority: context.attestedRenderReuseProducerAuthority }
+      : {}),
     ...(context?.scratchRoot ? { scratchRoot: context.scratchRoot } : {}),
+    ...(context?.callerId?.trim() ? { callerId: context.callerId.trim() } : {}),
   };
 }

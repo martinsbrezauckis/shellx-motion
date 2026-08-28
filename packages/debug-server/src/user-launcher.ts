@@ -5,8 +5,9 @@ import { runMotionDebugServerCli } from "./cli";
 
 /**
  * Human entry point. Expert/debug-server defaults stay conservative; Start Motion
- * deliberately grants local package creation, persists the per-user access key,
+ * deliberately grants a local write ceiling, persists the per-user access key,
  * publishes the live port for MCP bridges, and opens an authenticated Workbench.
+ * Caller-steered package creation and edits still need explicit host authoring roots.
  * Remote publishing remains unavailable.
  */
 export function userLaunchArgs(argv: string[]): string[] {

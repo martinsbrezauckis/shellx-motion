@@ -31,55 +31,34 @@ shellx-motion render /path/to/package --out /path/to/output.mp4
 Lane options are not interchangeable between commands:
 
 ```bash
-shellx-motion preview /path/to/package --lane native|browser  --out /path/to/previews
-shellx-motion render  /path/to/package --lane ffmpeg --frame-lane browser|native \
+shellx-motion preview /path/to/package --lane native|browser|gpu  --out /path/to/previews
+shellx-motion render  /path/to/package --lane ffmpeg --frame-lane browser|native|gpu \
   --out /path/to/output.mp4
 shellx-motion render  /path/to/package --lane native --at-ms 1500 --out /path/to/still.png
 ```
 
-`preview --lane` selects the frame renderer (`native` default). `render --lane` selects the output
-stage (`ffmpeg` default); its frame renderer is `--frame-lane` (`browser` default).
+`preview --lane` selects the frame renderer (`native` default): `native|browser|gpu`. `render --lane` selects the output stage (`ffmpeg` default); its frame renderer is `--frame-lane` (`browser` default): `browser|native|gpu`. GPU is strict and never falls back. V25-B1 accepted implementation admits active video to `preview --lane gpu` only through its host-owned visual-only CFR provider: Core maps trim/loop/scalar-rate requests in integer microseconds, receipt evidence binds immutable source / decoded RGBA / cache / stable texture facts, the completed LRU is 32 entries / 128 MiB, and in-flight RGBA is <=64 MiB. The provider is not a CLI argument. The qualified Linux RTX 5080 rig scrub/repeat, retained-resource high water, visual output, and cleanup are accepted at runtime commit `40b965bb69b02c2bcfc0b0972beaca2a07e4defa`; this remains separate from audio and final staging/encoding/mux evidence.
 `preview --lane ffmpeg` and `render --lane browser` are rejected as `unsupported_lane`.
 `render --lane native` writes a single PNG still, not a video. The debug command
-`motion.render.final` accepts `frameLane: "browser"` only.
+`motion.render.final` accepts `frameLane: "browser" | "native" | "gpu"`; native refuses unsupported content rather than falling back, GPU retains its separate strict final-video contract, and browser workflows require `frameLane: "browser"`.
+
+`--untrusted-execution` is intentionally not a CLI option. The Linux-only `enforced-untrusted` browser profile is selected only by a direct trusted renderer host through `BrowserRenderSessionOptions`; a package, prompt, CLI, SDK, Debug API, or MCP call cannot request it. It is data-only, needs verified Bubblewrap and Motion's fixed launcher, and refuses network authority and Chromium's `--no-sandbox` opt-out. It does not provide FFmpeg/FFprobe containment, seccomp, or Windows/macOS equivalence; read [host integration](../../../docs/public/host-integration.md#enforced-untrusted-browser-renderer-trusted-host-configuration-only) before embedding it.
+
+### Typography before browser delivery
+
+Generated manifest-font-backed MotionIR text has bounded Chromium evidence; arbitrary HTML/web/canvas
+text does not. Read [typography delivery](typography.md) before using `quality.maxFontFallbacks`.
 
 Never claim success from a command envelope alone. Confirm package and motion identity, validation,
 output hash, and render/preview timestamp. Confirm the receipt too — but know where it is:
-`validate` produces none; CLI `render` returns the receipt inline and always writes the same receipt
-beside the delivered file (or inside an image-sequence output directory). The Debug API
-`motion.render.final` returns the receipt inline and writes it under `receiptsRoot` when the caller
-or server supplies one. Read the returned `receiptPath` instead of guessing. `preview` writes
-`<packageId>-<lane>-preview.receipt.json` into `--out`; package-writing commands
-(`template apply`, `template media-replace`, `render-batch`) write
-into the output package's `receipts/`. `debug screenshot` was REMOVED — it could only relay a request to a host and report success for
+`validate --receipts-root <host-store>` writes a passed or failed `package.validate` receipt to that governed store (which must be outside the package); without the option it remains envelope-only.
+CLI `render` returns the receipt inline and writes it beside the delivered file (or inside an image-sequence output directory). The Debug API `motion.render.final` returns it inline and, only when the caller or server supplies a governed `receiptsRoot`, persists `<receiptId>.receipt.json` under that root. Read a returned `receiptPath` instead
+of guessing; without a Debug receipt root there is no file path to read. `preview` writes `<packageId>-<lane>-preview.receipt.json` into `--out`; package-writing commands (`template apply`, `template media-replace`, `render-batch`) write into the output package's `receipts/`. `debug screenshot` was REMOVED — it could only relay a request to a host and report success for
 something it could not verify. Use `debug preview-frame` for a real PNG plus receipt.
 
 ## Output ownership: what Motion will and will not overwrite
 
-Motion refuses to destroy a path a caller named. Every command that writes a deliverable checks
-first, deletes nothing on the refusal path, and returns a typed code you can act on:
-
-| Target | Rule | Refusal code |
-|---|---|---|
-| `--out <dir>` (`png-sequence`, `template apply`, `template media-replace`, `preview`) | must be empty or absent | `output_dir_not_empty` |
-| `--out <file>` (encoded video/GIF: `mp4-h264`, `webm-vp9`, …) | must not exist | `output_path_exists` |
-| CLI `--frames-dir <root>` (encoder scratch; frames land in `<root>/<packageId>`, not in `<root>`) | that subdirectory must be empty, absent, or hold only Motion's own PNG frames | `output_dir_not_empty` |
-| Debug API / MCP `motion.render.final` `framesDir` (the exact frame directory — **no** `<packageId>` suffix is appended) | must be empty or absent; Motion's own leftover frames do **not** pass here, and there is no `force` on this path | `invalid_args` |
-| connector `--out` (`package/`, `render/`, `preview/`, `receipts/`, `artifacts/`, `frames/`, the Cut plan and run receipt) | each must be empty or absent | `output_dir_not_empty`, `output_path_exists` |
-
-`--force` is the single opt-in that restores overwriting, and it reaches every one of those checks.
-Two deliberate exceptions: Motion's DEFAULT frame scratch (`.scratch/frames`, used when no
-`--frames-dir` is given) is wiped without asking because no caller named it, and a DIRECTORY sitting
-at a file `--out` is refused even with `--force` — Motion never recursive-deletes a directory to
-write a file. Re-rendering into the same **CLI** `--frames-dir` needs no flag: a directory holding
-only Motion's own frames is provably Motion's to replace.
-
-That allowance does not exist on the Debug API: `motion.render.final` tests its `framesDir` for
-emptiness alone. Any entry refuses it — hidden ones (`.DS_Store`, `Thumbs.db`, `desktop.ini`)
-included, and the frames Motion itself just wrote. A render killed part-way by the memory ceiling,
-a deadline or Ctrl-C therefore makes **every retry at the same `framesDir` fail with
-`invalid_args`** until you delete it or name a fresh path; omitting `framesDir` is the reliable
-retry. A relative `framesDir` there resolves against the **server's** cwd — pass an absolute path.
+File-video rendering streams by default; only `keepFrames` / `--keep-frames` requests retention. For restartable final delivery, use `--segment-frames <n>` and add `--resume-segments` only after an interrupted run: Motion derives and exclusively locks its checkpoint store from `--out`, so neither a store path nor a concat command is accepted. It refuses workflows, exact-source quality manifests, retained frames, and `--force` in this mode. Read [render output and frame ownership](output-ownership.md) before naming, retrying, or cleaning paths; for opt-in Debug/MCP reuse, see [attested render reuse](attested-render-reuse.md).
 
 ## Plan and review a media-rich template
 
@@ -327,11 +306,31 @@ shellx-motion debug procedural-bake \
 
 Read `sampleCount`, `keyframeCount`, and the deterministic bake fingerprint, then inspect the
 keyframe panel and preview representative times. Allowed nodes are constants, property/time/frame/
-audio-envelope reads, bounded arithmetic, clamp/map/ease/distance, and seeded deterministic noise.
+audio-envelope reads, bounded arithmetic, clamp/map/ease/distance, radians-only `sin`/`cos`, and
+seeded deterministic noise. Trig inputs are finite radians within +/-1,000,000 and every observable
+or baked scalar is quantized to six decimals.
 Unknown fields, cycles, missing inputs, duplicate targets, resource excess, JavaScript, callbacks,
 plugin code, dynamic property access, and file/network access fail closed. Trusted hosts use SDK
 `proceduralInspect`, `proceduralSet`, `proceduralSetEnabled`, `proceduralBake`, and
-`proceduralDetach`; one successful SDK mutation is one Design Studio history transaction.
+`proceduralDetach`; one successful SDK mutation is one Design Studio history transaction. For the bounded master, exact-overlap crossfades, governed RMS-envelope producer, and delivery receipt semantics, read [document audio](audio.md).
+
+## Bounded points layers
+
+Create a `type: "points"` layer through the typed full-layer create path; do not write package JSON
+or send a script/import. `pointCloud.points` is a stable ordered base array; optional `samples` use
+that order at strictly increasing absolute milliseconds. Every host admits 8,192 points/layer; `doctor` reports adaptive 16,384/32,768/65,536 tiers, with state/payload caps scaling from 65,536 records/8 MiB to 524,288/64 MiB. Four layers/document; weaker hosts refuse, never truncate. Colors are static; position/size/opacity interpolate linearly and clamp.
+
+```bash
+shellx-motion debug layer-create \
+  --tier edit_motion --trusted-local-tier \
+  --package /path/to/package --out /path/to/with-points \
+  --layer-json '{"id":"drone-formation","type":"points","startMs":0,"durationMs":1000,"pointCloud":{"points":[{"x":120,"y":80,"color":"#7dd3fc","size":4},{"x":180,"y":110,"color":"#ffffff","size":2}],"samples":[{"atMs":0,"positions":[{"x":120,"y":80},{"x":180,"y":110}]},{"atMs":1000,"positions":[{"x":220,"y":80},{"x":280,"y":110}]}]}}' \
+  --created-by local-agent
+```
+
+Browser emits one renderer-owned canvas instead of thousands of DOM or shape layers; native draws the
+same ordered geometry. This is not GPU/physics: preview a representative timestamp and read the receipt; unsupported features are typed refusals, never individual-shape fallback.
+For bounded analytic particle-field CLI examples and refusal rules, see [particle fields](particle-fields.md).
 
 Supported rich families include declared shader uniforms, particle emitters, fixed 3D scene
 objects/cameras/lights, layer depth, motion blur, film treatments, and rain/water/snow environment
@@ -345,22 +344,22 @@ shellx-motion debug gltf-import \
   --tier write_local --trusted-local-tier \
   --source /path/to/model.glb --out /path/to/model-package \
   --created-by local-agent
-
+# Legacy untextured only; preview is not a contained-PBR route.
 shellx-motion debug preview-frame \
   --tier render_motion --trusted-local-tier \
   --package /path/to/model-package --at-ms 500 --out /path/to/previews
+# Qualified contained-PNG PBR: direct final only.
+shellx-motion render /path/to/model-package --lane ffmpeg --frame-lane gpu --out /path/to/model-final.mp4
 ```
 
-The source must be glTF 2.0 with static triangle geometry in canonical embedded base64 buffers or
-one GLB BIN chunk. Import preserves original bytes and normalized JSON, generates normals when
-absent, and reports mesh, vertex, triangle, and lossiness evidence. External paths/URLs, extensions,
-animations, skins, textures, morph targets, sparse accessors, matrix transforms, and non-uniform
-scale fail closed. Do not convert those failures into hand-authored scene data.
+The source is glTF 2.0 static triangles in canonical embedded base64 buffers or one GLB BIN chunk; import preserves bytes/normalized JSON, generates absent normals, and reports mesh/lossiness evidence.
+Its only textured route is the **contained PNG base-color PBR direct-final subset**: exact `TEXCOORD_0`,
+opaque base-color plus metallic/roughness/emissive factors, immutable 1280x720 projection, and GPU-to-FFmpeg final (max 16 primitives/textures, 16 MiB decoded each, 48 MiB GPU, 4 MiB readback).
+`preview`, Native, browser, segmented, and resume refuse marked PBR packages. JPEG, external paths/URLs,
+samplers, extensions/compression, animations, skins, morph targets, sparse accessors, matrix transforms, and
+non-uniform scale fail closed. No hardware/installed-host claim follows; do not hand-author around a refusal.
 
-Design Studio opens the resulting Motion package and uses its normal scene controls. For Cut, retain the
-`layer.type:scene3d` fallback reason and one `cut.media.import_rendered` operation. Trusted hosts may
-call typed SDK `gltfImport`, but must set `authoringInputRoots` and `authoringOutputRoots` in local
-SDK/server configuration.
+Design Studio uses normal scene controls; Cut retains the `layer.type:scene3d` fallback reason and one `cut.media.import_rendered`; SDK `gltfImport` hosts must configure local input/output roots.
 
 ## Track and stabilize package footage
 

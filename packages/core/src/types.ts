@@ -3,7 +3,17 @@ import type { MotionSpatialInterpolation } from "./spatial-path-types";
 import type { MotionCompositingGraph } from "./compositing-graph-types";
 import type { MotionScene3D } from "./scene-3d-types";
 import type { MotionEnvironment } from "./environment-types";
+import type { MotionGpuMaterial } from "./gpu-material";
 import type { MotionProceduralGraph } from "./procedural-relationship-types";
+import type { MotionPointCloud } from "./motion-points";
+import type { MotionAudioDocument, MotionAudioFadeCurve } from "./audio-types";
+import type { MotionShapeGeometry } from "./motion-shape-geometry-types"; import type { MotionShapeGeometryKeyframes } from "./motion-shape-geometry-keyframes-types";
+import type { MotionParticleAnalyticTrail, MotionParticleEmitterOrigin, MotionParticleField, MotionParticleShading } from "./particle-field-types"; import type { MotionEffectModuleReference } from "./effect-module";
+import type { MotionLayoutApplicationRecord } from "./motion-layout-application-types"; import type { MotionLayoutGapAnimationDescriptor } from "./motion-layout-gap-animation-types";
+import type { MotionGradientColorKeyframes } from "./motion-gradient-color-keyframes-types";
+import type { MotionTextRuns } from "./motion-text-runs-types";
+import type { MotionBehaviorStore } from "./motion-behavior-types"; import type { MotionRelationStore } from "./motion-relation-types";
+import type { MotionRelationActionStore } from "./motion-relation-actions-public-types";
 // Template authoring types live in ./template-types for the module-size gate. Re-export the
 // whole family so `@shellx-motion/core` consumers keep importing them from here; the local import keeps
 // `TemplateDocument` in scope for `MotionPackage` below.
@@ -11,6 +21,18 @@ import type { TemplateDocument } from "./template-types";
 export * from "./template-types";
 export type { MotionScene3D, MotionScene3DMeshGeometry, MotionScene3DMeshObject, MotionScene3DObject, MotionVec3 } from "./scene-3d-types";
 export type { MotionEnvironment, MotionEnvironmentQuality, MotionFogEnvironment, MotionFogParameters, MotionRainAtmosphere, MotionRainEnvironment, MotionRainGround, MotionSnowAtmosphere, MotionSnowEnvironment, MotionSnowFall, MotionSnowGround, MotionWaterEnvironment, MotionWaterOptics, MotionWaterSurface } from "./environment-types";
+export type { MotionGpuMaterial, MotionGpuMaterialPreset, MotionGpuMaterialUniform } from "./gpu-material";
+export type { MotionShapeGeometry, MotionShapeGeometryPoint, MotionShapeGeometryViewBox } from "./motion-shape-geometry-types"; export type { MotionShapeGeometryKeyframe, MotionShapeGeometryKeyframes } from "./motion-shape-geometry-keyframes-types";
+export type { MotionGradientColorKeyframe, MotionGradientColorKeyframes } from "./motion-gradient-color-keyframes-types";
+export type { MotionBehavior, MotionBehaviorBounce, MotionBehaviorGravity, MotionBehaviorSquash, MotionBehaviorStore, MotionPathFollowBehavior, MotionTransformBehavior } from "./motion-behavior-types";
+export {
+  MOTION_LAYOUT_APPLICATION_SCHEMA,
+  type MotionLayoutApplicationGeneratedLayer,
+  type MotionLayoutApplicationPatch,
+  type MotionLayoutApplicationRecord,
+  type MotionLayoutApplicationSnapshot,
+  type MotionLayoutApplicationTrackPatch
+} from "./motion-layout-application-types";
 /**
  * The layer types Motion advertises to authors.
  *
@@ -20,9 +42,8 @@ export type { MotionEnvironment, MotionEnvironmentQuality, MotionFogEnvironment,
  * lane renders teaches an author something false: they build with it, the package validates, and
  * the first render refuses it.
  *
- * `"group"` used to be a member and was removed during cross-host verification for exactly that reason — no card
- * listed it, so no lane drew it. Grouping/precomp is on the capability roadmap; when it ships the
- * lane that renders it gets a capability card first and the member returns with it, in that order.
+ * `"group"` returned only after the GPU lane gained bounded local timelines, nested isolated targets,
+ * transforms, opacity, effects, masks and blend compositing. Other lanes may still refuse it.
  *
  * Note this union is advisory: `MotionLayer.type` is `MotionLayerType | string`, because hosts may
  * carry their own types through a document. Advisory is precisely why it must not lie — it is read
@@ -36,12 +57,16 @@ export type MotionLayerType =
   | "caption"
   | "audio"
   | "web"
+  | "html"
+  | "canvas"
   | "adjustment"
   | "camera"
   | "particles"
+  | "points"
   | "shader"
   | "scene3d"
-  | "environment";
+  | "environment"
+  | "group";
 
 /**
  * Damped-spring keyframe/transition easing, serialized as data so MotionIR stays
@@ -116,6 +141,15 @@ export interface MotionEffects {
     size: number;
     seed: number;
   };
+  /** Bounded, stateless lookback strokes for particles and ordered point clouds. */
+  trail?: MotionTrail;
+}
+
+export interface MotionTrail {
+  /** v1 absolute-millisecond lookback length; static so resource use cannot keyframe. */
+  durationMs: number;
+  /** Number of trajectory vertices including the current head. */
+  samples: number;
 }
 
 export interface MotionGradientStop {
@@ -123,12 +157,15 @@ export interface MotionGradientStop {
   color: string;
 }
 
+/** One complete fixed-topology color snapshot for a structured gradient. */
 export interface MotionGradient {
   type: "linear" | "radial";
   angle?: number;
   centerX?: number;
   centerY?: number;
   stops: MotionGradientStop[];
+  /** Omitted for legacy/static gradients so existing source identity remains unchanged. */
+  colorKeyframes?: MotionGradientColorKeyframes;
 }
 
 export interface MotionParticleEmitter {
@@ -146,6 +183,14 @@ export interface MotionParticleEmitter {
   spread?: number;
   gravity?: number;
   fadeOut?: boolean;
+  /** Bounded analytic visual deflection; this is not a general physics simulation. */
+  field?: MotionParticleField;
+  /** v2 only: weighted, bounded spawn origins within the particle layer. */
+  origins?: MotionParticleEmitterOrigin[];
+  /** v2 only: fixed-shader analytic lookback, never retained particle history. */
+  trail?: MotionParticleAnalyticTrail;
+  /** v2 only: fixed head shading controls owned by the renderer. */
+  shading?: MotionParticleShading;
 }
 
 export interface MotionShaderPlugin {
@@ -155,6 +200,8 @@ export interface MotionShaderPlugin {
   seed: number;
   uniforms?: Record<string, number>;
   fallbackColor: string;
+  /** Optional fixed Motion-owned WebGPU equivalent; package GLSL is never executed by WebGPU. */
+  gpuMaterial?: MotionGpuMaterial;
 }
 
 export interface MotionCrop {
@@ -197,6 +244,12 @@ export interface MotionTransform extends MotionExtensionFields {
   rotation?: number;
   originX?: number;
   originY?: number;
+}
+
+/** A normalized visible window along one authored SVG path. */
+export interface MotionPathReveal {
+  start: number;
+  end: number;
 }
 
 export type MotionKeyframeTarget =
@@ -271,6 +324,8 @@ export type MotionKeyframeTarget =
   | "effects.grayscale"
   | "effects.glow.radius"
   | "effects.glow.color"
+  | "pathReveal.start"
+  | "pathReveal.end"
   | "gradient.angle"
   | "environment.intensity"
   | "environment.wind"
@@ -437,6 +492,8 @@ export interface MotionSafeArea extends MotionExtensionFields {
 export type MotionTextFitPolicy = "safe" | "allow-crop" | "auto-fit";
 
 /** Render-time text-fit intent. Missing metadata keeps legacy packages unchecked. */
+export type { MotionTextRun, MotionTextRuns } from "./motion-text-runs-types";
+
 export interface MotionTextFit extends MotionExtensionFields {
   policy: MotionTextFitPolicy;
   /** Document safe-area id. Required for safe and auto-fit policies. */
@@ -445,15 +502,30 @@ export interface MotionTextFit extends MotionExtensionFields {
   minFontSize?: number;
 }
 
+/**
+ * Extensible layer paint, with the v1 geometry dash spelling kept explicitly
+ * numeric. Renderers never interpret CSS dash strings or percentages here.
+ */
+export interface MotionLayerStyle extends Record<string, unknown> {
+  strokeDasharray?: readonly number[];
+  strokeDashoffset?: number;
+}
+
 export interface MotionLayer extends MotionExtensionFields {
   id: string;
   name?: string;
   type: MotionLayerType | string;
+  /** Ordered local-timeline children for a bounded isolated group/precomposition. */
+  childLayerIds?: string[];
   trackId?: string;
   startMs: number;
   durationMs: number;
   text?: string;
+  /** Closed v1 styled text content; it owns a text/caption layer's complete text. */
+  textRuns?: MotionTextRuns;
   shape?: string;
+  /** v1 exact-key authored geometry; it cannot be combined with legacy `shape`/`x-path` geometry. */
+  geometry?: MotionShapeGeometry; geometryKeyframes?: MotionShapeGeometryKeyframes;
   fill?: string;
   color?: string;
   width?: number;
@@ -475,6 +547,8 @@ export interface MotionLayer extends MotionExtensionFields {
   muted?: boolean;
   fadeInMs?: number;
   fadeOutMs?: number;
+  /** Defaults to linear. Equal-power is appropriate for a matched crossfade. */
+  fadeCurve?: MotionAudioFadeCurve;
   normalizeLoudness?: boolean;
   ducking?: MotionAudioDucking;
   fit?: string;
@@ -482,7 +556,7 @@ export interface MotionLayer extends MotionExtensionFields {
   crop?: MotionCrop;
   allowedOrigins?: unknown[];
   transform?: MotionTransform;
-  style?: Record<string, unknown>;
+  style?: MotionLayerStyle;
   label?: Record<string, unknown>;
   keyframes?: Partial<Record<MotionKeyframeTarget, MotionKeyframe[]>>;
   transitions?: {
@@ -492,9 +566,13 @@ export interface MotionLayer extends MotionExtensionFields {
   mask?: MotionMask;
   keying?: MotionChromaKey;
   matte?: MotionMatte;
-  effects?: MotionEffects;
+  effects?: MotionEffects; effectModule?: MotionEffectModuleReference;
   gradient?: MotionGradient;
+  /** Browser-only, data-only trim window for one stroked SVG shape path. */
+  pathReveal?: MotionPathReveal;
   emitter?: MotionParticleEmitter;
+  /** Ordered, bounded instance data for a viewport-coordinate point cloud. */
+  pointCloud?: MotionPointCloud;
   shader?: MotionShaderPlugin;
   scene3d?: MotionScene3D;
   environment?: MotionEnvironment;
@@ -511,12 +589,21 @@ export interface MotionDocument extends MotionExtensionFields {
   width: number;
   height: number;
   background?: string;
+  audio?: MotionAudioDocument;
   scenes?: MotionScene[];
   tracks?: MotionTrack[];
   markers?: MotionMarker[];
   safeAreas?: Record<string, MotionSafeArea>;
   compositing?: MotionCompositingGraph;
   relationships?: MotionProceduralGraph;
+  /** Bounded root-owned transform behavior authorities; absent preserves legacy timing. */
+  behaviors?: MotionBehaviorStore;
+  /** Bounded root-owned relations reserve their target transforms; current render lanes refuse them. */
+  relations?: MotionRelationStore;
+  /** Application-bound row/column gap tracks; no generic ordinary-keyframe target is created. */ layoutGapAnimation?: MotionLayoutGapAnimationDescriptor;
+  scene3dAnimation?: import("./motion-scene3d-animation-types").MotionScene3DAnimationDescriptor; relationActions?: MotionRelationActionStore; // Persisted authoring metadata; never render authority.
+  /** Bounded document-resident inverse records; absent unless layout materialization is active. */
+  layoutApplications?: MotionLayoutApplicationRecord[];
   layers: MotionLayer[];
   assets: unknown[];
   designTokens?: unknown;
@@ -534,6 +621,7 @@ export interface MotionDocument extends MotionExtensionFields {
     dataRowHash?: string;
   };
 }
+
 
 /** Package-local font face consumed by deterministic browser rendering. */
 export interface MotionFontAsset {
@@ -575,100 +663,20 @@ export interface MotionPackage {
   template?: TemplateDocument;
 }
 
-export interface RendererCapability {
-  lane: "native" | "browser" | "ffmpeg" | "cut" | "canvas" | "hosted" | string;
-  layerTypes: string[];
-  outputs: string[];
-  features: string[];
-}
-
-export type RendererCapabilityAudio = "none" | "passthrough" | "mux" | "mix";
-export type RendererRuntimeAvailability = "bundled" | "external-binary" | "host-connector" | "hosted";
-
-export interface RendererRuntimeProbeCommand {
-  executable: string;
-  args: string[];
-  shell: false;
-}
-
-export interface RendererRuntimeRequirement {
-  availability: RendererRuntimeAvailability;
-  requirement: string;
-  cost: "local-cpu" | "host-dependent" | "hosted-metered";
-  probe?: RendererRuntimeProbeCommand;
-  setupHint: string;
-}
-
-export interface RendererAdapterCapability {
-  formats: string[];
-  unsupportedFeatureClasses: string[];
-  expectedLossiness: string;
-  previewLaneRequirement: string;
-  finalLaneRequirement: string;
-  hostCompatibility: string[];
-}
-
-export interface RendererCapabilityCard extends RendererCapability {
-  id: string;
-  label: string;
-  category: "preview" | "final" | "connector" | "adapter";
-  paradigms: string[];
-  alpha: boolean;
-  audio: RendererCapabilityAudio;
-  subtitles: boolean;
-  renderTargets: string[];
-  license: string;
-  speed: "fast" | "medium" | "slow";
-  stability: "stable" | "experimental" | "degraded";
-  strengths: string[];
-  weaknesses: string[];
-  runtime: RendererRuntimeRequirement;
-  requiresFrameLane?: boolean;
-  adapter?: RendererAdapterCapability;
-}
-
-export interface CapabilityMatch {
-  ok: boolean;
-  lane: string;
-  unsupported: Array<{ layerId: string; feature: string; reason: string }>;
-}
-
-export interface RendererCapabilityMatchOptions {
-  output?: string;
-  target?: string;
-  needsAlpha?: boolean;
-  needsAudio?: boolean;
-  needsSubtitles?: boolean;
-  preferLane?: string;
-}
-
-export interface RendererCapabilityCardMatch extends CapabilityMatch {
-  id: string;
-  label: string;
-  category: RendererCapabilityCard["category"];
-  outputOk: boolean;
-  targetOk: boolean;
-  alphaOk: boolean;
-  audioOk: boolean;
-  subtitlesOk: boolean;
-  score: number;
-  reasons: string[];
-  card: RendererCapabilityCard;
-}
-
-export interface RendererCapabilityPipeline {
-  lanes: string[];
-  frameLane?: string;
-  finalLane: string;
-  reason: string;
-}
-
-export interface RendererCapabilityMatchResult {
-  cards: RendererCapabilityCard[];
-  matches: RendererCapabilityCardMatch[];
-  recommendedLane: string | null;
-  recommendedPipeline?: RendererCapabilityPipeline;
-}
+export type {
+  CapabilityMatch,
+  RendererAdapterCapability,
+  RendererCapability,
+  RendererCapabilityAudio,
+  RendererCapabilityCard,
+  RendererCapabilityCardMatch,
+  RendererCapabilityMatchOptions,
+  RendererCapabilityMatchResult,
+  RendererCapabilityPipeline,
+  RendererRuntimeAvailability,
+  RendererRuntimeReadiness,
+  RendererRuntimeRequirement
+} from "./renderer-capability-types";
 
 /**
  * How an operation reached the engine (the wire/entry point that produced the receipt).
@@ -717,7 +725,6 @@ export interface ReceiptActor {
   /** Permission tier the server granted this session (e.g. "render_motion"). Observed, not claimed. */
   grantedTier?: string;
 }
-
 export interface OperationReceipt {
   schema: "shellx-motion/receipt@1";
   id: string;

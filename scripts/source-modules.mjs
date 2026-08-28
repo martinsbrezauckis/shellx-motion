@@ -15,11 +15,12 @@
  *
  * NON-SHIPPING SOURCE CONVENTION
  * ------------------------------
- * A module is *non-shipping* — test scaffolding, never part of an npm tarball — when its name
- * or location matches one of the patterns below. This is a naming convention rather than a
- * hand-maintained exclusion list on purpose: a list has to be edited every time a fixture module
- * is added, and the failure mode of forgetting is silent (scaffolding ships). A convention is
- * enforced by `scripts/packed-files-gate.mjs`, which asserts the complete packed manifest.
+ * A module is *non-shipping* — test scaffolding or explicitly pre-adoption implementation, never
+ * part of an npm tarball — when its name or location matches one of the patterns below. This is a
+ * naming convention rather than a hand-maintained file allowlist on purpose: a list has to be
+ * edited every time a fixture module is added, and the failure mode of forgetting is silent
+ * (scaffolding ships). A convention is enforced by `scripts/packed-files-gate.mjs`, which asserts
+ * the complete packed manifest.
  *
  *   <name>.test.ts              vitest suites
  *   <name>.fixture.ts           a single fixture module
@@ -28,6 +29,7 @@
  *   <name>.test-support.ts      shared helpers for a suite (main.test-support.ts)
  *   <name>.test-support-<x>.ts  the same, split by topic
  *   test-support/**             a directory of test-only helpers (test-support/png-fixture.ts)
+ *   unadopted/**                reviewed implementation retained before a public entry point adopts it
  *   __tests__/**, __fixtures__/**, __mocks__/**
  *
  * The patterns match the emitted forms too (`.js`, `.d.ts`, `.js.map`), so the same predicate
@@ -52,8 +54,14 @@ import ts from "typescript";
  */
 const CODE_SUFFIX = String.raw`(\.d)?\.(ts|tsx|js|jsx|mjs|cjs)(\.map)?`;
 
-/** Directory names whose entire contents are test-only. */
-const NON_SHIPPING_DIRECTORIES = new Set(["test-support", "__tests__", "__fixtures__", "__mocks__"]);
+/** Directory names whose entire contents are nonshipping. */
+const NON_SHIPPING_DIRECTORIES = new Set([
+  "test-support",
+  "unadopted",
+  "__tests__",
+  "__fixtures__",
+  "__mocks__"
+]);
 
 /** Basename patterns that mark a module as test-only. See the file header for the convention. */
 const NON_SHIPPING_BASENAMES = [
@@ -77,11 +85,12 @@ export const NON_SHIPPING_SOURCE_CONVENTION = [
   "*.test-support.ts    shared helpers for a suite",
   "*.test-support-<x>.ts the same, split by topic",
   "test-support/**      a directory of test-only helpers",
+  "unadopted/**         reviewed implementation retained before public adoption",
   "__tests__/**, __fixtures__/**, __mocks__/**"
 ];
 
 /**
- * Whether a module is test scaffolding that must never reach an npm tarball.
+ * Whether a module is nonshipping source that must never reach an npm tarball.
  *
  * Accepts a source path or an emitted path, absolute or relative, with either separator; only
  * the path segments are inspected, so the caller does not have to normalise first.

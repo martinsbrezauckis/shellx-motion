@@ -1,0 +1,40 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_lottie_3c9fe1f3ffd55847",
+  "name": "Static primitive fixture",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "lottie",
+  "compatibility": {
+    "lanes": [
+      "browser",
+      "ffmpeg",
+      "cut"
+    ],
+    "hosts": [
+      "shellx-motion",
+      "shellx-canvas",
+      "shellx-cut"
+    ]
+  },
+  "data": {
+    "adapter": {
+      "precomposition": {
+        "schema": "shellx-motion/lottie-precomp-flattening@1",
+        "flattenedPrecompCount": 0,
+        "flattenedLayerCount": 0,
+        "maxDepth": 0,
+        "changed": false,
+        "policy": "full-frame-identity-static"
+      },
+      "schema": "shellx-motion/adapter-source@1",
+      "id": "adapter.lottie",
+      "source": "source/input.lottie.json",
+      "sourceSha256": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d",
+      "loweringSource": "source/input.lottie.json",
+      "loweringSourceSha256": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d",
+      "diagnosticsReceipt": "receipts/adapter-diagnostics.receipt.json",
+      "loweringReceipt": "receipts/adapter-lowering.receipt.json"
+    }
+  }
+}

@@ -1,9 +1,12 @@
 # Agent template reference
 
-This page is reference material for agents and host integrations. Template packages remain part of
-Motion's CLI, SDK, MCP, and Debug API contracts, but ShellX Motion does not present them as a human
-Workbench gallery. They are starting material for package automation, not a promise that Motion
-generates narration, music, or sound effects.
+This page is reference material for agents and host integrations. Full template catalog, plan,
+control, apply, and media-replacement routes are Motion CLI and Debug/MCP contracts, but ShellX
+Motion does not present them as a human Workbench gallery. The 35-operation local SDK has no
+dedicated template catalog, plan, apply, or media-replacement API; its generic validate, render,
+and timeline-edit operations may act on a package the caller has selected. Templates are starting
+material for package automation, not a promise that Motion generates narration, music, or sound
+effects.
 
 A ShellX Motion template exposes a controlled edit surface over a composition:
 designers publish typed controls, media slots, and text slots without exposing
@@ -64,10 +67,11 @@ Cut's Generate catalog exposes **four** of them — `builtin.motion.cinematic-fo
 `builtin.motion.editorial-liquid-surface`, `builtin.motion.keyed-subject-promo`,
 and `builtin.motion.tracked-callout-overlay`. `cinematic-rain-launch` is **not**
 one of them: it declares `shellx-cut` host compatibility in its manifest, but it
-has no Cut Generate entry and is excluded from the `template-pack:host-parity`
-gate that proves those entries (`RICH_HOST_FAMILIES` in
-`scripts/template-host-parity-gate.ts`). To get rain into Cut, render it through
-Motion and hand Cut linked rendered media.
+has no Cut Generate entry. `template-pack:host-parity` accounts for all five
+Cut-advertised templates: it checks the four Generate entries and records rain's
+separate rendered-media-only static handoff. To get rain into Cut, render it
+through Motion and hand Cut linked rendered media; that is not a Generate or
+Cut-runtime parity claim.
 
 ## Typed controls: TemplateIR
 
@@ -128,6 +132,15 @@ with a `render.batch` receipt. Non-video presets work too (for example
 the same quality manifest used by single renders; row tokens such as `{{rowId}}`,
 `{{rowKey}}`, and any data-row field are available in manifest strings, including
 per-row baseline paths, so row-specific review baselines stay reproducible.
+
+For a package with `template.json`, top-level row keys matching declared template
+params or `metadata.inputSchema.properties` are applied through the same typed
+bindings as `template apply`. A provided typed key must change at least one real
+binding; an unknown, invalid, or unbound declared key refuses the row before any
+package copy or render. The deterministic precedence is token interpolation,
+typed template bindings, `replace.text` / `replace.media`, `layers.<id>` patches,
+then `motion` document overrides. This lets compact rows drive ordinary template
+controls while retaining `layers.<id>` for deliberate low-level per-row changes.
 
 ## Media slots and containment
 

@@ -10,8 +10,8 @@ const outDir = join(repoRoot, ".scratch", "render-alpha-smoke");
 const packageRoot = join(outDir, "package");
 const qualityManifestPath = join(outDir, "quality-manifest.json");
 const renderTargets = [
-  { preset: "webm-vp9-alpha", outputPath: join(outDir, "render", "alpha-overlay.webm"), mediaType: "video/webm" },
-  { preset: "mov-prores", outputPath: join(outDir, "render", "alpha-overlay.mov"), mediaType: "video/quicktime" }
+  { preset: "webm-vp9-alpha", outputPath: join(outDir, "render", "webm-vp9-alpha", "alpha-overlay.webm"), mediaType: "video/webm" },
+  { preset: "mov-prores", outputPath: join(outDir, "render", "mov-prores", "alpha-overlay.mov"), mediaType: "video/quicktime" }
 ] as const;
 
 await rm(outDir, { recursive: true, force: true });
@@ -114,7 +114,7 @@ for (const target of renderTargets) {
     qualityManifestPath,
     "--preview-package",
     packageRoot
-  ]);
+  ], { scratchRoot: join(outDir, "quality", target.preset) });
   assert(quality.ok, `Alpha smoke ${target.preset} quality check failed: ${JSON.stringify(quality, null, 2)}`);
 
   const receipt = readObjectField(rendered, "receipt", "rendered.receipt");

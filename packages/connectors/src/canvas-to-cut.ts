@@ -1,64 +1,41 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { convertCanvasFrameToMotionPackage, writeCanvasMotionPackage } from "@shellx-motion/adapters-canvas";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { admitCanvasMotionPackage, convertCanvasFrameToMotionPackage, writeCanvasMotionPackage } from "@shellx-motion/adapters-canvas";
 import { attachRenderedMediaToCutPlan, planCutImport } from "@shellx-motion/adapters-cut";
-import {
-  hashBuffer,
-  loadMotionPackage,
-  type MotionPackage,
-  type OperationReceipt,
-  assertOutputDirGuard,
-  prepareFramesDir
-} from "@shellx-motion/core";
-import {
-  buildEncodeImageSequenceCommand,
-  encodeImageSequenceWithPolicy,
-  readFfmpegExportPreset,
-  resolveExportPreset,
-  type FfmpegCommand,
-  type FfmpegExportPreset,
-  type FfmpegRunner
-} from "@shellx-motion/renderer-ffmpeg";
+import { BoundedResourceBudget, DEFAULT_PACKAGE_ARCHIVE_WRITE_LIMITS, hashBuffer, loadedPackageInputHashes, loadMotionPackageFromAdmittedFiles, readBudgetedStableFile, type OperationReceipt } from "@shellx-motion/core";
 import { renderMotionBrowserFrame } from "@shellx-motion/renderer-browser";
-import { renderNativePreviewFrame } from "@shellx-motion/renderer-native";
 import { connectorReceiptStatus, type ConnectorArtifact } from "./artifacts";
-import { connectorArtifactOperationHash, connectorArtifactStagingPath, finalizeConnectorArtifactHandle, publishConnectorArtifact } from "./artifact-handle";
-import { cutTargetCapabilitiesForMode, type CutImportModeRequest } from "./cut-import-mode";
-import { assertConnectorOutputOwnership } from "./output-ownership";
-import { packageAudioEncodeInput } from "./package-audio";
+import { connectorArtifactOperationHash, finalizeConnectorArtifactHandle } from "./artifact-handle";
+import { throwIfConnectorAborted } from "./connector-cancellation";
+import { createPrivateConnectorDelivery } from "./connector-delivery";
+import { cutTargetCapabilitiesForMode } from "./cut-import-mode";
+import {
+  admitGeneratedP2BPackage, assertNoP2BPrivateDeliveryPath,
+  assertP2BBrowserPreviewPackageTreeDigest, assertP2BBrowserStreamingPackageTreeDigest, assertP2BClosedTreeCapacity,
+  assertP2BExternalInput, assertP2BLinuxBeforeInput, assertP2BNoExternalPath, assertP2BPathlessExecutionInput,
+  assertP2BPackageDataLocators,
+  bindP2BPackageTreeDigest, bindP2BPackageTreeDigestToCutPlan, captureP2BDeliveryLeaf,
+  captureP2BReceiptBoundDeliveryLeaf, publishP2BAdmittedPackage,
+  remapP2BPrivateDeliveryPaths, writeP2BDeliveryJson, P2B_MAX_MEDIA_BYTES
+} from "./p2b-connector-delivery";
+import { assertP2BAcceptedDeliveryCandidate, p2bDeliveryExpectedInventory } from "./p2b-delivery-validation";
+import { renderConnectorStreamingArtifact } from "./streaming-final";
 
+/** P2B public input: Canvas selection evidence and a new or empty delivery root. */
 export interface CanvasToCutConnectorInput {
   canvasSelectionPath: string;
   outDir: string;
-  /**
-   * Overwrite the directories this connector owns under a non-empty `--out`. Off by default:
-   * `outDir` is caller-supplied, so a `package/` there is NOT evidence that Motion created it.
-   */
-  force?: boolean;
-  previewLane?: "native";
-  renderLane?: "ffmpeg";
-  preset?: string;
-  dryRunRender?: boolean;
-  cutImportMode?: CutImportModeRequest;
-  ffmpegRunner?: FfmpegRunner;
-  now?: () => string;
+  /** Coordinator-owned cancellation for this private P2B delivery. */
+  signal?: AbortSignal;
+  /** Explicit compatibility spelling; only real rendered media is accepted. */
+  cutImportMode?: "rendered_media";
 }
 
 export interface CanvasToCutConnectorResult {
-  ok: boolean;
-  status: OperationReceipt["status"];
+  ok: true;
+  status: "passed" | "warning";
   packageDir: string;
-  preview: { ok: boolean; lane: "native"; failureFatal: boolean; receiptPath: string; outputPath: string | null };
-  render: {
-    ok: boolean;
-    required: boolean;
-    dryRun: boolean;
-    lane: "ffmpeg";
-    frameLane?: "native" | "browser";
-    preset: FfmpegExportPreset;
-    receiptPath: string;
-    outputPath?: string;
-  };
+  preview: { ok: true; lane: "browser"; failureFatal: false; receiptPath: string; outputPath: string };
+  render: { ok: true; required: true; dryRun: false; lane: "ffmpeg"; frameLane: "browser"; preset: "mp4-h264"; receiptPath: string; outputPath: string };
   cutPlanPath: string;
   artifacts: ConnectorArtifact[];
   receiptPath: string;
@@ -66,521 +43,139 @@ export interface CanvasToCutConnectorResult {
 }
 
 export async function runCanvasToCutConnector(input: CanvasToCutConnectorInput): Promise<CanvasToCutConnectorResult> {
-  const previewLane = input.previewLane ?? "native";
-  const renderLane = input.renderLane ?? "ffmpeg";
-  const preset = normalizeCanvasToCutPreset(input.preset);
-  const dryRunRender = input.dryRunRender ?? true;
-  const createdAt = input.now?.() ?? new Date().toISOString();
-  if (previewLane !== "native") {
-    throw new Error(`Unsupported connector preview lane: ${previewLane}`);
-  }
-  if (renderLane !== "ffmpeg") {
-    throw new Error(`Unsupported connector render lane: ${renderLane}`);
-  }
+  throwIfConnectorAborted(input.signal, "before Canvas-to-Cut admission");
+  assertP2BLinuxBeforeInput();
+  assertP2BCanvasLegacyFields(input);
   const outDir = resolve(input.outDir);
-  const packageDir = join(outDir, "package");
-  const receiptDir = join(outDir, "receipts");
-  const previewPath = join(outDir, "preview", "native-0.png");
-  const previewReceiptPath = join(receiptDir, "native-preview.receipt.json");
-  const renderReceiptPath = join(receiptDir, "ffmpeg-render.receipt.json");
-  const artifactHandlePath = join(outDir, "artifacts", "rendered-media.artifact.json");
-  const cutPlanPath = join(outDir, "cut-import-plan.json");
-  const connectorReceiptPath = join(outDir, "connector-run.receipt.json");
   const canvasSelectionPath = resolve(input.canvasSelectionPath);
-  const canvasSelectionBytes = await readFile(canvasSelectionPath);
-  const canvasSelection: unknown = JSON.parse(canvasSelectionBytes.toString("utf8"));
-
-  // the output-ownership invariant: no guard ran here, so a caller's `<out>/package` was overwritten with ok:true.
-  await assertConnectorOutputOwnership({
-    packageDir,
-    ownedDirs: [receiptDir, join(outDir, "preview"), join(outDir, "render"), join(outDir, "artifacts")],
-    ownedFiles: [cutPlanPath, connectorReceiptPath],
-    force: input.force === true
-  });
-  await mkdir(receiptDir, { recursive: true });
-  await mkdir(join(outDir, "preview"), { recursive: true });
-
-  const canvasExport = convertCanvasFrameToMotionPackage(canvasSelection, {
-    createdAt,
-    inputPath: canvasSelectionPath
-  });
-  const writtenPackage = await writeCanvasMotionPackage(canvasExport, {
-    packageDir,
-    sourceRoot: dirname(canvasSelectionPath)
-  });
-
-  const preview = await renderNativePreviewFrame({
-    packageRoot: packageDir,
-    outputPath: previewPath,
-    outputRoots: [outDir],
-    atMs: 0,
-    now: () => createdAt
-  });
-  await writeJson(previewReceiptPath, preview.receipt);
-
-  const pkg = await loadMotionPackage(packageDir);
-  const renderOutputPath = join(outDir, "render", `${pkg.manifest.id}.${extensionForPreset(preset)}`);
-  const framesDir = join(outDir, "frames", pkg.manifest.id);
-  const requestedCutImportMode = input.cutImportMode ?? "auto";
-  const cutImportMode = requestedCutImportMode === "auto" && writtenPackage.missingAssetRefs.length > 0
-    ? "rendered_media"
-    : requestedCutImportMode;
-  const plannedCutImport = planCutImport(pkg, cutTargetCapabilitiesForMode({
-    targetId: "shellx-cut",
-    mode: cutImportMode
-  }));
-  const renderRequired = plannedCutImport.mode === "rendered_media";
-  const operationHash = connectorArtifactOperationHash({ packageId: pkg.manifest.id, motionId: pkg.motion.id, preset, plan: plannedCutImport });
-  const renderResult = !renderRequired
-    ? {
-        required: false,
-        frameLane: undefined,
-        receipt: createRenderNotRequiredReceipt({
-          packageId: pkg.manifest.id,
-          motionHash: hashBuffer(Buffer.from(JSON.stringify(pkg.motion), "utf8")),
-          createdAt,
-          mode: plannedCutImport.mode
-        })
-      }
-    : dryRunRender
-    ? {
-        required: true,
-        frameLane: undefined,
-        receipt: createDryRunRenderReceipt({
-          packageId: pkg.manifest.id,
-          motionHash: hashBuffer(Buffer.from(JSON.stringify(pkg.motion), "utf8")),
-          createdAt,
-          framesDir,
-          fps: pkg.motion.fps,
-          durationMs: pkg.motion.durationMs,
-          preset,
-          outputPath: renderOutputPath
-        })
-      }
-    : await renderRealFfmpegArtifact({
-        pkg,
-        packageDir,
-        packageId: pkg.manifest.id,
-        durationMs: pkg.motion.durationMs,
-        fps: pkg.motion.fps,
-        width: pkg.motion.width,
-        height: pkg.motion.height,
-        framesDir,
-        outputPath: renderOutputPath,
-        preset,
-        createdAt,
-        // the explicit-force invariant: declared and never set, so `--force` could not reach the frames guard it names.
-        force: input.force === true,
-        runner: input.ffmpegRunner
-      });
-  const renderReceipt = renderResult.receipt;
-  renderReceipt.inputHashes = { ...renderReceipt.inputHashes, operation: operationHash };
-  const renderOk = renderReceipt.status !== "failed";
-  await writeJson(renderReceiptPath, renderReceipt);
-
-  let cutPlan = renderRequired && dryRunRender
-    ? attachRenderedMediaToCutPlan(plannedCutImport, {
-      plannedPath: renderOutputPath,
-      receiptPath: renderReceiptPath,
-      dryRun: true
-    })
-    : plannedCutImport;
-
-  const warnings = [
-    ...preview.warnings,
-    ...writtenPackage.missingAssetRefs.map((assetRef) => `Canvas asset was not copied into package: ${assetRef}`),
-    ...renderReceipt.warnings,
-    ...cutPlan.receipt.warnings
-  ];
-  const previewFailureFatal = renderRequired && dryRunRender && !preview.ok;
-  const artifacts = canvasToCutArtifacts({
-    canvasSelectionPath,
-    packageDir,
-    previewPath,
-    previewOk: preview.ok,
-    previewReceiptPath,
-    renderRequired,
-    renderDryRun: dryRunRender,
-    renderOk,
-    renderOutputPath,
-    preset,
-    renderReceiptPath,
-    cutPlanPath,
-    connectorReceiptPath,
-    artifactHandlePath: renderRequired && !dryRunRender && renderOk ? artifactHandlePath : undefined
-  });
-  const connectorReceipt = createConnectorReceipt({
-    packageId: pkg.manifest.id,
-    createdAt,
-    inputHash: hashBuffer(canvasSelectionBytes),
-    packageDir,
-    previewOk: preview.ok,
-    previewFailureFatal,
-    previewReceiptPath,
-    renderOk,
-    renderReceiptPath,
-    renderRequired,
-    renderDryRun: dryRunRender,
-    renderFrameLane: renderResult.frameLane,
-    renderPreset: preset,
-    renderOutputPath: renderRequired ? renderOutputPath : undefined,
-    cutOk: cutPlan.ok,
-    cutMode: cutPlan.mode,
-    cutPlanPath,
-    artifacts,
-    warnings,
-    operationHash
-  });
-  await writeJson(connectorReceiptPath, connectorReceipt);
-
-  if (renderRequired && !dryRunRender && renderOk) {
-    const finalized = await finalizeConnectorArtifactHandle({
-      root: outDir,
-      descriptorPath: artifactHandlePath,
-      artifactPath: renderOutputPath,
-      renderReceiptPath,
-      connectorReceiptPath,
-      pkg,
-      operationHash,
-      preset,
-      mediaType: mediaTypeForPreset(preset),
-      createdAt
+  assertP2BExternalInput(outDir, canvasSelectionPath, "Canvas selection input");
+  const interchangeBudget = new BoundedResourceBudget(DEFAULT_PACKAGE_ARCHIVE_WRITE_LIMITS, "Canvas-to-Cut P2B interchange");
+  const selectionSource = await readBudgetedStableFile(canvasSelectionPath, { label: "Canvas selection input", budget: interchangeBudget, withinRoot: dirname(canvasSelectionPath) });
+  throwIfConnectorAborted(input.signal, "after Canvas-to-Cut input admission");
+  let canvasSelection: unknown;
+  try { canvasSelection = JSON.parse(selectionSource.bytes.toString("utf8")); }
+  catch (error) { throw new Error(`Canvas selection input is not valid JSON: ${error instanceof Error ? error.message : String(error)}`); }
+  const createdAt = new Date().toISOString();
+  const canvasExport = convertCanvasFrameToMotionPackage(canvasSelection, { createdAt, inputPath: "input/canvas-selection.json" });
+  const admittedAssets = await admitCanvasMotionPackage(canvasExport, { sourceRoot: dirname(canvasSelectionPath), budget: interchangeBudget });
+  throwIfConnectorAborted(input.signal, "after Canvas-to-Cut asset admission");
+  if (admittedAssets.missingAssetRefs.length > 0) throw new Error(`Canvas-to-Cut P2B accepted delivery refuses missing Canvas assets: ${admittedAssets.missingAssetRefs.join(", ")}.`);
+  const delivery = await createPrivateConnectorDelivery(outDir);
+  try {
+    const packageDir = join(outDir, "package"), receiptDir = join(outDir, "receipts");
+    const previewPath = join(outDir, "preview", "browser-0.png"), previewReceiptPath = join(receiptDir, "browser-preview.receipt.json");
+    const renderOutputPath = join(outDir, "render", "canvas.mp4"), renderReceiptPath = join(receiptDir, "ffmpeg-render.receipt.json");
+    const artifactHandlePath = join(outDir, "artifacts", "rendered-media.artifact.json"), cutPlanPath = join(outDir, "cut-import-plan.json"), connectorReceiptPath = join(outDir, "connector-run.receipt.json");
+    const admittedPackage = await admitGeneratedP2BPackage({
+      delivery, label: "Canvas-to-Cut generated package",
+      writeGeneratedPackage: async (path) => { await writeCanvasMotionPackage(canvasExport, { packageDir: path, budget: interchangeBudget, admission: admittedAssets }); }
     });
-    cutPlan = attachRenderedMediaToCutPlan(plannedCutImport, { dryRun: false, handle: finalized.reference });
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut package materialization");
+    assertP2BClosedTreeCapacity(admittedPackage, 7);
+    const pkg = loadMotionPackageFromAdmittedFiles(packageDir, admittedPackage.files);
+    const immutablePackageTreeSha256 = loadedPackageInputHashes(pkg)?.["admitted-package-tree"];
+    if (immutablePackageTreeSha256 !== admittedPackage.evidence.sha256) throw new Error("Canvas-to-Cut admitted execution snapshot does not match the published package-tree identity.");
+    assertP2BPathlessExecutionInput(pkg, "Canvas-to-Cut");
+    assertP2BPackageDataLocators(pkg, admittedPackage.files, "Canvas-to-Cut");
+    const plannedCutImport = planCutImport(pkg, cutTargetCapabilitiesForMode({ targetId: "shellx-cut", mode: "rendered_media" }));
+    bindP2BPackageTreeDigestToCutPlan(plannedCutImport, immutablePackageTreeSha256);
+    if (!plannedCutImport.ok || plannedCutImport.mode !== "rendered_media") throw new Error("Canvas-to-Cut P2B accepted delivery requires a valid rendered-media Browser-to-Cut plan.");
+    const operationHash = connectorArtifactOperationHash({ packageId: pkg.manifest.id, motionId: pkg.motion.id, preset: "mp4-h264", plan: plannedCutImport });
+    const stagedPackageDir = delivery.stagePath(packageDir), stagedPreviewPath = delivery.stagePath(previewPath), stagedPreviewReceiptPath = delivery.stagePath(previewReceiptPath);
+    const stagedRenderOutputPath = delivery.stagePath(renderOutputPath), stagedRenderReceiptPath = delivery.stagePath(renderReceiptPath), stagedArtifactHandlePath = delivery.stagePath(artifactHandlePath);
+    const stagedCutPlanPath = delivery.stagePath(cutPlanPath), stagedConnectorReceiptPath = delivery.stagePath(connectorReceiptPath);
+    await publishP2BAdmittedPackage(admittedPackage, stagedPackageDir);
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut package staging");
+    // The public Browser still-frame API has no AbortSignal parameter. Check immediately on
+    // both sides so its completed output cannot advance a cancelled connector delivery.
+    throwIfConnectorAborted(input.signal, "before Canvas-to-Cut browser preview");
+    const preview = await renderMotionBrowserFrame(pkg, { outDir: dirname(stagedPreviewPath), outputPath: stagedPreviewPath, atMs: 0, now: () => createdAt });
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut browser preview");
+    assertP2BBrowserPreviewPackageTreeDigest(preview.receipt, immutablePackageTreeSha256);
+    const previewReceipt = remapP2BPrivateDeliveryPaths(preview.receipt, delivery);
+    bindP2BPackageTreeDigest(previewReceipt, immutablePackageTreeSha256, "Canvas-to-Cut preview receipt");
+    await writeP2BDeliveryJson(delivery, stagedPreviewReceiptPath, previewReceipt, true);
+    const previewEvidence = await captureP2BReceiptBoundDeliveryLeaf({ delivery, publicPath: previewPath, receipt: previewReceipt, label: "Canvas-to-Cut preview frame" });
+    throwIfConnectorAborted(input.signal, "before Canvas-to-Cut final rendering");
+    const renderResult = await renderConnectorStreamingArtifact({ pkg, outputPath: stagedRenderOutputPath, preset: "mp4-h264", frameLane: "browser", signal: input.signal, now: () => createdAt });
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut final rendering");
+    if (renderResult.frameLane !== "browser" || renderResult.receipt.status === "failed") throw new Error("Canvas-to-Cut P2B accepted delivery requires a successful Browser-frame-to-FFmpeg H.264 MP4 final render.");
+    assertP2BBrowserStreamingPackageTreeDigest(renderResult.receipt, immutablePackageTreeSha256);
+    const renderReceipt = remapP2BPrivateDeliveryPaths(renderResult.receipt, delivery);
+    renderReceipt.inputHashes = { ...renderReceipt.inputHashes, operation: operationHash };
+    bindP2BPackageTreeDigest(renderReceipt, immutablePackageTreeSha256, "Canvas-to-Cut render receipt");
+    setP2BRenderReceiptOutputPath(renderReceipt, relative(outDir, renderOutputPath).split(sep).join("/"));
+    await writeP2BDeliveryJson(delivery, stagedRenderReceiptPath, renderReceipt, true);
+    const renderedMedia = await captureP2BDeliveryLeaf({ delivery, publicPath: renderOutputPath, label: "Canvas-to-Cut rendered media" });
+    const artifacts = canvasP2BArtifacts({ packageDir, previewPath, previewReceiptPath, renderOutputPath, renderReceiptPath, artifactHandlePath, cutPlanPath, connectorReceiptPath });
+    const warnings = [...preview.receipt.warnings, ...renderReceipt.warnings, ...plannedCutImport.receipt.warnings];
+    const connectorReceipt = createCanvasP2BReceipt({ packageId: pkg.manifest.id, createdAt, selectionSha256: selectionSource.sha256, selectionByteLength: selectionSource.byteLength, packageDir, previewPath, previewReceiptPath, renderOutputPath, renderReceiptPath, cutPlanPath, artifacts, warnings, operationHash });
+    bindP2BPackageTreeDigest(connectorReceipt, immutablePackageTreeSha256, "Canvas-to-Cut connector receipt");
+    await writeP2BDeliveryJson(delivery, stagedConnectorReceiptPath, connectorReceipt, true);
+    throwIfConnectorAborted(input.signal, "before Canvas-to-Cut artifact finalization");
+    const finalizedArtifact = await finalizeConnectorArtifactHandle({ root: delivery.stagingRoot, descriptorPath: stagedArtifactHandlePath, artifactPath: stagedRenderOutputPath, renderReceiptPath: stagedRenderReceiptPath, connectorReceiptPath: stagedConnectorReceiptPath, pkg, operationHash, preset: "mp4-h264", mediaType: "video/mp4", createdAt, maxBytes: P2B_MAX_MEDIA_BYTES });
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut artifact finalization");
+    if (finalizedArtifact.handle.sha256 !== renderedMedia.sha256 || finalizedArtifact.handle.byteLength !== renderedMedia.byteLength) throw new Error("Canvas-to-Cut artifact handle no longer matches the bounded rendered-media admission.");
+    const cutPlan = attachRenderedMediaToCutPlan(plannedCutImport, { dryRun: false, handle: finalizedArtifact.reference });
+    bindP2BPackageTreeDigestToCutPlan(cutPlan, immutablePackageTreeSha256);
+    if (!cutPlan.ok || cutPlan.mode !== "rendered_media") throw new Error("Canvas-to-Cut P2B accepted delivery requires an attached valid rendered-media Browser-to-Cut plan.");
+    await writeP2BDeliveryJson(delivery, stagedCutPlanPath, cutPlan, true);
+    await assertP2BAcceptedDeliveryCandidate({ delivery, artifacts, connectorReceipt, stagedConnectorReceiptPath, renderReceipt, stagedRenderReceiptPath, cutPlan, finalizedArtifact, stagedArtifactHandlePath, stagedRenderOutputPath, immutablePackageTreeSha256, packageId: pkg.manifest.id, motionId: pkg.motion.id, operationHash });
+    const expectedInventory = await p2bDeliveryExpectedInventory({ delivery, admittedPackage, packageDir, previewReceiptPath, previewReceipt, previewEvidence, renderReceiptPath, renderReceipt, renderedMedia, artifact: finalizedArtifact, cutPlanPath, cutPlan, connectorReceiptPath, connectorReceipt });
+    const result: CanvasToCutConnectorResult = {
+      ok: true, status: connectorReceipt.status as "passed" | "warning", packageDir,
+      preview: { ok: true, lane: "browser", failureFatal: false, receiptPath: previewReceiptPath, outputPath: previewPath },
+      render: { ok: true, required: true, dryRun: false, lane: "ffmpeg", frameLane: "browser", preset: "mp4-h264", receiptPath: renderReceiptPath, outputPath: renderOutputPath },
+      cutPlanPath, artifacts, receiptPath: connectorReceiptPath, warnings
+    };
+    assertNoP2BPrivateDeliveryPath({ result, connectorReceipt, renderReceipt, cutPlan }, delivery);
+    assertP2BNoExternalPath({ result, connectorReceipt, renderReceipt, cutPlan }, [canvasSelectionPath], "Canvas-to-Cut accepted delivery");
+    throwIfConnectorAborted(input.signal, "after Canvas-to-Cut validation and before delivery commit");
+    await delivery.commit(expectedInventory);
+    return result;
+  } catch (error) {
+    await delivery.abort();
+    throw error;
   }
-  await writeJson(cutPlanPath, cutPlan);
-
-  return {
-    ok: !previewFailureFatal && cutPlan.ok && renderOk,
-    status: connectorReceipt.status,
-    packageDir,
-    preview: {
-      ok: preview.ok,
-      lane: "native",
-      failureFatal: previewFailureFatal,
-      receiptPath: previewReceiptPath,
-      outputPath: preview.ok ? preview.frame.path : null
-    },
-    render: {
-      ok: renderOk,
-      required: renderRequired,
-      dryRun: renderRequired ? dryRunRender : true,
-      lane: "ffmpeg",
-      frameLane: renderResult.frameLane,
-      preset,
-      receiptPath: renderReceiptPath,
-      ...(renderRequired ? { outputPath: renderOutputPath } : {})
-    },
-    cutPlanPath,
-    artifacts,
-    receiptPath: connectorReceiptPath,
-    warnings
-  };
 }
 
-function canvasToCutArtifacts(input: {
-  canvasSelectionPath: string;
-  packageDir: string;
-  previewPath: string;
-  previewOk: boolean;
-  previewReceiptPath: string;
-  renderRequired: boolean;
-  renderDryRun: boolean;
-  renderOk: boolean;
-  renderOutputPath: string;
-  preset: FfmpegExportPreset;
-  renderReceiptPath: string;
-  cutPlanPath: string;
-  connectorReceiptPath: string;
-  artifactHandlePath?: string;
-}): ConnectorArtifact[] {
-  const artifacts: ConnectorArtifact[] = [
-    { role: "canvas_selection", path: input.canvasSelectionPath, status: "available" },
+function assertP2BCanvasLegacyFields(input: CanvasToCutConnectorInput): void {
+  const legacy = input as CanvasToCutConnectorInput & Record<string, unknown>;
+  if (legacy.cutImportMode !== undefined && legacy.cutImportMode !== "rendered_media") throw new Error("Canvas-to-Cut P2B accepted delivery refuses legacy cutImportMode other than rendered_media.");
+  const rejected = ["force", "previewLane", "renderLane", "frameLane", "preset", "dryRunRender", "streamingRenderer", "ffmpegRunner", "now"].find((key) => legacy[key] !== undefined);
+  if (rejected) throw new Error(`Canvas-to-Cut P2B accepted delivery does not support legacy ${rejected}; it always produces real Browser-preview and Browser-frame-to-FFmpeg H.264 rendered_media.`);
+}
+
+function canvasP2BArtifacts(input: { packageDir: string; previewPath: string; previewReceiptPath: string; renderOutputPath: string; renderReceiptPath: string; artifactHandlePath: string; cutPlanPath: string; connectorReceiptPath: string }): ConnectorArtifact[] {
+  return [
     { role: "motion_package", path: input.packageDir, status: "available" },
-    { role: "preview_frame", path: input.previewPath, status: input.previewOk ? "available" : "planned", mediaType: "image/png" },
+    { role: "preview_frame", path: input.previewPath, status: "available", mediaType: "image/png" },
     { role: "preview_receipt", path: input.previewReceiptPath, status: "available" },
+    { role: "rendered_media", path: input.renderOutputPath, status: "available", mediaType: "video/mp4", primary: true },
     { role: "render_receipt", path: input.renderReceiptPath, status: "available" },
-    { role: "cut_plan", path: input.cutPlanPath, status: "available", primary: !input.renderRequired },
+    { role: "artifact_handle", path: input.artifactHandlePath, status: "available", mediaType: "application/vnd.shellx-motion.artifact-handle+json" },
+    { role: "cut_plan", path: input.cutPlanPath, status: "available" },
     { role: "connector_receipt", path: input.connectorReceiptPath, status: "available" }
   ];
-  if (input.renderRequired) {
-    artifacts.splice(4, 0, {
-      role: "rendered_media",
-      path: input.renderOutputPath,
-      status: !input.renderOk ? "failed" : input.renderDryRun ? "planned" : "available",
-      mediaType: mediaTypeForPreset(input.preset),
-      primary: true
-    });
-  }
-  if (input.artifactHandlePath) {
-    artifacts.push({ role: "artifact_handle", path: input.artifactHandlePath, status: "available", mediaType: "application/vnd.shellx-motion.artifact-handle+json" });
-  }
-  return artifacts;
 }
 
-function createDryRunRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  framesDir: string;
-  fps: number;
-  durationMs: number;
-  preset: FfmpegExportPreset;
-  outputPath: string;
-}): OperationReceipt {
-  const command = buildEncodeImageSequenceCommand({
-    framesDir: input.framesDir,
-    fps: input.fps,
-    durationMs: input.durationMs,
-    outputPath: input.outputPath,
-    preset: input.preset,
-    inputRoots: [input.framesDir],
-    outputRoots: [dirname(input.outputPath)]
-  });
+function createCanvasP2BReceipt(input: { packageId: string; createdAt: string; selectionSha256: string; selectionByteLength: number; packageDir: string; previewPath: string; previewReceiptPath: string; renderOutputPath: string; renderReceiptPath: string; cutPlanPath: string; artifacts: ConnectorArtifact[]; warnings: string[]; operationHash: string }): OperationReceipt {
   return {
-    schema: "shellx-motion/receipt@1",
-    id: `render-dry-run-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "not_run",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
+    schema: "shellx-motion/receipt@1", id: `connector-canvas-cut-${hashBuffer(Buffer.from(`${input.packageId}:${input.createdAt}`)).slice(0, 16)}`,
+    operation: "connector.canvas_to_cut", status: connectorReceiptStatus({ failed: false, warnings: input.warnings }), packageId: input.packageId,
+    inputHashes: { canvasSelection: input.selectionSha256, operation: input.operationHash }, createdAt: input.createdAt, lane: "connector",
     output: {
-      dryRun: true,
-      preset: input.preset,
-      command
-    },
-    warnings: []
-  };
-}
-
-function createRenderNotRequiredReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  mode: string | null;
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `render-not-required-${hashBuffer(Buffer.from(`${input.packageId}:${input.mode ?? "none"}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "not_run",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      required: false,
-      reason: input.mode
-        ? `Cut import mode ${input.mode} does not require rendered media.`
-        : "Cut import planning found no applicable mode; rendered media was not run for the failed explicit handoff."
-    },
-    warnings: []
-  };
-}
-
-async function renderRealFfmpegArtifact(input: {
-  pkg: MotionPackage;
-  packageDir: string;
-  packageId: string;
-  durationMs: number;
-  fps: number;
-  width: number;
-  height: number;
-  framesDir: string;
-  /** Overwrite a frames directory holding files Motion did not write. */
-  force?: boolean;
-  outputPath: string;
-  preset: FfmpegExportPreset;
-  createdAt: string;
-  runner?: FfmpegRunner;
-}): Promise<{ receipt: OperationReceipt; frameLane: "native" | "browser" }> {
-  // Wiping a frames directory is correct — a stale frame from a longer previous render would be
-  // encoded into this one — but this one lives under a caller-supplied `--out`, so ownership is
-  // proven from the CONTENT (only Motion's own PNG frames), never from the path's name.
-  assertOutputDirGuard(await prepareFramesDir(input.framesDir, { force: input.force === true, callerSupplied: true }));
-  await mkdir(input.framesDir, { recursive: true });
-  await mkdir(dirname(input.outputPath), { recursive: true });
-  const frameCount = frameCountFor(input.durationMs, input.fps);
-  const frameLane = "browser";
-  for (let index = 0; index < frameCount; index += 1) {
-    const outputPath = join(input.framesDir, frameFileName(index));
-    const atMs = frameTimestampMs(index, input.fps, input.durationMs);
-    await renderMotionBrowserFrame(input.pkg, {
-      outDir: input.framesDir,
-      outputPath,
-      atMs,
-      now: () => input.createdAt
-    });
-  }
-
-  const stagingOutputPath = connectorArtifactStagingPath(input.outputPath);
-  // Final encode through the shared encode policy: hardware GPU encoding by default with a cached
-  // per-host probe, honoring SHELLX_MOTION_FORCE_SOFTWARE_ENCODE; the same host selects the same encoder
-  // as the CLI and debug-api render paths.
-  const encoded = await encodeImageSequenceWithPolicy({
-    packageId: input.packageId,
-    framesDir: input.framesDir,
-    fps: input.fps,
-    width: input.width,
-    height: input.height,
-    durationMs: input.durationMs,
-    outputPath: stagingOutputPath,
-    preset: input.preset,
-    ...packageAudioEncodeInput(input.pkg),
-    inputRoots: [input.framesDir, input.pkg.root],
-    outputRoots: [dirname(input.outputPath)],
-    quality: { minUniqueFrameHashes: 2 },
-    runner: input.runner,
-    now: () => input.createdAt
-  });
-  if (!encoded.ok) {
-    await rm(stagingOutputPath, { force: true });
-    return {
-      receipt: createFailedRenderReceipt({
-        packageId: input.packageId,
-        motionHash: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-        createdAt: input.createdAt,
-        outputPath: input.outputPath,
-        frameLane,
-        preset: input.preset,
-        command: encoded.command,
-        error: encoded.error
-      }),
-      frameLane
-    };
-  }
-  await publishConnectorArtifact(stagingOutputPath, input.outputPath);
-  encoded.receipt.output = {
-    ...(readRecord(encoded.receipt.output) ?? {}),
-    path: input.outputPath,
-    frameLane
-  };
-  encoded.receipt.artifacts = encoded.receipt.artifacts?.map((artifact) => artifact.role === "rendered_media"
-    ? { ...artifact, path: input.outputPath }
-    : artifact);
-  return { receipt: encoded.receipt, frameLane };
-}
-
-function createFailedRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  outputPath: string;
-  frameLane: "native" | "browser";
-  preset: FfmpegExportPreset;
-  command: FfmpegCommand;
-  error: { code: string; message: string };
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `ffmpeg-render-failed-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}:${input.error.code}:${input.error.message}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "failed",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      path: input.outputPath,
-      frameLane: input.frameLane,
-      preset: input.preset,
-      command: input.command,
-      error: input.error
-    },
-    warnings: [input.error.message]
-  };
-}
-
-function createConnectorReceipt(input: {
-  packageId: string;
-  createdAt: string;
-  inputHash: string;
-  packageDir: string;
-  previewOk: boolean;
-  previewFailureFatal: boolean;
-  previewReceiptPath: string;
-  renderOk: boolean;
-  renderReceiptPath: string;
-  renderRequired: boolean;
-  renderDryRun: boolean;
-  renderFrameLane?: "native" | "browser";
-  renderPreset: FfmpegExportPreset;
-  renderOutputPath?: string;
-  cutOk: boolean;
-  cutMode: string | null;
-  cutPlanPath: string;
-  artifacts: ConnectorArtifact[];
-  warnings: string[];
-  operationHash: string;
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `connector-canvas-cut-${hashBuffer(Buffer.from(`${input.packageId}:${input.createdAt}`)).slice(0, 16)}`,
-    operation: "connector.canvas_to_cut",
-    status: connectorReceiptStatus({ failed: input.previewFailureFatal || !input.cutOk || !input.renderOk, warnings: input.warnings }),
-    packageId: input.packageId,
-    inputHashes: { canvasSelection: input.inputHash, operation: input.operationHash },
-    createdAt: input.createdAt,
-    lane: "connector",
-    output: {
-      packageDir: input.packageDir,
       artifacts: input.artifacts,
-      preview: { ok: input.previewOk, lane: "native", failureFatal: input.previewFailureFatal, receiptPath: input.previewReceiptPath },
-      render: {
-        ok: input.renderOk,
-        required: input.renderRequired,
-        dryRun: input.renderRequired ? input.renderDryRun : true,
-        lane: "ffmpeg",
-        frameLane: input.renderFrameLane,
-        preset: input.renderPreset,
-        receiptPath: input.renderReceiptPath,
-        ...(input.renderOutputPath ? { outputPath: input.renderOutputPath } : {})
-      },
-      cut: { ok: input.cutOk, mode: input.cutMode, planPath: input.cutPlanPath }
-    },
-    warnings: input.warnings
+      inputEvidence: { kind: "canvas_selection", label: "canvas-selection.json", sha256: input.selectionSha256, byteLength: input.selectionByteLength },
+      packageDir: input.packageDir,
+      preview: { ok: true, lane: "browser", failureFatal: false, receiptPath: input.previewReceiptPath, outputPath: input.previewPath },
+      render: { ok: true, required: true, dryRun: false, lane: "ffmpeg", frameLane: "browser", preset: "mp4-h264", receiptPath: input.renderReceiptPath, outputPath: input.renderOutputPath },
+      cut: { ok: true, mode: "rendered_media", planPath: input.cutPlanPath }
+    }, warnings: input.warnings
   };
 }
 
-function normalizeCanvasToCutPreset(value: string | undefined): FfmpegExportPreset {
-  if (!value) return "mp4-h264";
-  const preset = readFfmpegExportPreset(value);
-  if (preset) return preset;
-  throw new Error(`Unsupported export preset: ${value}.`);
-}
-
-function extensionForPreset(preset: FfmpegExportPreset): string {
-  return resolveExportPreset(preset).container;
-}
-
-function mediaTypeForPreset(preset: FfmpegExportPreset): string {
-  const container = resolveExportPreset(preset).container;
-  if (container === "gif") return "image/gif";
-  if (container === "mov") return "video/quicktime";
-  return `video/${container}`;
-}
-
-function frameCountFor(durationMs: number, fps: number): number {
-  return Math.max(1, Math.ceil((durationMs / 1000) * fps));
-}
-
-function frameTimestampMs(index: number, fps: number, durationMs: number): number {
-  return Math.min(durationMs - 1, Math.round((index / fps) * 1000));
-}
-
-function frameFileName(index: number): string {
-  return `${String(index + 1).padStart(6, "0")}.png`;
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value))
-    : null;
+function setP2BRenderReceiptOutputPath(receipt: OperationReceipt, path: string): void {
+  if (!receipt.output || typeof receipt.output !== "object" || Array.isArray(receipt.output)) throw new Error("Canvas-to-Cut P2B render receipt has no mutable output record.");
+  (receipt.output as Record<string, unknown>).path = path;
 }

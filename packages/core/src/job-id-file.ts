@@ -46,3 +46,22 @@ export function motionJobFileKey(jobId: string): string {
   const digest = createHash("sha256").update(jobId, "utf8").digest("hex").slice(0, DIGEST_LENGTH);
   return `${readable}-${digest}`;
 }
+
+/**
+ * Opaque filesystem key for the authenticated job identity.
+ *
+ * `jobId` is a caller-facing handle, not a global primary key: two authenticated callers may
+ * independently choose the same value.  Durable owner-scoped state therefore names the tuple
+ * `(callerId, jobId)`.  The full SHA-256 digest keeps both inputs out of filenames and makes the
+ * tuple collision-resistant on case-insensitive filesystems too.
+ *
+ * JSON's escaping and array boundaries make the preimage unambiguous even when either string
+ * contains a delimiter-like character.  The schema-like domain prefix prevents an unrelated
+ * digest consumer from accidentally sharing this namespace.
+ */
+export function motionJobOwnerKey(callerId: string, jobId: string): string {
+  return createHash("sha256")
+    .update("shellx-motion/job-owner-key@1\u0000", "utf8")
+    .update(JSON.stringify([callerId, jobId]), "utf8")
+    .digest("hex");
+}

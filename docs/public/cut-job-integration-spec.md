@@ -1,8 +1,10 @@
 # Cut ↔ Motion job integration — implementation spec
 
 **For:** developers integrating the Motion job surface into ShellX Cut.
-**Status in Motion 0.1.0:** the job-query, visibility, retention, and receipt contracts described
-here are implemented and covered by the repository test suite.
+**Current source status:** the persistent local coordinator, render and generic connector
+submit/control/event surfaces, visibility, retention, connector binding journal and receipt-lineage
+contracts described here are implemented. Focused source contract tests cover the Motion side;
+Cut/Design Studio process-pair and packed/native acceptance remain host work.
 
 This document describes the nine integration requirements and the corresponding Cut-side work.
 Runtime behavior is backed by the tests named in the final section.
@@ -13,15 +15,15 @@ Runtime behavior is backed by the tests named in the final section.
 
 | # | Cut's requirement | Status |
 |---|---|---|
-| 1 | Registered `motion.job.get` / `motion.job.list` actions | **Available.** In the command registry, the actions catalog, and `schemas/debug.json`. |
-| 2 | CLI commands | **Available.** `shellx-motion job get <jobId>`, `shellx-motion job list`. |
-| 3 | Debug API dispatch | **Available.** Both route through the `render` domain. |
-| 4 | MCP tools | **Available.** `motion_job_get`, `motion_job_list`. |
+| 1 | Registered discovery/submit/query/control/event actions | **Available.** `motion.connector.catalog`, `motion.job.submit`, `motion.connector.submit`, and `motion.job.get/list/events/cancel/retry` share the command registry and generated schema. |
+| 2 | CLI commands | **Query available.** One-shot CLI renders remain signal-owned by their process; asynchronous control requires the persistent local coordinator. |
+| 3 | Debug API dispatch | **Available for streamed final-video and admitted generic connector jobs.** Submit, query, control and events share one coordinator; materialized compatibility renders use blocking `motion.render.final`. |
+| 4 | MCP tools | **Discoverable.** `motion_connector_catalog`, `motion_job_submit`, `motion_connector_submit`, and `motion_job_get/list/events/cancel/retry`; generic connector submit refuses with `capability_unavailable` until its resolver and journal are configured. |
 | 5 | One consistent jobId across lease, handoff, evidence and receipt | **Enforced.** See "Job identity" below. |
-| 6 | Non-blocking handoff returning a jobId before rendering completes | **Supported by caller-assigned identity.** Cut supplies the id before starting the render. |
+| 6 | Non-blocking handoff returning a jobId before rendering completes | **Available.** `motion.job.submit` returns the persisted id before expensive work starts. |
 | 7 | Own-caller visibility by default, operator-only cross-caller | **Enforced** in the store rather than filtered at the surface. |
 | 8 | Terminal-state lookup after the lease disappears | **Available**, with a 7-day / 1000-job retention. |
-| 9 | End-to-end tests with Cut and Design Studio running simultaneously | **Covered** with separate OS processes. |
+| 9 | End-to-end tests with Cut and Design Studio running simultaneously | **Pending host acceptance.** Motion has focused coordinator and MCP contract coverage, not a Cut/Design Studio process-pair run. |
 
 ### Job identity
 
@@ -32,33 +34,67 @@ Integrations must preserve that exact id across the whole operation.
 
 ## The concurrency model
 
-Cut asked for a non-blocking submission that returns a jobId before rendering completes, **or a
-clearly defined alternative**. This is the alternative, and it is strictly stronger for this case.
-
-**Cut chooses the id.** It is an input, not a return value:
+**Cut submits to the persistent local coordinator.** It can supply a stable id or use the returned
+Motion-minted id:
 
 ```jsonc
-{ "command": "motion.render.final",
+{ "command": "motion.job.submit",
   "args": { "packageRoot": "…", "outputPath": "…", "preset": "mp4-h264",
             "jobId": "cut:render-42" } }
 ```
 
-Cut holds `cut:render-42` from the moment it builds the request — **before the work starts**, which
-is earlier than any asynchronous submit could return one. From that instant any process can ask
-about it.
+The response contains `cut:render-42` before the coordinator starts expensive work. From that
+instant same-owner processes can query events, request cancellation, or observe the terminal result.
 
-Why this rather than a background submission queue: Motion is a local-first engine with no daemon.
-An async submit would mean Motion owning process supervision, orphan reaping and output streaming —
-a large new surface, and a security surface, for a capability Cut can get today by naming its own
-job. Cut already spawns the render and already owns that process's lifetime.
+The coordinator is the supervised local owner for this explicit API. It persists state/events and
+holds the real AbortSignal for its streamed producer/FFmpeg worker. Render submission rejects
+workflow, quality-manifest, retained-frame, dry-run, still, image-sequence, and other materialized
+routes, which remain blocking compatibility renders. It does not resurrect an interrupted worker
+after a server restart. Ordinary render replay callbacks remain process/session-owned, so their
+`motion.job.retry` returns `job_not_retryable` after restart and Cut must submit a new linked run
+explicitly. Admitted connector jobs have the narrower durable-binding exception described below:
+only an explicit retry of a terminal retryable failure may reconstruct execution.
 
-**The render call still blocks.** Run it on a background thread or child process; poll from the UI
-thread. The job stores are files under the user's runtime directory, so a completely separate
-process reads them — that is the whole reason they are files.
+If Cut omits `jobId`, Motion mints one and returns it before expensive work starts. A Cut-supplied
+id is still recommended when the host must correlate UI state before the submit response or recover
+that correlation after its own process interruption. `jobId` is caller-facing rather than globally
+unique: durable records, events, retry state and connector bindings are keyed by the authenticated
+caller plus that id. Two callers may therefore use the same text without replacing or blocking each
+other, while same-caller reuse retains the existing terminal-replacement semantics.
 
-If Cut omits `jobId`, Motion mints one and returns it as `jobId` on the result envelope. That is
-enough to look up afterwards but useless for live progress, because it arrives at the end. **For a
-progress UI, always supply your own.**
+### Generic connector jobs: one Cut adapter, not one adapter per feature
+
+Cut implements this sequence once:
+
+1. Call `runtime-probe`, negotiate catalog/job protocol v2, then read and validate CLI
+   `connector catalog` or the equivalent Debug/MCP `motion.connector.catalog`. CLI
+   `connector describe <id>` remains a convenience projection; a pure Debug/MCP client needs no
+   capability-specific route because the catalog contains every descriptor.
+2. Select only a descriptor whose invocation is `admitted`; generate its closed request from the
+   advertised field types. Branch on request-field and output-role classes, never the capability id.
+3. Mint caller-scoped opaque handles for host-selected input and output locations. Keep the handle
+   mapping in trusted Cut host state; never send a path or URL in the connector request.
+4. Submit the exact discovered capability id, descriptor revision/fingerprint, request-schema id
+   and request to `motion.connector.submit`.
+5. Drive progress, cancellation and explicit retry through the descriptor's advertised
+   `motion.job.*` controls and validate terminal artifacts by their advertised roles/schemas.
+
+The Motion host context must be configured once with a stable authenticated `callerId`, a
+`connectorJobReferences` resolver scoped to that caller, and a
+`MotionConnectorJobBindingJournal` stored beside the coordinator. The MCP tool stays discoverable
+without those authorities but fails closed before queueing. The journal contains the exact
+descriptor and opaque/scalar request, never resolved paths, executors or callbacks.
+
+This is the zero-feature-patch boundary: if a later Motion render or scene-orchestration capability
+uses the same catalog major, safe request-field subset, caller/reference authority, job controls and
+artifact/receipt/import-plan roles, Motion adds its descriptor and executor and Cut code stays
+unchanged. Cut changes only for a protocol major or a new interaction, trust, permission,
+editor-operation or artifact class.
+
+Descriptor drift is a refusal, not an implicit upgrade. Cut should rediscover and submit a new job.
+`motion.job.retry` is an explicit new run with lineage. Following a host restart it can reconstruct
+only a terminal retryable failed connector binding and re-resolve the opaque handles; it never
+automatically re-executes an interrupted pending/running job, and cancellation is never retryable.
 
 ### One render is one job
 
@@ -70,16 +106,21 @@ and sees one job. `motion.job.list` will never show `ffmpeg.version`.
 
 ## What Cut has to build
 
-### 1. A stable caller id, one per workspace
+### 1. A stable caller id, one per workspace (CLI/direct hosts)
 
 ```
 --caller-id cut:workspace-7        (CLI)
-context.callerId = "cut:workspace-7"   (Debug API / MCP host config)
+context.callerId = "cut:workspace-7"   (trusted direct SDK / HTTP host config)
 ```
 
+MCP and WebSocket clients do not nominate that value: the authenticated server mints their
+connection principal. Direct coordinator integration must configure the trusted `callerId` before
+submission; putting one in a request object is not an ownership mechanism.
+
 Requirements:
-- **Stable across processes.** A fresh Cut process must recognise work its predecessor started, so
-  a pid or a per-connection session id is wrong.
+- **Stable across processes for CLI/direct hosts.** A fresh Cut process must recognise work its
+  predecessor started, so a pid or a per-connection session id is wrong. MCP/WebSocket ownership
+  is instead bound to the server-minted connection principal.
 - **One per workspace**, because that is the granularity at which Cut's own agents should see each
   other's work.
 
@@ -130,6 +171,12 @@ Rules:
 - **`cancelled` never carries `error`; `failed` always does.** So a retry policy shaped like
   `if (job.error?.retryable) retry()` is structurally incapable of restarting work a human stopped.
   Please keep that shape.
+- **Preserve unknown typed failure codes.** Shared Core codes have the retry/remedy policy documented
+  in `JOB_STATUS.md`. A newer capability may return or raise a bounded code an older Cut build has never
+  enumerated; keep its `code`, `message`, `retryable`, optional `remedy`, `retryAfterMs`, and
+  `suggestedAction` unchanged. Motion never includes exception stacks, detail objects, or
+  path-bearing text in that metadata. Branch on the metadata, not on a feature-specific code switch,
+  and never rewrite an unknown code to `invalid_args` or `connector_failed`.
 - **Never infer success from an artifact path.** A failed encode can leave a truncated file.
 
 ### 4. Handle the three query errors distinctly
@@ -158,9 +205,8 @@ period during which **nothing is being produced**.
 - A job that failed while still queued carries **no** `startedAtMs`. It never ran — reporting it as
   a failed render would be wrong; it is a capacity problem.
 
-Verified on real concurrent renders: with one slot, the second render reported `pending` for four
-consecutive polls with `startedAtMs` absent, then flipped to `running`, and finished with
-`queueWaitMs: 14563` against the first render's `10`.
+The coordinator test covers cancellation and retry lineage; a Cut/Design Studio concurrent-render
+acceptance run remains required before making a measured cross-host performance claim.
 
 ---
 
@@ -175,7 +221,8 @@ Cut and Design Studio share one machine and one capacity pool. They do **not** s
   itself this.
 - Scheduling stays global: every job competes for the machine-wide cap regardless of owner.
 
-Verified with two real OS processes, one per host, rendering simultaneously.
+The Motion-side visibility tests cover caller separation. A two-host process-pair acceptance run is
+still required for Cut and Design Studio integration sign-off.
 
 ---
 
@@ -219,7 +266,10 @@ Tool names are the command with dots replaced by underscores:
 ```
 motion_job_get     { "args": { "jobId": "cut:render-42" } }
 motion_job_list    { "args": { "limit": 20 } }
-motion_render_final{ "args": { …, "jobId": "cut:render-42" } }
+motion_job_events  { "args": { "jobId": "cut:render-42" } }
+motion_job_cancel  { "args": { "jobId": "cut:render-42", "reason": "operator stopped export" } }
+motion_job_retry   { "args": { "jobId": "cut:failed-42" } }
+motion_job_submit  { "args": { …, "jobId": "cut:render-42" } }
 ```
 
 The caller id comes from the server's context (`context.callerId`), or is derived from the observed
@@ -264,6 +314,11 @@ rather than surfacing a failed render.
     "platform": {
       "schema": "shellx-motion/platform-requirements@1",
       "ok": true, "satisfied": false, "missingCount": 1,
+      "capacity": {
+        "source": "host-adaptive",
+        "jobs": { "maxConcurrentJobs": 2, "maxProcessTreeRssBytes": 18790481920 },
+        "points": { "tier": "maximum", "portablePointsPerLayer": 8192, "maxPointsPerLayer": 65536 }
+      },
       "tools": [
         { "tool": "ffmpeg", "status": "ready", "present": true,
           "source": "path", "executable": "ffmpeg",
@@ -331,8 +386,9 @@ Read it this way:
   than fall through, and a host surfacing this result should pass the wording on rather than
   flattening it to "not found": a `SHELLX_MOTION_BROWSER` that is relative or names nothing comes
   back as `status: "broken"`, `source: "override"` with a `problem` naming the rejected value and no
-  substitute browser; and a Playwright cache that other users can write, or an entry inside it whose
-  name is not `chromium-<build number>`, contributes nothing and is named in `problem`.
+  substitute browser; and a Playwright cache whose root, build/layout components, or executable leaf
+  is non-canonical, not user/root-owned, or group/world-writable (or whose entry name is not
+  `chromium-<build number>`) contributes nothing and is named in `problem`.
 
 `detail` keeps the probe error, which distinguishes *missing* from *installed but broken* — the
 message only claims "not installed" when the underlying error actually looks like an absent binary
@@ -377,8 +433,9 @@ compare it against the retention window yourself.
 
 - Receipt ids are formed exactly as before. Cut derives and validates
   `expected_cut_plan_receipt_id`, and nothing here touches that.
-- `motion.render.status` and `motion.render.queue` still exist and still read receipt files. They
-  are unchanged, and they still cannot see running work.
+- On Linux, `motion.render.status` and `motion.render.queue` still read receipt files through the
+  stable-reader capability, and they still cannot see running work. macOS and Windows return
+  `capability_unavailable` before receipt-state access; `motion.job.*` is the portable live route.
 - The editable-import receiver contract is unchanged.
 
 ---

@@ -3,6 +3,8 @@ import { execFile } from "node:child_process";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { workbenchDesktopChildEnvironment } from "./workbench-child-environment.js";
+import { WorkbenchSystemExecutableUnavailableError, resolveWorkbenchSystemExecutable } from "./workbench-system-executable.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_SELECTED_PATH_CHARS = 4096;
@@ -13,8 +15,14 @@ export type WorkbenchPathPurpose =
   | "render-output"
   | "quality-manifest";
 
+/**
+ * Internal-only picker purpose. It is deliberately absent from WorkbenchPathPurpose and the generic
+ * `/workbench/select-path` parser, so an HTTP caller cannot request a local effect-module path.
+ */
+type EffectModuleManifestPickerPurpose = "effect-module-manifest";
+
 export interface WorkbenchPathPickerRequest {
-  purpose: WorkbenchPathPurpose;
+  purpose: WorkbenchPathPurpose | EffectModuleManifestPickerPurpose;
   kind: "folder" | "file" | "save-file";
   title: string;
   currentPath: string;
@@ -119,6 +127,51 @@ export async function runWorkbenchPathPicker(
   }
 }
 
+/**
+ * A host-shaped picker for C1 manifests. There is no `currentPath` or caller-selected purpose:
+ * this can be reached only by the operator-gated management route.
+ */
+export async function runEffectModuleManifestPicker(
+  picker: WorkbenchPathPicker
+): Promise<WorkbenchPathPickerResult> {
+  let selected: string | null;
+  try {
+    selected = await picker({
+      purpose: "effect-module-manifest",
+      kind: "file",
+      title: "Choose a local Motion effect-module manifest",
+      currentPath: "",
+      extensions: [".json"]
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 501,
+      code: "path_picker_unavailable",
+      message: error instanceof Error ? error.message : "The system file chooser is unavailable."
+    };
+  }
+  if (selected === null || selected.trim() === "") return { ok: true, cancelled: true };
+  if (selected.length > MAX_SELECTED_PATH_CHARS || !isAbsolute(selected)) {
+    return { ok: false, status: 400, code: "invalid_selected_path", message: "The system chooser returned an invalid location." };
+  }
+  try {
+    const selectedFacts = await lstat(selected);
+    if (!selectedFacts.isFile() || selectedFacts.isSymbolicLink()) throw new Error("Choose a regular manifest file, not a link.");
+    const canonical = await realpath(selected);
+    if (!(await stat(canonical)).isFile()) throw new Error("The selected location is not a file.");
+    if (extname(canonical).toLowerCase() !== ".json") throw new Error("Choose a .json file.");
+    return { ok: true, cancelled: false, path: canonical };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_selected_path",
+      message: error instanceof Error ? error.message : "The selected location is unavailable."
+    };
+  }
+}
+
 export function createDefaultWorkbenchPathPicker(platform: NodeJS.Platform = process.platform): WorkbenchPathPicker {
   if (platform === "win32") return pickOnWindows;
   if (platform === "darwin") return pickOnMacos;
@@ -156,12 +209,13 @@ async function pickOnWindows(request: WorkbenchPathPickerRequest): Promise<strin
     "}",
     "$dialog.Dispose()"
   ].join("\n");
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-NonInteractive", "-Command", script], {
+  const executable = await resolveWorkbenchSystemExecutable("windows-powershell");
+  const { stdout } = await execFileAsync(executable, ["-NoProfile", "-STA", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 32 * 1024,
     env: {
-      ...process.env,
+      ...workbenchDesktopChildEnvironment(),
       SHELLX_MOTION_PICKER_KIND: request.kind,
       SHELLX_MOTION_PICKER_TITLE: request.title,
       SHELLX_MOTION_PICKER_CURRENT: request.currentPath,
@@ -189,7 +243,10 @@ async function pickOnMacos(request: WorkbenchPathPickerRequest): Promise<string 
   try {
     const args = lines.flatMap((line) => ["-e", line]);
     args.push("--", request.kind, request.title);
-    const { stdout } = await execFileAsync("/usr/bin/osascript", args, { encoding: "utf8", maxBuffer: 32 * 1024 });
+    const executable = await resolveWorkbenchSystemExecutable("macos-osascript");
+    const { stdout } = await execFileAsync(executable, args, {
+      encoding: "utf8", maxBuffer: 32 * 1024, env: workbenchDesktopChildEnvironment()
+    });
     return stdout.trim() || null;
   } catch (error) {
     if (String((error as NodeJS.ErrnoException).code) === "1") return null;
@@ -203,12 +260,15 @@ async function pickOnLinux(request: WorkbenchPathPickerRequest): Promise<string 
   if (request.kind === "save-file") zenityArgs.push("--save", "--confirm-overwrite");
   if (request.currentPath) zenityArgs.push(`--filename=${request.currentPath}`);
   try {
-    const { stdout } = await execFileAsync("zenity", zenityArgs, { encoding: "utf8", maxBuffer: 32 * 1024 });
+    const executable = await resolveWorkbenchSystemExecutable("linux-zenity");
+    const { stdout } = await execFileAsync(executable, zenityArgs, {
+      encoding: "utf8", maxBuffer: 32 * 1024, env: workbenchDesktopChildEnvironment()
+    });
     return stdout.trim() || null;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (String(code) === "1") return null;
-    if (code !== "ENOENT") throw error;
+    if (code !== "ENOENT" && !(error instanceof WorkbenchSystemExecutableUnavailableError)) throw error;
   }
 
   const kdialogArgs = request.kind === "folder"
@@ -217,7 +277,10 @@ async function pickOnLinux(request: WorkbenchPathPickerRequest): Promise<string 
       ? ["--getsavefilename", request.currentPath || ".", "*.mp4 *.webm *.gif *.png", request.title]
       : ["--getopenfilename", request.currentPath || ".", request.purpose === "quality-manifest" ? "*.json" : request.extensions.map((extension) => `*${extension}`).join(" "), request.title];
   try {
-    const { stdout } = await execFileAsync("kdialog", kdialogArgs, { encoding: "utf8", maxBuffer: 32 * 1024 });
+    const executable = await resolveWorkbenchSystemExecutable("linux-kdialog");
+    const { stdout } = await execFileAsync(executable, kdialogArgs, {
+      encoding: "utf8", maxBuffer: 32 * 1024, env: workbenchDesktopChildEnvironment()
+    });
     return stdout.trim() || null;
   } catch (error) {
     if (String((error as NodeJS.ErrnoException).code) === "1") return null;

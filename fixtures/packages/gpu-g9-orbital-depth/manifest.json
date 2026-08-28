@@ -1,0 +1,19 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_g9_orbital_depth",
+  "name": "Orbital Depth — G9 GPU Film",
+  "motion": "motion.json",
+  "assets": [
+    "assets/source/orbital-triangle.gltf",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2",
+    "assets/fonts/LICENSE-Inter.txt"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["gpu", "ffmpeg"],
+    "hosts": ["motion"]
+  },
+  "quality": { "maxFontFallbacks": 0 },
+  "workflow": "g9-advanced-gpu-film"
+}

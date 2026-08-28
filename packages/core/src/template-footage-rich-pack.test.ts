@@ -55,17 +55,15 @@ describe("footage-rich product template families", () => {
       const pkg = await loadFamily(family.dir);
       expect(pkg.manifest).toMatchObject({
         id: family.packageId,
-        compatibility: {
-          lanes: ["browser", "ffmpeg"],
-          hosts: ["shellx-motion", "shellx-canvas", "shellx-cut"]
-        }
+        compatibility: { hosts: ["shellx-motion", "shellx-canvas", "shellx-cut"] }
       });
+      expect(pkg.manifest.compatibility.lanes).toEqual(expect.arrayContaining(["browser", "ffmpeg"]));
       expect(pkg.template?.metadata).toMatchObject({
         license: {
           attributionRequired: false,
           redistributionAllowed: true,
           commercialUse: true,
-          notes: expect.stringContaining("sans-serif")
+          notes: expect.stringContaining("Inter")
         },
         provenance: {
           source: `shellx-product-pack-${family.dir}`,

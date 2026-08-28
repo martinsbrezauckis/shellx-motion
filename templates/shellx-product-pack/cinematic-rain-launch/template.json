@@ -3,7 +3,7 @@
   "id": "template_shellx_cinematic_rain_launch",
   "name": "ShellX Cinematic Rain Launch",
   "motion": "motion.json",
-  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleLanes": ["browser", "ffmpeg", "gpu"],
   "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
   "metadata": {
     "inputSchema": {
@@ -50,7 +50,7 @@
       "attributionRequired": false,
       "redistributionAllowed": true,
       "commercialUse": true,
-      "notes": "Package-local sample art may be replaced with licensed user media before export."
+      "notes": "Package-local sample art may be replaced with licensed user media before export. Typography uses package-local Inter faces under SIL OFL 1.1."
     },
     "assetsAttribution": [
       {
@@ -64,6 +64,20 @@
         "license": "shellx-generated-sample",
         "author": "ShellX Motion",
         "path": "assets/masks/rain-occlusion.svg"
+      },
+      {
+        "name": "Inter SemiBold (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-600-normal.woff2"
+      },
+      {
+        "name": "Inter Black (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-900-normal.woff2"
       }
     ],
     "preview": {
@@ -75,10 +89,10 @@
       "sourceHash": "28e15ddc24c0cb314323f7c0ccbab62b483fe12db59fdb9d7cc613289bfa0b20"
     },
     "performance": {
-      "recommendedLane": "browser",
+      "recommendedLane": "gpu",
       "renderCost": "high",
       "previewFps": 24,
-      "notes": ["Uses scene-sampled rain, wet-ground reflections, an occlusion mask, particles, motion blur and a restrained finishing pass."]
+      "notes": ["Uses scene-sampled rain, wet-ground reflections, an occlusion mask, particles, and its authored 3-sample 150-degree temporal blur through the strict GPU lane. GPU admission requires live WebGPU hardware and refuses without browser, native, or software fallback."]
     },
     "story": {
       "kind": "cinematic-product-promo",

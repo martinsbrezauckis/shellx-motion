@@ -14,7 +14,7 @@ describe("atomic SVG package authoring", () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-svg-package-"));
     const outputRoot = join(root, "packages", "svg-import");
     try {
-      await mkdir(dirname(outputRoot), { recursive: true });
+      await mkdir(dirname(outputRoot), { recursive: true, mode: 0o700 });
       const result = await writeStaticSvgPackage({
         sourcePath: fixturePath,
         outputRoot,

@@ -22,5 +22,9 @@ export function createAuthoringClientBindings(invoke: Invoke) {
     proceduralSetEnabled: (input: MotionSdkRequestMap["proceduralSetEnabled"]) => invoke("proceduralSetEnabled", input),
     proceduralBake: (input: MotionSdkRequestMap["proceduralBake"]) => invoke("proceduralBake", input),
     proceduralDetach: (input: MotionSdkRequestMap["proceduralDetach"]) => invoke("proceduralDetach", input),
+    proceduralAudioEnvelopeProduce: (input: MotionSdkRequestMap["proceduralAudioEnvelopeProduce"]) => invoke("proceduralAudioEnvelopeProduce", input),
+    cutoutRigBake: (input: MotionSdkRequestMap["cutoutRigBake"]) => invoke("cutoutRigBake", input),
+    audioMasterSet: (input: MotionSdkRequestMap["audioMasterSet"]) => invoke("audioMasterSet", input),
+    audioCrossfadeSet: (input: MotionSdkRequestMap["audioCrossfadeSet"]) => invoke("audioCrossfadeSet", input),
   };
 }

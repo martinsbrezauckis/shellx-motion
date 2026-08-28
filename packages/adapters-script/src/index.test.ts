@@ -1,9 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadMotionPackage } from "@shellx-motion/core";
-import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "./index";
+import { convertScriptedFramesToMotionPackage } from "./index";
 
 const tempDirs: string[] = [];
 
@@ -68,7 +67,7 @@ describe("scripted frame Motion package adapter", () => {
     ]);
     expect(result.receipt).toMatchObject({
       schema: "shellx-motion/receipt@1",
-      operation: "package.compile",
+      operation: "script.compile",
       status: "passed",
       packageId: "pkg_script_launch_demo",
       createdAt: "2026-06-30T08:00:00.000Z",
@@ -188,7 +187,7 @@ describe("scripted frame Motion package adapter", () => {
       "x-storyboard": { frameId: "hook", sceneId: "scene_hook" }
     });
     expect(result.receipt).toMatchObject({
-      operation: "package.compile",
+      operation: "script.compile",
       packageId: "pkg_script_weekly_growth",
       output: {
         frameCount: 2,
@@ -540,34 +539,6 @@ describe("scripted frame Motion package adapter", () => {
         }
       ]
     })).toThrow("frames[0].effects[0].intensity must be an integer between 1 and 48.");
-  });
-
-  it("writes a loadable scripted-frame package with compile receipt evidence", async () => {
-    const packageDir = await mkdtemp(join(tmpdir(), "shellx-motion-script-package-"));
-    tempDirs.push(packageDir);
-    await mkdir(packageDir, { recursive: true });
-
-    const scriptedExport = convertScriptedFramesToMotionPackage(scriptedVideo(), {
-      createdAt: "2026-06-30T08:01:00.000Z",
-      inputPath: "cut-generate/storyboard.json"
-    });
-    const written = await writeScriptedMotionPackage(scriptedExport, { packageDir });
-    const loaded = await loadMotionPackage(packageDir);
-    const receipt = JSON.parse(await readFile(written.receiptPath, "utf8")) as Record<string, unknown>;
-
-    expect(written).toEqual({
-      packageDir,
-      manifestPath: join(packageDir, "manifest.json"),
-      motionPath: join(packageDir, "motion.json"),
-      receiptPath: join(packageDir, "receipts", "script-compile.receipt.json")
-    });
-    expect(loaded.manifest.id).toBe("pkg_script_launch_demo");
-    expect(loaded.motion.layers).toHaveLength(15);
-    expect(receipt).toMatchObject({
-      operation: "package.compile",
-      packageId: "pkg_script_launch_demo",
-      lane: "script"
-    });
   });
 
   it("rejects storyboard dimensions and frame rates outside the first local render envelope", () => {

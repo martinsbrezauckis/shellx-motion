@@ -220,7 +220,7 @@ export async function verifyAttestedArtifactHandle(
 export async function writeAttestedArtifactHandle(path: string, handle: AttestedArtifactHandle): Promise<void> {
   validateArtifactHandle(handle);
   const target = resolve(path);
-  await mkdir(dirname(target), { recursive: true });
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   const staging = resolve(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`);
   const file = await open(staging, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
   try {

@@ -1,0 +1,101 @@
+{
+  "schema": "shellx-motion/receipt@1",
+  "id": "adapter-diagnostics-lottie-3c9fe1f3ffd55847",
+  "operation": "adapter.diagnostics",
+  "status": "passed",
+  "packageId": "pkg_lottie_3c9fe1f3ffd55847",
+  "inputHashes": {
+    "source": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d"
+  },
+  "createdAt": "2026-08-26T00:00:00.000Z",
+  "lane": "adapter",
+  "output": {
+    "adapterId": "adapter.lottie",
+    "format": "lottie",
+    "source": {
+      "path": "source/input.lottie.json",
+      "sha256": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d"
+    },
+    "normalizedPackagePath": "pkg_lottie_3c9fe1f3ffd55847",
+    "supportedFeatures": [
+      {
+        "path": "lottie",
+        "feature": "lottie.composition",
+        "status": "supported",
+        "reason": "Composition dimensions, frame rate, and frame bounds can map to a Motion document."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair",
+        "feature": "lottie.shape.layer",
+        "status": "supported",
+        "reason": "Shape layers can be inventoried for bounded static path lowering."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[0]",
+        "feature": "lottie.shape.group",
+        "status": "supported",
+        "reason": "Shape groups can be recursively inventoried."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[0].it[0]",
+        "feature": "lottie.shape.rectangle",
+        "status": "supported",
+        "reason": "Static rectangle primitives lower deterministically to Motion path geometry."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[0].it[1]",
+        "feature": "lottie.shape.fill",
+        "status": "supported",
+        "reason": "Static fill color maps to Motion shape style."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[0].it[2]",
+        "feature": "lottie.transform",
+        "status": "supported",
+        "reason": "Static position, scale, rotation, anchor, and opacity can map to Motion transforms."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[1]",
+        "feature": "lottie.shape.group",
+        "status": "supported",
+        "reason": "Shape groups can be recursively inventoried."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[1].it[0]",
+        "feature": "lottie.shape.ellipse",
+        "status": "supported",
+        "reason": "Static ellipse primitives lower deterministically to Motion path geometry."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[1].it[1]",
+        "feature": "lottie.shape.fill",
+        "status": "supported",
+        "reason": "Static fill color maps to Motion shape style."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.shapes[1].it[2]",
+        "feature": "lottie.transform",
+        "status": "supported",
+        "reason": "Static position, scale, rotation, anchor, and opacity can map to Motion transforms."
+      },
+      {
+        "path": "lottie.layers[0]#Primitive pair.ks",
+        "feature": "lottie.transform",
+        "status": "supported",
+        "reason": "Static position, scale, rotation, anchor, and opacity can map to Motion transforms."
+      }
+    ],
+    "warningFeatures": [],
+    "unsupportedFeatures": [],
+    "recommendedFallbackLane": "none",
+    "lossiness": {
+      "level": "none",
+      "budget": "No unsupported feature loss detected by the current diagnostic parser.",
+      "unsupportedCount": 0,
+      "warningCount": 0,
+      "supportedCount": 11
+    },
+    "suggestedNextAction": "Lower the fixture-backed static Lottie subset, then verify rendered frames and the lossiness receipt."
+  },
+  "warnings": []
+}

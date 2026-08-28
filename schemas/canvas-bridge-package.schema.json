@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/canvas-bridge-package@1",
+  "$comment": "Canonical serialized Canvas -> Motion package export. The producer is convertCanvasFrameToMotionPackage in packages/adapters-canvas/src/index.ts; the immediate consumer is writeCanvasMotionPackage in package-writer.ts. The three package documents deliberately reuse their published schemas instead of copying their rules here. writeCanvasMotionPackage retains one backwards-compatible in-process path for pre-schema objects with no top-level schema field; that legacy shape is not a public wire format and is intentionally excluded from this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "manifest", "motion", "receipt", "integration"],
+  "properties": {
+    "schema": { "const": "shellx-motion/canvas-bridge-package@1" },
+    "manifest": {
+      "allOf": [
+        { "$ref": "package-manifest.schema.json" },
+        {
+          "properties": {
+            "sourceApp": { "const": "shellx-canvas" }
+          }
+        }
+      ]
+    },
+    "motion": {
+      "allOf": [
+        { "$ref": "motion.schema.json" },
+        {
+          "properties": {
+            "provenance": {
+              "type": "object",
+              "required": ["sourceApp", "projectId", "selectedFrameId"],
+              "properties": {
+                "sourceApp": { "const": "shellx-canvas" },
+                "projectId": { "type": "string", "minLength": 1 },
+                "selectedFrameId": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "receipt": {
+      "allOf": [
+        { "$ref": "receipt.schema.json" },
+        {
+          "required": ["output"],
+          "properties": {
+            "operation": { "const": "export.final" },
+            "status": { "const": "passed" },
+            "lane": { "const": "canvas" }
+          }
+        }
+      ]
+    },
+    "integration": {
+      "oneOf": [
+        { "$ref": "#/$defs/verifiedNegotiation" },
+        { "$ref": "#/$defs/legacyCompatibilityAdapter" }
+      ]
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxPlanBytes", "maxArtifactBytes", "maxOperations"],
+      "properties": {
+        "maxPlanBytes": { "type": "integer", "minimum": 1 },
+        "maxArtifactBytes": { "type": "integer", "minimum": 1 },
+        "maxOperations": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "verifiedNegotiation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "ok", "localHost", "remoteHost", "selectedProtocol", "modes", "presets", "features", "schemas", "limits", "missingRequiredModes"],
+      "properties": {
+        "schema": { "const": "shellx-motion/integration-negotiation@1" },
+        "ok": { "const": true },
+        "localHost": { "const": "shellx-canvas" },
+        "remoteHost": { "const": "shellx-motion" },
+        "selectedProtocol": { "const": 1 },
+        "modes": { "$ref": "#/$defs/stringList" },
+        "presets": { "$ref": "#/$defs/stringList" },
+        "features": { "$ref": "#/$defs/stringList" },
+        "schemas": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/stringList" }
+        },
+        "limits": { "$ref": "#/$defs/limits" },
+        "missingRequiredModes": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "legacyCompatibilityAdapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "ok", "adapter", "payloadSchema"],
+      "properties": {
+        "schema": { "const": "shellx-motion/integration-compatibility-adapter@1" },
+        "ok": { "const": true },
+        "adapter": { "const": "shellx-canvas/frame-selection@1" },
+        "payloadSchema": { "const": "shellx-canvas/frame-selection@1" }
+      }
+    }
+  }
+}

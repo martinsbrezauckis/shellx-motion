@@ -1,0 +1,20 @@
+/** Shared C6B package facts; used by fresh COW and source-independent output reopen. */
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
+import { canonicalJsonSha256, compareCodeUnits, loadMotionPackage, readBoundedStableFile, requiredLoadedPackageDocumentHashes, resolvePackageAsset, type MotionPackage } from "@shellx-motion/core";
+import { captureTrustedWorkspaceCompleteDirectoryInventory } from "@shellx-motion/core/internal/closed-directory-inventory";
+import type { TrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+import { snapshotPackageEditTree } from "./package-edit-tree-snapshot.js";
+import { PackageEditTransactionError } from "./package-edit-transaction.js";
+import { C6B1B_RECEIPT_PATH, type C6B1bExactBase, type C6B1bInventory } from "./checkpoint-storyboard-scalar-spatial-materialize-receipt-private.js";
+export interface CheckpointStoryboardScalarSpatialMaterializationHost { readonly sourcePackageRoot: string; readonly outputPackageRoot: string; readonly packageWorkspaceRoot: string; readonly packageWorkspaceAuthority: TrustedWorkspaceAnchor; readonly requireAbsentOutput?: boolean; }
+export interface PackageFacts { readonly pkg: MotionPackage; readonly base: C6B1bExactBase; readonly snapshot: Awaited<ReturnType<typeof snapshotPackageEditTree>>; }
+export async function observePackage(root: string, host: CheckpointStoryboardScalarSpatialMaterializationHost): Promise<PackageFacts> {
+  const pkg = await loadMotionPackage(root), loaded = requiredLoadedPackageDocumentHashes(pkg, "C6B1b materialization");
+  const [manifest, motion, snapshot, inventory] = await Promise.all([readBoundedStableFile(join(pkg.root, "manifest.json"), { label: "C6B1b manifest", maxBytes: 4 * 1024 * 1024, withinRoot: pkg.root, allowRootAlias: true, requireSingleLink: true }), readBoundedStableFile(resolvePackageAsset(pkg, pkg.manifest.motion), { label: "C6B1b Motion", maxBytes: 64 * 1024 * 1024, withinRoot: pkg.root, requireSingleLink: true }), snapshotPackageEditTree(pkg.root), closedInventoryFor(pkg.root, host)]);
+  if (loaded["manifest.json"] !== manifest.sha256 || loaded[pkg.manifest.motion] !== motion.sha256) throw new PackageEditTransactionError("source_changed", "C6B1b package bytes changed while reopened.");
+  return Object.freeze({ pkg, snapshot, base: Object.freeze({ packageId: pkg.manifest.id, manifestRawSha256: manifest.sha256, motionRawSha256: motion.sha256, manifestCanonicalSha256: canonicalJsonSha256(pkg.manifest), motionCanonicalSha256: canonicalJsonSha256(pkg.motion), inventory, c6aPlanFingerprint: "", c6b1bProfileFingerprint: "", c6b1bProjectionFingerprint: "" }) });
+}
+export async function closedInventoryFor(root: string, host: CheckpointStoryboardScalarSpatialMaterializationHost): Promise<C6B1bInventory> { const entry = await lstat(root, { bigint: true }); if (!entry.isDirectory() || entry.isSymbolicLink()) throw new PackageEditTransactionError("unsupported_source_entry", "C6B1b package root is not a regular directory."); try { const snapshot = await captureTrustedWorkspaceCompleteDirectoryInventory({ workspaceRoot: host.packageWorkspaceRoot, workspaceAuthority: host.packageWorkspaceAuthority, directory: root, identity: { dev: Number(entry.dev), ino: Number(entry.ino) }, label: "C6B1b package inventory" }); return Object.freeze({ sha256: snapshot.evidence.sha256, entryCount: snapshot.evidence.entryCount, leafCount: snapshot.evidence.entryCount }); } catch { throw new PackageEditTransactionError("unsupported_source_entry", "C6B1b package does not satisfy closed-inventory limits."); } }
+export function preservedLeaves(snapshot: Awaited<ReturnType<typeof snapshotPackageEditTree>>, motionPath: string) { const entries = [...snapshot.entries].filter(([path, value]) => value.startsWith("file:") && path !== motionPath && path !== C6B1B_RECEIPT_PATH).sort(([left], [right]) => compareCodeUnits(left, right)); return Object.freeze({ sha256: canonicalJsonSha256(entries), count: entries.length }); }
+export function same(left: unknown, right: unknown): boolean { return canonicalJsonSha256(left) === canonicalJsonSha256(right); }

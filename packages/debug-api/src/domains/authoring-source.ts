@@ -1,7 +1,10 @@
 import {
   buildScriptedVideoFromSourceImport,
   buildSourceImportDocument,
+  DEFAULT_HOST_INTERCHANGE_LIMITS,
   hashBuffer,
+  OutputDirectoryTransaction,
+  readBoundedStableFile,
   readSourceImportDocumentFromMarkdown,
   type OperationReceipt,
   type SourceImportKind,
@@ -10,12 +13,16 @@ import {
 import { join, resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { positiveIntegerArg, positiveNumberArg, stringArg } from "./args.js";
+import { assertConfiguredAuthoringInputFile, assertConfiguredAuthoringOutputRoot, configuredAuthoringInputRoot } from "./authoring-root-policy.js";
+import { sourceAuthoringCommandFailure, sourceCommittedObserverFailure } from "./authoring-source-publication-failure.js";
 
 export interface SourceAuthoringServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   fetchSource?: (url: string) => ReturnType<typeof fetchSourceDocument>;
   isEmptyOrAbsentDirectory?: (path: string) => Promise<boolean>;
-  readText?: (path: string) => Promise<string>;
+  readSourceMarkdown?: (path: string, roots: string[] | undefined) => Promise<{ text: string; sha256: string }>;
   writeText?: (path: string, value: string) => Promise<void>;
   writeJson?: (path: string, value: unknown) => Promise<void>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
@@ -49,6 +56,9 @@ async function importSource(args: unknown, services: SourceAuthoringServices): P
   if (!services.isEmptyOrAbsentDirectory || !services.writeText || !services.writeJson) {
     return capabilityUnavailable("Source import artifact persistence is unavailable.");
   }
+  if (!services.authoringOutputRoots?.length) {
+    return capabilityUnavailable("Source import requires host-approved authoring output roots.");
+  }
   if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Source import receipt persistence is unavailable.");
 
   let source;
@@ -67,12 +77,15 @@ async function importSource(args: unknown, services: SourceAuthoringServices): P
 
   try {
     const sourceDir = resolve(outDir);
+    await assertConfiguredAuthoringOutputRoot(sourceDir, services.authoringOutputRoots, "Source import output");
     if (!await services.isEmptyOrAbsentDirectory(sourceDir)) {
       return invalidArgs("motion.source.import outDir must be empty or absent before source import.");
     }
+    const transaction = await OutputDirectoryTransaction.create(sourceDir);
     const markdownPath = join(sourceDir, "source.md");
     const receiptPath = join(sourceDir, "receipts", "source-import.receipt.json");
-    await services.writeText(markdownPath, source.markdown);
+    const stagedMarkdownPath = join(transaction.stagingPath, "source.md");
+    const stagedReceiptPath = join(transaction.stagingPath, "receipts", "source-import.receipt.json");
     const output = {
       url: source.url,
       title: source.title,
@@ -103,8 +116,28 @@ async function importSource(args: unknown, services: SourceAuthoringServices): P
       artifacts,
       warnings: []
     };
-    await services.writeJson(receiptPath, receipt);
-    const hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
+    try {
+      await services.writeText(stagedMarkdownPath, source.markdown);
+      await services.writeJson(stagedReceiptPath, receipt);
+      await transaction.assertCurrent();
+      await transaction.commit();
+      await transaction.assertPublishedCurrent();
+    } catch (error) {
+      await transaction.abort();
+      throw error;
+    }
+    let hostReceiptPath: string | undefined;
+    try {
+      hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
+    } catch (error) {
+      return sourceCommittedObserverFailure("source_import_receipt_observer_failed", error, {
+        outputPath: sourceDir,
+        receiptPath,
+        receipt,
+        artifacts,
+        output
+      });
+    }
     return {
       ok: true,
       receiptId: receipt.id,
@@ -122,7 +155,7 @@ async function importSource(args: unknown, services: SourceAuthoringServices): P
       warnings: []
     };
   } catch (error) {
-    return commandFailure("source_import_failed", error);
+    return sourceAuthoringCommandFailure("source_import_failed", error);
   }
 }
 
@@ -141,18 +174,26 @@ async function sourceToScriptedVideo(args: unknown, services: SourceAuthoringSer
   for (const [label, value] of [["maxFrames", maxFrames], ["frameDurationMs", frameDurationMs], ["width", width], ["height", height], ["fps", fps]] as const) {
     if (value === false) return invalidArgs(`${label} must be a positive integer.`);
   }
-  if (!services.isEmptyOrAbsentDirectory || !services.readText || !services.writeJson) {
+  if (!services.isEmptyOrAbsentDirectory || !services.readSourceMarkdown || !services.writeJson) {
     return capabilityUnavailable("Source storyboard artifact persistence is unavailable.");
+  }
+  if (!services.authoringInputRoots?.length) {
+    return capabilityUnavailable("Source storyboard planning requires host-approved authoring input roots.");
+  }
+  if (!services.authoringOutputRoots?.length) {
+    return capabilityUnavailable("Source storyboard planning requires host-approved authoring output roots.");
   }
   if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Source storyboard receipt persistence is unavailable.");
 
   try {
     const sourcePath = resolve(sourcePathArg);
     const storyboardDir = resolve(outDir);
+    await assertConfiguredAuthoringOutputRoot(storyboardDir, services.authoringOutputRoots, "Source storyboard output");
     if (!await services.isEmptyOrAbsentDirectory(storyboardDir)) {
       return invalidArgs("motion.source.to_scripted_video outDir must be empty or absent before storyboard planning.");
     }
-    const markdown = await services.readText(sourcePath);
+    const sourceSnapshot = await services.readSourceMarkdown(sourcePath, services.authoringInputRoots);
+    const markdown = sourceSnapshot.text;
     const source = readSourceImportDocumentFromMarkdown(markdown);
     const scripted = buildScriptedVideoFromSourceImport(source, {
       sourcePath,
@@ -164,8 +205,9 @@ async function sourceToScriptedVideo(args: unknown, services: SourceAuthoringSer
     });
     const scriptPath = join(storyboardDir, "scripted-video.json");
     const receiptPath = join(storyboardDir, "receipts", "source-storyboard.receipt.json");
+    const transaction = await OutputDirectoryTransaction.create(storyboardDir);
     const scriptBytes = Buffer.from(`${JSON.stringify(scripted, null, 2)}\n`, "utf8");
-    const inputHashes = { sourceMarkdown: hashBuffer(Buffer.from(markdown, "utf8")), source: source.sha256 };
+    const inputHashes = { sourceMarkdown: sourceSnapshot.sha256, source: source.sha256 };
     const output = {
       sourcePath,
       scriptPath,
@@ -195,9 +237,28 @@ async function sourceToScriptedVideo(args: unknown, services: SourceAuthoringSer
       artifacts,
       warnings: []
     };
-    await services.writeJson(scriptPath, scripted);
-    await services.writeJson(receiptPath, receipt);
-    const hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
+    try {
+      await services.writeJson(join(transaction.stagingPath, "scripted-video.json"), scripted);
+      await services.writeJson(join(transaction.stagingPath, "receipts", "source-storyboard.receipt.json"), receipt);
+      await transaction.assertCurrent();
+      await transaction.commit();
+      await transaction.assertPublishedCurrent();
+    } catch (error) {
+      await transaction.abort();
+      throw error;
+    }
+    let hostReceiptPath: string | undefined;
+    try {
+      hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
+    } catch (error) {
+      return sourceCommittedObserverFailure("source_storyboard_receipt_observer_failed", error, {
+        outputPath: storyboardDir,
+        receiptPath,
+        receipt,
+        artifacts,
+        output: { sourcePath, scriptPath, frameCount: scripted.frames.length, reviewRequired: scripted.review.required, scripted }
+      });
+    }
     return {
       ok: true,
       receiptId: receipt.id,
@@ -226,8 +287,23 @@ async function sourceToScriptedVideo(args: unknown, services: SourceAuthoringSer
       warnings: []
     };
   } catch (error) {
-    return commandFailure("source_storyboard_failed", error);
+    return sourceAuthoringCommandFailure("source_storyboard_failed", error);
   }
+}
+
+export async function readApprovedSourceMarkdown(
+  path: string,
+  roots: string[] | undefined,
+): Promise<{ text: string; sha256: string }> {
+  await assertConfiguredAuthoringInputFile(path, roots, "Source Markdown");
+  const lexical = resolve(path);
+  const approvedRoot = configuredAuthoringInputRoot(lexical, roots, "Source Markdown");
+  const snapshot = await readBoundedStableFile(lexical, {
+    label: "Source Markdown",
+    maxBytes: DEFAULT_HOST_INTERCHANGE_LIMITS.maxFileBytes,
+    withinRoot: approvedRoot,
+  });
+  return { text: snapshot.bytes.toString("utf8"), sha256: snapshot.sha256 };
 }
 
 function readSourceImportKind(value: string | undefined): SourceImportKind | undefined | false {
@@ -245,8 +321,4 @@ function capabilityUnavailable(message: string): MotionDebugResult {
     error: { code: "capability_unavailable", message, suggestedAction: "Configure the required host capability and retry." },
     warnings: []
   };
-}
-
-function commandFailure(code: string, error: unknown): MotionDebugResult {
-  return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] };
 }

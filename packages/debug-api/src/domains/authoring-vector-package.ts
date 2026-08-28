@@ -23,6 +23,7 @@ import {
   type PackageManifest
 } from "@shellx-motion/core";
 import { commitNewPackage } from "./package-edit-transaction.js";
+import { assertPreparedStaticVectorSource, staticVectorPreparedFiles, type PreparedStaticVectorSource } from "./authoring-vector-prepared.js";
 
 const MAX_VECTOR_SOURCE_BYTES = 16 * 1024 * 1024;
 const MAX_BINARY_VECTOR_SOURCE_BYTES = 32 * 1024 * 1024;
@@ -62,7 +63,6 @@ export interface StaticVectorLoweringResult {
   diagnostics: AdapterDiagnosticResult;
   receipt: OperationReceipt;
 }
-
 export interface StaticVectorPackageDefinition {
   adapterId: string;
   formatLabel: string;
@@ -72,19 +72,11 @@ export interface StaticVectorPackageDefinition {
   lower: (input: AdapterDiagnosticInput & { createdBy?: string }) => StaticVectorLoweringResult;
   prepareSource?: (bytes: Buffer) => PreparedStaticVectorSource;
   maxSourceBytes?: number;
+  packageCompatibility?: (lowering: StaticVectorLoweringResult) => PackageManifest["compatibility"];
+  augmentPrepared?: (input: { packageId: string; prepared: PreparedStaticVectorSource; lowering: StaticVectorLoweringResult }) => void;
+  validateAugmentedPackage?: (packageRoot: string) => Promise<void>;
 }
-
-export interface PreparedStaticVectorSource {
-  primaryPath: string;
-  primarySha256: string;
-  loweringPath: string;
-  loweringText: string;
-  files: Array<{ path: string; bytes: Uint8Array; sha256: string }>;
-  /** Package-visible media paths required by the lowered Motion document. */
-  manifestAssets?: string[];
-  manifestData?: Record<string, unknown>;
-}
-
+export type { PreparedStaticVectorSource } from "./authoring-vector-prepared.js";
 interface StagedVectorPackage {
   manifest: PackageManifest;
   lowering: StaticVectorLoweringResult;
@@ -94,6 +86,14 @@ interface StagedVectorPackage {
 interface ApprovedRoot {
   lexical: string;
   canonical: string;
+}
+
+function lottieGpuPrecompositionCompatibility(lowering: StaticVectorLoweringResult): PackageManifest["compatibility"] | undefined {
+  const output = lowering.receipt.output;
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return undefined;
+  const gpuPrecomposition = (output as Record<string, unknown>).lottieGpuPrecomposition;
+  if (typeof gpuPrecomposition !== "object" || gpuPrecomposition === null || Array.isArray(gpuPrecomposition)) return undefined;
+  return { lanes: ["gpu"], hosts: ["shellx-motion"] };
 }
 
 /**
@@ -127,7 +127,7 @@ export async function writeStaticVectorPackage(
   const prepared = definition.prepareSource
     ? definition.prepareSource(source.bytes)
     : defaultPreparedSource(source.bytes, portableSourcePath, definition.formatLabel);
-  assertPreparedSource(prepared, definition.formatLabel);
+  assertPreparedStaticVectorSource(prepared, definition.formatLabel);
   const packageId = `${definition.packagePrefix}_${prepared.primarySha256.slice(0, 16)}`;
   const lowering = definition.lower({
     adapterId: definition.adapterId,
@@ -143,6 +143,7 @@ export async function writeStaticVectorPackage(
     || lowering.source.sha256 !== loweringFile?.sha256) {
     throw new Error(`${definition.formatLabel} lowering provenance does not match the stable source bytes.`);
   }
+  definition.augmentPrepared?.({ packageId, prepared, lowering }); assertPreparedStaticVectorSource(prepared, definition.formatLabel);
 
   const diagnosticsReceiptPath = "receipts/adapter-diagnostics.receipt.json";
   const loweringReceiptPath = "receipts/adapter-lowering.receipt.json";
@@ -153,10 +154,15 @@ export async function writeStaticVectorPackage(
     motion: "motion.json",
     assets: prepared.manifestAssets ?? [],
     sourceApp: definition.sourceApp,
-    compatibility: {
-      lanes: ["browser", "ffmpeg", "cut"],
-      hosts: ["shellx-motion", "shellx-canvas", "shellx-cut"]
-    },
+    // A `ty:0` Lottie precomposition uses the persistent GPU group compositor.
+    // Browser deliberately refuses group layers, so the lowering receipt is
+    // authoritative over the generic vector compatibility default.
+    compatibility: lottieGpuPrecompositionCompatibility(lowering)
+      ?? definition.packageCompatibility?.(lowering)
+      ?? {
+        lanes: ["browser", "ffmpeg", "cut"],
+        hosts: ["shellx-motion", "shellx-canvas", "shellx-cut"]
+      },
     data: {
       adapter: {
         ...(prepared.manifestData ?? {}),
@@ -184,7 +190,7 @@ export async function writeStaticVectorPackage(
       await writePrivateJson(join(stagedRoot, "manifest.json"), manifest);
       await writePrivateJson(join(stagedRoot, "motion.json"), lowering.motion);
       // Preserve every prepared input byte-for-byte under validated package paths.
-      for (const file of prepared.files) {
+      for (const file of staticVectorPreparedFiles(prepared)) {
         await mkdir(dirname(join(stagedRoot, file.path)), { recursive: true, mode: 0o700 });
         await writePrivateBytes(join(stagedRoot, file.path), file.bytes);
       }
@@ -265,7 +271,7 @@ async function validateStagedVectorPackage(
   const diagnosticsReceiptPath = "receipts/adapter-diagnostics.receipt.json";
   const loweringReceiptPath = "receipts/adapter-lowering.receipt.json";
   const [fileHashes, motionHash, diagnosticsReceipt, loweringReceipt] = await Promise.all([
-    Promise.all(staged.prepared.files.map(async (file) => ({ file, hash: await hashPackageFile(join(stagedRoot, file.path)) }))),
+    Promise.all(staticVectorPreparedFiles(staged.prepared).map(async (file) => ({ file, hash: await hashPackageFile(join(stagedRoot, file.path)) }))),
     hashPackageFile(join(stagedRoot, pkg.manifest.motion)),
     readStableReceipt(join(stagedRoot, diagnosticsReceiptPath)),
     readStableReceipt(join(stagedRoot, loweringReceiptPath))
@@ -302,7 +308,7 @@ async function validateStagedVectorPackage(
     throw new Error("Staged Motion bytes do not match the lowering receipt.");
   }
   assertReceiptIdentity(diagnosticsReceipt, staged.lowering.diagnostics, staged.lowering.source.sha256, definition.formatLabel);
-  assertReceiptIdentity(loweringReceipt, staged.lowering, staged.lowering.source.sha256, definition.formatLabel);
+  assertReceiptIdentity(loweringReceipt, staged.lowering, staged.lowering.source.sha256, definition.formatLabel); await definition.validateAugmentedPackage?.(stagedRoot);
 }
 
 function assertReceiptIdentity(
@@ -437,33 +443,6 @@ function defaultPreparedSource(bytes: Buffer, path: string, formatLabel: string)
     loweringText: text,
     files: [{ path, bytes, sha256 }]
   };
-}
-
-function assertPreparedSource(prepared: PreparedStaticVectorSource, formatLabel: string): void {
-  if (prepared.files.length === 0 || prepared.files.length > 256) throw new Error(`${formatLabel} prepared source file count is invalid.`);
-  const seen = new Set<string>();
-  for (const file of prepared.files) {
-    if (!/^(?:source|assets)\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(file.path)
-      || file.path.includes("\\")
-      || file.path.split("/").some((part) => part === "." || part === ".." || part === "")) {
-      throw new Error(`${formatLabel} prepared source path is unsafe.`);
-    }
-    const key = file.path.normalize("NFC").toLocaleLowerCase("en-US");
-    if (seen.has(key)) throw new Error(`${formatLabel} prepared source paths are duplicated.`);
-    seen.add(key);
-    if (hashBuffer(Buffer.from(file.bytes)) !== file.sha256) throw new Error(`${formatLabel} prepared source hash does not match its bytes.`);
-  }
-  const primary = prepared.files.find((file) => file.path === prepared.primaryPath);
-  const lowering = prepared.files.find((file) => file.path === prepared.loweringPath);
-  if (!primary || primary.sha256 !== prepared.primarySha256 || !lowering) throw new Error(`${formatLabel} prepared source identity is incomplete.`);
-  if (hashBuffer(Buffer.from(prepared.loweringText, "utf8")) !== lowering.sha256) throw new Error(`${formatLabel} lowering text does not match preserved bytes.`);
-  const manifestAssets = prepared.manifestAssets ?? [];
-  if (manifestAssets.length > 254 || new Set(manifestAssets).size !== manifestAssets.length) throw new Error(`${formatLabel} prepared manifest assets are invalid.`);
-  for (const assetPath of manifestAssets) {
-    if (!assetPath.startsWith("assets/") || !prepared.files.some((file) => file.path === assetPath)) {
-      throw new Error(`${formatLabel} prepared manifest asset ${assetPath} is not backed by prepared bytes.`);
-    }
-  }
 }
 
 function decodeStableUtf8(bytes: Uint8Array, label: string): string {

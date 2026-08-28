@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createMotionDensityAccumulator,
+  MAX_MOTION_DENSITY_REPORTED_RANGES,
   resolveMotionDensityPolicy,
   roundMotionValue,
   type MotionDensityComplete,
@@ -31,6 +32,17 @@ function onePixelFrame(base: [number, number, number], pixel: [number, number, n
   frame.rgba[0] = pixel[0];
   frame.rgba[1] = pixel[1];
   frame.rgba[2] = pixel[2];
+  return frame;
+}
+
+function thinLineFrame(size = 128, changedPixels = 20): MotionDensityFrame {
+  const frame = solidFrame([0, 0, 0], 255, size);
+  for (let index = 0; index < changedPixels; index += 1) {
+    const offset = index * 4;
+    frame.rgba[offset] = 255;
+    frame.rgba[offset + 1] = 255;
+    frame.rgba[offset + 2] = 255;
+  }
   return frame;
 }
 
@@ -102,13 +114,43 @@ describe("motion density measurement", () => {
     expect(report.longestFrozenMs).toBe(2000);
   });
 
-  it("counts a change smaller than the noise floor as still, and one above it as movement", () => {
+  it("counts a change as still only when both calibrated signals are quiet", () => {
     // One pixel of 64 changing by 255 is a mean absolute difference of about 0.0125 across the
     // planes — above the 0.003 default. The same change at a 0.05 threshold is below it.
     const frames = [solidFrame([0, 0, 0]), onePixelFrame([0, 0, 0], [255, 255, 255])];
 
     expect(complete(analyze(frames, { durationMs: 100 })).stillComparisons).toBe(0);
-    expect(complete(analyze(frames, { durationMs: 100, policy: { noiseThreshold: 0.05 } })).stillComparisons).toBe(1);
+    expect(complete(analyze(frames, {
+      durationMs: 100,
+      policy: { noiseThreshold: 0.05, changedPixelRatio: 0.02 }
+    })).stillComparisons).toBe(1);
+  });
+
+  it("recognizes thin graphic motion even when whole-frame mean difference is quiet", () => {
+    const frames = [solidFrame([0, 0, 0], 255, 128), thinLineFrame()];
+    const report = complete(analyze(frames, { durationMs: 100 }));
+
+    expect(report.maxFrameDifference).toBeLessThan(report.policy.noiseThreshold);
+    expect(report.maxChangedPixelRatio).toBeGreaterThan(report.policy.changedPixelRatio);
+    expect(report.stillComparisons).toBe(0);
+  });
+
+  it("does not treat one changed high-resolution pixel as meaningful motion", () => {
+    const frames = [solidFrame([0, 0, 0], 255, 128), onePixelFrame([0, 0, 0], [255, 255, 255], 128)];
+    const report = complete(analyze(frames, { durationMs: 100 }));
+
+    expect(report.maxFrameDifference).toBeLessThan(report.policy.noiseThreshold);
+    expect(report.maxChangedPixelRatio).toBeLessThan(report.policy.changedPixelRatio);
+    expect(report.stillComparisons).toBe(1);
+  });
+
+  it("measures changed pixels between adjacent frames rather than accumulating their area", () => {
+    const frames = [solidFrame([0, 0, 0], 255, 128), thinLineFrame(128, 10), thinLineFrame(128, 20)];
+    const report = complete(analyze(frames, { durationMs: 100 }));
+
+    expect(report.maxFrameDifference).toBeLessThan(report.policy.noiseThreshold);
+    expect(report.maxChangedPixelRatio).toBeLessThan(report.policy.changedPixelRatio);
+    expect(report.stillComparisons).toBe(2);
   });
 
   it("measures a hue change at constant luma as real movement", () => {
@@ -292,7 +334,10 @@ describe("motion density determinism", () => {
   it("rounds every measured value to a fixed number of decimals", () => {
     const report = complete(analyze([solidFrame([0, 0, 0]), solidFrame([1, 1, 1]), solidFrame([90, 3, 200])], { durationMs: 100 }));
 
-    for (const value of [report.frozenRatio, report.meanFrameDifference, report.maxFrameDifference]) {
+    for (const value of [
+      report.frozenRatio, report.meanFrameDifference, report.maxFrameDifference,
+      report.meanChangedPixelRatio, report.maxChangedPixelRatio
+    ]) {
       expect(value).toBe(roundMotionValue(value));
       expect(String(value).replace(/^-?\d*\.?/, "").length).toBeLessThanOrEqual(6);
     }
@@ -310,6 +355,8 @@ describe("motion density determinism", () => {
   it("falls back to documented defaults for missing or nonsensical policy values", () => {
     expect(resolveMotionDensityPolicy({})).toEqual({
       noiseThreshold: 0.003,
+      changedPixelDelta: 2,
+      changedPixelRatio: 0.001,
       minFrozenMs: 300,
       warnFrozenRatio: 0.25,
       warnLongestFrozenMs: 2000,
@@ -331,7 +378,33 @@ describe("motion density determinism", () => {
     const report = complete(analyze(frames, { durationMs: 4333, policy: { maxReportedRanges: 3 } }));
 
     expect(report.frozenRanges).toHaveLength(3);
+    expect(report.frozenRanges.map((range) => range.startMs)).toEqual([0, 433, 867]);
     expect(report.omittedRanges).toBeGreaterThan(0);
     expect(motionDensityWarnings(report)[0]).toContain(`(+${report.omittedRanges} shorter)`);
+  });
+
+  it("clamps caller range capacity and keeps a long alternating render at a fixed top-K", () => {
+    const frames: MotionDensityFrame[] = [];
+    for (let block = 0; block < MAX_MOTION_DENSITY_REPORTED_RANGES + 20; block += 1) {
+      for (let repeat = 0; repeat < 10; repeat += 1) frames.push(solidFrame([(block * 2) % 255, 30, 30]));
+      frames.push(solidFrame([(block * 2 + 120) % 255, 200, 30]));
+    }
+    const report = complete(analyze(frames, {
+      durationMs: frames.length * 100,
+      fps: 10,
+      policy: { minFrozenMs: 300, maxReportedRanges: Number.MAX_SAFE_INTEGER }
+    }));
+
+    expect(report.policy.maxReportedRanges).toBe(MAX_MOTION_DENSITY_REPORTED_RANGES);
+    expect(report.frozenRanges).toHaveLength(MAX_MOTION_DENSITY_REPORTED_RANGES);
+    expect(report.omittedRanges).toBeGreaterThan(0);
+  });
+
+  it("caches a complete result when finish is called again", () => {
+    const accumulator = createMotionDensityAccumulator();
+    accumulator.observe(solidFrame([10, 10, 10]), 0);
+    accumulator.observe(solidFrame([10, 10, 10]), 1_000);
+    const first = accumulator.finish({ durationMs: 2_000, coverage: "complete" });
+    expect(accumulator.finish({ durationMs: 2_000, coverage: "complete" })).toEqual(first);
   });
 });

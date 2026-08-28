@@ -229,6 +229,7 @@ export function buildWorkflowPlan(input: WorkflowPlanInput): MotionActionPlan {
     steps,
     verify: [...new Set([...phaseActions.flatMap((action) => action.verify), ...input.verificationForCalls(workflow.calls)])],
     cautions,
+    examples: [],
     // The other phases, rather than an arbitrary slice of the catalog: these are the actions whose
     // aliases and verify lists explain the steps the agent is about to run.
     related: phaseActions.slice(1),

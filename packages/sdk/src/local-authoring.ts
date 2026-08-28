@@ -4,6 +4,8 @@ import { createLocalCompositingOperations } from "./local-compositing.js";
 import { createLocalGltfOperations } from "./local-gltf.js";
 import { createLocalKeyingOperations } from "./local-keying.js";
 import { createLocalProceduralOperations } from "./local-procedural.js";
+import { createLocalAudioOperations } from "./local-audio.js";
+import { createLocalCutoutRigOperations } from "./local-cutout-rig.js";
 import type { MotionSdkPackageIdentity } from "./types.js";
 
 interface LocalAuthoringRuntime {
@@ -22,5 +24,7 @@ export function createLocalAuthoringOperations(runtime: LocalAuthoringRuntime) {
     compositing: createLocalCompositingOperations(runtime),
     gltf: createLocalGltfOperations(runtime),
     procedural: createLocalProceduralOperations(runtime),
+    audio: createLocalAudioOperations(runtime),
+    cutoutRig: createLocalCutoutRigOperations(runtime),
   };
 }

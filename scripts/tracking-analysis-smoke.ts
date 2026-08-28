@@ -5,8 +5,10 @@ import { analyzeTrackingMedia } from "../packages/analysis-tracking/src/index";
 import { dispatchDebugCommand } from "../packages/debug-api/src/index";
 import { createGovernedFfmpegRunner, resolveFfmpegExecutable } from "../packages/renderer-ffmpeg/src/index";
 import { createLocalMotionSdk } from "../packages/sdk/src/local";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "../packages/core/src/output-path-trusted-workspace";
+import { renderingSamplesProofRoot } from "./rendering-samples-proof-root";
 
-const root = resolve(".scratch/tracking-analysis-smoke");
+const root = renderingSamplesProofRoot(".scratch/tracking-analysis-smoke");
 const sourcePath = resolve(root, "moving-marker.mkv");
 const sourceFramesPath = resolve(root, "moving-marker.gray");
 const receiptPath = resolve(root, "tracking-analysis.receipt.json");
@@ -17,8 +19,10 @@ const detachedPackageRoot = resolve(root, "detached-package");
 const sdkTrackedPackageRoot = resolve(root, "sdk-tracked-package");
 const sdkStabilizedPackageRoot = resolve(root, "sdk-stabilized-package");
 const sdkDetachedPackageRoot = resolve(root, "sdk-detached-package");
+const authoringContext = { authoringInputRoots: [root], authoringOutputRoots: [root] };
 await rm(root, { recursive: true, force: true });
 await mkdir(root, { recursive: true });
+const workspaceAuthority = await createTrustedWorkspaceAnchor(root);
 await writeFile(sourceFramesPath, Buffer.concat([
   syntheticLumaFrame(64, 48, 11, 11),
   syntheticLumaFrame(64, 48, 14, 13),
@@ -51,6 +55,7 @@ const result = await analyzeTrackingMedia({
   id: "smoke_point_translation",
   assetId: "moving_marker",
   sourcePath,
+  inputRoot: root,
   mode: "point",
   model: "translation",
   reference: {
@@ -120,7 +125,7 @@ await writeJson(resolve(sourcePackageRoot, "motion.json"), {
   provenance: { sourceApp: "shellx-motion-smoke", createdBy: "tracking-smoke" },
 });
 
-const workflowRequest = await dispatchDebugCommand("motion.analysis.tracking.request", {
+const workflowRequest = await inWorkspace(async () => await dispatchDebugCommand("motion.analysis.tracking.request", {
   packageRoot: sourcePackageRoot,
   outDir: trackedPackageRoot,
   analysisId: "workflow_point_translation",
@@ -133,35 +138,35 @@ const workflowRequest = await dispatchDebugCommand("motion.analysis.tracking.req
     pyramidLevels: 2, maxIterations: 20, confidenceFloor: 0.55, deterministicSeed: 20260714,
   },
   createdAt: "2026-07-14T00:00:00.000Z",
-}, { tier: "write_local", scratchRoot: resolve(root, "workflow-scratch") });
+}, { tier: "write_local", scratchRoot: resolve(root, "workflow-scratch"), ...authoringContext }));
 assert(workflowRequest.ok, `tracking debug request failed: ${JSON.stringify(workflowRequest)}`);
-const workflowInspect = await dispatchDebugCommand("motion.analysis.tracking.inspect", {
+const workflowInspect = await inWorkspace(async () => await dispatchDebugCommand("motion.analysis.tracking.inspect", {
   packageRoot: trackedPackageRoot,
   analysisId: "workflow_point_translation",
-}, { tier: "read_motion" });
+}, { tier: "read_motion", ...authoringContext }));
 assert(workflowInspect.ok && record(workflowInspect.result)?.current === true, `tracking debug inspect failed: ${JSON.stringify(workflowInspect)}`);
-const workflowApply = await dispatchDebugCommand("motion.analysis.tracking.apply", {
+const workflowApply = await inWorkspace(async () => await dispatchDebugCommand("motion.analysis.tracking.apply", {
   packageRoot: trackedPackageRoot,
   outDir: stabilizedPackageRoot,
   analysisId: "workflow_point_translation",
   layerId: "footage",
-}, { tier: "edit_motion" });
+}, { tier: "edit_motion", ...authoringContext }));
 assert(workflowApply.ok, `tracking debug apply failed: ${JSON.stringify(workflowApply)}`);
-const workflowVerify = await dispatchDebugCommand("motion.analysis.tracking.verify", {
+const workflowVerify = await inWorkspace(async () => await dispatchDebugCommand("motion.analysis.tracking.verify", {
   packageRoot: stabilizedPackageRoot,
   layerId: "footage",
   analysisId: "workflow_point_translation",
-}, { tier: "read_motion" });
+}, { tier: "read_motion", ...authoringContext }));
 assert(workflowVerify.ok && record(record(workflowVerify.result)?.verification)?.current === true, `tracking debug verify failed: ${JSON.stringify(workflowVerify)}`);
-const workflowDetach = await dispatchDebugCommand("motion.analysis.tracking.detach", {
+const workflowDetach = await inWorkspace(async () => await dispatchDebugCommand("motion.analysis.tracking.detach", {
   packageRoot: stabilizedPackageRoot,
   outDir: detachedPackageRoot,
   layerId: "footage",
-}, { tier: "edit_motion" });
+}, { tier: "edit_motion", ...authoringContext }));
 assert(workflowDetach.ok && record(workflowDetach.result)?.restoredPreviousKeyframes === true, `tracking debug detach failed: ${JSON.stringify(workflowDetach)}`);
 
-const sdk = createLocalMotionSdk();
-const sdkRequest = await sdk.trackingRequest({
+const sdk = createLocalMotionSdk(authoringContext);
+const sdkRequest = await inWorkspace(async () => await sdk.trackingRequest({
   packageRoot: sourcePackageRoot,
   outDir: sdkTrackedPackageRoot,
   analysisId: "sdk_point_translation",
@@ -174,31 +179,31 @@ const sdkRequest = await sdk.trackingRequest({
     pyramidLevels: 2, maxIterations: 20, confidenceFloor: 0.55, deterministicSeed: 20260714,
   },
   createdAt: "2026-07-14T00:00:00.000Z",
-});
+}));
 assert(sdkRequest.ok, `tracking SDK request failed: ${JSON.stringify(sdkRequest)}`);
 assert.equal(sdkRequest.output.lifecycle.lastGood?.samples.total, 3);
 assert.equal(sdkRequest.output.lifecycle.lastGood?.segments.length, 1);
 assert(!JSON.stringify(sdkRequest.output).includes("implementationSha256"), "tracking SDK output must omit full solver/sample matrices");
-const sdkInspect = await sdk.trackingInspect({ packageRoot: sdkTrackedPackageRoot, analysisId: "sdk_point_translation" });
+const sdkInspect = await inWorkspace(async () => await sdk.trackingInspect({ packageRoot: sdkTrackedPackageRoot, analysisId: "sdk_point_translation" }));
 assert(sdkInspect.ok && sdkInspect.output.current, `tracking SDK inspect failed: ${JSON.stringify(sdkInspect)}`);
-const sdkApply = await sdk.trackingApply({
+const sdkApply = await inWorkspace(async () => await sdk.trackingApply({
   packageRoot: sdkTrackedPackageRoot,
   outDir: sdkStabilizedPackageRoot,
   analysisId: "sdk_point_translation",
   layerId: "footage",
-});
+}));
 assert(sdkApply.ok && sdkApply.output.segment.index === 0, `tracking SDK apply failed: ${JSON.stringify(sdkApply)}`);
-const sdkVerify = await sdk.trackingVerify({
+const sdkVerify = await inWorkspace(async () => await sdk.trackingVerify({
   packageRoot: sdkStabilizedPackageRoot,
   layerId: "footage",
   analysisId: "sdk_point_translation",
-});
+}));
 assert(sdkVerify.ok && sdkVerify.output.verification.current, `tracking SDK verify failed: ${JSON.stringify(sdkVerify)}`);
-const sdkDetach = await sdk.trackingDetach({
+const sdkDetach = await inWorkspace(async () => await sdk.trackingDetach({
   packageRoot: sdkStabilizedPackageRoot,
   outDir: sdkDetachedPackageRoot,
   layerId: "footage",
-});
+}));
 assert(sdkDetach.ok && sdkDetach.output.restoredPreviousKeyframes, `tracking SDK detach failed: ${JSON.stringify(sdkDetach)}`);
 
 const smokeReceipt = {
@@ -252,4 +257,8 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+async function inWorkspace<T>(operation: () => Promise<T>): Promise<T> {
+  return await withTrustedWorkspaceAnchor(workspaceAuthority, operation);
 }

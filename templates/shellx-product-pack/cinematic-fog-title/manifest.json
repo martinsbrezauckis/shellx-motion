@@ -4,10 +4,14 @@
   "name": "ShellX Cinematic Fog Title",
   "motion": "motion.json",
   "template": "template.json",
-  "assets": ["assets/samples/alpine-dawn.svg"],
+  "assets": [
+    "assets/samples/alpine-dawn.svg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-800-normal.woff2"
+  ],
   "sourceApp": "shellx-motion",
   "compatibility": {
-    "lanes": ["browser", "ffmpeg"],
+    "lanes": ["browser", "ffmpeg", "gpu"],
     "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
   },
   "workflow": "template-pack-cinematic-fog-title"

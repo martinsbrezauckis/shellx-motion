@@ -19,6 +19,7 @@ import type { MotionPermissionTier } from "@shellx-motion/actions";
 import {
   listMotionAnimationPresets,
   listMotionEasingPresets,
+  listTransitionPresets,
   MOTION_EXPORT_PRESETS,
   NAMED_EASINGS_LIST,
   readSupportedTransitionType,
@@ -95,6 +96,10 @@ export const MOTION_DEBUG_ARG_ENUMS: Readonly<Record<string, MotionDebugArgEnum>
   animationPreset: {
     values: listMotionAnimationPresets().map((preset) => preset.id),
     description: "Animation preset ids accepted by motion.timeline.animation.preset.apply."
+  },
+  transitionPreset: {
+    values: listTransitionPresets().map((preset) => preset.id),
+    description: "Transition preset ids accepted by motion.timeline.transition.preset.apply."
   },
   exportPreset: {
     values: [...MOTION_EXPORT_PRESETS],

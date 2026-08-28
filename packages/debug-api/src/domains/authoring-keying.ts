@@ -26,6 +26,8 @@ import { commitMotionDocumentEdit, PackageEditTransactionError } from "./package
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export interface KeyingAuthoringServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
@@ -119,6 +121,8 @@ async function mutate(
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg,
       outputRoot,
+      authoringInputRoots: services.authoringInputRoots!,
+      authoringOutputRoots: services.authoringOutputRoots!,
       patchedMotion: edit.motion,
       receipt,
       receiptFileName,

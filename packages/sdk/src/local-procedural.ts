@@ -15,6 +15,7 @@ import type {
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
   MotionSdkPackageIdentity,
+  MotionSdkProceduralAudioEnvelopeProduceRequest,
   MotionSdkProceduralBakeRequest,
   MotionSdkProceduralDetachRequest,
   MotionSdkProceduralEnabledRequest,
@@ -27,6 +28,7 @@ import type {
 } from "./types.js";
 import { verifyPersistedReceipt } from "./local-receipt.js";
 import { LocalMotionSdkError } from "./local-result.js";
+import { produceLocalProceduralAudioEnvelope } from "./local-procedural-audio-envelope.js";
 
 interface LocalProceduralRuntime {
   executeDebug(
@@ -50,6 +52,7 @@ export function createLocalProceduralOperations(runtime: LocalProceduralRuntime)
     setEnabled: (input: MotionSdkProceduralEnabledRequest) => mutate("enabled.set", input, runtime),
     bake: (input: MotionSdkProceduralBakeRequest) => mutate("bake", input, runtime),
     detach: (input: MotionSdkProceduralDetachRequest) => mutate("detach", input, runtime),
+    produceAudioEnvelope: (input: MotionSdkProceduralAudioEnvelopeProduceRequest) => produceLocalProceduralAudioEnvelope(input, runtime),
   };
 }
 

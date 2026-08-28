@@ -37,7 +37,8 @@ export function motionDensityWarnings(report: MotionDensityReport): string[] {
       return [
         `Preview strip saw no visible change across ${report.stillComparisons} of ${report.comparisons} sampled intervals`
         + ` (${report.frameCount} frames every ${formatSeconds(report.sampleIntervalMs)}s; mean absolute frame difference`
-        + ` <= ${formatDifference(report.policy.noiseThreshold)} against the first unchanged frame).`
+        + ` <= ${formatDifference(report.policy.noiseThreshold)} against the first unchanged frame and adjacent changed-pixel ratio`
+        + ` <= ${formatDifference(report.policy.changedPixelRatio)}).`
         + " This is sampled evidence, not a full-render measurement: raise frameCount or render to confirm."
       ];
     }
@@ -49,7 +50,8 @@ export function motionDensityWarnings(report: MotionDensityReport): string[] {
       + ` (${formatSeconds(report.frozenMs)}s of ${formatSeconds(report.durationMs)}s across ${report.frozenRunCount}`
       + ` frozen ${report.frozenRunCount === 1 ? "run" : "runs"}, longest ${formatSeconds(report.longestFrozenMs)}s).`
       + ` ${formatRanges(report)} Verify this is intentional;`
-      + ` measured as mean absolute frame difference <= ${formatDifference(report.policy.noiseThreshold)} over runs of at least ${formatSeconds(report.policy.minFrozenMs)}s.`
+      + ` measured when reference-frame mean absolute difference <= ${formatDifference(report.policy.noiseThreshold)}`
+      + ` and adjacent changed-pixel ratio <= ${formatDifference(report.policy.changedPixelRatio)} over runs of at least ${formatSeconds(report.policy.minFrozenMs)}s.`
     ];
   }
   if (report.longestFrozenSpanMs >= report.policy.warnLongestFrozenMs) {

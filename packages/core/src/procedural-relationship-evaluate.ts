@@ -3,6 +3,8 @@ import { plainRecord } from "./compositing-graph-safety";
 import { validateMotionProceduralGraph } from "./procedural-relationship-validate";
 import {
   MAX_PROCEDURAL_ABS_VALUE,
+  MAX_PROCEDURAL_TRIG_INPUT_RADIANS,
+  PROCEDURAL_VALUE_DECIMALS,
   type MotionProceduralAudioEnvelope,
   type MotionProceduralGraph,
   type MotionProceduralNode,
@@ -115,6 +117,7 @@ function evaluateNode(
   else if (node.type === "audio-envelope") output = sampleEnvelope(envelopes.get(node.envelopeId)!, atMs);
   else if (node.type === "abs") output = Math.abs(requireValue(values, node.input));
   else if (node.type === "negate") output = -requireValue(values, node.input);
+  else if (node.type === "sin" || node.type === "cos") output = evaluateTrig(node.type, node.id, requireValue(values, node.input));
   else if (node.type === "add") output = requireValue(values, node.left) + requireValue(values, node.right);
   else if (node.type === "subtract") output = requireValue(values, node.left) - requireValue(values, node.right);
   else if (node.type === "multiply") output = requireValue(values, node.left) * requireValue(values, node.right);
@@ -186,6 +189,18 @@ function requireValue(values: Map<string, number>, id: string): number {
   if (value === undefined) throw new Error(`Procedural node input ${id} is unavailable.`);
   return value;
 }
-function quantize(value: number): number { const result = Number(value.toFixed(6)); return Object.is(result, -0) ? 0 : result; }
+/** Stable observable/baked scalar rule: finite values are rounded to six decimals and -0 becomes 0. */
+export function quantizeMotionProceduralValue(value: number): number {
+  const result = Number(value.toFixed(PROCEDURAL_VALUE_DECIMALS));
+  return Object.is(result, -0) ? 0 : result;
+}
+function quantize(value: number): number { return quantizeMotionProceduralValue(value); }
+function evaluateTrig(type: "sin" | "cos", id: string, input: number): number {
+  if (!Number.isFinite(input) || Math.abs(input) > MAX_PROCEDURAL_TRIG_INPUT_RADIANS) {
+    throw new Error(`Procedural ${type} node ${id} requires finite radians within +/-${MAX_PROCEDURAL_TRIG_INPUT_RADIANS}.`);
+  }
+  const radians = quantizeMotionProceduralValue(input);
+  return type === "sin" ? Math.sin(radians) : Math.cos(radians);
+}
 function finite(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }

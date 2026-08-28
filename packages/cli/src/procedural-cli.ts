@@ -1,6 +1,6 @@
 import type { MotionDebugCommand } from "@shellx-motion/debug-api";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export const PROCEDURAL_DEBUG_COMMANDS = {
   "procedural-inspect": "motion.procedural.inspect",
@@ -9,6 +9,25 @@ export const PROCEDURAL_DEBUG_COMMANDS = {
   "procedural-bake": "motion.procedural.relationship.bake",
   "procedural-detach": "motion.procedural.relationship.detach",
 } as const satisfies Record<string, MotionDebugCommand>;
+
+/**
+ * The direct CLI is its own local host. It derives the narrow package and
+ * revision parents from its typed procedural arguments; Debug/MCP callers do
+ * not use this helper and must still receive roots from their embedding host.
+ */
+export function proceduralAuthoringRoots(
+  command: MotionDebugCommand,
+  args: unknown,
+): { inputRoots: string[]; outputRoots: string[] } | null {
+  if (!Object.values(PROCEDURAL_DEBUG_COMMANDS).includes(command as never) || !isRecord(args)
+    || typeof args.packageRoot !== "string" || !args.packageRoot || args.packageRoot.includes("\0")) return null;
+  const inputRoot = dirname(resolve(args.packageRoot));
+  if (command === "motion.procedural.inspect") {
+    return { inputRoots: [inputRoot], outputRoots: [inputRoot] };
+  }
+  if (typeof args.outDir !== "string" || !args.outDir || args.outDir.includes("\0")) return null;
+  return { inputRoots: [inputRoot], outputRoots: [dirname(resolve(args.outDir))] };
+}
 
 export async function proceduralDebugArgs(
   command: MotionDebugCommand,
@@ -69,4 +88,8 @@ function booleanChoice(argv: string[], positive: string, negative: string): bool
 function commaList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

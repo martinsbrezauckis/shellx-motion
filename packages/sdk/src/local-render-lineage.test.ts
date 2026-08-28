@@ -6,6 +6,7 @@ import {
   attestArtifactReceipt,
   createAttestedArtifactHandle,
   hashBuffer,
+  OutputDirectoryReservation,
   writeAttestedArtifactHandle,
   type OperationReceipt,
 } from "@shellx-motion/core";
@@ -49,7 +50,7 @@ describe("local render lineage", () => {
     const artifactPath = join(artifactRoot, "output.png");
     const receiptPath = join(artifactRoot, "receipts", "render.receipt.json");
     const descriptorPath = join(artifactRoot, "handles", "render.artifact.json");
-    await mkdir(dirname(receiptPath), { recursive: true });
+    await mkdir(dirname(receiptPath), { recursive: true, mode: 0o700 });
     await writeFile(artifactPath, PNG);
     const receipt: OperationReceipt = {
       schema: "shellx-motion/receipt@1",
@@ -80,9 +81,17 @@ describe("local render lineage", () => {
     await writeAttestedArtifactHandle(descriptorPath, handle);
     const cacheInput = {
       root: artifactRoot, path: descriptorPath, pkg, preset: "png",
+      expectedOutputPath: artifactPath,
       operationHash: OPERATION_HASH, sdkCacheKey: OPERATION_HASH, lineage,
+      authority: await OutputDirectoryReservation.acquire(artifactRoot, {
+        allowExistingContents: true,
+        requireExisting: true,
+        requireExclusiveChildAuthority: true
+      }),
     };
     await expect(readCachedRenderArtifact(cacheInput)).resolves.toMatchObject({ id: handle.id, packageLineage: lineage });
+    await expect(readCachedRenderArtifact({ ...cacheInput, expectedOutputPath: join(artifactRoot, "other.png") }))
+      .rejects.toThrow("does not match the requested outputPath");
 
     const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
     descriptor.packageLineage.motionSha256 = "f".repeat(64);

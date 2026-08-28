@@ -138,6 +138,10 @@ function installBrowserKeyingRuntime(maxPixels: number, version: typeof BROWSER_
     if (element instanceof HTMLCanvasElement) return element;
     if (!(element instanceof HTMLImageElement)) throw new Error("Keying supports only decoded image or frozen-video surfaces.");
     if (!element.complete || element.naturalWidth < 1) await element.decode();
+    const sourcePixels = element.naturalWidth * element.naturalHeight;
+    if (!Number.isSafeInteger(sourcePixels) || sourcePixels < 1 || sourcePixels > maxPixels) {
+      throw new Error(`Keying surface exceeds the ${maxPixels}-pixel budget.`);
+    }
     const canvas = document.createElement("canvas");
     canvas.width = element.naturalWidth;
     canvas.height = element.naturalHeight;

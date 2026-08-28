@@ -49,23 +49,34 @@
         </aside>
 
         <section class="edit-stage" aria-label="Motion workspace">
-          <section class="preview-region" aria-label="Preview monitor">
+          <section class="preview-region" id="previewRegion" aria-label="Browser preview monitor">
             <div class="preview-toolbar">
-              <div class="view-switch" role="group" aria-label="Preview background">
-                <button type="button" class="selected" data-stage="black">Black</button>
-                <button type="button" data-stage="neutral">Neutral</button>
+              <div class="preview-toolbar-controls">
+                <div class="view-switch" role="group" aria-label="Preview background">
+                  <button type="button" class="selected" data-stage="black">Black</button>
+                  <button type="button" data-stage="neutral">Neutral</button>
+                </div>
+                <div class="lane-switch" role="group" aria-label="Preview renderer" aria-describedby="previewControlsScrollHint">
+                  <span class="toolbar-label">Preview</span>
+                  <button type="button" class="selected" data-preview-lane="browser" aria-pressed="true">Browser</button>
+                  <button type="button" data-preview-lane="gpu" aria-pressed="false">GPU strict</button>
+                </div>
+                <span class="screen-reader-only" id="previewControlsScrollHint">On narrow screens, scroll this toolbar horizontally to reach all preview controls.</span>
               </div>
-              <span id="previewSize">— × —</span>
-              <button class="quiet-button compact" id="previewButton" type="button" disabled>Refresh frame</button>
+              <div class="preview-toolbar-actions">
+                <span class="compact-scroll-cue" aria-hidden="true">↔</span>
+                <span id="previewSize">— × —</span>
+                <button class="quiet-button compact" id="previewButton" type="button" disabled>Refresh frame</button>
+              </div>
             </div>
             <div class="preview-stage" id="previewStage" data-background="black">
-              <img id="previewImage" alt="Rendered Motion preview" hidden>
+              <img id="previewImage" alt="Browser-rendered Motion preview" hidden>
               <div class="stage-empty" id="stageEmpty">
                 <span class="stage-glyph" aria-hidden="true"></span>
                 <strong>Open a Motion package</strong>
                 <span>Preview frames render on this machine.</span>
               </div>
-              <div class="stage-progress" id="stageProgress" hidden><i></i><span>Rendering preview</span></div>
+              <div class="stage-progress" id="stageProgress" hidden aria-label="Rendering browser preview"><i></i><span>Rendering browser preview</span></div>
             </div>
             <div class="transport">
               <button class="transport-button" id="playButton" type="button" aria-label="Play" disabled>
@@ -115,6 +126,12 @@
               <div class="section-label">Diagnostics</div>
               <div id="diagnostics" class="diagnostics"><span class="diagnostic neutral">No diagnostics yet</span></div>
             </div>
+            <div class="inspector-section gpu-readiness" id="gpuReadiness" data-state="unverified" aria-live="polite">
+              <div class="section-label">GPU lane · source-only readiness</div>
+              <strong id="gpuReadinessLabel">GPU readiness has not been checked.</strong>
+              <span id="gpuReadinessDetail">This workbench does not infer a hardware adapter from a Chromium install or a prior render.</span>
+              <button class="quiet-button compact gpu-proof-button" id="gpuProofButton" type="button">Run active proof</button>
+            </div>
           </section>
           <section class="tab-panel" id="queuePanel" role="tabpanel" hidden>
             <div class="panel-toolbar"><strong>Render queue</strong><button class="quiet-button compact" type="button" data-refresh-panel="queue">Refresh</button></div>
@@ -152,9 +169,21 @@
         <label class="stacked-field" for="renderOutputPath">Save render to
           <span class="path-entry"><output id="renderOutputPath" class="path-display" data-path="" data-empty="true" aria-live="polite">Choose a destination</output><button class="quiet-button compact" id="renderOutputBrowse" type="button">Browse…</button></span>
         </label>
-        <label class="stacked-field" for="renderPreset">Preset<select id="renderPreset"><option value="mp4-h264">MP4 · H.264</option><option value="webm-vp9">WebM · VP9</option><option value="gif">Animated GIF</option><option value="png-frame">PNG still frame</option></select></label>
-        <label class="stacked-field" for="qualityManifestPath">Quality manifest <span class="optional">optional</span>
+        <label class="stacked-field" for="renderFrameLane">Frame renderer
+          <select id="renderFrameLane"><option value="browser">Browser</option><option value="gpu">GPU strict · streamed FFmpeg video</option></select>
+        </label>
+        <label class="stacked-field" for="renderPreset">Preset<select id="renderPreset"><option value="mp4-h264">MP4 · H.264</option><option value="webm-vp9">WebM · VP9</option><option value="webm-vp9-alpha">WebM · VP9 alpha</option><option value="mov-prores">MOV · ProRes 4444 alpha</option><option value="gif">Animated GIF</option><option value="png-frame">PNG still frame</option></select></label>
+        <div class="gate-field gpu-final-contract" id="gpuFinalContract" hidden role="note">
+          <strong>GPU final is a strict streamed FFmpeg video lane.</strong>
+          <span>It sends <code>frameLane: gpu</code>. WebM VP9 alpha and MOV ProRes 4444 preserve the straight-RGBA transport for transparent delivery. This workbench does not request fallback, reuse, cache, still, sequence, segmented, or batch delivery; exact-source quality manifests are refused for this lane.</span>
+        </div>
+        <div class="gate-field gpu-readiness-inline" id="renderGpuReadiness" hidden role="note" aria-live="off">
+          <strong id="renderGpuReadinessLabel">Checking GPU source-only readiness…</strong>
+          <span class="gate-note" id="renderGpuReadinessDetail">This check does not launch WebGPU or infer an adapter from Chromium.</span>
+        </div>
+        <label class="stacked-field" id="qualityManifestField" for="qualityManifestPath">Quality manifest <span class="optional">optional</span>
           <span class="path-entry"><output id="qualityManifestPath" class="path-display" data-path="" data-empty="true" aria-live="polite">None selected</output><button class="quiet-button compact" id="qualityManifestBrowse" type="button">Browse…</button></span>
+          <span class="gate-note" id="qualityManifestNote" hidden>GPU final streams raw frames to FFmpeg and refuses exact-source quality manifests.</span>
         </label>
         <div class="gate-field">
           <label class="checkbox-field" for="motionGate"><input id="motionGate" type="checkbox"><span>Require frame-to-frame motion</span></label>

@@ -207,7 +207,7 @@ async function writeImagePackage(): Promise<string> {
       2
     )}\n`
   );
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "assets", "logo.png"),
     makeRgbaPngFixture(2, 2, [

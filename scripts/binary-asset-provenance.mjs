@@ -14,9 +14,10 @@
  * this repository.
  *
  * The rules are path patterns, not a checked-in file list, because this script must be correct in two
- * trees: the implementation tree (which carries template families withheld from publication) and the
- * public export (which does not). A hardcoded inventory would be wrong in one of them, which is the
- * same drift that put a stale font total into a published NOTICE.
+ * trees: the implementation tree (which carries deliberately excluded private records and template
+ * families withheld from publication) and the public export (which does not). A hardcoded inventory
+ * would be wrong in one of them, which is the same drift that put a stale font total into a published
+ * NOTICE.
  *
  * Fails closed. A binary matching no rule is an error, not an omission -- that is the property that
  * makes this an inventory rather than a sample, and it means a new binary asset cannot enter the tree
@@ -28,9 +29,9 @@
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -53,6 +54,27 @@ const BINARY_EXTENSIONS = new Set([
  */
 const RULES = [
   {
+    match: (path) => path === "fixtures/packages/gpu-v25b1-scrub-signal/assets/video/atmosphere-fog-rays.mp4",
+    kind: "V25-B1 fixture video copy",
+    origin: "A byte-identical copy of the silent generated atmosphere-background source in the public keyed-subject-promo template. It is a V25-B1 exact-time GPU-preview input, not a rendered preview or final-media proof.",
+    verify: "Compare its SHA-256 with `templates/shellx-product-pack/keyed-subject-promo/assets/generated/atmosphere-fog-rays.mp4` and with `contentSha256` in that template's `receipts/generated-background.receipt.json`; the scrub-signal source recipe also verifies the digest before copying."
+  },
+  {
+    match: (path) => /^fixtures\/packages\/gpu-v25b1-scrub-signal\/assets\/fonts\/inter-latin-(600|900)-normal\.woff2$/.test(path),
+    kind: "V25-B1 fixture font copies",
+    origin: "Byte-identical Inter Latin subset faces copied from the public keyed-subject-promo template, redistributed under SIL Open Font License 1.1 for manifest-bound typography in the V25-B1 preview fixture.",
+    verify: "Compare each SHA-256 with the same path under `templates/shellx-product-pack/keyed-subject-promo/assets/fonts/`; the fixture recipe verifies each source digest before copying and `NOTICE` carries the licence inventory."
+  },
+  {
+    // SVG is reviewable source text, so it is intentionally outside BINARY_EXTENSIONS and will not
+    // appear in BINARY_ASSETS.md. Keep its exact-copy provenance adjacent to the binary rules so
+    // the complete V25-B1 asset closure cannot silently drift.
+    match: (path) => path === "fixtures/packages/gpu-v25b1-scrub-signal/assets/images/neon-studio.svg",
+    kind: "V25-B1 fixture SVG copy",
+    origin: "A byte-identical copy of the redistribution-safe Neon Studio SVG sample in the public keyed-subject-promo template.",
+    verify: "Compare its SHA-256 with `templates/shellx-product-pack/keyed-subject-promo/assets/samples/neon-studio.svg`; the scrub-signal recipe verifies that digest before copying."
+  },
+  {
     match: (path) => path.endsWith(".woff2"),
     kind: "Third-party font",
     origin: "Inter (Latin subset), by Rasmus Andersson and The Inter Project Authors, redistributed from the @fontsource/inter npm package under SIL Open Font License 1.1.",
@@ -63,6 +85,18 @@ const RULES = [
     kind: "Rendered by this repository",
     origin: "A frame rendered from the template family it sits in, by ShellX Motion's own render lanes.",
     verify: "Regenerate with `pnpm run template-pack:proof`, which re-renders the product pack from its template sources."
+  },
+  {
+    match: (path) => path === "fixtures/packages/gpu-g9-mixed-media-atlas/assets/video/atmosphere-fog-rays.mp4",
+    kind: "Generated source fixture copy",
+    origin: "A byte-identical copy of the silent generated atmosphere-background asset in the public keyed-subject-promo template. Its original generated-asset receipt records the bundled-sample route, media facts, generator terms, and source digest.",
+    verify: "Compare this file's SHA-256 with `templates/shellx-product-pack/keyed-subject-promo/assets/generated/atmosphere-fog-rays.mp4` and with `contentSha256` in that template's `receipts/generated-background.receipt.json`."
+  },
+  {
+    match: (path) => path === "fixtures/packages/gpu-material-admitted/assets/poster.png",
+    kind: "Rendered template fixture copy",
+    origin: "A byte-identical copy of the public feature-announcement template's browser-lane rendered poster, used as the fixed image input for the GPU material fixture.",
+    verify: "Compare this file's SHA-256 with `templates/shellx-product-pack/feature-announcement/preview/poster.png`, then regenerate that source poster with `pnpm run template-pack:proof`."
   },
   {
     match: (path) => /(^|\/)assets\/generated\//.test(path),
@@ -101,30 +135,56 @@ const RULES = [
   }
 ];
 
-/** Every tracked file git knows about, so untracked scratch never enters the inventory. */
+/**
+ * Every file Git knows about in the implementation tree. A public source export
+ * deliberately has no Git metadata, so it falls back to the source filesystem
+ * while excluding dependency, build, and scratch outputs that a prior command
+ * may have created. The export itself was constructed from the implementation
+ * tracked set, so these two modes describe the same public payload.
+ */
 function trackedFiles() {
-  return execFileSync("git", ["ls-files", "-z"], { cwd: REPO, maxBuffer: 64 * 1024 * 1024 })
-    .toString("utf8")
-    .split("\0")
-    .filter(Boolean);
+  try {
+    return execFileSync("git", ["ls-files", "-z"], { cwd: REPO, maxBuffer: 64 * 1024 * 1024 })
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    const ignoredDirectories = new Set([".git", ".scratch", "build", "coverage", "dist", "node_modules"]);
+    const files = [];
+    const visit = (directory) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
+        const absolute = join(directory, entry.name);
+        if (entry.isDirectory()) visit(absolute);
+        else if (entry.isFile()) files.push(relative(REPO, absolute).replaceAll("\\", "/"));
+      }
+    };
+    visit(REPO);
+    return files;
+  }
 }
 
 /**
- * Template families the export manifest withholds, so this document describes what SHIPS.
+ * The implementation-only roots and template families the export manifest withholds, so this
+ * document describes what SHIPS.
  *
- * Without this the generator was correct in neither tree at once: it inventoried 49 binaries in the
- * implementation tree, the published tree carries 38, and the 49-entry file is the one that would
- * have shipped — a provenance document listing eleven files the reader does not have. That is the
- * same defect the NOTICE font totals had, in the file whose entire job is to be checkable.
+ * Without this the generator was correct in neither tree at once: its implementation inventory would
+ * include private captures and withheld template assets that the published tree does not carry. That
+ * would ship a provenance document listing files the reader does not have — the same defect the
+ * NOTICE font totals had, in the file whose entire job is to be checkable.
  *
  * Reading the withheld set from the manifest (rather than restating it) keeps one home for the
  * decision. The published tree has no manifest and nothing withheld, so an empty set is correct
  * there and the two trees generate byte-identical output.
  */
-function withheldFamilyDirs() {
+function exportManifest() {
   const manifestPath = join(REPO, "scripts", "public-export-manifest.json");
-  if (!existsSync(manifestPath)) return new Set();
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!existsSync(manifestPath)) return null;
+  return JSON.parse(readFileSync(manifestPath, "utf8"));
+}
+
+function withheldFamilyDirs(manifest) {
+  if (!manifest) return new Set();
   const prefix = "**/templates/shellx-product-pack/";
   return new Set(
     (manifest.excludeWithin ?? [])
@@ -134,16 +194,43 @@ function withheldFamilyDirs() {
   );
 }
 
-const withheld = withheldFamilyDirs();
+function deliberatelyExcludedRoots(manifest) {
+  if (!manifest) return new Set();
+  const roots = new Set((manifest.deliberatelyExcluded ?? []).map((entry) => {
+    const path = entry?.path;
+    if (typeof path !== "string" || !path || path.startsWith("/") || path.includes("\\") || path.split("/").includes("..")) {
+      throw new Error(`Invalid deliberatelyExcluded path in scripts/public-export-manifest.json: ${JSON.stringify(path)}`);
+    }
+    return path.replace(/\/$/, "");
+  }));
+  // A directory excluded from an included root is just as absent from the public export as a
+  // deliberatelyExcluded top-level root. Recognize exact `**/path/**` entries so private author-time
+  // generator assets do not leak into the public binary inventory. Filename globs and wildcarded
+  // path segments remain intentionally unsupported here rather than being approximated.
+  for (const entry of manifest.excludeWithin ?? []) {
+    const match = typeof entry?.glob === "string" ? /^\*\*\/([^*?[\]{}]+)\/\*\*$/.exec(entry.glob) : null;
+    if (match) roots.add(match[1].replace(/\/$/, ""));
+  }
+  return roots;
+}
+
+function isDeliberatelyExcluded(path, roots) {
+  return [...roots].some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+const manifest = exportManifest();
+const withheld = withheldFamilyDirs(manifest);
+const deliberatelyExcluded = deliberatelyExcludedRoots(manifest);
 const binaries = [];
 for (const path of trackedFiles().sort()) {
   if (!BINARY_EXTENSIONS.has(extname(path).toLowerCase())) continue;
+  if (isDeliberatelyExcluded(path, deliberatelyExcluded)) continue;
   if ([...withheld].some((dir) => path.startsWith(`templates/shellx-product-pack/${dir}/`))) continue;
   const bytes = await readFile(join(REPO, path));
   const rule = RULES.find((candidate) => candidate.match(path));
   if (!rule) {
-    console.error(`No provenance rule matches a tracked binary: ${path}`);
-    console.error("Every binary in this repository must state where it came from. Add a rule in");
+    console.error(`No provenance rule matches a published binary: ${path}`);
+    console.error("Every binary that ships in the public source release must state where it came from. Add a rule in");
     console.error("scripts/binary-asset-provenance.mjs, or stop tracking the file.");
     process.exit(1);
   }
@@ -166,17 +253,18 @@ const lines = [
   "",
   "<!-- Generated by scripts/binary-asset-provenance.mjs. Do not edit this file by hand. -->",
   "",
-  `This repository tracks ${binaries.length} binary files. Everything else in it is source text that`,
-  "you, or a reviewing tool, can read directly.",
+  `The public source release ships ${binaries.length} binary files. Everything else shipped in it is`,
+  "source text that you, or a reviewing tool, can read directly.",
   "",
   "Binaries are the part of a repository that source review cannot inspect: a security reviewer can",
   "read every line of TypeScript here and learn nothing from the inside of a WOFF2. So this file",
   "states, for each one, what it is, its exact digest, where it came from, and how you can check that",
   "claim without taking our word for it.",
   "",
-  "Every tracked binary appears below. That is enforced rather than asserted -- the generator fails",
-  "when a binary matches no provenance rule, so a new asset cannot be added without stating its",
-  "origin.",
+  "Every binary in the public source release appears below. The implementation tree reads the export",
+  "manifest and excludes its deliberately excluded roots before inventorying. The generator then fails",
+  "when a shipped binary matches no provenance rule, so a new public asset cannot be added without",
+  "stating its origin.",
   ""
 ];
 

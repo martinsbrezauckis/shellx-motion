@@ -1,0 +1,47 @@
+# Dependency inventory only. This intentionally reads the committed manifests and pnpm lockfile
+# without installing packages, so a fork pull request cannot trigger package lifecycle hooks here.
+name: SBOM
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Verify deterministic SBOM contract
+        run: pnpm run sbom:check
+
+      - name: Generate CycloneDX SBOM
+        run: pnpm run sbom:generate -- --out "$RUNNER_TEMP/shellx-motion.cdx.json"
+
+      # v6.0.0 runs on Node 24 and is SHA-pinned; this is an ephemeral CI artifact, never a
+      # checked-in release file. It uploads only the named JSON document and retains it for 14 days.
+      - name: Upload SBOM
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: shellx-motion-sbom
+          path: ${{ runner.temp }}/shellx-motion.cdx.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readdirSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,7 +15,8 @@ import {
   browserExecutableCandidates,
   captureDeterministicScreenshot,
   classifyBrowserFrameFailure,
-  createMotionBrowserRenderSession,
+  createHostBoundBrowserFrameRenderer,
+  createMotionBrowserRenderSession as createMotionBrowserRenderSessionUnbound,
   chromiumRuntimeSandboxEvidence,
   hashBrowserCaptureWorkflow,
   loadHtmlComposition,
@@ -23,12 +24,12 @@ import {
   BrowserFrameCancelledError,
   BrowserFrameTimeoutError,
   BrowserWorkflowReplayError,
-  renderBrowserFrame,
-  renderMotionBrowserFrame,
+  resolveBrowserFrameTimeoutMs,
   resolveChromiumLaunchArgs,
   videoMediaTimeMsForLayer
 } from "./index";
 import { makeRgbaPngFixture } from "./test-support/png-fixture";
+import { TEST_APPROVED_AGENT_SCRIPT_AUTHORITY } from "./test-support/approved-agent-script-authority";
 // Generated text-layer fixture builders split out for the module-size gate.
 import {
   writeGeneratedTextAlignmentKeyframePackage,
@@ -42,7 +43,34 @@ import {
 } from "./index.fixtures-text";
 
 const tempDirs: string[] = [];
+let implicitOutputSequence = 0;
 const execFileAsync = promisify(execFile);
+const HTML_TYPOGRAPHY_WARNING = "Browser HTML/web/canvas typography is unverified: font provenance and fallback coverage are not attestable.";
+const TEXT_RUNS_HOST_FIXTURE = process.env.MOTION_BROWSER_TEXT_RUNS_HOST_FIXTURE === "1";
+const hostBoundBrowserFrameRenderer = createHostBoundBrowserFrameRenderer({ agentScriptAuthority: TEST_APPROVED_AGENT_SCRIPT_AUTHORITY });
+
+function createMotionBrowserRenderSession(
+  pkg: Parameters<typeof createMotionBrowserRenderSessionUnbound>[0],
+  options: Parameters<typeof createMotionBrowserRenderSessionUnbound>[1] = {},
+) {
+  return createMotionBrowserRenderSessionUnbound(pkg, { ...options, agentScriptAuthority: TEST_APPROVED_AGENT_SCRIPT_AUTHORITY });
+}
+
+function renderBrowserFrame(pkg: Parameters<typeof hostBoundBrowserFrameRenderer>[0], options: Parameters<typeof hostBoundBrowserFrameRenderer>[1]) {
+  return hostBoundBrowserFrameRenderer(pkg, withUniqueImplicitTestOutput(options));
+}
+
+function renderMotionBrowserFrame(pkg: Parameters<typeof hostBoundBrowserFrameRenderer>[0], options: Parameters<typeof hostBoundBrowserFrameRenderer>[1]) {
+  return hostBoundBrowserFrameRenderer(pkg, withUniqueImplicitTestOutput(options));
+}
+
+// The production default pathname deliberately stays stable. Tests that compare several frames
+// from the same package instead ask the no-clobber public API for distinct caller-owned targets.
+function withUniqueImplicitTestOutput<T extends { outDir: string; outputPath?: string; format?: "png" | "jpeg" }>(options: T): T {
+  if (options.outputPath) return options;
+  const extension = options.format === "jpeg" ? "jpg" : "png";
+  return { ...options, outputPath: join(options.outDir, `test-frame-${++implicitOutputSequence}.${extension}`) };
+}
 
 describe("browser renderer lane", () => {
   afterEach(async () => {
@@ -62,6 +90,34 @@ describe("browser renderer lane", () => {
     });
   });
 
+  it("records unverified typography for browser HTML without inferring whether its code draws text", async () => {
+    const pkg = await loadMotionPackage(resolve("../../fixtures/packages/web-card"));
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-html-typography-"));
+    tempDirs.push(outDir);
+
+    const result = await renderBrowserFrame(pkg, { atMs: 0, outDir });
+
+    expect(result.output.typography).toEqual({
+      schema: "shellx-motion/browser-typography@1",
+      authority: "chromium",
+      attestation: "unverified",
+      fontProbe: "canvas-metric",
+      scopes: [{
+        kind: "html-web-canvas",
+        attestation: "unverified",
+        layerIds: ["web-card"],
+        reason: "arbitrary_html_web_canvas_text_unobservable"
+      }],
+      layers: [],
+      fontAssets: [],
+      fallbackLayerIds: []
+    });
+    expect(result.receipt).toMatchObject({
+      status: "warning",
+      warnings: [HTML_TYPOGRAPHY_WARNING]
+    });
+  }, 45_000);
+
   it("rejects browser frame output paths outside the requested output directory", async () => {
     const pkg = await loadMotionPackage(resolve("../../fixtures/packages/lower-third"));
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-output-root-"));
@@ -75,6 +131,19 @@ describe("browser renderer lane", () => {
       })
     ).rejects.toThrow(/Browser output path must be inside outDir/);
   });
+
+  it("does not clobber an existing direct browser frame output", async () => {
+    const pkg = await loadMotionPackage(resolve("../../fixtures/packages/web-card"));
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-existing-output-"));
+    const outputPath = join(outDir, "existing-frame.png");
+    tempDirs.push(outDir);
+    await writeFile(outputPath, "caller-owned-frame", "utf8");
+
+    await expect(renderBrowserFrame(pkg, { atMs: 0, outDir, outputPath })).rejects.toMatchObject({
+      code: "derived_output_exists"
+    });
+    await expect(readFile(outputPath, "utf8")).resolves.toBe("caller-owned-frame");
+  }, 45_000);
 
   it("fails closed before launching the browser when a layer type is unsupported", async () => {
     // A1 runtime gate: the browser lane now calls matchRendererCapability at render entry (like the
@@ -123,6 +192,7 @@ describe("browser renderer lane", () => {
     expect(composition).toEqual({
       compositionId: "hyper-card",
       source: "index.html",
+      sourceLayerId: "html-composition",
       startMs: 0,
       durationMs: 3000,
       layers: [{ id: "title", startMs: 250, durationMs: 2200 }]
@@ -154,11 +224,18 @@ describe("browser renderer lane", () => {
     });
   });
 
-  it("requests the Chromium sandbox by default and receipts an explicit host opt-out", () => {
+  it("receipts Playwright's default Chromium sandbox opt-out distinctly from an explicit host opt-out", () => {
     expect(resolveChromiumLaunchArgs({})).toEqual(["--disable-gpu"]);
     expect(resolveChromiumLaunchArgs({ SHELLX_MOTION_CHROMIUM_NO_SANDBOX: "1" })).toEqual(["--disable-gpu", "--no-sandbox"]);
     expect(resolveChromiumLaunchArgs({ SHELLX_MOTION_CHROMIUM_NO_SANDBOX: "true" })).toEqual(["--disable-gpu", "--no-sandbox"]);
     expect(chromiumRuntimeSandboxEvidence(resolveChromiumLaunchArgs({}))).toEqual({
+      schema: "shellx-motion/runtime-sandbox@1",
+      provider: "chromium",
+      status: "disabled",
+      scope: "browser-process",
+      reasonCode: "playwright_default_no_sandbox",
+    });
+    expect(chromiumRuntimeSandboxEvidence(resolveChromiumLaunchArgs({}), true)).toEqual({
       schema: "shellx-motion/runtime-sandbox@1",
       provider: "chromium",
       status: "requested",
@@ -200,7 +277,8 @@ describe("browser renderer lane", () => {
     expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     expect(result.receipt).toMatchObject({
       operation: "preview.frame",
-      status: "passed",
+      status: "warning",
+      warnings: [HTML_TYPOGRAPHY_WARNING],
       packageId: "pkg_web_card",
       lane: "browser",
       createdAt: "2026-07-01T20:15:00.000Z",
@@ -237,8 +315,9 @@ describe("browser renderer lane", () => {
           sandbox: {
             schema: "shellx-motion/runtime-sandbox@1",
             provider: "chromium",
-            status: "requested",
+            status: "disabled",
             scope: "browser-process",
+            reasonCode: "playwright_default_no_sandbox",
           },
         }
       }
@@ -405,10 +484,27 @@ describe("browser renderer lane", () => {
           schema: "shellx-motion/browser-workflow@1",
           steps: [{ action: "wait", ms: 1_000 }]
         }
-      }], { perFrameTimeoutMs: 100 })).rejects.toBeInstanceOf(BrowserFrameTimeoutError);
+      }], { perFrameTimeoutMs: 100 })).rejects.toMatchObject({
+        code: "browser_frame_timeout",
+        timeoutMs: 100
+      });
     } finally {
       await session.close();
     }
+  });
+
+  it("derives each default batch-frame deadline from declared pixels while retaining a hard cap", () => {
+    // Control: a compact preview retains the historic 30s base plus its exact pixel allowance.
+    expect(resolveBrowserFrameTimeoutMs({ width: 1_280, height: 720 })).toBe(43_824);
+    // The 1080p product-pack proof workload receives 30s plus 15s per declared output megapixel.
+    expect(resolveBrowserFrameTimeoutMs({ width: 1_920, height: 1_080 })).toBe(61_104);
+    // Device scale is part of the declared raster work, and even adversarially large input is
+    // bounded by the source policy rather than permitting an unbounded wait.
+    expect(resolveBrowserFrameTimeoutMs({ width: 7_680, height: 4_320, deviceScaleFactor: 4 })).toBe(120_000);
+    // A caller can still demand a deliberately stricter bounded control timeout.
+    expect(resolveBrowserFrameTimeoutMs({ width: 1_920, height: 1_080 }, 100)).toBe(100);
+    expect(() => resolveBrowserFrameTimeoutMs({ width: 1_920, height: 1_080 }, 120_001))
+      .toThrow("Browser per-frame timeout must be an integer from 100 to 120000ms.");
   });
 
   it("closes Chromium when a single-frame render exceeds the shared governor deadline", async () => {
@@ -547,26 +643,15 @@ describe("browser renderer lane", () => {
     expect(quality.edges.pixels).toBeGreaterThan(1000);
   });
 
-  it("normalizes multi-composition browser HTML into a capture artifact before Chromium loads it", async () => {
+  it("refuses secondary package compositions for an approved active entry before Chromium loads it", async () => {
     const root = await writeMultiCompositionBrowserPackage();
     const pkg = await loadMotionPackage(root);
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-multi-composition-"));
     tempDirs.push(root, outDir);
 
-    const result = await renderBrowserFrame(pkg, { atMs: 0, outDir, now: () => "2026-07-05T00:00:00.000Z" });
-    const png = await readFile(result.output.path);
-    const mountedRegion = inspectPngRegionBuffer(png, { x: 40, y: 40, width: 80, height: 40 });
-
-    expect(result.ok).toBe(true);
-    expect(mountedRegion.ok).toBe(true);
-    if (!mountedRegion.ok) return;
-    expect(mountedRegion.luma.brightPixels).toBeGreaterThan(2500);
-    expect(result.output.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "browser_capture_html", status: "available", mediaType: "text/html" })
-    ]));
-    expect(result.receipt.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "browser_capture_html", status: "available", mediaType: "text/html" })
-    ]));
+    await expect(renderBrowserFrame(pkg, { atMs: 0, outDir, now: () => "2026-07-05T00:00:00.000Z" }))
+      .rejects.toThrow("Approved-agent-entry script sources cannot inline secondary package compositions.");
+    expect(readdirSync(outDir)).toEqual([]);
   });
 
   it("blocks browser file requests outside the Motion package root", async () => {
@@ -586,11 +671,11 @@ describe("browser renderer lane", () => {
     });
   });
 
-  it("blocks browser WebSocket egress and records the attempted URL", async () => {
+  it("blocks browser WebSocket egress and records only the attempted authority", async () => {
     const root = await writeBrowserPackage("WebSocket policy");
     await writeFile(
       join(root, "card.html"),
-      `<!doctype html><html><body data-composition-id="websocket-policy" data-start="0" data-duration="1000"><main id="peer-status">pending</main><script>document.querySelector("#peer-status").textContent = typeof RTCPeerConnection; new WebSocket("ws://127.0.0.1:9/private")</script></body></html>\n`
+      `<!doctype html><html><body data-composition-id="websocket-policy" data-start="0" data-duration="1000"><main id="peer-status">pending</main><script>document.querySelector("#peer-status").textContent = typeof RTCPeerConnection; new WebSocket("ws://127.0.0.1:9/private?pin=0000")</script></body></html>\n`
     );
     const pkg = await loadMotionPackage(root);
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-websocket-"));
@@ -606,7 +691,11 @@ describe("browser renderer lane", () => {
     });
 
     expect(result.receipt.status).toBe("warning");
-    expect(result.receipt.warnings).toContain("Blocked browser WebSocket request: ws://127.0.0.1:9/private");
+    const receiptWarnings = result.receipt.warnings.join("\n");
+    expect(receiptWarnings).toContain("Blocked browser WebSocket request: ws://127.0.0.1:9");
+    expect(receiptWarnings).not.toContain("/private");
+    expect(receiptWarnings).not.toContain("?pin=0000");
+    expect(receiptWarnings).not.toContain("#fragment");
   });
 
   it("allows runtime browser requests declared by any browser layer", async () => {
@@ -631,15 +720,21 @@ describe("browser renderer lane", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(result.receipt.status).toBe("passed");
-      expect(result.receipt.warnings).toEqual([]);
+      expect(result.receipt.status).toBe("warning");
+      expect(result.receipt.warnings).toEqual([HTML_TYPOGRAPHY_WARNING]);
       expect(result.receipt.warnings).not.toContain(`Blocked undeclared browser request: ${origin}`);
       expect(result.output.network).toEqual({
         policy: "host-approved-origins",
         allowPrivateNetwork: true,
         resolutionTimeoutMs: 5000,
         approvedOrigins: [origin],
-        pins: [{ hostname: "127.0.0.1", address: "127.0.0.1", family: 4 }]
+        pins: [{ hostname: "127.0.0.1", address: "127.0.0.1", family: 4 }],
+        responsePolicy: {
+          maxResponseBytes: 64 * 1024 * 1024,
+          maxAggregateBytes: 256 * 1024 * 1024,
+          maxConcurrentResponses: 8,
+          contentTypes: "bounded-render-media"
+        }
       });
       expect(result.receipt.output).toMatchObject({ network: result.output.network });
     } finally {
@@ -870,7 +965,7 @@ describe("browser renderer lane", () => {
     });
   });
 
-  it("shapes RTL text in Chromium and records sanitized direction, language, and font fallback evidence", async () => {
+  it("renders RTL text in Chromium and records sanitized direction, language, and font fallback evidence", async () => {
     const root = await writeGeneratedTypographyEvidencePackage();
     const pkg = await loadMotionPackage(root);
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-generated-typography-"));
@@ -885,7 +980,16 @@ describe("browser renderer lane", () => {
     expect(quality.blank).toBe(false);
     expect(quality.luma.brightPixels).toBeGreaterThan(50);
     expect(result.output.typography).toEqual({
+      schema: "shellx-motion/browser-typography@1",
+      authority: "chromium",
+      attestation: "unverified",
       fontProbe: "canvas-metric",
+      scopes: [{
+        kind: "motion-ir",
+        attestation: "unverified",
+        layerIds: ["arabic-title", "sanitized-title"],
+        reason: "requested_font_not_manifest_bound"
+      }],
       layers: [
         {
           layerId: "arabic-title",
@@ -893,7 +997,8 @@ describe("browser renderer lane", () => {
           lang: "ar",
           requestedFontFamily: "'ShellXDefinitelyMissingArabicFont',sans-serif",
           resolvedFontFamily: "ShellXDefinitelyMissingArabicFont, sans-serif",
-          primaryFontAvailable: false
+          primaryFontAvailable: false,
+          fontProvenance: "unverified"
         },
         {
           layerId: "sanitized-title",
@@ -901,16 +1006,18 @@ describe("browser renderer lane", () => {
           lang: null,
           requestedFontFamily: null,
           resolvedFontFamily: "Inter, Arial, sans-serif",
-          primaryFontAvailable: null
+          primaryFontAvailable: null,
+          fontProvenance: "unverified"
         }
       ],
+      fontAssets: [],
       fallbackLayerIds: ["arabic-title"]
     });
     expect(result.receipt.status).toBe("warning");
     expect(result.receipt.warnings).toContain("Browser renderer used a font fallback for text layer arabic-title.");
   });
 
-  it("fails browser rendering when package quality forbids detected font fallbacks", async () => {
+  it("refuses browser rendering when a fallback attestation requests an unbound generated family", async () => {
     const root = await writeGeneratedTypographyEvidencePackage();
     const manifestPath = join(root, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
@@ -920,9 +1027,12 @@ describe("browser renderer lane", () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-generated-typography-policy-"));
     tempDirs.push(root, outDir);
 
-    await expect(renderMotionBrowserFrame(pkg, { atMs: 0, outDir })).rejects.toThrow(
-      "Browser renderer detected 1 font fallback(s); package quality allows at most 0. Layers: arabic-title."
-    );
+    await expect(renderMotionBrowserFrame(pkg, { atMs: 0, outDir })).rejects.toMatchObject({
+      code: "browser_motion_typography_unverified",
+      refusal: {
+        detail: { attestation: "font-fallback", scope: "motion-ir", layerIds: ["arabic-title", "sanitized-title"] }
+      }
+    });
   });
 
   it("measures readable generated text against its declared safe area", async () => {
@@ -1010,6 +1120,38 @@ describe("browser renderer lane", () => {
     });
     expect(layer?.appliedFontSize).toBeLessThan(64);
     expect(layer?.appliedFontSize).toBeGreaterThanOrEqual(16);
+    // The new text-runs field must stay absent, byte-for-byte, for legacy text.
+    expect(layer).not.toHaveProperty("textRuns");
+  });
+
+  it.skipIf(!TEXT_RUNS_HOST_FIXTURE)("refuses constrained styled text under safe policy instead of pretending its inline run override fitted", async () => {
+    const root = await writeGeneratedStyledTextFitPackage("safe");
+    const pkg = await loadMotionPackage(root);
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-generated-styled-text-fit-safe-"));
+    tempDirs.push(root, outDir);
+
+    await expect(renderMotionBrowserFrame(pkg, { atMs: 0, outDir })).rejects.toMatchObject({
+      code: "text_fit_failed",
+      evidence: { failedLayerIds: ["title"], layers: [expect.objectContaining({ policy: "safe", status: "failed", textRuns: expect.objectContaining({ runs: expect.any(Array) }) })] }
+    });
+  });
+
+  it.skipIf(!TEXT_RUNS_HOST_FIXTURE)("auto-fits mixed overridden and inherited text-runs at one coherent scale", async () => {
+    const root = await writeGeneratedStyledTextFitPackage("auto-fit");
+    const pkg = await loadMotionPackage(root);
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-generated-styled-text-fit-auto-"));
+    tempDirs.push(root, outDir);
+
+    const result = await renderMotionBrowserFrame(pkg, { atMs: 0, outDir });
+    const layer = result.output.textFit?.layers[0];
+    expect(layer).toMatchObject({ layerId: "title", policy: "auto-fit", status: "auto-fitted", textRuns: { scale: expect.any(Number), runs: [{ fontAssetId: "font-codicon", inheritsLayerFontSize: false, requestedFontSizePx: 160 }, { fontAssetId: "font-codicon", inheritsLayerFontSize: true, requestedFontSizePx: null }] } });
+    const textRuns = layer?.textRuns;
+    if (!layer || !textRuns) throw new Error("expected styled text-fit evidence");
+    expect(textRuns.scale).toBeGreaterThan(0);
+    expect(textRuns.scale).toBeLessThan(1);
+    expect(textRuns.runs[0]!.effectiveFontSizePx).toBeCloseTo(160 * textRuns.scale, 2);
+    expect(textRuns.runs[1]!.effectiveFontSizePx).toBeCloseTo(layer.appliedFontSize, 2);
+    expect(textRuns.runs[0]!.effectiveFontSizePx).toBeGreaterThan(textRuns.runs[1]!.effectiveFontSizePx);
   });
 
   it("embeds a manifest-declared package font face and records it in render evidence", async () => {
@@ -1035,7 +1177,14 @@ describe("browser renderer lane", () => {
       layerId: "icon-title",
       requestedFontFamily: "'ShellXCodicon'",
       resolvedFontFamily: "ShellXCodicon",
+      fontProvenance: "manifest-bound",
     });
+    expect(result.output.typography?.fontAssets).toEqual([{
+      id: "font-codicon",
+      family: "ShellXCodicon",
+      sha256: result.receipt.inputHashes["assets/fonts/codicon.ttf"]
+    }]);
+    expect(result.output.typography).toMatchObject({ attestation: "verified" });
   });
 
   it("rejects undeclared or extension-mismatched package font faces before browser launch", async () => {
@@ -1533,6 +1682,8 @@ describe("browser renderer lane", () => {
     const startQuality = inspectPngBuffer(await readFile(start.output.path));
     const laterQuality = inspectPngBuffer(await readFile(later.output.path));
 
+    expect(BROWSER_CAPABILITY.features).toContain("particles.analytic-field");
+    expect(matchRendererCapability(pkg.motion, BROWSER_CAPABILITY)).toEqual({ ok: true, lane: "browser", unsupported: [] });
     expect(start.output.sha256).toBe(startAgain.output.sha256);
     expect(start.output.sha256).not.toBe(later.output.sha256);
     expect(start.receipt.warnings).toEqual([]);
@@ -2981,10 +3132,32 @@ describe("browser renderer lane", () => {
     expect(await readFile(outputPath)).toEqual(validPng);
   });
 
+  it("does not let the public screenshot API overwrite a caller-owned path", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-capture-existing-"));
+    const outputPath = join(outDir, "frame.png");
+    tempDirs.push(outDir);
+    await writeFile(outputPath, "caller-owned-frame", "utf8");
+    let captures = 0;
+
+    await expect(captureDeterministicScreenshot({
+      async screenshot() { captures += 1; return makeRgbaPngFixture(1, 1, [{ r: 1, g: 2, b: 3, a: 255 }]); },
+      async waitForTimeout() {}
+    }, { path: outputPath, animations: "disabled", caret: "hide" })).rejects.toMatchObject({ code: "derived_output_exists" });
+
+    expect(captures).toBe(0);
+    await expect(readFile(outputPath, "utf8")).resolves.toBe("caller-owned-frame");
+  });
+
   it("prefers explicit and Playwright Chromium executables before system browsers", async () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), "shellx-motion-browser-cache-"));
     tempDirs.push(cacheRoot);
-    await mkdir(join(cacheRoot, "chromium-999", "chrome-linux64"), { recursive: true });
+    await mkdir(join(cacheRoot, "chromium-999", "chrome-linux64"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    const cachedChromium = join(cacheRoot, "chromium-999", "chrome-linux64", "chrome");
+    await writeFile(cachedChromium, "#!/bin/sh\nexit 0\n", "utf8");
+    await chmod(cachedChromium, 0o755);
     // The pin has to be a file that EXISTS. A pin naming a path with nothing at it is no longer a
     // first candidate followed by a fall-through — it fails closed, which the next test covers.
     const pinned = join(cacheRoot, "pinned-chrome");
@@ -2999,9 +3172,15 @@ describe("browser renderer lane", () => {
         const candidates = browserExecutableCandidates();
 
         expect(candidates[0]).toBe(pinned);
-        expect(candidates[1]).toBe(join(cacheRoot, "chromium-999", "chrome-linux", "chrome"));
-        expect(candidates[2]).toBe(join(cacheRoot, "chromium-999", "chrome-linux64", "chrome"));
-        expect(candidates.indexOf("/usr/bin/google-chrome")).toBeGreaterThan(2);
+        if (process.platform === "win32") {
+          // A caller-created cache has no authoritative Windows ACL evidence, so discovery must
+          // reject it while still honoring the explicit executable pin above.
+          expect(candidates).not.toContain(join(cacheRoot, "chromium-999", "chrome-linux", "chrome"));
+          expect(candidates).not.toContain(join(cacheRoot, "chromium-999", "chrome-linux64", "chrome"));
+          return;
+        }
+        expect(candidates[1]).toBe(cachedChromium);
+        expect(candidates.indexOf("/usr/bin/google-chrome")).toBeGreaterThan(1);
       }
     );
   });
@@ -3017,7 +3196,7 @@ describe("browser renderer lane", () => {
   it("refuses to launch a substitute browser when the pin names a path with no file at it", async () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), "shellx-motion-browser-badpin-"));
     tempDirs.push(cacheRoot);
-    await mkdir(join(cacheRoot, "chromium-999", "chrome-linux64"), { recursive: true });
+    await mkdir(join(cacheRoot, "chromium-999", "chrome-linux64"), { recursive: true, mode: 0o700 });
     await writeFile(join(cacheRoot, "chromium-999", "chrome-linux64", "chrome"), "#!/bin/sh\nexit 0\n", "utf8");
 
     const pkg = await loadMotionPackage(resolve("../../fixtures/packages/web-card"));
@@ -3250,7 +3429,7 @@ async function writeMultiLayerRuntimeRequestPackage(origin: string): Promise<str
       id: "pkg_browser_multi_origin",
       name: "Browser Multi Origin",
       motion: "motion.json",
-      assets: ["card.html"],
+      assets: ["card.html", "data.html"],
       sourceApp: "shellx-motion",
       compatibility: { lanes: ["browser"], hosts: ["motion"] }
     }, null, 2)}\n`
@@ -3268,7 +3447,7 @@ async function writeMultiLayerRuntimeRequestPackage(origin: string): Promise<str
       background: "#ffffff",
       layers: [
         { id: "web-card", type: "web", source: "card.html", startMs: 0, durationMs: 1000, allowedOrigins: [] },
-        { id: "web-data", type: "web", source: `${origin}/data.html`, startMs: 0, durationMs: 1000, allowedOrigins: [origin] }
+        { id: "web-data", type: "web", source: "data.html", startMs: 0, durationMs: 1000, allowedOrigins: [origin] }
       ],
       assets: [],
       provenance: { sourceApp: "shellx-motion", createdBy: "test" }
@@ -3277,6 +3456,10 @@ async function writeMultiLayerRuntimeRequestPackage(origin: string): Promise<str
   await writeFile(
     join(root, "card.html"),
     `<!doctype html><html><body data-composition-id="multi-origin" data-start="0" data-duration="1000"><main data-layer-id="title" data-start="0" data-duration="1000" style="font: 32px sans-serif">Runtime origin</main><script>const img = new Image(); img.src = ${JSON.stringify(`${origin}/pixel.svg`)}; document.body.appendChild(img);</script></body></html>\n`
+  );
+  await writeFile(
+    join(root, "data.html"),
+    `<!doctype html><html><body data-composition-id="declared-origin" data-start="0" data-duration="1000"></body></html>\n`
   );
   return root;
 }
@@ -3321,7 +3504,7 @@ async function writeBrowserPackage(title: string): Promise<string> {
 
 async function writeMultiCompositionBrowserPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-browser-multi-composition-package-"));
-  await mkdir(join(root, "compositions"), { recursive: true });
+  await mkdir(join(root, "compositions"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -3463,7 +3646,7 @@ async function writeInteractiveBrowserPackage(): Promise<string> {
 
 async function writeGeneratedMotionPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -3690,7 +3873,7 @@ async function writeGeneratedTransparentOverlayPackage(): Promise<string> {
 
 async function writeGeneratedImageCropPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-image-crop-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -3756,7 +3939,7 @@ async function writeGeneratedImageCropFitPackage(input: {
   pixels?: Array<{ r: number; g: number; b: number; a: number }>;
 }): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-image-crop-fit-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   const transform = input.transform ?? { x: 20, y: 20, width: 8, height: 8 };
   const crop = input.crop ?? { x: 1, y: 1, width: 2, height: 2 };
   const imageWidth = input.imageWidth ?? 4;
@@ -3833,7 +4016,7 @@ async function writeGeneratedImageCropFitPackage(input: {
 
 async function writeGeneratedImageCropKeyframePackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-image-crop-keyframe-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -3897,7 +4080,7 @@ async function writeGeneratedImageCropKeyframePackage(): Promise<string> {
 
 async function writeGeneratedImageBorderRadiusPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-image-border-radius-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -3957,7 +4140,7 @@ async function writeGeneratedImageBorderRadiusPackage(): Promise<string> {
 
 async function writeGeneratedImageAliasPackage(field: "assetRef" | "source" | "src"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), `shellx-motion-generated-image-${field}-package-`));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -4007,7 +4190,7 @@ async function writeGeneratedImageAliasPackage(field: "assetRef" | "source" | "s
 
 async function writeGeneratedImageObjectFitPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-image-object-fit-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -4108,7 +4291,14 @@ async function writeGeneratedParticlePackage(): Promise<string> {
             direction: -90,
             spread: 110,
             gravity: 140,
-            fadeOut: true
+            fadeOut: true,
+            field: {
+              schema: "shellx-motion/particle-field@1",
+              sources: [
+                { kind: "radial", centerX: 0.5, centerY: 0.42, strength: 0.45, softening: 0.2 },
+                { kind: "vortex", centerX: 0.5, centerY: 0.42, strength: 0.25, softening: 0.14 }
+              ]
+            }
           },
           effects: { glow: { radius: 5, color: "#00d4ff" } },
           blendMode: "screen"
@@ -4355,7 +4545,7 @@ async function writeGeneratedFilmAdjustmentPackage(enabled: boolean): Promise<st
 
 async function writeGeneratedShaderPackage(source: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-shader-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "manifest.json"), `${JSON.stringify({
     schema: "shellx-motion/package-manifest@1",
     id: "pkg_generated_shader",
@@ -4510,7 +4700,7 @@ async function writeGeneratedRainEnvironmentPackage(seed = 20260713): Promise<st
 
 async function writeGeneratedFootageRainEnvironmentPackage(sourceAware: boolean, effectMasked = false): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-footage-rain-environment-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "manifest.json"), `${JSON.stringify({
     schema: "shellx-motion/package-manifest@1",
     id: `pkg_generated_${sourceAware ? "footage" : "synthetic"}_rain_environment`,
@@ -4709,7 +4899,7 @@ async function writeGeneratedSnowEnvironmentPackage(seed = 20260715): Promise<st
 
 async function writeGeneratedFogEnvironmentPackage(seed = 20260717): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-fog-environment-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "manifest.json"), `${JSON.stringify({
     schema: "shellx-motion/package-manifest@1",
     id: `pkg_generated_fog_environment_${seed}`,
@@ -5117,7 +5307,7 @@ async function writeGeneratedShapeShadowKeyframePackage(): Promise<string> {
 async function writeGeneratedVideoPackage(options: { validVideo: boolean; crop?: { x: number; y: number; width: number; height: number }; motionBlur?: boolean }): Promise<string> {
   const suffix = options.motionBlur ? "_motion_blur" : "";
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-video-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -6097,10 +6287,34 @@ async function writeGeneratedTextFitPackage(layer: Record<string, unknown>): Pro
   return root;
 }
 
+async function writeGeneratedStyledTextFitPackage(policy: "safe" | "auto-fit"): Promise<string> {
+  const root = await writeGeneratedEmbeddedFontPackage();
+  await writeFile(
+    join(root, "motion.json"),
+    `${JSON.stringify({
+      schema: "shellx-motion/motion@1", id: "motion_generated_styled_text_fit", name: "Styled text fit", durationMs: 1_000, fps: 24, width: 240, height: 120,
+      background: "#020617", safeAreas: { title: { top: 16, right: 16, bottom: 16, left: 16 } },
+      layers: [{
+        id: "title", type: "text", startMs: 0, durationMs: 1_000,
+        transform: { x: 20, y: 20, width: 200, height: 80 },
+        style: { fontSize: 64, lineHeight: 1, color: "#ffffff" },
+        textFit: { policy, safeAreaId: "title", ...(policy === "auto-fit" ? { minFontSize: 24 } : {}) },
+        textRuns: { schema: "shellx-motion/text-runs@1", runs: [
+          { text: "\uea60\uea60\uea60", fontAssetId: "font-codicon", fontSizePx: 160, letterSpacingPx: 4 },
+          { text: "\uea60", fontAssetId: "font-codicon" }
+        ] }
+      }],
+      assets: [{ id: "font-codicon", type: "font", family: "ShellXCodicon", source: { path: "assets/fonts/codicon.ttf", mimeType: "font/ttf" }, weight: 400, style: "normal" }],
+      provenance: { sourceApp: "shellx-motion", createdBy: "test" }
+    }, null, 2)}\n`
+  );
+  return root;
+}
+
 async function writeGeneratedEmbeddedFontPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-generated-embedded-font-package-"));
   const fontDir = join(root, "assets", "fonts");
-  await mkdir(fontDir, { recursive: true });
+  await mkdir(fontDir, { recursive: true, mode: 0o700 });
   const require = createRequire(import.meta.url);
   const playwrightRoot = dirname(require.resolve("playwright-core"));
   const playwrightFontDir = join(playwrightRoot, "lib", "vite", "dashboard", "assets");

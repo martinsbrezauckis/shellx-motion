@@ -1,10 +1,11 @@
 {
   "name": "@shellx-motion/renderer-native",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal/private-output-publication": "./src/private-output-publication.ts"
   },
   "files": [
     "dist"
@@ -16,6 +17,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./internal/private-output-publication": {
+        "types": "./dist/private-output-publication.d.ts",
+        "default": "./dist/private-output-publication.js"
       }
     }
   },

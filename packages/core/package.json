@@ -1,10 +1,35 @@
 {
   "name": "@shellx-motion/core",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./internal/scene3d-gltf-material": "./src/scene-3d-gltf-material-package-route.ts",
+    "./internal/scene3d-gltf-pbr-final": "./src/scene-3d-gltf-material-final-route.ts",
+    "./internal/scene3d-gltf-pbr-hdr10-final": "./src/scene-3d-gltf-pbr-hdr10-final-route.ts",
+    "./internal/layout-removal-authority": "./src/motion-layout-removal-authority.ts",
+    "./internal/parametric-trace-preview": "./src/gpu-parametric-trace-preview.ts",
+    "./internal/scene3d-animation-gpu-preview": "./src/scene3d-animation-gpu-preview-internal.ts",
+    "./internal/render-delivery-source": "./src/unadopted/render-delivery-source/render-delivery-source-internal.ts",
+    "./internal/motion-behavior-validation": "./src/motion-behavior-validation-internal.ts",
+    "./internal/trusted-host-workspace": "./src/output-path-trusted-workspace.ts",
+    "./internal/derived-output-publication-authenticity": "./src/derived-output-publication-authenticity.ts",
+    "./internal/paired-output-receipt-verification": "./src/paired-output-receipt-verification.ts",
+    "./internal/admitted-package-execution": "./src/package-admitted-execution-internal.ts",
+    "./internal/closed-directory-inventory": "./src/closed-directory-inventory-internal.ts",
+    "./internal/checkpoint-storyboard-scalar-spatial-materializer": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-scalar-spatial-materializer.ts",
+    "./internal/checkpoint-storyboard-behavior-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-behavior-materializer.ts",
+    "./internal/checkpoint-storyboard-relation-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-relation-materializer.ts",
+    "./internal/checkpoint-storyboard-relation-action-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-relation-action-materializer.ts",
+    "./internal/checkpoint-storyboard-lifecycle-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-lifecycle-materializer.ts",
+    "./internal/checkpoint-storyboard-geometry-morph-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-geometry-morph-materializer.ts",
+    "./internal/checkpoint-storyboard-retained-trace-profile": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-profile.ts",
+    "./internal/checkpoint-storyboard-retained-trace-preview": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-preview.ts",
+    "./internal/checkpoint-storyboard-data-recipe": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-data-recipe.ts",
+    "./internal/checkpoint-storyboard-frame-manifest": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-frame-manifest.ts",
+    "./internal/collision-showcase": "./src/internal/collision-showcase/collision-showcase.ts",
+    "./internal/scene-recipe": "./src/internal/scene-recipe/scene-recipe.ts",
     "./test-support": "./src/tool-environment.test-support.ts"
   },
   "files": [
@@ -18,6 +43,90 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./internal/scene3d-gltf-material": {
+        "types": "./dist/scene-3d-gltf-material-package-route.d.ts",
+        "default": "./dist/scene-3d-gltf-material-package-route.js"
+      },
+      "./internal/scene3d-gltf-pbr-final": {
+        "types": "./dist/scene-3d-gltf-material-final-route.d.ts",
+        "default": "./dist/scene-3d-gltf-material-final-route.js"
+      },
+      "./internal/scene3d-gltf-pbr-hdr10-final": {
+        "types": "./dist/scene-3d-gltf-pbr-hdr10-final-route.d.ts",
+        "default": "./dist/scene-3d-gltf-pbr-hdr10-final-route.js"
+      },
+      "./internal/layout-removal-authority": {
+        "types": "./dist/motion-layout-removal-authority.d.ts",
+        "default": "./dist/motion-layout-removal-authority.js"
+      },
+      "./internal/scene3d-animation-gpu-preview": {
+        "types": "./dist/scene3d-animation-gpu-preview-internal.d.ts",
+        "default": "./dist/scene3d-animation-gpu-preview-internal.js"
+      },
+      "./internal/motion-behavior-validation": {
+        "types": "./dist/motion-behavior-validation-internal.d.ts",
+        "default": "./dist/motion-behavior-validation-internal.js"
+      },
+      "./internal/trusted-host-workspace": {
+        "types": "./dist/output-path-trusted-workspace.d.ts",
+        "default": "./dist/output-path-trusted-workspace.js"
+      },
+      "./internal/derived-output-publication-authenticity": {
+        "types": "./dist/derived-output-publication-authenticity.d.ts",
+        "default": "./dist/derived-output-publication-authenticity.js"
+      },
+      "./internal/paired-output-receipt-verification": {
+        "types": "./dist/paired-output-receipt-verification.d.ts",
+        "default": "./dist/paired-output-receipt-verification.js"
+      },
+      "./internal/admitted-package-execution": {
+        "types": "./dist/package-admitted-execution-internal.d.ts",
+        "default": "./dist/package-admitted-execution-internal.js"
+      },
+      "./internal/closed-directory-inventory": {
+        "types": "./dist/closed-directory-inventory-internal.d.ts",
+        "default": "./dist/closed-directory-inventory-internal.js"
+      },
+      "./internal/checkpoint-storyboard-scalar-spatial-materializer": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-scalar-spatial-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-scalar-spatial-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-behavior-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-behavior-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-behavior-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-relation-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-relation-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-relation-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-relation-action-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-relation-action-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-relation-action-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-lifecycle-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-lifecycle-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-lifecycle-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-geometry-morph-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-geometry-morph-materializer.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-geometry-morph-materializer.js"
+      },
+      "./internal/checkpoint-storyboard-retained-trace-profile": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-profile.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-profile.js"
+      },
+      "./internal/checkpoint-storyboard-retained-trace-preview": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-preview.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-retained-trace-preview.js"
+      },
+      "./internal/checkpoint-storyboard-data-recipe": {
+        "types": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-data-recipe.d.ts",
+        "default": "./dist/internal/checkpoint-storyboard/checkpoint-storyboard-data-recipe.js"
+      },
+      "./internal/scene-recipe": {
+        "types": "./dist/internal/scene-recipe/scene-recipe.d.ts",
+        "default": "./dist/internal/scene-recipe/scene-recipe.js"
       }
     }
   },

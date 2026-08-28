@@ -9,8 +9,8 @@
  *
  * That turns a privacy feature into an integrity bug. A detached signature, a `parentReceiptId`, any
  * field a future writer adds -- all destroyed by a `read_motion` READ, the lowest tier there is. And
- * `motion.prompt.cancel|retry` record `inputHashes.targetReceipt = sha256(<the file>)`, so a read
- * that rewrites the bytes invalidates a hash that was already recorded against them.
+ * Prompt/render controls record the stable reader's admitted-byte snapshot, so a read that rewrites
+ * the bytes must retain an explicit post-purge outcome rather than silently changing that evidence.
  *
  * The correct purge deletes `output.rawRequest` from the PARSED ORIGINAL and re-serialises that, so
  * every field the normalizer does not model survives. These cases pin that, plus the four properties
@@ -100,7 +100,7 @@ afterEach(async () => {
 });
 
 describe("expired raw-prompt purge preserves the receipt it purges", () => {
-  it("removes only output.rawRequest and keeps every unmodeled field", async () => {
+  it.runIf(process.platform === "linux")("removes only output.rawRequest and keeps every unmodeled field", async () => {
     await writeStored(expiredRetention());
 
     const read = await readViaDebugApi();
@@ -117,7 +117,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(output.artifacts).toEqual([{ role: "prompt_transcript", path: "/tmp/transcript.txt", status: "available" }]);
   });
 
-  it("does not invent a top-level artifacts array by hoisting output.artifacts", async () => {
+  it.runIf(process.platform === "linux")("does not invent a top-level artifacts array by hoisting output.artifacts", async () => {
     // The normalizer merges `artifacts` and `output.artifacts` into one top-level list for its own
     // callers. Persisting that view writes a field the author never stored.
     await writeStored(expiredRetention());
@@ -128,7 +128,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect("artifacts" in after).toBe(false);
   });
 
-  it("adds nothing beyond the purge itself to the stored key set", async () => {
+  it.runIf(process.platform === "linux")("adds nothing beyond the purge itself to the stored key set", async () => {
     // Stated as a key-set property rather than a field list so a normalizer that starts modelling
     // some new field cannot quietly begin writing it back into everyone's receipts.
     await writeStored(expiredRetention());
@@ -140,7 +140,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(after).toEqual(before);
   });
 
-  it("rewrites the retention record to its redacted state and says so in warnings", async () => {
+  it.runIf(process.platform === "linux")("rewrites the retention record to its redacted state and says so in warnings", async () => {
     await writeStored(expiredRetention());
 
     await readViaDebugApi();
@@ -157,7 +157,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(after.warnings).toEqual([expect.stringContaining("Raw prompt redacted:")]);
   });
 
-  it("is idempotent: a second read leaves the bytes untouched", async () => {
+  it.runIf(process.platform === "linux")("is idempotent: a second read leaves the bytes untouched", async () => {
     await writeStored(expiredRetention());
 
     await readViaDebugApi();
@@ -168,7 +168,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(secondBytes).toBe(firstBytes);
   });
 
-  it("fails closed on a malformed retention record without rewriting the evidence of it", async () => {
+  it.runIf(process.platform === "linux")("fails closed on a malformed retention record without rewriting the evidence of it", async () => {
     // A record that cannot prove a live window loses the raw content anyway, and the record itself
     // is left exactly as stored, because a malformed record IS the evidence.
     await writeStored({ mode: "raw_request", rawRequestRetained: true, deleteAfter: "not-a-timestamp", purpose: "debugging" });
@@ -188,7 +188,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(after.signature).toBeTruthy();
   });
 
-  it("keeps a live raw prompt exactly as stored", async () => {
+  it.runIf(process.platform === "linux")("keeps a live raw prompt exactly as stored", async () => {
     await writeStored({
       mode: "raw_request",
       rawRequestRetained: true,
@@ -204,7 +204,9 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(await readFile(receiptPath, "utf8")).toBe(before);
   });
 
-  it("still returns a redacted read when the store cannot be rewritten", async () => {
+  // chmod mode bits do not establish a deny-write ACL on Windows, so these two failure fixtures
+  // are Linux-only alongside the stable-reader/purge capability they exercise.
+  it.runIf(process.platform === "linux")("still returns a redacted read when the store cannot be rewritten", async () => {
     if (process.getuid?.() === 0) return;
     await writeStored(expiredRetention());
     await chmod(receiptsRoot, 0o500);
@@ -217,7 +219,7 @@ describe("expired raw-prompt purge preserves the receipt it purges", () => {
     expect(await readFile(receiptPath, "utf8")).toContain(RAW_PROMPT);
   });
 
-  it("leaves no temp file behind when the persist-back cannot complete", async () => {
+  it.runIf(process.platform === "linux")("leaves no temp file behind when the persist-back cannot complete", async () => {
     if (process.getuid?.() === 0) return;
     await writeStored(expiredRetention());
     await chmod(receiptsRoot, 0o500);

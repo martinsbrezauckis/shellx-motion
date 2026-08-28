@@ -16,7 +16,7 @@
 import type { MotionActionPlan } from "@shellx-motion/actions";
 import { debugArgEnum } from "../command-metadata-enums.js";
 import { debugCommandContract } from "../command-metadata.js";
-import type { MotionDebugArgPropertySchema } from "../command-registry.js";
+import type { MotionDebugArgPropertySchema, MotionDebugArgsSchema } from "../command-registry.js";
 
 /** One argument of one step, flattened into the shape an agent can act on directly. */
 export interface MotionPlanStepArgument {
@@ -30,6 +30,14 @@ export interface MotionPlanStepArgument {
   minimum?: number;
 }
 
+/** One group of metadata-defined required input alternatives for a planned call. */
+export interface MotionPlanStepRequiredArgGroup {
+  /** `anyOf` permits several alternatives together; `oneOf` requires exactly one source shape. */
+  mode: "anyOf" | "oneOf";
+  /** Each inner list is the complete required set for one valid input shape. */
+  alternatives: string[][];
+}
+
 /** A plan step plus everything needed to actually issue the call. */
 export interface MotionAnnotatedPlanStep {
   order: number;
@@ -38,7 +46,10 @@ export interface MotionAnnotatedPlanStep {
   mutates?: boolean;
   permission?: string;
   args?: MotionPlanStepArgument[];
+  /** Arguments required for every valid input shape. Omitted when only alternative groups apply. */
   requiredArgs?: string[];
+  /** Additional schema-defined input shapes that must be satisfied before the call is valid. */
+  requiredArgGroups?: MotionPlanStepRequiredArgGroup[];
   /** True when the call accepts no arguments at all, so an empty args list is not a gap. */
   takesNoArguments?: boolean;
 }
@@ -65,13 +76,14 @@ function annotateCall(call: string): Omit<MotionAnnotatedPlanStep, "order" | "ca
   const schema = contract.argsSchema;
   const base = { mutates: contract.mutates, permission: contract.permission };
   if (!schema) return base;
-  const required = new Set(schema.required ?? []);
+  const required = [...new Set(schema.required ?? [])];
+  const alternativeGroups = requiredArgGroups(schema);
   const args = Object.entries(schema.properties).map(([name, property]) => {
     const allowedValues = property.enumRef ? debugArgEnum(property.enumRef)?.values : property.enum;
     return {
       name,
       type: property.type,
-      required: required.has(name),
+      required: required.includes(name),
       ...(property.description ? { description: property.description } : {}),
       ...(property.aliases ? { aliases: property.aliases } : {}),
       ...(allowedValues ? { allowedValues } : {}),
@@ -82,9 +94,28 @@ function annotateCall(call: string): Omit<MotionAnnotatedPlanStep, "order" | "ca
   return {
     ...base,
     args,
-    requiredArgs: [...required],
+    ...(required.length > 0 ? { requiredArgs: required } : {}),
+    ...(alternativeGroups.length > 0 ? { requiredArgGroups: alternativeGroups } : {}),
     ...(args.length === 0 ? { takesNoArguments: true } : {})
   };
+}
+
+/**
+ * Extract every top-level input-choice constraint from a published argument schema.
+ *
+ * The metadata owns these constraints: callers never need command-specific exceptions for a
+ * schema whose direct `required` list is empty but whose `anyOf`/`oneOf` still rejects `{}`.
+ */
+export function requiredArgGroups(schema: MotionDebugArgsSchema | null | undefined): MotionPlanStepRequiredArgGroup[] {
+  if (!schema) return [];
+  const groups: MotionPlanStepRequiredArgGroup[] = [];
+  for (const [mode, variants] of [["anyOf", schema.anyOf], ["oneOf", schema.oneOf]] as const) {
+    const alternatives = (variants ?? [])
+      .map((variant) => [...new Set(variant.required ?? [])])
+      .filter((required): required is string[] => required.length > 0);
+    if (alternatives.length > 0) groups.push({ mode, alternatives });
+  }
+  return groups;
 }
 
 /**

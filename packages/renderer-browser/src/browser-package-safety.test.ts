@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { browserPackageFingerprint } from "./browser-package-safety";
+import { browserPackageFingerprint, readBrowserPackageFile } from "./browser-package-safety";
 
 const roots: string[] = [];
 
@@ -24,7 +24,7 @@ async function writeProbeTree(): Promise<string> {
   await writeFile(join(root, "z.txt"), "zed", "utf8");
   await writeFile(join(root, "i1.txt"), "i-one", "utf8");
   await writeFile(join(root, "I2.txt"), "I-two", "utf8");
-  await mkdir(join(root, "nested"), { recursive: true });
+  await mkdir(join(root, "nested"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "nested", "ä.txt"), "nested-a-umlaut", "utf8");
   await writeFile(join(root, "nested", "z.txt"), "nested-zed", "utf8");
   return root;
@@ -80,5 +80,30 @@ describe("browser package fingerprint", () => {
       throw error;
     }
     await expect(browserPackageFingerprint(root)).rejects.toThrow("symbolic link");
+  });
+
+  it("reads embedded package bytes through a descriptor-stable non-symlink boundary", async ({ skip }) => {
+    const { symlink } = await import("node:fs/promises");
+    const root = await writeProbeTree();
+    await expect(readBrowserPackageFile(root, join(root, "a.txt"), { label: "Browser test asset" }))
+      .resolves.toMatchObject({ byteLength: 5, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    try {
+      await symlink(join(root, "a.txt"), join(root, "asset-link.txt"));
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create symbolic links; covered on symlink-capable hosts.");
+      }
+      throw error;
+    }
+    await expect(readBrowserPackageFile(root, join(root, "asset-link.txt"), { label: "Browser test asset" }))
+      .rejects.toThrow(/bounded regular non-symlink file/);
+  });
+
+  it("maps a missing embedded file to the caller's stable package-asset refusal", async () => {
+    const root = await writeProbeTree();
+    await expect(readBrowserPackageFile(root, join(root, "missing.png"), {
+      label: "Browser test asset",
+      missingMessage: "Image layer hero references a missing package asset: assets/missing.png",
+    })).rejects.toThrow("Image layer hero references a missing package asset: assets/missing.png");
   });
 });

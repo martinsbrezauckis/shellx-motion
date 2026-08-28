@@ -8,22 +8,31 @@
  * than add a dependency, this module implements exactly the keyword subset the published schemas use.
  * It is intentionally NOT a general-purpose validator: it throws on any keyword it does not
  * understand, so a schema can never silently rely on an unimplemented constraint (which would give
- * false confidence). It is used by the schema drift tests and by scripts/generate-public-contracts.ts
- * in --check mode. It is not part of the render/validation hot path.
+ * false confidence). It is the stage-one structural validator in Motion's runtime two-stage
+ * validation path, and is also used by schema drift tests and by
+ * scripts/generate-public-contracts.ts in --check mode. It is not part of the render hot path.
  *
  * Supported keywords: type, const, enum, required, properties, additionalProperties (boolean or
- * schema), items (single schema), minLength, minItems, minimum, maximum, exclusiveMinimum,
- * exclusiveMaximum, pattern, allOf, anyOf, oneOf, if/then/else, and `$ref` to local `#/$defs/<name>`.
+ * schema), items (single schema), minLength, maxLength, minItems, maxItems, uniqueItems, minimum, maximum, exclusiveMinimum,
+ * exclusiveMaximum, pattern, allOf, anyOf, oneOf, if/then/else, and `$ref` to local
+ * `#/$defs/<name>` definitions or an explicit caller-supplied published-schema resolver.
  * Ignored (metadata): $schema, $id, $comment, title, description, examples, default, $defs.
  */
+
+import { checkUniqueJsonItems } from "./published-schema-unique-items";
+import { isMotionPublishedSchema } from "./motion-scene3d-animation-root-preflight";
+import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
 
 /** A JSON Schema document (subset) as a plain JSON object. */
 export type JsonSchemaDocument = Record<string, unknown>;
 
+/** Resolve a non-local JSON Schema reference for a composed published contract. */
+export type PublishedSchemaResolver = (ref: string) => JsonSchemaDocument | undefined;
+
 const METADATA_KEYWORDS = new Set(["$schema", "$id", "$comment", "title", "description", "examples", "default", "$defs"]);
 const SUPPORTED_KEYWORDS = new Set([
   "type", "const", "enum", "required", "properties", "additionalProperties", "items",
-  "minLength", "minItems", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+  "minLength", "maxLength", "minItems", "maxItems", "uniqueItems", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
   "pattern", "allOf", "anyOf", "oneOf", "if", "then", "else"
 ]);
 
@@ -31,23 +40,30 @@ const SUPPORTED_KEYWORDS = new Set([
  * Validate `value` against `schema`, returning a list of human-readable error paths/messages.
  * An empty array means the document is valid under the supported keyword subset.
  *
- * @param schema The JSON Schema (subset) document. Its `$defs` are used to resolve local `$ref`s.
+ * @param schema The JSON Schema (subset) document. Its `$defs` resolve local `$ref`s.
  * @param value The document to validate.
+ * @param resolveExternalRef Optional resolver for relative references to other published schemas.
  * @returns Array of `{ path, message }` errors; empty when valid.
  * @throws If the schema uses a keyword this checker does not implement.
  */
 export function validateAgainstPublishedSchema(
   schema: JsonSchemaDocument,
-  value: unknown
+  value: unknown,
+  resolveExternalRef?: PublishedSchemaResolver
 ): Array<{ path: string; message: string }> {
+  if (isMotionPublishedSchema(schema)) { const rootProblem = motionDocumentRootPreflight(value); if (rootProblem) return [rootProblem]; }
   const errors: Array<{ path: string; message: string }> = [];
-  checkNode(schema, value, "", schema, errors);
+  checkNode(schema, value, "", schema, errors, resolveExternalRef);
   return errors;
 }
 
 /** Convenience wrapper: true when the value is valid under the schema. */
-export function isValidAgainstPublishedSchema(schema: JsonSchemaDocument, value: unknown): boolean {
-  return validateAgainstPublishedSchema(schema, value).length === 0;
+export function isValidAgainstPublishedSchema(
+  schema: JsonSchemaDocument,
+  value: unknown,
+  resolveExternalRef?: PublishedSchemaResolver
+): boolean {
+  return validateAgainstPublishedSchema(schema, value, resolveExternalRef).length === 0;
 }
 
 function checkNode(
@@ -55,15 +71,26 @@ function checkNode(
   value: unknown,
   path: string,
   root: JsonSchemaDocument,
-  errors: Array<{ path: string; message: string }>
+  errors: Array<{ path: string; message: string }>,
+  resolveExternalRef?: PublishedSchemaResolver
 ): void {
   if ("$ref" in node) {
     const ref = node.$ref;
     if (typeof ref !== "string") throw new Error(`Unsupported $ref at ${path}: must be a string.`);
-    checkNode(resolveRef(ref, root), value, path, root, errors);
+    const resolved = resolveRef(ref, root, resolveExternalRef);
+    checkNode(resolved.node, value, path, resolved.root, errors, resolveExternalRef);
     return;
   }
   assertSupportedKeywords(node, path);
+  if ("maxItems" in node && (!Number.isSafeInteger(node.maxItems) || (node.maxItems as number) < 0)) {
+    throw new Error(`published-schema-check: maxItems at ${path} must be a non-negative safe integer.`);
+  }
+  if ("maxLength" in node && (!Number.isSafeInteger(node.maxLength) || (node.maxLength as number) < 0)) {
+    throw new Error(`published-schema-check: maxLength at ${path} must be a non-negative safe integer.`);
+  }
+  if ("uniqueItems" in node && typeof node.uniqueItems !== "boolean") {
+    throw new Error(`published-schema-check: uniqueItems at ${path} must be a boolean.`);
+  }
 
   if ("const" in node && !deepEqual(value, node.const)) {
     errors.push({ path, message: `must equal ${JSON.stringify(node.const)}` });
@@ -79,50 +106,80 @@ function checkNode(
 
   if (typeof value === "string") checkString(node, value, path, errors);
   if (typeof value === "number") checkNumber(node, value, path, errors);
-  if (Array.isArray(value)) checkArray(node, value, path, root, errors);
-  if (isPlainObject(value)) checkObject(node, value, path, root, errors);
+  if (Array.isArray(value)) checkArray(node, value, path, root, errors, resolveExternalRef);
+  if (isPlainObject(value)) checkObject(node, value, path, root, errors, resolveExternalRef);
 
-  checkCombinators(node, value, path, root, errors);
+  checkCombinators(node, value, path, root, errors, resolveExternalRef);
 }
 
 /**
- * Longest `pattern` this checker will compile.
+ * Exact precompiled patterns used by Motion's published schemas.
  *
- * Every pattern in the repository's own schemas is well under this (the longest is
- * `^quality/(?!.*\.\.)[^/].*$`). The bound exists for the case this module cannot see: it is exported
- * from `@shellx-motion/core`, so a consumer can hand it a schema it did not author.
+ * This checker is intentionally not a general JSON Schema evaluator. Keeping the closed set as
+ * regex literals means a caller can never make this exported helper compile caller-selected regex
+ * source. A new published-schema pattern therefore needs an explicit source review and code change,
+ * just like a new supported JSON Schema keyword.
  */
-const MAX_SCHEMA_PATTERN_LENGTH = 200;
-
-/**
- * Constructs that make backtracking super-linear, in the two shapes that actually cause it:
- *
- *   1. a quantified group that already contains a quantifier — `(a+)+`, `(\w+\s?)*`;
- *   2. a quantified group containing an alternation — `(a|a)*`, the ambiguous-alternation case.
- *
- * Unbounded `*`/`+` only. A `?` or a bounded `{n,m}` on such a group cannot blow up, which matters
- * because the repository's own patterns do use `(\.d)?` and `(ts|tsx|js)` under `?` — refusing those
- * would break real validation to prevent an impossible attack.
- */
-const NESTED_QUANTIFIER = /\([^)]*[*+][^)]*\)\s*[*+]|\([^)]*\|[^)]*\)\s*[*+]/;
+const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp>([
+  ["^#[0-9A-F]{8}$", /^#[0-9A-F]{8}$/],
+  ["^#[0-9A-Fa-f]{6}$", /^#[0-9A-Fa-f]{6}$/],
+  ["^#[0-9a-fA-F]{6}$", /^#[0-9a-fA-F]{6}$/],
+  ["^#[0-9a-f]{6}$", /^#[0-9a-f]{6}$/],
+  ["^(?!/)(?!.*(?:^|/)\\.\\.?/)[a-zA-Z0-9._/-]+$", /^(?!\/)(?!.*(?:^|\/)\.\.?\/)[a-zA-Z0-9._\/-]+$/],
+  ["^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$", /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/],
+  ["^/", /^\//],
+  ["^/[A-Za-z0-9_~./-]+$", /^\/[A-Za-z0-9_~.\/-]+$/],
+  ["^[1-9][0-9]*:[1-9][0-9]*$", /^[1-9][0-9]*:[1-9][0-9]*$/],
+  ["^[A-Fa-f0-9]{64}$", /^[A-Fa-f0-9]{64}$/],
+  ["^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$", /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/],
+  ["^[A-Za-z0-9][A-Za-z0-9._-]*$", /^[A-Za-z0-9][A-Za-z0-9._-]*$/],
+  ["^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/],
+  ["^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/],
+  ["^[a-f0-9]{64}$", /^[a-f0-9]{64}$/],
+  ["^[a-fA-F0-9]{64}$", /^[a-fA-F0-9]{64}$/],
+  ["^[a-z0-9-]{1,100}$", /^[a-z0-9-]{1,100}$/],
+  ["^[a-z]+/[a-z0-9.+-]+$", /^[a-z]+\/[a-z0-9.+-]+$/],
+  ["^[a-z][a-z0-9-]{0,127}$", /^[a-z][a-z0-9-]{0,127}$/],
+  ["^[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9._/-]{0,95}@[0-9]{1,8}$", /^[a-z][a-z0-9.-]{0,63}\/[a-z][a-z0-9._\/-]{0,95}@[0-9]{1,8}$/],
+  ["^[a-z][a-z0-9.-]{0,79}@[1-9][0-9]*$", /^[a-z][a-z0-9.-]{0,79}@[1-9][0-9]*$/],
+  ["^[a-z][a-z0-9.-]{0,99}@[1-9][0-9]*$", /^[a-z][a-z0-9.-]{0,99}@[1-9][0-9]*$/],
+  ["^[a-z][a-z0-9.-]{1,120}$", /^[a-z][a-z0-9.-]{1,120}$/],
+  ["^[a-z][a-z0-9._:-]{0,119}@[0-9]{1,8}$", /^[a-z][a-z0-9._:-]{0,119}@[0-9]{1,8}$/],
+  ["^[a-z][a-z0-9._:-]{0,127}$", /^[a-z][a-z0-9._:-]{0,127}$/],
+  ["^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$", /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/],
+  ["^[a-z][a-z0-9_.:-]{0,95}$", /^[a-z][a-z0-9_.:-]{0,95}$/],
+  ["^\\.[a-z0-9]{1,16}$", /^\.[a-z0-9]{1,16}$/],
+  ["^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/],
+  ["^artifact-[a-f0-9]{24}$", /^artifact-[a-f0-9]{24}$/],
+  ["^checkpoint_storyboard_[a-f0-9]{32}$", /^checkpoint_storyboard_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_creative_review_handle_[a-f0-9]{32}$", /^checkpoint_storyboard_creative_review_handle_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_endpoint_witness_handle_[a-f0-9]{32}$", /^checkpoint_storyboard_endpoint_witness_handle_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_preview_[a-f0-9]{32}$", /^checkpoint_storyboard_preview_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_preview_receipt_[a-f0-9]{32}$", /^checkpoint_storyboard_preview_receipt_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$/],
+  ["^checkpoint_storyboard_retained_trace_review_handle_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_review_handle_[a-f0-9]{32}$/],
+  ["^cubic-bezier\\(", /^cubic-bezier\(/],
+  ["^https?://", /^https?:\/\//],
+  ["^quality/(?!.*\\.\\.)[^/].*$", /^quality\/(?!.*\.\.)[^\/].*$/],
+  ["^segments/segment-[0-9]{6}\\.[a-z0-9]{1,16}$", /^segments\/segment-[0-9]{6}\.[a-z0-9]{1,16}$/],
+  ["^steps\\(", /^steps\(/],
+]);
 
 function checkString(node: JsonSchemaDocument, value: string, path: string, errors: Array<{ path: string; message: string }>): void {
-  if (typeof node.minLength === "number" && value.length < node.minLength) {
+  const scalarLength = Array.from(value).length;
+  if (typeof node.minLength === "number" && scalarLength < node.minLength) {
     errors.push({ path, message: `must be at least ${node.minLength} character(s)` });
   }
+  if (typeof node.maxLength === "number" && scalarLength > node.maxLength) {
+    errors.push({ path, message: `must contain at most ${node.maxLength} character(s)` });
+  }
   if (typeof node.pattern === "string") {
-    // Refuse a pattern this checker cannot evaluate safely, exactly as it refuses a keyword it does
-    // not implement. `new RegExp(node.pattern)` compiles and runs schema-supplied source: in-repo the
-    // schemas are ours, but this module is exported, and running an arbitrary caller-supplied regex
-    // over caller-supplied input is a denial-of-service primitive. Throwing keeps this module's one
-    // promise — that it never reports "valid" for something it did not actually check.
-    if (node.pattern.length > MAX_SCHEMA_PATTERN_LENGTH) {
-      throw new Error(`published-schema-check: pattern at ${path} exceeds ${MAX_SCHEMA_PATTERN_LENGTH} characters and was not evaluated.`);
+    const pattern = PUBLISHED_SCHEMA_PATTERNS.get(node.pattern);
+    if (!pattern) {
+      throw new Error(`published-schema-check: pattern at ${path} is not one of Motion's reviewed published-schema patterns and was not evaluated.`);
     }
-    if (NESTED_QUANTIFIER.test(node.pattern)) {
-      throw new Error(`published-schema-check: pattern at ${path} nests quantifiers and was not evaluated; rewrite it without a quantified group inside a quantifier.`);
-    }
-    if (!new RegExp(node.pattern).test(value)) {
+    if (!pattern.test(value)) {
       errors.push({ path, message: `must match pattern ${node.pattern}` });
     }
   }
@@ -148,13 +205,18 @@ function checkArray(
   value: unknown[],
   path: string,
   root: JsonSchemaDocument,
-  errors: Array<{ path: string; message: string }>
+  errors: Array<{ path: string; message: string }>,
+  resolveExternalRef?: PublishedSchemaResolver
 ): void {
   if (typeof node.minItems === "number" && value.length < node.minItems) {
     errors.push({ path, message: `must contain at least ${node.minItems} item(s)` });
   }
+  if (typeof node.maxItems === "number" && value.length > node.maxItems) {
+    errors.push({ path, message: `must contain at most ${node.maxItems} item(s)` });
+  }
+  if (node.uniqueItems === true) checkUniqueJsonItems(value, path, errors);
   if (isPlainObject(node.items)) {
-    value.forEach((item, index) => checkNode(node.items as JsonSchemaDocument, item, `${path}/${index}`, root, errors));
+    value.forEach((item, index) => checkNode(node.items as JsonSchemaDocument, item, `${path}/${index}`, root, errors, resolveExternalRef));
   }
 }
 
@@ -163,7 +225,8 @@ function checkObject(
   value: Record<string, unknown>,
   path: string,
   root: JsonSchemaDocument,
-  errors: Array<{ path: string; message: string }>
+  errors: Array<{ path: string; message: string }>,
+  resolveExternalRef?: PublishedSchemaResolver
 ): void {
   const properties = isPlainObject(node.properties) ? node.properties as Record<string, JsonSchemaDocument> : {};
   if (Array.isArray(node.required)) {
@@ -176,13 +239,13 @@ function checkObject(
   for (const [key, propValue] of Object.entries(value)) {
     const propSchema = properties[key];
     if (propSchema) {
-      checkNode(propSchema, propValue, `${path}/${key}`, root, errors);
+      checkNode(propSchema, propValue, `${path}/${key}`, root, errors, resolveExternalRef);
       continue;
     }
     if (node.additionalProperties === false) {
       errors.push({ path: `${path}/${key}`, message: "unexpected property" });
     } else if (isPlainObject(node.additionalProperties)) {
-      checkNode(node.additionalProperties as JsonSchemaDocument, propValue, `${path}/${key}`, root, errors);
+      checkNode(node.additionalProperties as JsonSchemaDocument, propValue, `${path}/${key}`, root, errors, resolveExternalRef);
     }
   }
 }
@@ -192,40 +255,54 @@ function checkCombinators(
   value: unknown,
   path: string,
   root: JsonSchemaDocument,
-  errors: Array<{ path: string; message: string }>
+  errors: Array<{ path: string; message: string }>,
+  resolveExternalRef?: PublishedSchemaResolver
 ): void {
   if (Array.isArray(node.allOf)) {
-    for (const sub of node.allOf) checkNode(sub as JsonSchemaDocument, value, path, root, errors);
+    for (const sub of node.allOf) checkNode(sub as JsonSchemaDocument, value, path, root, errors, resolveExternalRef);
   }
   if (Array.isArray(node.anyOf)) {
-    const anyOk = node.anyOf.some((sub) => validateSubtree(sub as JsonSchemaDocument, value, root).length === 0);
+    const anyOk = node.anyOf.some((sub) => validateSubtree(sub as JsonSchemaDocument, value, root, resolveExternalRef).length === 0);
     if (!anyOk) errors.push({ path, message: "must match at least one anyOf schema" });
   }
   if (Array.isArray(node.oneOf)) {
-    const matches = node.oneOf.filter((sub) => validateSubtree(sub as JsonSchemaDocument, value, root).length === 0).length;
+    const matches = node.oneOf.filter((sub) => validateSubtree(sub as JsonSchemaDocument, value, root, resolveExternalRef).length === 0).length;
     if (matches !== 1) errors.push({ path, message: `must match exactly one oneOf schema (matched ${matches})` });
   }
   if (isPlainObject(node.if)) {
-    const ifPasses = validateSubtree(node.if as JsonSchemaDocument, value, root).length === 0;
+    const ifPasses = validateSubtree(node.if as JsonSchemaDocument, value, root, resolveExternalRef).length === 0;
     const branch = ifPasses ? node.then : node.else;
-    if (isPlainObject(branch)) checkNode(branch as JsonSchemaDocument, value, path, root, errors);
+    if (isPlainObject(branch)) checkNode(branch as JsonSchemaDocument, value, path, root, errors, resolveExternalRef);
   }
 }
 
-function validateSubtree(node: JsonSchemaDocument, value: unknown, root: JsonSchemaDocument): Array<{ path: string; message: string }> {
+function validateSubtree(
+  node: JsonSchemaDocument,
+  value: unknown,
+  root: JsonSchemaDocument,
+  resolveExternalRef?: PublishedSchemaResolver
+): Array<{ path: string; message: string }> {
   const errors: Array<{ path: string; message: string }> = [];
-  checkNode(node, value, "", root, errors);
+  checkNode(node, value, "", root, errors, resolveExternalRef);
   return errors;
 }
 
-function resolveRef(ref: string, root: JsonSchemaDocument): JsonSchemaDocument {
+function resolveRef(
+  ref: string,
+  root: JsonSchemaDocument,
+  resolveExternalRef?: PublishedSchemaResolver
+): { node: JsonSchemaDocument; root: JsonSchemaDocument } {
   const prefix = "#/$defs/";
-  if (!ref.startsWith(prefix)) throw new Error(`Unsupported $ref '${ref}': only local #/$defs/<name> references are supported.`);
-  const name = ref.slice(prefix.length);
-  const defs = isPlainObject(root.$defs) ? root.$defs as Record<string, unknown> : {};
-  const target = defs[name];
-  if (!isPlainObject(target)) throw new Error(`Unresolved $ref '${ref}'.`);
-  return target as JsonSchemaDocument;
+  if (ref.startsWith(prefix)) {
+    const name = ref.slice(prefix.length);
+    const defs = isPlainObject(root.$defs) ? root.$defs as Record<string, unknown> : {};
+    const target = defs[name];
+    if (!isPlainObject(target)) throw new Error(`Unresolved $ref '${ref}'.`);
+    return { node: target as JsonSchemaDocument, root };
+  }
+  const external = resolveExternalRef?.(ref);
+  if (!external) throw new Error(`Unsupported $ref '${ref}': provide a published-schema resolver for non-local references.`);
+  return { node: external, root: external };
 }
 
 function assertSupportedKeywords(node: JsonSchemaDocument, path: string): void {

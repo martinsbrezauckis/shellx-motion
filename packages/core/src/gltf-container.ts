@@ -10,6 +10,8 @@ export const MAX_GLTF_BUFFER_VIEWS = 128;
 export const MAX_GLTF_NODES = 64;
 export const MAX_GLTF_MESHES = 16;
 export const MAX_GLTF_MATERIALS = 32;
+export const MAX_GLTF_TEXTURES = 16;
+export const MAX_GLTF_IMAGES = 16;
 
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
@@ -34,6 +36,8 @@ export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): Par
   assertBoundedArray(json.nodes, MAX_GLTF_NODES, "nodes");
   assertBoundedArray(json.meshes, MAX_GLTF_MESHES, "meshes");
   assertBoundedArray(json.materials, MAX_GLTF_MATERIALS, "materials", true);
+  assertBoundedArray(json.textures, MAX_GLTF_TEXTURES, "textures", true);
+  assertBoundedArray(json.images, MAX_GLTF_IMAGES, "images", true);
   const buffers = readBuffers(json.buffers as unknown[], parsed.binaryChunk);
   return {
     format,

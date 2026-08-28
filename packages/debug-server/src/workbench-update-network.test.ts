@@ -75,6 +75,24 @@ describe("update feed network boundary", () => {
     await Promise.all(openServers.splice(0).map(closeServer));
   });
 
+  it("rejects a malformed running version before it makes a network request", async () => {
+    let fetched = 0;
+    const result = await runWorkbenchUpdateCheck(baseConfig({
+      currentVersion: "1.0",
+      fetchImpl: async () => {
+        fetched += 1;
+        return updateFetchResponse({ body: VALID_RELEASE });
+      }
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      configured: true,
+      error: { code: "update_current_version_invalid", message: expect.stringContaining("valid SemVer") }
+    });
+    expect(fetched).toBe(0);
+  });
+
   it("fetches the release for a public target on the pinned policy", async () => {
     let fetchedUrl = "";
     const fetcher: UpdateFetch = async (url) => {

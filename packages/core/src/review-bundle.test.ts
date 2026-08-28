@@ -1,12 +1,59 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeReviewBundle } from "./review-bundle";
+import { OutputDirectoryReservation } from "./output-path-topology";
 
 const fixtureRoot = resolve("../../fixtures/packages/lower-third");
 
 describe("review bundle", () => {
+  it("refuses a configured artifact root replaced after its authority was retained", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-review-root-authority-"));
+    const mediaRoot = join(tempRoot, "media");
+    const replacedRoot = join(tempRoot, "media-original");
+    const receiptsRoot = join(tempRoot, "receipts");
+    const outDir = join(tempRoot, "bundle");
+    const mediaPath = join(mediaRoot, "final.mp4");
+    try {
+      await mkdir(mediaRoot, { mode: 0o700 });
+      await mkdir(receiptsRoot, { mode: 0o700 });
+      await writeFile(mediaPath, "trusted media", "utf8");
+      await writeFile(join(receiptsRoot, "render.receipt.json"), `${JSON.stringify({
+        schema: "shellx-motion/receipt@1",
+        id: "render-final-retained-root",
+        operation: "render.final",
+        status: "passed",
+        packageId: "pkg_lower_third",
+        inputHashes: { "motion.json": "abc123" },
+        createdAt: "2026-08-12T00:00:00.000Z",
+        lane: "ffmpeg",
+        output: { path: mediaPath },
+        artifacts: [{ role: "rendered_media", path: mediaPath, status: "available", primary: true }],
+        warnings: []
+      })}\n`, "utf8");
+      const authority = await OutputDirectoryReservation.acquire(mediaRoot, {
+        allowExistingContents: true,
+        requireExisting: true,
+        requireExclusiveChildAuthority: true
+      });
+
+      await rename(mediaRoot, replacedRoot);
+      await mkdir(mediaRoot, { mode: 0o700 });
+      await writeFile(mediaPath, "replacement media", "utf8");
+
+      await expect(writeReviewBundle({
+        packageRoot: fixtureRoot,
+        receiptsRoot,
+        outDir,
+        artifactRootAuthorities: [authority]
+      })).rejects.toThrow(/changed after Motion captured its identity|topology changed after admission/i);
+      await expect(readdir(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("writes a portable HTML review bundle with copied receipt artifacts", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-"));
     const receiptsRoot = join(tempRoot, "receipts");
@@ -15,8 +62,8 @@ describe("review bundle", () => {
     const mediaPath = join(mediaRoot, "final.mp4");
     const qualityManifestPath = join(tempRoot, "quality", "final.quality-manifest.json");
     try {
-      await mkdir(receiptsRoot, { recursive: true });
-      await mkdir(mediaRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+      await mkdir(mediaRoot, { recursive: true, mode: 0o700 });
       await writeFile(mediaPath, "fake mp4 bytes", "utf8");
       await writeFile(
         join(receiptsRoot, "render.receipt.json"),
@@ -76,6 +123,7 @@ describe("review bundle", () => {
       expect(copied).toMatchObject({
         role: "rendered_media",
         mediaType: "video/mp4",
+        path: join(outDir, copied.relativePath),
         relativePath: expect.stringMatching(/^artifacts\/rendered_media-[a-f0-9]{12}-final\.mp4$/)
       });
       expect(await readFile(join(outDir, copied.relativePath), "utf8")).toBe("fake mp4 bytes");
@@ -94,25 +142,31 @@ describe("review bundle", () => {
         status: "passed",
         packageId: "pkg_lower_third",
         output: {
-          htmlPath: join(outDir, "review-html-bundle.html"),
-          receiptPath: join(outDir, "review-html-bundle.receipt.json"),
+          htmlPath: "review-html-bundle.html",
+          receiptPath: "review-html-bundle.receipt.json",
           receiptCount: 1,
           copiedArtifactCount: 1,
           qualityGateCount: 1,
           failedQualityGateCount: 0
         },
         artifacts: expect.arrayContaining([
-          expect.objectContaining({ role: "review_html_bundle", path: join(outDir, "review-html-bundle.html"), status: "available", mediaType: "text/html", primary: true }),
-          expect.objectContaining({ role: "review_artifact", path: join(outDir, copied.relativePath), status: "available", mediaType: "video/mp4" })
+          expect.objectContaining({ role: "review_html_bundle", path: "review-html-bundle.html", status: "available", mediaType: "text/html", primary: true }),
+          expect.objectContaining({ role: "review_html_bundle_receipt", path: "review-html-bundle.receipt.json", status: "available", mediaType: "application/json" }),
+          expect.objectContaining({ role: "review_artifact", path: copied.relativePath, status: "available", mediaType: "video/mp4" })
         ])
+      });
+      expect(JSON.stringify(receipt)).not.toContain(outDir);
+      expect(result.receipt.output).toMatchObject({
+        htmlPath: "review-html-bundle.html",
+        receiptPath: "review-html-bundle.receipt.json"
       });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
-  // Regression for the sealed Codex Security finding "Receipt-controlled paths can disclose local
-  // files through review bundles": receipts are data read from an operator-selected directory, so
+  // Regression for receipt-controlled paths disclosing local files through review bundles:
+  // receipts are data read from an operator-selected directory, so
   // a crafted receipt pointing artifacts[].path or output.path at an arbitrary readable file must
   // not get that file copied into a bundle built to be shared. Out-of-root references have to
   // surface as explicit omissions — visible to the reviewer, absent from the bundle bytes.
@@ -125,8 +179,8 @@ describe("review bundle", () => {
     const credentialsPath = join(secretsRoot, "credentials.txt");
     const notesPath = join(secretsRoot, "render-notes.txt");
     try {
-      await mkdir(receiptsRoot, { recursive: true });
-      await mkdir(secretsRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+      await mkdir(secretsRoot, { recursive: true, mode: 0o700 });
       await writeFile(insideMediaPath, "fake mp4 bytes", "utf8");
       await writeFile(credentialsPath, "s3cret-credential-bytes", "utf8");
       await writeFile(notesPath, "s3cret-notes-bytes", "utf8");
@@ -200,9 +254,60 @@ describe("review bundle", () => {
     }
   });
 
+  it("records an unapproved outputPath fallback without reading or exposing its bytes", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-output-path-"));
+    const receiptsRoot = join(tempRoot, "receipts");
+    const privateRoot = join(tempRoot, "private");
+    const outDir = join(tempRoot, "bundle");
+    const privatePath = join(privateRoot, "operator-notes.txt");
+    try {
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+      await mkdir(privateRoot, { recursive: true, mode: 0o700 });
+      await writeFile(privatePath, "do-not-package-this", "utf8");
+      await writeFile(
+        join(receiptsRoot, "render.receipt.json"),
+        `${JSON.stringify({
+          schema: "shellx-motion/receipt@1",
+          id: "render-final-output-path-escape",
+          operation: "render.final",
+          status: "passed",
+          packageId: "pkg_lower_third",
+          inputHashes: { "motion.json": "abc123" },
+          createdAt: "2026-07-01T12:00:00.000Z",
+          lane: "ffmpeg",
+          // Some operations use outputPath rather than path. It is receipt-controlled too, so it
+          // must travel through the exact same canonical-root and omission-ledger boundary.
+          output: { outputPath: privatePath },
+          warnings: []
+        }, null, 2)}\n`,
+        "utf8"
+      );
+
+      const result = await writeReviewBundle({
+        receiptsRoot,
+        outDir,
+        createdAt: "2026-07-01T12:30:00.000Z"
+      });
+
+      expect(result).toMatchObject({ copiedArtifactCount: 0, omittedArtifactCount: 1 });
+      expect(result.omittedArtifacts).toEqual([
+        { role: "receipt_output", sourceName: "operator-notes.txt", reason: "outside_approved_roots", receiptId: "render-final-output-path-escape", operation: "render.final" }
+      ]);
+      expect(await readdir(outDir)).not.toContain("artifacts");
+      const html = await readFile(result.htmlPath, "utf8");
+      const rawReceipt = await readFile(result.receiptPath, "utf8");
+      expect(html).toContain("operator-notes.txt");
+      expect(html).not.toContain(privateRoot);
+      expect(html).not.toContain("do-not-package-this");
+      expect(rawReceipt).not.toContain(privateRoot);
+      expect(rawReceipt).not.toContain("do-not-package-this");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   /**
-   * Regression for the receipt-controlled silent-skip holes in the omission ledger (Codex security
-   * review, pre-0.1.0).
+   * Regression for the receipt-controlled silent-skip holes fixed before 0.1.0.
    *
    * `copyReviewArtifacts` opened with a bare `continue` for artifacts whose `status` was not
    * `available`, whose `path` was empty, or whose `path` carried a URL scheme. All three are
@@ -221,7 +326,7 @@ describe("review bundle", () => {
     const outDir = join(tempRoot, "bundle");
     const hiddenPath = join(receiptsRoot, "hidden-evidence.mp4");
     try {
-      await mkdir(receiptsRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
       await writeFile(hiddenPath, "evidence bytes", "utf8");
       await writeFile(
         join(receiptsRoot, "render.receipt.json"),
@@ -281,8 +386,8 @@ describe("review bundle", () => {
     const privateRoot = join(tempRoot, "private");
     const outDir = join(tempRoot, "bundle");
     try {
-      await mkdir(receiptsRoot, { recursive: true });
-      await mkdir(privateRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+      await mkdir(privateRoot, { recursive: true, mode: 0o700 });
       await writeFile(join(privateRoot, "target.mp4"), "private bytes", "utf8");
       // A directory symlink inside receiptsRoot: the declared path looks in-root lexically, but
       // its canonical location is outside — exactly what realpath-based binding must reject.
@@ -395,8 +500,8 @@ describe("review bundle", () => {
     const receiptsRoot = join(tempRoot, "receipts");
     const outDir = join(tempRoot, "bundle");
     try {
-      await mkdir(join(receiptsRoot, "batch-a"), { recursive: true });
-      await mkdir(join(receiptsRoot, "batch-b"), { recursive: true });
+      await mkdir(join(receiptsRoot, "batch-a"), { recursive: true, mode: 0o700 });
+      await mkdir(join(receiptsRoot, "batch-b"), { recursive: true, mode: 0o700 });
       for (const batch of ["batch-a", "batch-b"]) {
         await writeFile(
           join(receiptsRoot, batch, "render.receipt.json"),

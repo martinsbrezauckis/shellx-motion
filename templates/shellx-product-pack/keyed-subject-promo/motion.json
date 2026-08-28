@@ -103,7 +103,7 @@
       "startMs": 260,
       "durationMs": 5300,
       "transform": { "x": 132, "y": 178, "width": 720, "height": 52 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 25, "fontWeight": 850, "letterSpacing": 4.4, "color": "#e9d5ff" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 25, "fontWeight": 900, "letterSpacing": 4.4, "color": "#e9d5ff" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "copy", "minFontSize": 17 },
       "keyframes": { "opacity": [{ "atMs": 260, "value": 0 }, { "atMs": 720, "value": 1, "easing": "ease-out" }] }
     },
@@ -114,7 +114,7 @@
       "startMs": 420,
       "durationMs": 5100,
       "transform": { "x": 124, "y": 272, "width": 800, "height": 308 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 88, "fontWeight": 880, "lineHeight": 1.01, "color": "#faf5ff", "textShadow": { "x": 0, "y": 12, "blur": 34, "color": "rgba(0, 0, 0, 0.62)" } },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 88, "fontWeight": 900, "lineHeight": 1.01, "color": "#faf5ff", "textShadow": { "x": 0, "y": 12, "blur": 34, "color": "rgba(0, 0, 0, 0.62)" } },
       "textFit": { "policy": "auto-fit", "safeAreaId": "copy", "minFontSize": 52 },
       "effects": { "motionBlur": { "samples": 3, "shutterAngle": 150 } },
       "keyframes": {
@@ -129,7 +129,7 @@
       "startMs": 1050,
       "durationMs": 4100,
       "transform": { "x": 132, "y": 622, "width": 700, "height": 150 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 32, "fontWeight": 560, "lineHeight": 1.2, "color": "#e9d5ff" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 32, "fontWeight": 600, "lineHeight": 1.2, "color": "#e9d5ff" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "copy", "minFontSize": 22 },
       "keyframes": { "opacity": [{ "atMs": 1050, "value": 0 }, { "atMs": 1520, "value": 1, "easing": "ease-out" }] }
     },
@@ -153,7 +153,7 @@
       "startMs": 3980,
       "durationMs": 1650,
       "transform": { "x": 168, "y": 842, "width": 258, "height": 40 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 24, "fontWeight": 880, "letterSpacing": 1.5, "textAlign": "center", "color": "#160b24" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 24, "fontWeight": 900, "letterSpacing": 1.5, "textAlign": "center", "color": "#160b24" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "badge", "minFontSize": 16 }
     },
     {
@@ -169,7 +169,9 @@
   ],
   "assets": [
     { "schema": "shellx-motion/asset@1", "id": "atmosphere-fog-rays-footage", "kind": "video", "source": { "path": "assets/generated/atmosphere-fog-rays.mp4", "mimeType": "video/mp4" }, "size": { "width": 736, "height": 400 }, "durationMs": 6042 },
-    { "schema": "shellx-motion/asset@1", "id": "green-screen-subject-sample", "kind": "image", "source": { "path": "assets/samples/green-screen-subject.svg", "mimeType": "image/svg+xml" }, "size": { "width": 900, "height": 1080 } }
+    { "schema": "shellx-motion/asset@1", "id": "green-screen-subject-sample", "kind": "image", "source": { "path": "assets/samples/green-screen-subject.svg", "mimeType": "image/svg+xml" }, "size": { "width": 900, "height": 1080 } },
+    { "id": "font_inter_600", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" }, "weight": 600, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
   ],
   "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-keyed-subject-promo" }
 }

@@ -1,7 +1,7 @@
 import { convertScriptedFramesToMotionPackage, type writeScriptedMotionPackage } from "@shellx-motion/adapters-script";
 import type { importHtmlSnippetToMotionPackage, writeHtmlSnippetExport } from "@shellx-motion/adapters-html";
 import type { exportMotionPackageToOtio, importOtioTimelineToMotionPackage } from "@shellx-motion/adapters-otio";
-import type { OperationReceipt } from "@shellx-motion/core";
+import { applyReceiptActor, isPublicationCommitUncertain, type OperationReceipt, type PublicationCommitUncertainError, type ReceiptActor } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { recordArg, stringArg } from "./args.js";
 import { dispatchSourceAuthoringCommand, type SourceAuthoringServices } from "./authoring-source.js";
@@ -13,6 +13,15 @@ import { dispatchTemplateMutationCommand, type TemplateMutationServices } from "
 import { dispatchTrackingAuthoringCommand, type TrackingAuthoringServices } from "./authoring-tracking.js";
 import { dispatchGltfAuthoringCommand, type GltfAuthoringServices } from "./authoring-gltf.js";
 import { dispatchLottieAuthoringCommand, type LottieAuthoringServices } from "./authoring-lottie.js";
+import { dispatchAgentScriptAuthoringCommand, type AgentScriptAuthoringServices } from "./authoring-agent-script.js";
+import { dispatchCutoutRigAuthoringCommand, type CutoutRigAuthoringServices } from "./authoring-cutout-rig.js";
+import {
+  assertConfiguredAuthoringInputFile,
+  assertConfiguredAuthoringInputRoot,
+  assertConfiguredAuthoringOutputFile,
+  assertConfiguredAuthoringOutputRoot,
+  configuredAuthoringInputRoot,
+} from "./authoring-root-policy.js";
 
 export interface AuthoringDomainServices
   extends SourceAuthoringServices,
@@ -22,10 +31,15 @@ export interface AuthoringDomainServices
     KeyingAuthoringServices,
     CompositingGraphAuthoringServices,
     ProceduralAuthoringServices,
+    CutoutRigAuthoringServices,
     GltfAuthoringServices,
-    LottieAuthoringServices {
+    LottieAuthoringServices,
+    AgentScriptAuthoringServices {
   receiptsRoot?: string;
-  readJson?: (path: string) => Promise<unknown>;
+  /** Observed transport actor committed with the Script receipt before any mirror observes it. */
+  receiptActor?: ReceiptActor;
+  /** The configured root is supplied for stable no-follow reads; implementations must not widen it. */
+  readJson?: (path: string, withinRoot?: string) => Promise<unknown>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
   scriptedPackageWriter?: typeof writeScriptedMotionPackage;
   htmlSnippetExporter?: typeof writeHtmlSnippetExport;
@@ -39,10 +53,14 @@ export async function dispatchAuthoringCommand(
   args: unknown,
   services: AuthoringDomainServices = {}
 ): Promise<MotionDebugResult | null> {
+  const cutoutRigResult = await dispatchCutoutRigAuthoringCommand(command, args, services);
+  if (cutoutRigResult) return cutoutRigResult;
   const gltfResult = await dispatchGltfAuthoringCommand(command, args, services);
   if (gltfResult) return gltfResult;
   const lottieResult = await dispatchLottieAuthoringCommand(command, args, services);
   if (lottieResult) return lottieResult;
+  const agentScriptResult = await dispatchAgentScriptAuthoringCommand(command, args, services);
+  if (agentScriptResult) return agentScriptResult;
   const proceduralResult = await dispatchProceduralAuthoringCommand(command, args, services);
   if (proceduralResult) return proceduralResult;
   const compositingResult = await dispatchCompositingGraphAuthoringCommand(command, args, services);
@@ -73,24 +91,37 @@ export async function dispatchAuthoringCommand(
   if (scriptPath && !services.readJson) return capabilityUnavailable("Scripted-video JSON reading is unavailable.");
   if (!services.scriptedPackageWriter) return capabilityUnavailable("Scripted Motion package writing is unavailable.");
   if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Script compile receipt persistence is unavailable.");
+  if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("Script compilation");
 
   try {
-    const script = scriptInline ?? await services.readJson!(scriptPath!);
+    const approvedInputRoot = scriptPath
+      ? configuredAuthoringInputRoot(scriptPath, services.authoringInputRoots, "Script compile source")
+      : undefined;
+    if (scriptPath) await assertConfiguredAuthoringInputFile(scriptPath, services.authoringInputRoots, "Script compile source");
+    const script = scriptInline ?? await services.readJson!(scriptPath!, approvedInputRoot);
     const inputPath = scriptInline ? "inline-scripted-video.json" : scriptPath!;
     const scriptedExport = convertScriptedFramesToMotionPackage(script, {
       ...(createdAt ? { createdAt } : {}),
       inputPath
     });
-    const written = await services.scriptedPackageWriter(scriptedExport, { packageDir });
-    const hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, scriptedExport.receipt) : undefined;
+    await assertConfiguredAuthoringOutputRoot(packageDir, services.authoringOutputRoots, "Script compile package output");
+    const written = await services.scriptedPackageWriter({
+      ...scriptedExport,
+      receipt: applyReceiptActor(scriptedExport.receipt, services.receiptActor)
+    }, { packageDir });
+    // The package's exact final receipt is committed before this observer is called. A mirror
+    // failure therefore warns about host observation; it must never rewrite committed success.
+    const hostReceipt = receiptsRoot ? await mirrorScriptCompileReceipt(services, receiptsRoot, written.receipt) : undefined;
+    const warnings = [...written.receipt.warnings, ...(hostReceipt?.warning ? [hostReceipt.warning] : [])];
     return {
       ok: true,
-      receiptId: scriptedExport.receipt.id,
+      receiptId: written.receipt.id,
       visibleState: {
         panel: "receipts",
         operation: "script.compile",
         packageId: scriptedExport.manifest.id,
-        packageDir: written.packageDir
+        packageDir: written.packageDir,
+        ...(hostReceipt?.path ? { hostReceiptPath: hostReceipt.path } : {})
       },
       result: {
         ok: true,
@@ -100,20 +131,52 @@ export async function dispatchAuthoringCommand(
         manifestPath: written.manifestPath,
         motionPath: written.motionPath,
         receiptPath: written.receiptPath,
-        ...(hostReceiptPath ? { hostReceiptPath } : {}),
+        ...(hostReceipt?.path ? { hostReceiptPath: hostReceipt.path } : {}),
+        ...(hostReceipt?.warning ? { hostReceipt: { status: "mirror_failed", message: hostReceipt.warning } } : {}),
         manifest: scriptedExport.manifest,
         motion: scriptedExport.motion,
-        receipt: scriptedExport.receipt
+        receipt: written.receipt
       },
-      warnings: scriptedExport.receipt.warnings
+      warnings
     };
   } catch (error) {
+    if (isPublicationCommitUncertain(error)) return scriptCompileCommitUncertain(error);
     return {
       ok: false,
       error: { code: "script_compile_failed", message: error instanceof Error ? error.message : String(error) },
       warnings: []
     };
   }
+}
+
+async function mirrorScriptCompileReceipt(
+  services: AuthoringDomainServices,
+  root: string,
+  receipt: OperationReceipt
+): Promise<{ path?: string; warning?: string }> {
+  try {
+    if (!services.writeReceipt) throw new Error("Receipt persistence capability is unavailable.");
+    return { path: await services.writeReceipt(root, receipt) };
+  } catch (error) {
+    return { warning: `Script package committed, but host receipt mirror failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+function scriptCompileCommitUncertain(error: PublicationCommitUncertainError): MotionDebugResult {
+  const evidence = error.evidence;
+  const detail = {
+    possiblyCommitted: true,
+    packageDir: evidence.publicPath,
+    publicPaths: [evidence.publicPath],
+    expectedClosedTree: evidence.expected,
+    expectedPublications: [evidence]
+  };
+  return {
+    ok: false,
+    error: { code: "publication_commit_uncertain", message: error.message, detail },
+    result: detail,
+    warnings: []
+  };
 }
 
 async function exportHtmlSnippet(args: unknown, services: AuthoringDomainServices): Promise<MotionDebugResult> {
@@ -123,7 +186,10 @@ async function exportHtmlSnippet(args: unknown, services: AuthoringDomainService
   if (!packageRoot) return invalidArgs("motion.html.snippet.export requires packageRoot.");
   if (!outDir) return invalidArgs("motion.html.snippet.export requires outDir.");
   if (!services.htmlSnippetExporter) return capabilityUnavailable("HTML snippet export is unavailable.");
+  if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("HTML snippet export");
   try {
+    await assertConfiguredAuthoringInputRoot(packageRoot, services.authoringInputRoots, "HTML snippet package input");
+    await assertConfiguredAuthoringOutputRoot(outDir, services.authoringOutputRoots, "HTML snippet export output");
     const result = await services.htmlSnippetExporter({ packageRoot, outDir, ...(createdAt ? { createdAt } : {}) });
     return {
       ok: true,
@@ -152,7 +218,10 @@ async function importHtmlSnippet(args: unknown, services: AuthoringDomainService
   if (!htmlPath) return invalidArgs("motion.html.snippet.import requires htmlPath.");
   if (!packageDir) return invalidArgs("motion.html.snippet.import requires packageDir.");
   if (!services.htmlSnippetImporter) return capabilityUnavailable("HTML snippet import is unavailable.");
+  if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("HTML snippet import");
   try {
+    await assertConfiguredAuthoringInputFile(htmlPath, services.authoringInputRoots, "HTML snippet source");
+    await assertConfiguredAuthoringOutputRoot(packageDir, services.authoringOutputRoots, "HTML snippet package output");
     const result = await services.htmlSnippetImporter({ htmlPath, packageDir, ...(createdAt ? { createdAt } : {}) });
     return {
       ok: true,
@@ -183,7 +252,10 @@ async function exportOtio(args: unknown, services: AuthoringDomainServices): Pro
   if (!packageRoot) return invalidArgs("motion.otio.export requires packageRoot.");
   if (!outPath) return invalidArgs("motion.otio.export requires outPath.");
   if (!services.otioExporter) return capabilityUnavailable("OTIO export is unavailable.");
+  if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("OTIO export");
   try {
+    await assertConfiguredAuthoringInputRoot(packageRoot, services.authoringInputRoots, "OTIO package input");
+    await assertConfiguredAuthoringOutputFile(outPath, services.authoringOutputRoots, "OTIO export output");
     const result = await services.otioExporter({ packageRoot, outPath, ...(createdAt ? { createdAt } : {}) });
     return {
       ok: true,
@@ -214,7 +286,10 @@ async function importOtio(args: unknown, services: AuthoringDomainServices): Pro
   if (!otioPath) return invalidArgs("motion.otio.import requires otioPath.");
   if (!packageDir) return invalidArgs("motion.otio.import requires packageDir.");
   if (!services.otioImporter) return capabilityUnavailable("OTIO import is unavailable.");
+  if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("OTIO import");
   try {
+    await assertConfiguredAuthoringInputFile(otioPath, services.authoringInputRoots, "OTIO source");
+    await assertConfiguredAuthoringOutputRoot(packageDir, services.authoringOutputRoots, "OTIO package output");
     const result = await services.otioImporter({ otioPath, packageDir, ...(createdAt ? { createdAt } : {}) });
     return {
       ok: true,
@@ -249,6 +324,26 @@ function capabilityUnavailable(message: string): MotionDebugResult {
   };
 }
 
+function hasConfiguredAuthoringRoots(services: AuthoringDomainServices): boolean {
+  return Boolean(services.authoringInputRoots?.length && services.authoringOutputRoots?.length);
+}
+
+function authoringRootsUnavailable(operation: string): MotionDebugResult {
+  return capabilityUnavailable(`${operation} requires host-approved input and output roots.`);
+}
+
 function commandFailure(code: string, error: unknown): MotionDebugResult {
+  if (isPublicationCommitUncertain(error)) {
+    return {
+      ok: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        detail: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence }
+      },
+      result: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence },
+      warnings: []
+    };
+  }
   return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] };
 }

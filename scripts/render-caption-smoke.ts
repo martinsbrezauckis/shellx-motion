@@ -8,10 +8,11 @@
  * warning to be one of the advisories predicted here.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../packages/cli/src/main";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "../packages/core/src/output-path-trusted-workspace";
 import {
   assertJobSucceeded,
   assertReceiptSucceeded,
@@ -20,11 +21,13 @@ import {
   readDeliveredMedia,
   smokeJobIdentity
 } from "./render-smoke-status";
+import { renderingSamplesProofRoot } from "./rendering-samples-proof-root";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const sourcePackageRoot = join(repoRoot, "fixtures/packages/keyframed-lower-third");
-const outDir = join(repoRoot, ".scratch", "render-caption-smoke");
+const sourceFixturePackageRoot = join(repoRoot, "fixtures/packages/keyframed-lower-third");
+const outDir = renderingSamplesProofRoot(join(repoRoot, ".scratch", "render-caption-smoke"));
+const sourcePackageRoot = join(outDir, "source-package");
 const inputsDir = join(outDir, "inputs");
 const captionsPath = join(inputsDir, "captions.srt");
 const packageRoot = join(outDir, "package");
@@ -34,6 +37,9 @@ const outputPath = join(outDir, "caption-lower-third.mp4");
 
 await rm(outDir, { recursive: true, force: true });
 await mkdir(inputsDir, { recursive: true });
+await cp(sourceFixturePackageRoot, sourcePackageRoot, { recursive: true, errorOnExist: true, force: false });
+const workspaceAuthority = await createTrustedWorkspaceAnchor(outDir);
+const inWorkspace = async <T>(operation: () => Promise<T>): Promise<T> => await withTrustedWorkspaceAnchor(workspaceAuthority, operation);
 await writeFile(
   captionsPath,
   [
@@ -48,7 +54,7 @@ await writeFile(
   "utf8"
 );
 
-const imported = await runCli([
+const imported = await inWorkspace(async () => await runCli([
   "debug",
   "caption-import",
   "--tier",
@@ -68,7 +74,7 @@ const imported = await runCli([
   "cap",
   "--created-by",
   "render-caption-smoke"
-]);
+]));
 
 assert(imported.ok, `Caption import smoke failed: ${JSON.stringify(imported, null, 2)}`);
 assert(readObjectField(imported, "command", "imported.command") === "debug.caption-import", "unexpected caption import command");
@@ -84,12 +90,12 @@ assert(layers.some((layer) => readObjectField(layer, "id", "layer.id") === "cap_
 const tracks = readArray(readObjectField(motion, "tracks", "motion.tracks"));
 assert(tracks.some((track) => readObjectField(track, "id", "track.id") === "captions"), "patched package missing captions track");
 
-const validated = await runCli(["validate", packageRoot]);
+const validated = await inWorkspace(async () => await runCli(["validate", packageRoot]));
 assert(validated.ok, `Caption package validation failed: ${JSON.stringify(validated, null, 2)}`);
 
 const { jobId, callerId } = smokeJobIdentity("render-caption");
 
-const render = await runCli([
+const render = await inWorkspace(async () => await runCli([
   "render",
   packageRoot,
   "--lane",
@@ -102,7 +108,7 @@ const render = await runCli([
   jobId,
   "--caller-id",
   callerId
-], { scratchRoot: framesRoot });
+], { scratchRoot: framesRoot }));
 
 assert(render.ok, `Caption render smoke failed: ${JSON.stringify(render, null, 2)}`);
 assert(readObjectField(render, "command", "render.command") === "render", "unexpected render command");
@@ -124,7 +130,7 @@ const mp4Artifact = renderArtifacts.find((artifact) => readObjectField(artifact,
 assert(mp4Artifact, "render receipt missing video/mp4 artifact");
 assert(readObjectField(mp4Artifact, "status", "mp4Artifact.status") === "available", "captioned MP4 artifact must be available");
 
-const quality = await runCli([
+const quality = await inWorkspace(async () => await runCli([
   "quality-check",
   outputPath,
   "--at-ms",
@@ -149,7 +155,7 @@ const quality = await runCli([
   "3",
   "--min-psnr-db",
   "35"
-], { scratchRoot: qualityScratchRoot });
+], { scratchRoot: qualityScratchRoot }));
 
 assert(quality.ok, `Caption quality-check failed: ${JSON.stringify(quality, null, 2)}`);
 assert(readObjectField(quality, "command", "quality.command") === "quality-check", "unexpected quality command");
@@ -161,6 +167,7 @@ assert(readNumber(readObjectField(visualDiff, "meanAbsoluteError", "quality.visu
 console.log(JSON.stringify({
   ok: true,
   command: "render-caption:smoke",
+  sourceFixturePackageRoot,
   sourcePackageRoot,
   captionsPath,
   packageRoot,

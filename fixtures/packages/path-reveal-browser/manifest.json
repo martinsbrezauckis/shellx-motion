@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_path_reveal_browser",
+  "name": "Browser Path Reveal Sample",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["browser"],
+    "hosts": ["motion"]
+  }
+}

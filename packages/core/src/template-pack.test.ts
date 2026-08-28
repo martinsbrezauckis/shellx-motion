@@ -295,10 +295,11 @@ describe("ShellX product template pack", () => {
     expect(pkg.manifest).toMatchObject({
       id: "pkg_shellx_cinematic_rain_launch",
       compatibility: {
-        lanes: ["browser", "ffmpeg"],
+        lanes: ["browser", "ffmpeg", "gpu"],
         hosts: ["shellx-motion", "shellx-canvas", "shellx-cut"]
       }
     });
+    expect(pkg.template?.compatibleLanes).toEqual(["browser", "ffmpeg", "gpu"]);
     expect(pkg.template?.metadata).toMatchObject({
       story: {
         kind: "cinematic-product-promo",
@@ -489,7 +490,7 @@ describe("ShellX product template pack", () => {
     }
   });
 
-  it("loads the product-metric-card data template with batch rows and social overrides", async () => {
+  it("loads the product-metric-card data template with compiler-backed batch rows and social overrides", async () => {
     const pkg = await loadMotionPackage(join(PRODUCT_PACK_ROOT, "product-metric-card"));
     const rows = await loadPackageDataRows(pkg);
     const jobs = expandMotionPackageRows(pkg, rows);
@@ -502,36 +503,35 @@ describe("ShellX product template pack", () => {
     });
     expect(rows.map((row) => row.id)).toEqual(["motion_renderer_lane", "cut_generate_lane", "canvas_export_lane"]);
     expect(pkg.template?.metadata?.outputBounds?.aspectRatios).toEqual(["16:9", "1:1"]);
-    // Row 0 is the shipped design itself: it carries no layer patches, so the expanded job must be
-    // byte-identical to the literal document apart from the ids/provenance expansion adds.
-    expect(jobs[0].motion.layers).toEqual(pkg.motion.layers);
+    // The literal package remains a standalone render, while every shipped row carries the sealed
+    // data block that materializes its metric/report visuals through the chart compilers.
     expect(jobs[0].motion.layers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "metric-value", text: "1,200" }),
-      expect.objectContaining({ id: "progress-fill", width: 496 })
+      expect.objectContaining({ id: "chart_product_metric_metric_value", text: "1,200" }),
+      expect.objectContaining({ id: "chart_product_metric_metric_progress_fill", width: 500 })
     ]));
-    // Row 1 re-themes and re-numbers the same 16:9 layout: same canvas, different accent and a
-    // different progress geometry out of the same source layer.
+    // Row 1 re-themes and re-numbers the same 16:9 layout through the same data compiler.
     expect(jobs[1].motion).toMatchObject({
       width: 1920,
       height: 1080,
       layers: expect.arrayContaining([
-        expect.objectContaining({ id: "metric-value", text: "3.2" }),
-        expect.objectContaining({ id: "progress-fill", width: 558, fill: "#f7b93f" }),
+        expect.objectContaining({ id: "chart_product_metric_metric_value", text: "320 min" }),
+        expect.objectContaining({ id: "chart_product_metric_metric_progress_fill", width: 563, fill: "#f7b93f" }),
         expect.objectContaining({ id: "eyebrow", text: "CAMPAIGN METRICS" })
       ])
     });
-    // Row 2 is the 1:1 social re-layout: new canvas, its own title transform, its own progress
-    // geometry, and 26 layers dropped because the rail/channel/timeline blocks do not fit a square.
+    // Row 2 is the 1:1 social re-layout: its data becomes a comparison chart and the legacy
+    // rail/metric layers are replaced rather than having stale geometry carried forward.
     expect(jobs[2].motion).toMatchObject({
       width: 1080,
       height: 1080,
       layers: expect.arrayContaining([
         expect.objectContaining({ id: "title", transform: { x: 72, y: 152 } }),
-        expect.objectContaining({ id: "progress-fill", width: 518 })
+        expect.objectContaining({ id: "chart_product_metric_metric_value", text: "553" }),
+        expect.objectContaining({ id: "chart_product_metric_comparison_published_current", width: 504 })
       ])
     });
-    expect(jobs[2].motion.layers.filter((layer) => layer.visible === false).map((layer) => layer.id))
-      .toEqual(expect.arrayContaining(["rail-panel", "channel-1-fill", "timeline-progress"]));
+    expect(jobs[2].motion.layers.map((layer) => layer.id))
+      .not.toEqual(expect.arrayContaining(["rail-panel", "channel-1-fill", "timeline-progress", "metric-value"]));
     // The three rows must stay visibly different from each other, not just from the base document.
     expect(new Set(jobs.map((job) => JSON.stringify(job.motion.layers))).size).toBe(3);
   });

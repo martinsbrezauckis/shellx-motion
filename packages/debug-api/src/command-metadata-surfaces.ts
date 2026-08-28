@@ -13,6 +13,8 @@ import { canvasFixtureContract } from "@shellx-motion/adapters-canvas";
 import type { MotionDebugCommandMetadata } from "./command-registry.js";
 import { argsSchema, editReceipt, PACKAGE_EDIT, PACKAGE_ROOT, readReceipt, RECEIPTS_ROOT } from "./command-metadata-shared.js";
 
+const LINUX_STABLE_RECEIPT_ROOT = "Trusted host receipt root. Identity-stable receipt reads and receipt-derived controls currently require Linux; macOS and Windows return capability_unavailable before reading or writing receipt state.";
+
 /** Selection targets accepted by motion.select and motion.highlight; at least one is required. */
 const SELECTION = {
   layerId: { type: "string" as const, aliases: ["layer"], description: "Layer to select. One selection target is required." },
@@ -27,7 +29,7 @@ const SELECTION = {
 
 /** Job-control arguments shared by render cancel and retry. */
 const JOB_CONTROL = {
-  receiptsRoot: { type: "string" as const, description: "Trusted host receipt root holding the job's receipts." },
+  receiptsRoot: { type: "string" as const, description: LINUX_STABLE_RECEIPT_ROOT },
   receiptId: { type: "string" as const, aliases: ["id"], description: "Receipt id of the job to act on." },
   reason: { type: "string" as const, description: "Optional human-readable reason recorded in the control receipt." }
 };
@@ -88,7 +90,7 @@ export const SURFACE_COMMAND_METADATA = {
   "motion.state": {
     argsSchema: argsSchema([], {
       packageRoot: { type: "string", description: "Optional Motion package root to summarize." },
-      receiptsRoot: { type: "string", description: "Optional trusted host receipt root to summarize alongside the package." }
+      receiptsRoot: { type: "string", description: `Optional ${LINUX_STABLE_RECEIPT_ROOT.toLowerCase()} Package-only state remains portable when it is omitted.` }
     }),
     expectedReceipts: readReceipt("state")
   },
@@ -110,7 +112,7 @@ export const SURFACE_COMMAND_METADATA = {
   "motion.export.presets": { argsSchema: argsSchema([], {}) },
   "motion.export.panel": {
     argsSchema: argsSchema([], {
-      receiptsRoot: { type: "string", description: "Optional trusted host receipt root used to report platform verification coverage." },
+      receiptsRoot: { type: "string", description: `Optional ${LINUX_STABLE_RECEIPT_ROOT.toLowerCase()} Export presets remain portable when receipt coverage is omitted.` },
       requiredHosts: { type: "array", description: "Host ids that must be verified, as a string array." }
     }),
     expectedReceipts: readReceipt("export.panel")
@@ -142,7 +144,7 @@ export const SURFACE_COMMAND_METADATA = {
     expectedReceipts: [{ operation: "preview.strip", mode: "emits", required: true, artifactRoles: ["preview_frame"] }]
   },
   "motion.render.status": {
-    argsSchema: argsSchema([], { receiptsRoot: { type: "string", description: "Trusted host receipt root to read render job state from." } }),
+    argsSchema: argsSchema([], { receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT } }),
     expectedReceipts: readReceipt("render.status")
   },
   "motion.render.cancel": {
@@ -178,19 +180,20 @@ export const SURFACE_COMMAND_METADATA = {
     expectedReceipts: readReceipt("packages.browse")
   },
   "motion.receipts.list": {
-    argsSchema: argsSchema(["receiptsRoot"], { ...RECEIPTS_ROOT }),
+    argsSchema: argsSchema(["receiptsRoot"], { ...RECEIPTS_ROOT, receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT } }),
     expectedReceipts: readReceipt("receipts.list")
   },
   "motion.receipts.panel": {
     argsSchema: argsSchema(["receiptsRoot"], {
       ...RECEIPTS_ROOT,
+      receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT },
       limit: { type: "number", minimum: 0, description: "Maximum receipts to return; must be a non-negative integer." }
     }),
     expectedReceipts: readReceipt("receipts.panel")
   },
   "motion.receipts.read": {
     argsSchema: argsSchema([], {
-      receiptsRoot: { type: "string", description: "Trusted host receipt root. Required with receiptId, and required to bound receiptPath." },
+      receiptsRoot: { type: "string", description: `${LINUX_STABLE_RECEIPT_ROOT} Required with receiptId, and required to bound receiptPath.` },
       receiptPath: { type: "string", aliases: ["path"], description: "Receipt file path; must resolve inside receiptsRoot." },
       receiptId: { type: "string", aliases: ["id"], description: "Receipt id to look up inside receiptsRoot." }
     }),
@@ -215,6 +218,16 @@ export const SURFACE_COMMAND_METADATA = {
     }),
     expectedReceipts: [{ operation: "package.patch", mode: "emits", required: true, artifactRoles: ["motion_package", "package_diff"] }]
   },
+  "motion.package.asset.import": {
+    argsSchema: argsSchema(["packageRoot", "outDir", "assetPath"], {
+      ...PACKAGE_EDIT,
+      assetPath: { type: "string", aliases: ["source", "inputPath"], description: "Host-approved external regular file to copy into the new package revision. The engine refuses sources over 64 MiB before allocating file bytes; request arguments cannot widen that ceiling." },
+      assetRef: { type: "string", description: "Optional portable target under assets/. Defaults to assets/ plus the source filename; an existing file is never replaced." },
+      createdBy: { type: "string", description: "Optional author identity recorded in the package-local import receipt." },
+      createdAt: { type: "string", description: "Optional deterministic ISO timestamp for the package-local import receipt." }
+    }),
+    expectedReceipts: [{ operation: "package.asset.import", mode: "emits", required: true, artifactRoles: ["motion_package", "package_asset", "package_asset_import_receipt"] }]
+  },
   "motion.actions.find": {
     argsSchema: argsSchema(["request"], { request: { type: "string", description: "Action id or natural-language request to match against the action catalog." } })
   },
@@ -226,9 +239,17 @@ export const SURFACE_COMMAND_METADATA = {
   },
   "motion.actions.panel": { argsSchema: argsSchema([], {}) },
   "motion.agent.health": { argsSchema: argsSchema([], {}) },
+  "motion.agent.snapshot": {
+    argsSchema: argsSchema([], {
+      packageRoot: { type: "string", maxLength: 4096, description: "Optional Motion package root. Caller paths must be inside host-approved snapshot package roots and contain no symlink traversal." },
+      receiptsRoot: { type: "string", maxLength: 4096, description: "Optional receipt root. Caller paths must be inside a trusted host receipts root." },
+      request: { type: "string", maxLength: 256, description: "Optional compact action find/guide/plan selector, at most 256 Unicode scalars. It is not echoed in the snapshot. Job facts are complete only when the host supplies an authenticated owner principal; otherwise jobs are empty and inexact with a warning." }
+    })
+  },
   "motion.agent.transcript": {
     argsSchema: argsSchema(["receiptsRoot"], {
       ...RECEIPTS_ROOT,
+      receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT },
       receiptId: { type: "string", aliases: ["id"], description: "Prompt receipt id whose transcript should be read." },
       receiptPath: { type: "string", aliases: ["path"], description: "Prompt receipt path; must resolve inside receiptsRoot." },
       limit: { type: "number", minimum: 0, description: "Maximum transcript entries to return; must be a non-negative integer." }
@@ -237,7 +258,7 @@ export const SURFACE_COMMAND_METADATA = {
   },
   "motion.prompt.run": {
     argsSchema: argsSchema(["request"], {
-      request: { type: "string", aliases: ["prompt"], description: "Natural-language instruction handed to the local agent." },
+      request: { type: "string", aliases: ["prompt"], description: "Natural-language instruction handed to the host-injected local agent runtime. The command returns capability_unavailable when the host has not injected one." },
       packageId: { type: "string", default: "unknown", description: "Package id recorded in the prompt receipt." },
       agentId: { type: "string", description: "Agent adapter to run; the default adapter when omitted." },
       cwd: { type: "string", description: "Working directory for the agent; must be inside a trusted prompt working root." },
@@ -247,8 +268,8 @@ export const SURFACE_COMMAND_METADATA = {
         default: false,
         description: "Execute the debug commands the agent proposes. Without this the run only records proposals and changes nothing."
       },
-      retainRawRequest: { type: "boolean", default: false, description: "Keep the raw prompt text in the receipt; requires rawRequestDeleteAfter and rawRequestPurpose." },
-      rawRequestDeleteAfter: { type: "string", description: "ISO timestamp after which receipt reads redact the raw prompt and rewrite the stored receipt without it. Copies made before the deadline are not reached." },
+      retainRawRequest: { type: "boolean", default: false, description: "Keep the raw prompt text in the receipt; requires rawRequestDeleteAfter, rawRequestPurpose, and Linux's stable receipt purge capability. Unsupported hosts refuse before writing a prompt receipt." },
+      rawRequestDeleteAfter: { type: "string", description: "ISO timestamp after which Linux stable receipt reads redact the raw prompt and rewrite the stored receipt without it. Copies made before the deadline are not reached." },
       rawRequestPurpose: { type: "string", enum: ["user_requested_replay", "debugging"], description: "Declared purpose for retaining the raw prompt." }
     }),
     expectedReceipts: [{ operation: "prompt.run", mode: "emits", required: true, artifactRoles: ["prompt_receipt"] }]
@@ -257,11 +278,34 @@ export const SURFACE_COMMAND_METADATA = {
     argsSchema: argsSchema(["packageDir"], {
       scriptPath: { type: "string", description: "Scripted-video JSON path. Required unless script is given inline." },
       script: { type: "object", description: "Inline scripted-video document, in place of scriptPath." },
-      packageDir: { type: "string", description: "Empty or absent output directory for the compiled Motion package." },
-      receiptsRoot: { type: "string", description: "Optional trusted host receipt mirror." },
+      packageDir: { type: "string", description: "Linux-only empty or absent host-approved output directory. Motion commits the complete compiled package and its final receipt once through descriptor-relative exact closed-tree publication; macOS and Windows refuse before creating output state." },
+      receiptsRoot: { type: "string", description: "Optional trusted host receipt mirror. It runs only after the complete package commits; a mirror failure is returned as a warning." },
       createdAt: { type: "string", description: "Deterministic ISO timestamp for the emitted receipt." }
     }),
     expectedReceipts: [{ operation: "script.compile", mode: "emits", required: true, artifactRoles: ["motion_package"] }]
+  },
+  "motion.package.script.author": {
+    argsSchema: argsSchema(["packageRoot", "outDir", "html", "layer"], {
+      packageRoot: { type: "string", description: "Data-only source Motion package inside a host-approved authoring input root. It is never modified in place." },
+      outDir: { type: "string", description: "Empty or absent output directory inside a host-approved authoring output root, outside packageRoot." },
+      html: { type: "string", maxLength: 262144, description: "Inline local HTML entry bytes. Only classic inline scripts are admitted; dynamic code construction, src/module/inert scripts, workers, frames, event handlers, javascript: URLs, and secondary composition are refused before authority minting. Motion injects a hash-based CSP that blocks eval and unlisted executable code." },
+      layer: {
+        type: "object",
+        required: ["id", "type", "startMs", "durationMs"],
+        properties: {
+          id: { type: "string", maxLength: 128, description: "Safe local layer id; it also determines scripts/agent/<id>.html." },
+          type: { type: "string", enum: ["web", "html", "canvas"], description: "Active browser layer kind." },
+          startMs: { type: "number", minimum: 0, description: "Layer start time in milliseconds." },
+          durationMs: { type: "number", exclusiveMinimum: 0, description: "Positive layer duration in milliseconds." },
+          name: { type: "string", maxLength: 256, description: "Optional display name." },
+          opacity: { type: "number", description: "Optional layer opacity." },
+          visible: { type: "boolean", description: "Optional layer visibility." }
+        },
+        additionalProperties: false,
+        description: "The command owns source and allowedOrigins: callers cannot provide paths, URLs, external origins, or package claims."
+      }
+    }),
+    expectedReceipts: [{ operation: "package.script.author", mode: "emits", required: true }]
   },
   "motion.template.panel": {
     argsSchema: argsSchema(["packageRoot"], { ...PACKAGE_ROOT }),
@@ -275,7 +319,7 @@ export const SURFACE_COMMAND_METADATA = {
     argsSchema: argsSchema(["packageRoot", "outDir", "paramId", "assetPath"], {
       ...PACKAGE_EDIT,
       paramId: { type: "string", description: "Template media parameter to rebind." },
-      assetPath: { type: "string", description: "Source media file copied into the output package's assets." },
+      assetPath: { type: "string", description: "Host-approved regular file inside a configured authoring input root; copied with retained identity and a 64 MiB ceiling." },
       assetRef: { type: "string", description: "Package-relative asset reference to write; assets/<basename> when omitted." }
     }),
     expectedReceipts: editReceipt("template.media.replace")
@@ -284,13 +328,13 @@ export const SURFACE_COMMAND_METADATA = {
     argsSchema: argsSchema(["packageDir"], {
       canvasSelectionPath: { type: "string", description: "Canvas frame-selection JSON path. Required unless selection is given inline." },
       selection: { type: "object", aliases: ["canvasSelection"], description: CANVAS_SELECTION_DESCRIPTION },
-      packageDir: { type: "string", aliases: ["outDir"], description: "Empty or absent output directory for the generated Motion package." },
+      packageDir: { type: "string", aliases: ["outDir"], description: "Linux-only empty or absent output directory for the generated Motion package. Exact closed-tree publication is unavailable on macOS and Windows, which refuse before creating output state." },
       selectedFrameId: { type: "string", description: "Frame to package when the selection carries several." },
-      sourceRoot: { type: "string", description: "Root used to resolve selection asset paths; the selection file's directory when omitted." },
+      sourceRoot: { type: "string", description: "Host-approved root used to resolve declared assets. Required for inline selections that declare assets; file-backed selections derive their selection parent when omitted." },
       receiptsRoot: { type: "string", description: "Optional trusted host receipt mirror." },
       createdAt: { type: "string", description: "Deterministic ISO timestamp for the emitted receipt." },
       createdBy: { type: "string", description: "Optional attribution recorded in the emitted receipt." }
     }),
-    expectedReceipts: [{ operation: "canvas.package", mode: "emits", required: true, artifactRoles: ["motion_package", "canvas_frame_selection"] }]
+    expectedReceipts: [{ operation: "export.final", mode: "emits", required: true, artifactRoles: ["motion_package", "canvas_frame_selection"] }]
   }
 } satisfies MotionDebugCommandMetadata;

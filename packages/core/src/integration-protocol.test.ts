@@ -123,4 +123,34 @@ describe("ShellX integration protocol", () => {
       binding: { ...envelope.binding, requiredFeatures: ["future.magic"] }
     }, expected)).toThrow("No shared support for required feature");
   });
+
+  it.each([
+    ["unknown envelope field", (value: Record<string, unknown>) => { value.unexpected = true; }, /unknown field/],
+    ["unknown binding field", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).unexpected = true; }, /unknown field/],
+    ["zero binding protocol", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).protocol = 0; }, /positive integer/],
+    ["retargeted producer", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).producer = "shellx-cut"; }, /producer must be shellx-canvas/],
+    ["retargeted consumer", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).consumer = "shellx-cut"; }, /consumer must be shellx-motion/],
+    ["unnegotiated mode", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).mode = "render.final"; }, /mode must be canvas.bridge/],
+    ["unnegotiated schema", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).payloadSchema = "shellx-motion/receipt@1"; }, /payload schema must be shellx-motion\/canvas-frame-selection@1/],
+    ["duplicate required feature", (value: Record<string, unknown>) => { (value.binding as Record<string, unknown>).requiredFeatures = ["artifact.attestation", "artifact.attestation"]; }, /must not contain duplicates/],
+    ["incompatible producer protocol", (value: Record<string, unknown>) => { (value.producer as Record<string, unknown>).protocol = { min: 2, max: 2, preferred: 2 }; }, /supports 2-2/],
+    ["invalid producer limit", (value: Record<string, unknown>) => { (value.producer as Record<string, unknown>).limits = { maxPlanBytes: 0, maxArtifactBytes: 1, maxOperations: 1 }; }, /limits.maxPlanBytes must be a positive integer/]
+  ] as Array<[string, (value: Record<string, unknown>) => void, RegExp]>)
+  ("refuses adversarial %s before accepting a connector envelope", (_label, mutate, message) => {
+    const envelope = createIntegrationEnvelope({
+      producer: "shellx-canvas",
+      consumer: "shellx-motion",
+      mode: "canvas.bridge",
+      payloadSchema: "shellx-motion/canvas-frame-selection@1",
+      requiredFeatures: ["artifact.attestation"]
+    });
+    const candidate = JSON.parse(JSON.stringify(envelope)) as Record<string, unknown>;
+    mutate(candidate);
+    expect(() => verifyIntegrationEnvelope(candidate, {
+      producer: "shellx-canvas",
+      consumer: "shellx-motion",
+      mode: "canvas.bridge",
+      payloadSchema: "shellx-motion/canvas-frame-selection@1"
+    })).toThrow(message);
+  });
 });

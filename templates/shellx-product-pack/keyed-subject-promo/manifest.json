@@ -7,11 +7,13 @@
   "assets": [
     "assets/generated/atmosphere-fog-rays.mp4",
     "assets/samples/neon-studio.svg",
-    "assets/samples/green-screen-subject.svg"
+    "assets/samples/green-screen-subject.svg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
   ],
   "sourceApp": "shellx-motion",
   "compatibility": {
-    "lanes": ["browser", "ffmpeg"],
+    "lanes": ["browser", "ffmpeg", "gpu"],
     "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
   },
   "workflow": "template-pack-keyed-subject-promo"

@@ -111,6 +111,8 @@ function analyzedReport(sampleIntervalMs: number): MotionDensityReport {
     durationMs: sampleIntervalMs * 10,
     meanFrameDifference: 0,
     maxFrameDifference: 0,
+    meanChangedPixelRatio: 0,
+    maxChangedPixelRatio: 0,
     policy: MOTION_DENSITY_POLICY_DEFAULTS,
     frozenMs: sampleIntervalMs * 9,
     frozenRatio: 0.9,
@@ -155,6 +157,8 @@ describe("motionDensityAdvisoryIsResolvable", () => {
       durationMs: 15_000,
       meanFrameDifference: 0,
       maxFrameDifference: 0,
+      meanChangedPixelRatio: 0,
+      maxChangedPixelRatio: 0,
       policy: MOTION_DENSITY_POLICY_DEFAULTS,
       stillIntervalRatio: 1
     })).toBe(true);

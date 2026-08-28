@@ -48,13 +48,34 @@
  * `@shellx-motion/debug-server`.
  */
 import { callerReceiptsRootRefusal, type ReceiptsRootPolicyServices } from "./domains/receipts-root-policy.js";
-import type { MotionDebugResult } from "./command-registry.js";
+import {
+  admitConfiguredRenderInputFile,
+  assertConfiguredRenderOutputDirectory,
+  assertConfiguredRenderOutputFile,
+  RenderRootPolicyError
+} from "./domains/render-root-policy.js";
+import { renderFilesystemRootPolicy, type RenderFilesystemRootContext } from "./domains/render-host-context.js";
+import { stringArg } from "./domains/args.js";
+import { debugCommandDefinition, type MotionDebugCommand, type MotionDebugResult } from "./command-registry.js";
+import type { MotionPermissionTier } from "@shellx-motion/actions";
+import { assertCallerPackagePathRoles } from "./caller-package-path-roles.js";
 
 /** The host-declared roots a dispatch context carries, as the policy needs to see them. */
 export interface CallerBoundaryContext {
   receiptsRoot?: string;
   scratchRoot?: string;
   operatorReceiptRoots?: string[];
+}
+
+/** The caller-side context fields needed to admit package and preview paths. */
+export interface CallerRenderBoundaryContext extends RenderFilesystemRootContext {
+  tier: MotionPermissionTier;
+  /**
+   * Server-owned template catalog roots. They are intentionally distinct from
+   * render package roots: catalog/plan may read them, but browse and render do
+   * not inherit that authority.
+   */
+  templateRoots?: string[];
 }
 
 /**
@@ -66,12 +87,13 @@ export interface CallerBoundaryContext {
  * used". Collapsing the two would put the host's root through a containment check against itself.
  *
  * @param args the raw argument object as the transport received it.
- * @returns the caller's non-empty string value, or undefined.
+ * @returns the caller's string value, including whitespace-only strings so the boundary can refuse
+ *   them instead of silently treating them as omitted.
  */
 export function callerSuppliedReceiptsRoot(args: unknown): string | undefined {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
   const requested = (args as Record<string, unknown>).receiptsRoot;
-  return typeof requested === "string" && requested.trim() !== "" ? requested : undefined;
+  return typeof requested === "string" ? requested : undefined;
 }
 
 /**
@@ -98,4 +120,76 @@ export async function refuseCallerReceiptsRoot(
     ...(context.operatorReceiptRoots ? { operatorReceiptRoots: context.operatorReceiptRoots } : {}),
     isPathInsideTrustedRoot
   });
+}
+
+const CALLER_PACKAGE_READ_TIERS = new Set<MotionPermissionTier>([
+  "read_motion",
+  "draft_motion",
+  "render_motion"
+]);
+
+/**
+ * Refuse caller-steered package reads outside the host render-package roots,
+ * preview/cache outputs outside render-output roots, and external cache-plan
+ * inputs outside render-input roots.
+ *
+ * This belongs at the caller boundary rather than in `dispatchDebugCommand`:
+ * in-process CLI and SDK callers intentionally dispatch host-owned paths
+ * directly, while debug transports and prompt re-entry do not own the roots
+ * supplied in their command arguments.
+ */
+export async function refuseUntrustedCallerRenderPaths(
+  command: MotionDebugCommand,
+  args: unknown,
+  context: CallerRenderBoundaryContext
+): Promise<MotionDebugResult | null> {
+  const definition = debugCommandDefinition(command);
+  if (!definition || !CALLER_PACKAGE_READ_TIERS.has(definition.permission)) return null;
+  const policy = renderFilesystemRootPolicy(context);
+
+  try {
+    await assertCallerPackagePathRoles(command, args, policy, context);
+
+    const previewOutDir = callerSuppliedPreviewOutDir(command, args);
+    if (previewOutDir !== null) {
+      await assertConfiguredRenderOutputDirectory(previewOutDir, policy, `${command} outDir`);
+    }
+    if (command === "motion.preview.frame" || command === "motion.preview.playhead") {
+      const outputPath = stringArg(args, "outputPath");
+      if (outputPath !== null) {
+        await assertConfiguredRenderOutputFile(outputPath, policy, `${command} outputPath`);
+      }
+    }
+    if (command === "motion.render.cache.plan") {
+      const outputPath = stringArg(args, "outputPath");
+      if (outputPath !== null) {
+        await assertConfiguredRenderOutputFile(outputPath, policy, `${command} outputPath`);
+      }
+      for (const field of ["workflowPath", "qualityManifestPath"] as const) {
+        const inputPath = stringArg(args, field);
+        if (inputPath !== null) {
+          await admitConfiguredRenderInputFile(inputPath, policy, `${command} ${field}`);
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: error instanceof RenderRootPolicyError ? error.code : "render_path_not_approved",
+        message: error instanceof Error ? error.message : "Caller render path is not approved by the host."
+      },
+      warnings: []
+    };
+  }
+}
+
+function callerSuppliedPreviewOutDir(
+  command: MotionDebugCommand,
+  args: unknown
+): string | null {
+  return command === "motion.preview.frame" || command === "motion.preview.playhead" || command === "motion.preview.strip"
+    ? stringArg(args, "outDir")
+    : null;
 }

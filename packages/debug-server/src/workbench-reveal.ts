@@ -20,6 +20,9 @@
 import { spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import type { RetainedDirectoryAuthority } from "@shellx-motion/core";
+import { workbenchDesktopChildEnvironment } from "./workbench-child-environment.js";
+import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable.js";
 
 /** The concrete target the opener is asked to reveal. */
 export interface RevealTarget {
@@ -48,7 +51,12 @@ export type RevealResult =
  * @param opener The OS opener (default reveals in the platform file manager).
  * @returns A typed success or error result.
  */
-export async function runWorkbenchReveal(requestedPath: unknown, roots: string[], opener: RevealOpener): Promise<RevealResult> {
+export async function runWorkbenchReveal(
+  requestedPath: unknown,
+  roots: string[],
+  authorities: readonly RetainedDirectoryAuthority[],
+  opener: RevealOpener
+): Promise<RevealResult> {
   if (typeof requestedPath !== "string" || requestedPath.trim() === "" || requestedPath.includes("\0") || !isAbsolute(requestedPath)) {
     return { ok: false, status: 400, code: "invalid_reveal_path", message: "Reveal requests require an absolute artifact path." };
   }
@@ -56,6 +64,7 @@ export async function runWorkbenchReveal(requestedPath: unknown, roots: string[]
 
   let facts: Awaited<ReturnType<typeof lstat>>;
   try {
+    await assertAuthorities(authorities);
     facts = await lstat(resolvedPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -78,11 +87,16 @@ export async function runWorkbenchReveal(requestedPath: unknown, roots: string[]
   }
 
   const directory = facts.isDirectory() ? canonicalPath : dirname(canonicalPath);
+  await assertAuthorities(authorities);
   const opened = await opener({ path: canonicalPath, directory, platform: process.platform });
   if (!opened.ok) {
     return { ok: false, status: 500, code: "reveal_failed", message: `The OS file manager could not be opened: ${opened.message}` };
   }
   return { ok: true, revealed: directory, platform: process.platform };
+}
+
+async function assertAuthorities(authorities: readonly RetainedDirectoryAuthority[]): Promise<void> {
+  for (const authority of authorities) await authority.assertCurrent();
 }
 
 /** True when the canonical path resolves inside at least one canonical root. */
@@ -108,20 +122,27 @@ async function isInsideRoots(canonicalPath: string, roots: string[]): Promise<bo
  * shell-free with an argv array.
  */
 export function createDefaultRevealOpener(): RevealOpener {
-  return (target) => spawnRevealCommand(revealCommandFor(target));
+  return async (target) => {
+    try {
+      return await spawnRevealCommand(await revealCommandFor(target));
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  };
 }
 
 /** Resolve the file-manager command and argv for the host platform. */
-function revealCommandFor(target: RevealTarget): { command: string; args: string[] } {
+async function revealCommandFor(target: RevealTarget): Promise<{ command: string; args: string[] }> {
+  const command = await resolveWorkbenchSystemExecutable("file-reveal", { platform: target.platform });
   if (target.platform === "darwin") {
-    return { command: "open", args: ["-R", target.path] };
+    return { command, args: ["-R", target.path] };
   }
   if (target.platform === "win32") {
     // explorer's select syntax takes a single "/select,<path>" token.
-    return { command: "explorer.exe", args: [`/select,${target.path}`] };
+    return { command, args: [`/select,${target.path}`] };
   }
-  // Linux/other: xdg-open cannot select a file, so open the containing folder.
-  return { command: "xdg-open", args: [target.directory] };
+  // Linux: xdg-open cannot select a file, so open the containing folder.
+  return { command, args: [target.directory] };
 }
 
 /**
@@ -133,7 +154,12 @@ function spawnRevealCommand(plan: { command: string; args: string[] }): Promise<
   return new Promise((resolvePromise) => {
     let settled = false;
     try {
-      const child = spawn(plan.command, plan.args, { stdio: "ignore", windowsHide: true });
+      const child = spawn(plan.command, plan.args, {
+        stdio: "ignore",
+        windowsHide: true,
+        // Reveal is an explicit human desktop action. It alone gets the documented X11 exception.
+        env: workbenchDesktopChildEnvironment()
+      });
       child.once("error", (error) => {
         if (settled) return;
         settled = true;

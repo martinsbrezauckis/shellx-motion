@@ -3,10 +3,10 @@
  * Run the implementation-side public-export content gate when its private manifest is present.
  *
  * The generated public repository intentionally excludes the exporter, its manifest, and the
- * private marker table. `pnpm test` still needs to be self-contained there, so this small public
- * wrapper makes the boundary explicit: implementation checkouts run the strict gate; an already
- * generated public tree reports that publication scanning is not applicable instead of importing a
- * file that does not ship.
+ * private marker table. Public `pnpm test` must be self-contained there, so this small wrapper
+ * makes the boundary explicit: `pnpm run source-hygiene:implementation` runs the strict gate in
+ * implementation checkouts; an already generated public tree reports that publication scanning is
+ * not applicable instead of importing a file that does not ship.
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";

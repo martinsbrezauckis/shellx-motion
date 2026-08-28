@@ -1,0 +1,103 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_material_admitted",
+  "name": "GPU Material Admitted Fixture",
+  "durationMs": 1600,
+  "fps": 24,
+  "width": 320,
+  "height": 180,
+  "background": "#020617",
+  "layers": [
+    {
+      "id": "poster",
+      "type": "image",
+      "assetId": "image_poster",
+      "startMs": 0,
+      "durationMs": 1600,
+      "opacity": 0.26,
+      "fit": "cover",
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 }
+    },
+    {
+      "id": "material-field",
+      "type": "shader",
+      "startMs": 0,
+      "durationMs": 1600,
+      "opacity": 0.72,
+      "blendMode": "screen",
+      "transform": { "x": 0, "y": 0, "width": 320, "height": 180 },
+      "shader": {
+        "schema": "shellx-motion/shader-plugin@1",
+        "language": "glsl-es-100-expression",
+        "fragmentAssetId": "shader_material_fallback",
+        "seed": 424242,
+        "fallbackColor": "#081b35",
+        "uniforms": { "u_speed": 0.45, "u_glow": 0.85, "u_scanline": 0.35 },
+        "gpuMaterial": {
+          "preset": "hologram",
+          "colors": ["#020617", "#22d3ee", "#a78bfa"]
+        }
+      },
+      "keyframes": {
+        "shader.uniforms.u_speed": [
+          { "atMs": 0, "value": 0.45, "easing": "ease-in-out" },
+          { "atMs": 800, "value": 1.15, "easing": "ease-in-out" },
+          { "atMs": 1600, "value": 0.7 }
+        ]
+      }
+    },
+    {
+      "id": "title-panel",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#020617b3",
+      "startMs": 0,
+      "durationMs": 1600,
+      "transform": { "x": 22, "y": 119, "width": 276, "height": 42 },
+      "style": { "borderRadius": 8, "stroke": "#67e8f9", "strokeWidth": 1 }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "FIXED GPU MATERIAL",
+      "startMs": 0,
+      "durationMs": 1600,
+      "transform": { "x": 34, "y": 128, "width": 252, "height": 22 },
+      "style": {
+        "fontFamily": "Inter",
+        "fontSize": 18,
+        "fontWeight": 700,
+        "letterSpacing": 1.1,
+        "lineHeight": 1,
+        "textAlign": "center",
+        "verticalAlign": "middle",
+        "color": "#ffffff"
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "image_poster",
+      "type": "image",
+      "source": { "path": "assets/poster.png", "mimeType": "image/png" }
+    },
+    {
+      "id": "font_inter_700",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-700-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 700,
+      "style": "normal"
+    },
+    {
+      "id": "shader_material_fallback",
+      "type": "shader",
+      "source": { "path": "assets/material-fallback.glsl", "mimeType": "text/x-shellx-motion-glsl" }
+    }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "gpu-material-admitted-fixture",
+    "workflow": "gpu-fixed-material-contract"
+  }
+}

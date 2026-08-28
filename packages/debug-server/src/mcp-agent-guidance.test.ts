@@ -17,9 +17,11 @@
  * PUBLISHED TOOL returns, and for an agent-first product the tool surface is the product.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
 import { startMotionDebugServer } from "./index";
 
 const servers: Array<{ close: () => Promise<void> }> = [];
+const RENDER_PACKAGE_ROOT = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
 });
@@ -31,7 +33,12 @@ interface McpStructured {
 }
 
 async function mcpServer(grantedTier: "read_motion" | "write_local" = "read_motion") {
-  const handle = await startMotionDebugServer({ host: "127.0.0.1", port: 0, grantedTier });
+  const handle = await startMotionDebugServer({
+    host: "127.0.0.1",
+    port: 0,
+    grantedTier,
+    context: { renderPackageRoots: [RENDER_PACKAGE_ROOT] }
+  });
   servers.push(handle);
   const rpc = async (method: string, params: unknown = {}): Promise<Record<string, any>> => {
     const response = await fetch(new URL("/rpc", handle.url), {
@@ -140,7 +147,7 @@ describe("the guidance surface a blind agent binds to", () => {
   it("tells a refused caller what the HOST must change, never to retry with more permission", async () => {
     const { tool } = await mcpServer("read_motion");
 
-    const denied = await tool("motion_render_final", { packageRoot: "fixtures/packages/lower-third" });
+    const denied = await tool("motion_render_final", { packageRoot: RENDER_PACKAGE_ROOT });
 
     expect(denied.error?.code).toBe("permission_denied");
     // The old suggestedAction was "Retry with render_motion permission." — an instruction with no
@@ -163,7 +170,7 @@ describe("the guidance surface a blind agent binds to", () => {
     // requestedTier and is refused at -32001, historically with no guidance at all.
     const body = await rpc("tools/call", {
       name: "motion_render_final",
-      arguments: { requestedTier: "write_local", args: { packageRoot: "fixtures/packages/lower-third" } }
+      arguments: { requestedTier: "write_local", args: { packageRoot: RENDER_PACKAGE_ROOT } }
     });
 
     expect(body.error.code).toBe(-32001);

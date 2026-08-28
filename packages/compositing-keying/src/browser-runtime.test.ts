@@ -12,4 +12,12 @@ describe("browser keying runtime script", () => {
     expect(() => runInNewContext(source, context)).not.toThrow();
     expect(context.__SHELLX_MOTION_APPLY_KEYING__).toBeTypeOf("function");
   });
+
+  it("checks decoded image dimensions before allocating the keying canvas", () => {
+    const source = browserKeyingRuntimeScript();
+    const budgetCheck = source.indexOf("const sourcePixels = element.naturalWidth * element.naturalHeight");
+    const canvasAllocation = source.indexOf('document.createElement("canvas")');
+    expect(budgetCheck).toBeGreaterThan(0);
+    expect(canvasAllocation).toBeGreaterThan(budgetCheck);
+  });
 });

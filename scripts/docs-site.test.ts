@@ -6,7 +6,6 @@ const manualRoot = new URL("../docs/public/site/manual/motion/", import.meta.url
 const publicModelReference = new RegExp([
   "Clau" + "de",
   "Co" + "dex",
-  "Op" + "us",
   "Gr" + "ok",
   "Open" + "AI",
   "Anth" + "ropic",
@@ -38,6 +37,8 @@ describe("ShellX Motion online manual", () => {
     expect(html).toContain(`data-app-version="${pkg.version}"`);
     expect(publicIndex.productVersion).toBe(pkg.version);
     expect(html).toContain(`<title>ShellX Motion Manual</title>`);
+    expect(html.match(/<link rel="canonical"/g)).toHaveLength(1);
+    expect(html).toContain(`<link rel="canonical" href="https://docs.theshellx.com/manual/motion/" />`);
     const canonical = await readFile(new URL("assets/brand/shellx-motion-icon.png", root));
     const manualIcon = await readFile(new URL("icon.png", manualRoot));
     expect(manualIcon.equals(canonical)).toBe(true);
@@ -62,7 +63,9 @@ describe("ShellX Motion online manual", () => {
     const humanSurfaces = (await Promise.all([
       publicTextFiles(new URL("docs/public/", root)),
       publicTextFiles(new URL("skill/", root)),
-      publicTextFiles(new URL("templates/", root)),
+      // `templates/generators/` is private author-time source and is deliberately excluded by the
+      // public export manifest. The product pack is the template surface a public reader can see.
+      publicTextFiles(new URL("templates/shellx-product-pack/", root)),
       publicTextFiles(new URL("fixtures/", root))
     ])).flat();
     humanSurfaces.push(

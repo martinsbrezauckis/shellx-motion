@@ -1,0 +1,33 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_v25b1_scrub_signal",
+  "name": "Scrub the Signal — V25-B1 GPU Preview Fixture",
+  "motion": "motion.json",
+  "assets": [
+    "assets/video/atmosphere-fog-rays.mp4",
+    "assets/images/neon-studio.svg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2",
+    "assets/fonts/LICENSE-Inter.txt"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "gpu"
+    ],
+    "hosts": [
+      "motion"
+    ]
+  },
+  "quality": {
+    "maxFontFallbacks": 0
+  },
+  "workflow": "v25-b1-active-video-exact-time-scrub",
+  "metadata": {
+    "recipe": "templates/generators/scrub-signal/recipe.json",
+    "visualOnly": true,
+    "v25Batch": "V25-B1",
+    "sourceAssetPolicy": "checked-in-package-local-assets-with-exact-provenance",
+    "scrubTrace": "SCRUB_TRACE.md"
+  }
+}

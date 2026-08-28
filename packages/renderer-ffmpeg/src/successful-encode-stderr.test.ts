@@ -60,6 +60,13 @@ describe("summarizeSuccessfulEncodeStderr", () => {
     expect(summarizeSuccessfulEncodeStderr(withProblem)).toContain("Non-monotonous DTS");
   });
 
+  it("keeps a diagnostic after FFmpeg's bare-carriage-return progress update", () => {
+    const withProblem = "frame=   10 fps=0.0 q=25.0 size=3kB time=00:00:00.70 bitrate=32.1kbits/s speed=115x\r"
+      + "[mp4 @ 0x55f] Non-monotonous DTS in output stream 0:0; previous: 1024, current: 512;";
+    expect(summarizeSuccessfulEncodeStderr(withProblem))
+      .toBe("[mp4 @ [address]] Non-monotonous DTS in output stream 0:0; previous: 1024, current: 512;");
+  });
+
   it("keeps an unrecognised line rather than hiding it", () => {
     // The classifier is a denylist on purpose: a line it has never seen must survive.
     const surprising = `${CLEAN_ENCODE_STDERR}\nsomething nobody anticipated happened here`;
@@ -461,5 +468,25 @@ describe("summarizeSuccessfulEncodeStderr on newer-FFmpeg MP4 chatter", () => {
     const secondRun = WINDOWS_FASTSTART_CHATTER.replaceAll("000001dbec2dbb00", "0000027fa41c9200");
     expect(secondRun).not.toBe(WINDOWS_FASTSTART_CHATTER);
     expect(summarizeSuccessfulEncodeStderr(secondRun)).toBe(summarizeSuccessfulEncodeStderr(WINDOWS_FASTSTART_CHATTER));
+  });
+});
+
+describe("summarizeSuccessfulEncodeStderr on Matroska stream metadata", () => {
+  const MATROSKA_STREAM_METADATA = [
+    "      ENCODER         : Lavc60.31.102 ffv1",
+    "      DURATION        : 00:00:01.500000000"
+  ].join("\n");
+
+  it("filters uppercase encoder and duration tags from a successful FFV1 segment", () => {
+    expect(summarizeSuccessfulEncodeStderr(MATROSKA_STREAM_METADATA)).toBe("");
+  });
+
+  it("keeps a real Matroska muxer diagnostic beside routine stream metadata", () => {
+    const warned = [
+      MATROSKA_STREAM_METADATA,
+      "[matroska @ 0x1] Error writing trailer: Invalid argument"
+    ].join("\n");
+    expect(summarizeSuccessfulEncodeStderr(warned))
+      .toBe("[matroska @ [address]] Error writing trailer: Invalid argument");
   });
 });

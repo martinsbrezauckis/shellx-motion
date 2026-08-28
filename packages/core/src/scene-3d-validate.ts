@@ -12,6 +12,7 @@ import {
   SCENE_3D_SCHEMA,
   SCENE_3D_SCHEMAS,
 } from "./scene-3d";
+import { scene3dMeshGeometrySha256 } from "./scene-3d-geometry";
 
 export interface Scene3DValidationError { path: string; message: string }
 
@@ -159,9 +160,14 @@ function validateMesh(
     && ["gltf", "glb"].includes(String(source.format))
     && integer(source.meshIndex)
     && integer(source.primitiveIndex)
-    && (source.materialIndex === undefined || integer(source.materialIndex));
+    && (source.materialIndex === undefined || integer(source.materialIndex))
+    && typeof source.geometrySha256 === "string"
+    && /^[a-f0-9]{64}$/.test(source.geometrySha256);
   if (!validSource) {
-    errors.push({ path: `${path}/source`, message: "must identify bounded glTF mesh, primitive, and optional material indices" });
+    errors.push({ path: `${path}/source`, message: "must identify bounded glTF mesh, primitive, optional material indices, and exact geometry SHA-256" });
+  } else if (validPositions && boundedNormals && matchingNormals && validIndices && Array.isArray(positions) && Array.isArray(normals) && Array.isArray(indices)
+    && scene3dMeshGeometrySha256({ positions, normals, indices }) !== source.geometrySha256) {
+    errors.push({ path: `${path}/source/geometrySha256`, message: "must match the exact bounded glTF geometry payload" });
   }
 }
 

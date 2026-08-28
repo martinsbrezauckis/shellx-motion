@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { deflateSync, inflateSync } from "node:zlib";
+import { deflateSync } from "node:zlib";
 import {
   createMotionDensityAccumulator,
   type MotionDensityCoverage,
@@ -8,6 +8,8 @@ import {
   type MotionDensityReport
 } from "./motion-density";
 import { motionDensityWarnings } from "./motion-density-warnings";
+import { crc32, decodePngRgba } from "./png-rgba-decode";
+import { inspectRgba } from "./png-quality-stats";
 
 export interface PngQuality {
   ok: true;
@@ -517,9 +519,10 @@ export async function analyzeFrameSequenceMotion(
  * is folded in here rather than bolted on beside it.
  *
  * Frames are read with a one-frame lookahead so file I/O still overlaps the synchronous decode,
- * while memory stays bounded at two frame buffers plus the accumulator's two plane sets — the
- * previous `Promise.all` shape could not retain pixels for a frame-to-frame comparison without
- * holding the whole sequence in memory.
+ * while memory stays bounded at one decoded RGBA frame plus one raw read-ahead frame, the
+ * accumulator's two Y/Cb/Cr plane sets, and its previous-luma copy — the previous `Promise.all`
+ * shape could not retain pixels for a frame-to-frame comparison without holding the whole sequence
+ * in memory.
  *
  * A frame that cannot be read or decoded is recorded as an invalid frame for the quality gate AND
  * marks the motion measurement unavailable, so the caller never receives a motion verdict computed
@@ -588,94 +591,6 @@ function frameTimestamps(frameCount: number, durationMs: number, fps?: number): 
   return Array.from({ length: frameCount }, (_, index) => (index * 1000) / effectiveFps);
 }
 
-function inspectRgba(input: { width: number; height: number; rgba: Buffer }, sha256: string): PngQuality {
-  let minLuma = 255;
-  let maxLuma = 0;
-  let totalLuma = 0;
-  let darkPixels = 0;
-  let brightPixels = 0;
-  let transparentPixels = 0;
-  let nonTransparentPixels = 0;
-  let opaquePixels = 0;
-  let chromaPixels = 0;
-  const min = { r: 255, g: 255, b: 255 };
-  const max = { r: 0, g: 0, b: 0 };
-
-  for (let offset = 0; offset < input.rgba.length; offset += 4) {
-    const a = input.rgba[offset + 3];
-    if (a === 0) {
-      transparentPixels += 1;
-      continue;
-    }
-    if (a === 255) opaquePixels += 1;
-    const r = input.rgba[offset];
-    const g = input.rgba[offset + 1];
-    const b = input.rgba[offset + 2];
-    const luma = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-    minLuma = Math.min(minLuma, luma);
-    maxLuma = Math.max(maxLuma, luma);
-    totalLuma += luma;
-    if (luma <= 55) darkPixels += 1;
-    if (luma >= 200) brightPixels += 1;
-    nonTransparentPixels += 1;
-    min.r = Math.min(min.r, r);
-    min.g = Math.min(min.g, g);
-    min.b = Math.min(min.b, b);
-    max.r = Math.max(max.r, r);
-    max.g = Math.max(max.g, g);
-    max.b = Math.max(max.b, b);
-    if (Math.max(r, g, b) - Math.min(r, g, b) >= 32) chromaPixels += 1;
-  }
-
-  const pixels = input.width * input.height;
-  const transparentRatio = pixels === 0 ? 0 : transparentPixels / pixels;
-  const nonTransparentRatio = pixels === 0 ? 0 : nonTransparentPixels / pixels;
-  const opaqueRatio = pixels === 0 ? 0 : opaquePixels / pixels;
-  const lumaRange = nonTransparentPixels === 0 ? 0 : maxLuma - minLuma;
-  const rgbRange = {
-    r: nonTransparentPixels === 0 ? 0 : max.r - min.r,
-    g: nonTransparentPixels === 0 ? 0 : max.g - min.g,
-    b: nonTransparentPixels === 0 ? 0 : max.b - min.b
-  };
-  const maxRgbRange = Math.max(rgbRange.r, rgbRange.g, rgbRange.b);
-  const edgePixels = countEdgePixels(input);
-
-  return {
-    ok: true,
-    width: input.width,
-    height: input.height,
-    pixels,
-    transparentPixels,
-    transparentRatio,
-    nonTransparentPixels,
-    nonTransparentRatio,
-    opaquePixels,
-    opaqueRatio,
-    blank: nonTransparentRatio < 0.01 || (lumaRange <= 2 && maxRgbRange <= 2),
-    sha256,
-    luma: {
-      min: nonTransparentPixels === 0 ? 0 : minLuma,
-      max: nonTransparentPixels === 0 ? 0 : maxLuma,
-      avg: nonTransparentPixels === 0 ? 0 : totalLuma / nonTransparentPixels,
-      range: lumaRange,
-      darkPixels,
-      darkRatio: pixels === 0 ? 0 : darkPixels / pixels,
-      brightPixels,
-      brightRatio: pixels === 0 ? 0 : brightPixels / pixels
-    },
-    chroma: {
-      pixels: chromaPixels,
-      ratio: pixels === 0 ? 0 : chromaPixels / pixels,
-      channelSpanThreshold: 32
-    },
-    edges: {
-      pixels: edgePixels,
-      ratio: pixels === 0 ? 0 : edgePixels / pixels
-    },
-    rgbRange
-  };
-}
-
 function extractRgbaRegion(
   input: { width: number; height: number; rgba: Buffer },
   region: PngRegion
@@ -697,193 +612,6 @@ function extractRgbaRegion(
     input.rgba.copy(rgba, y * region.width * 4, sourceStart, sourceEnd);
   }
   return { width: region.width, height: region.height, rgba };
-}
-
-function countEdgePixels(input: { width: number; height: number; rgba: Buffer }): number {
-  const threshold = 24;
-  let edgePixels = 0;
-  for (let y = 0; y < input.height; y += 1) {
-    for (let x = 0; x < input.width; x += 1) {
-      const offset = (y * input.width + x) * 4;
-      const alpha = input.rgba[offset + 3];
-      if (alpha === 0) continue;
-      const luma = lumaAt(input.rgba, offset);
-      let edge = false;
-      if (x + 1 < input.width) {
-        const rightOffset = offset + 4;
-        edge = edge || Math.abs(luma - lumaAt(input.rgba, rightOffset)) >= threshold || Math.abs(alpha - input.rgba[rightOffset + 3]) >= threshold;
-      }
-      if (y + 1 < input.height) {
-        const downOffset = ((y + 1) * input.width + x) * 4;
-        edge = edge || Math.abs(luma - lumaAt(input.rgba, downOffset)) >= threshold || Math.abs(alpha - input.rgba[downOffset + 3]) >= threshold;
-      }
-      if (edge) edgePixels += 1;
-    }
-  }
-  return edgePixels;
-}
-
-function lumaAt(rgba: Buffer, offset: number): number {
-  return Math.round(0.2126 * rgba[offset] + 0.7152 * rgba[offset + 1] + 0.0722 * rgba[offset + 2]);
-}
-
-const CRC_TABLE = createCrcTable();
-
-function createCrcTable(): Uint32Array {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < table.length; i += 1) {
-    let value = i;
-    for (let bit = 0; bit < 8; bit += 1) {
-      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-    }
-    table[i] = value >>> 0;
-  }
-  return table;
-}
-
-function crc32(buffer: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function decodePngRgba(png: Buffer): { width: number; height: number; rgba: Buffer } {
-  assertPngSignature(png);
-  let offset = 8;
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = 0;
-  let interlaceMethod = 0;
-  const idatChunks: Buffer[] = [];
-
-  while (offset < png.length) {
-    if (offset + 12 > png.length) throw new Error("PNG has truncated chunk header.");
-    const length = png.readUInt32BE(offset);
-    const typeBytes = png.subarray(offset + 4, offset + 8);
-    const type = typeBytes.toString("ascii");
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > png.length) throw new Error(`PNG chunk ${type} is truncated.`);
-    const data = png.subarray(offset + 8, offset + 8 + length);
-    const expectedCrc = png.readUInt32BE(offset + 8 + length);
-    const actualCrc = crc32(Buffer.concat([typeBytes, data]));
-    if (actualCrc !== expectedCrc) throw new Error(`PNG chunk ${type} has invalid CRC.`);
-    offset = chunkEnd;
-
-    if (type === "IHDR") {
-      width = data.readUInt32BE(0);
-      height = data.readUInt32BE(4);
-      bitDepth = data[8];
-      colorType = data[9];
-      interlaceMethod = data[12];
-    } else if (type === "IDAT") {
-      idatChunks.push(data);
-    } else if (type === "IEND") {
-      break;
-    }
-  }
-
-  if (width <= 0 || height <= 0) throw new Error("PNG has invalid dimensions.");
-  if (bitDepth !== 8) throw new Error(`Unsupported PNG bit depth: ${bitDepth}.`);
-  if (colorType !== 2 && colorType !== 6) throw new Error(`Unsupported PNG color type: ${colorType}.`);
-  if (interlaceMethod !== 0) throw new Error(`Unsupported PNG interlace method: ${interlaceMethod}.`);
-
-  const channels = colorType === 6 ? 4 : 3;
-  const bytesPerPixel = channels;
-  const stride = width * channels;
-
-  // Both numbers below are attacker-controlled: every PNG this decoder sees is
-  // package-controlled (quality-manifest baselines named by the template, and frames rendered from
-  // package input). Each needs its own bound, because either guard alone leaves the other door open.
-  //
-  //   - dimensions: `width`/`height` are two UInt32BE fields out of IHDR that used to size
-  //     `Buffer.alloc(width * height * 4)` directly. 100000x100000 asks for a 40 GB allocation
-  //     before a single IDAT byte is read, from a file that can be a few hundred bytes.
-  //   - inflated size: zlib reaches ~1029:1 on a run of zeros, so a 65 KB IDAT expands to 64 MiB
-  //     regardless of what the header claims. A sane-looking header does not make the stream sane.
-  //
-  // The frame budget is deliberately the SAME ceiling the render lanes already work to, so this is a
-  // bound rather than a wall: Motion renders up to 4K, and 3840x2160 RGBA is 33.2 MPix. Anything
-  // larger is not a Motion frame.
-  const MAX_FRAME_PIXELS = 3840 * 2160;
-  if (width * height > MAX_FRAME_PIXELS) {
-    throw new Error(
-      `PNG dimensions ${width}x${height} exceed the ${MAX_FRAME_PIXELS}-pixel frame budget ` +
-      "(3840x2160). Refusing before allocating a pixel buffer."
-    );
-  }
-
-  // The exact size a valid image of these dimensions inflates to: one filter byte per scanline plus
-  // the scanline itself. Anything beyond it is not data this image can use, so the cap is derived
-  // from the header rather than being a second magic number -- and `maxOutputLength` makes zlib stop
-  // at the boundary instead of after the memory is already gone.
-  const expectedInflatedBytes = (stride + 1) * height;
-  let inflated: Buffer;
-  try {
-    inflated = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedInflatedBytes });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `PNG IDAT stream inflates past the ${expectedInflatedBytes} bytes its own IHDR declares ` +
-      `(${width}x${height}): ${reason}`
-    );
-  }
-  const rgba = Buffer.alloc(width * height * 4);
-  let sourceOffset = 0;
-  let previous: Buffer<ArrayBufferLike> = Buffer.alloc(stride);
-
-  for (let y = 0; y < height; y += 1) {
-    const filter = inflated[sourceOffset];
-    sourceOffset += 1;
-    const raw = Buffer.from(inflated.subarray(sourceOffset, sourceOffset + stride));
-    sourceOffset += stride;
-    const row = unfilterScanline(raw, previous, filter, bytesPerPixel);
-    for (let x = 0; x < width; x += 1) {
-      const source = x * channels;
-      const target = (y * width + x) * 4;
-      rgba[target] = row[source];
-      rgba[target + 1] = row[source + 1];
-      rgba[target + 2] = row[source + 2];
-      rgba[target + 3] = channels === 4 ? row[source + 3] : 255;
-    }
-    previous = row;
-  }
-
-  return { width, height, rgba };
-}
-
-function unfilterScanline(raw: Buffer, previous: Buffer, filter: number, bytesPerPixel: number): Buffer {
-  const row = Buffer.alloc(raw.length);
-  for (let index = 0; index < raw.length; index += 1) {
-    const left = index >= bytesPerPixel ? row[index - bytesPerPixel] : 0;
-    const up = previous[index] ?? 0;
-    const upLeft = index >= bytesPerPixel ? previous[index - bytesPerPixel] ?? 0 : 0;
-    if (filter === 0) row[index] = raw[index];
-    else if (filter === 1) row[index] = (raw[index] + left) & 0xff;
-    else if (filter === 2) row[index] = (raw[index] + up) & 0xff;
-    else if (filter === 3) row[index] = (raw[index] + Math.floor((left + up) / 2)) & 0xff;
-    else if (filter === 4) row[index] = (raw[index] + paeth(left, up, upLeft)) & 0xff;
-    else throw new Error(`Unsupported PNG filter: ${filter}.`);
-  }
-  return row;
-}
-
-function paeth(left: number, up: number, upLeft: number): number {
-  const estimate = left + up - upLeft;
-  const leftDistance = Math.abs(estimate - left);
-  const upDistance = Math.abs(estimate - up);
-  const upLeftDistance = Math.abs(estimate - upLeft);
-  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) return left;
-  if (upDistance <= upLeftDistance) return up;
-  return upLeft;
-}
-
-function assertPngSignature(png: Buffer): void {
-  if (png.length < 8 || png.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
-    throw new Error("File is not a PNG image.");
-  }
 }
 
 function hashBuffer(buffer: Buffer): string {

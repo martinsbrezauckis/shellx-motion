@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { actionCoverage, findAction, planAction } from "./catalog";
-
 describe("motion action catalog", () => {
   it("matches exact action ids and refuses unknown action-id fallbacks", () => {
     expect(findAction("motion.timeline.layer.rich.set")?.id).toBe("motion.timeline.layer.rich.set");
@@ -14,12 +13,32 @@ describe("motion action catalog", () => {
     expect(findAction("quietly inspect frosted weather telemetry")).toBeNull();
   });
 
+  it("finds read-only atomic revision planning without promising a receipt or package write", () => {
+    const action = findAction("plan atomic timeline revision");
+    expect(action).toMatchObject({
+      id: "motion.revision.transaction.plan", permission: "read_motion", mutates: false,
+      calls: ["motion.state", "motion.revision.transaction.plan"], surfaces: ["timeline"]
+    });
+    expect(action?.verify.join(" ")).toMatch(/without writing a receipt or package/);
+  });
+
   it("routes environment creation and rich-control edits to their owning actions", () => {
     expect(findAction("add a cinematic snow environment")?.id).toBe("motion.timeline.layer.create");
     expect(findAction("create rain environment")?.id).toBe("motion.timeline.layer.create");
     expect(findAction("change snow intensity")?.id).toBe("motion.timeline.layer.rich.set");
     expect(findAction("set environment intensity to 0.8")?.id).toBe("motion.timeline.layer.rich.set");
     expect(findAction("set shader uniform u_speed")?.id).toBe("motion.timeline.layer.rich.set");
+    expect(findAction("reveal line")?.id).toBe("motion.timeline.layer.rich.set");
+    expect(findAction("engrave path")?.id).toBe("motion.timeline.layer.rich.set");
+  });
+
+  it("keeps the exact cutout rig bake action discoverable at its edit tier", () => {
+    const action = findAction("motion.timeline.cutout.rig.bake");
+    expect(action).toMatchObject({
+      id: "motion.timeline.cutout.rig.bake",
+      permission: "edit_motion",
+      mutates: true,
+    });
   });
 
   it("ships a cold-start skill with the exact rich-control route", () => {
@@ -28,6 +47,7 @@ describe("motion action catalog", () => {
 
     expect(skill).toContain("actions guide motion.timeline.layer.rich.set");
     expect(skill).toContain("debug layer-rich-set");
+    expect(skill).toContain("pathReveal.start");
     expect(skill).toContain("Cut as the editorial/link-lifecycle host");
     expect(reference).toContain("unknown `motion.*` ID returns no action");
     expect(reference).toContain("fixtures/packages/environment-*-cinematic");
@@ -38,7 +58,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.render.final");
     expect(action?.permission).toBe("render_motion");
-    expect(action?.verify).toContain("Optional quality manifests gate final renders and record quality-check status in render receipts.");
+    expect(action?.verify).toContain("Quality manifests gate final renders; attested reuse requires receipt-linked source evidence, and a verified hit needs no current browser or FFmpeg run.");
   });
 
   it("finds quality-manifest gated final renders from natural user wording", () => {
@@ -69,7 +89,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.preview.strip");
     expect(action?.permission).toBe("render_motion");
-    expect(action?.mutates).toBe(false);
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.preview.strip", "motion.receipts.read"]);
     expect(action?.verify).toContain("Preview strip receipt includes per-frame output hashes, timestamps, and artifact paths.");
   });
@@ -79,7 +99,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.preview.playhead");
     expect(action?.permission).toBe("render_motion");
-    expect(action?.mutates).toBe(false);
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.preview.playhead", "motion.receipts.read"]);
     expect(action?.verify).toContain("Playhead preview receipt includes timeline state, output frame hash, timestamp, and artifact path.");
   });
@@ -147,7 +167,7 @@ describe("motion action catalog", () => {
     const action = findAction("export this Canvas frame to mp4 without Cut");
 
     expect(action?.id).toBe("motion.connector.canvas_to_mp4");
-    expect(action?.permission).toBe("render_motion");
+    expect(action?.permission).toBe("write_local");
     expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual([
       "motion.connector.canvas_to_mp4",
@@ -291,10 +311,11 @@ describe("motion action catalog", () => {
   });
 
   it("finds Template-to-Cut connector flows from natural wording", () => {
-    const action = findAction("apply editable template to Cut timeline");
+    const action = findAction("rendered template media to Cut");
 
     expect(action?.id).toBe("motion.connector.template_to_cut");
     expect(action?.permission).toBe("write_local");
+    expect(action?.verify).toContain("Linux-only Template-to-Cut P2A receipt binds changed params, a Browser-to-FFmpeg MP4, artifact handle, and Cut import plan; the template source is input evidence, not output.");
     expect(action?.calls).toEqual([
       "motion.template.controls",
       "motion.connector.template_to_cut",
@@ -307,6 +328,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.review.html.bundle");
     expect(action?.permission).toBe("write_local");
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.review.html.bundle", "motion.receipts.list"]);
     expect(action?.verify).toContain("Review HTML bundle includes public-safe artifact links and quality-gate summaries; its receipt records HTML path, copied artifacts, receipt count, and quality-gate counts.");
   });
@@ -316,7 +338,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.source.import");
     expect(action?.permission).toBe("write_local");
-    expect(action?.mutates).toBe(false);
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.source.import", "motion.receipts.read"]);
     expect(action?.verify).toContain("Source import receipt includes public URL, kind, Markdown path, source hash, truncation evidence, and safe-fetch policy.");
   });
@@ -326,7 +348,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.source.to_scripted_video");
     expect(action?.permission).toBe("write_local");
-    expect(action?.mutates).toBe(false);
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.source.import", "motion.source.to_scripted_video", "motion.script.compile", "motion.receipts.read"]);
     expect(action?.verify).toContain("Source-to-scripted-video emits deterministic scripted-video JSON, source refs, review-required storyboard metadata, and receipt artifacts before Script-to-Cut.");
   });
@@ -392,6 +414,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.package.archive");
     expect(action?.permission).toBe("write_local");
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.package.archive", "motion.receipts.read"]);
     expect(action?.verify).toContain("Package archive receipt includes archive path, file count, deterministic hash, and archived package file hashes.");
   });
@@ -401,6 +424,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.package.extract");
     expect(action?.permission).toBe("write_local");
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.package.extract", "motion.receipts.read"]);
     expect(action?.verify).toContain("Package extract receipt includes package root, extracted file count, archive hash, and validation result.");
   });
@@ -410,6 +434,7 @@ describe("motion action catalog", () => {
 
     expect(action?.id).toBe("motion.support.bundle");
     expect(action?.permission).toBe("write_local");
+    expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.support.bundle", "motion.receipts.list"]);
     expect(action?.verify).toContain("Support bundle lists diagnostics, receipts, and platform verification summaries without secret material.");
   });
@@ -440,7 +465,7 @@ describe("motion action catalog", () => {
     const qualityCheck = findAction("run quality check on rendered video");
 
     expect(canvasPackage?.id).toBe("motion.canvas.package");
-    expect(canvasPackage?.permission).toBe("render_motion");
+    expect(canvasPackage?.permission).toBe("write_local");
     expect(canvasPackage?.calls).toEqual(["motion.canvas.package", "motion.receipts.read"]);
     expect(canvasPackage?.verify).toContain("Canvas package receipt includes source frame hash and resource catalog path.");
     expect(qualityPanel?.id).toBe("motion.quality.panel");
@@ -461,22 +486,22 @@ describe("motion action catalog", () => {
     expect(action?.mutates).toBe(true);
     expect(action?.calls).toEqual(["motion.render.batch", "motion.render.status", "motion.receipts.read"]);
     expect(action?.verify).toContain("Batch render receipt includes per-row output paths, preset, and statuses.");
-    expect(action?.verify).toContain("Render status returns queue-style job state and progress derived from host receipts.");
-    expect(action?.verify).toContain("Render status and queue rows expose compact quality-manifest gate status when present.");
+    expect(action?.verify).toContain("Historical render status summarizes completed receipt evidence; it is neither a live queue nor live progress.");
+    expect(action?.verify).toContain("Historical render status and receipt-history rows expose compact quality-manifest gate status when present.");
   });
 
   it("finds render queue cancel and retry workflows from natural wording", () => {
     const cancel = findAction("cancel render job");
     const retry = findAction("retry failed render");
 
-    expect(cancel?.id).toBe("motion.render.cancel");
+    expect(cancel?.id).toBe("motion.job.cancel");
     expect(cancel?.permission).toBe("render_motion");
-    expect(cancel?.calls).toEqual(["motion.render.cancel", "motion.render.status", "motion.receipts.read"]);
-    expect(cancel?.verify).toContain("Render cancel receipt references the target job and render status marks it cancelled.");
-    expect(retry?.id).toBe("motion.render.retry");
+    expect(cancel?.calls).toEqual(["motion.job.cancel", "motion.job.get"]);
+    expect(cancel?.verify).toContain("Cancellation acknowledgement sets cancelRequested while work is still pending or running.");
+    expect(retry?.id).toBe("motion.job.retry");
     expect(retry?.permission).toBe("render_motion");
-    expect(retry?.calls).toEqual(["motion.render.retry", "motion.render.status", "motion.receipts.read"]);
-    expect(retry?.verify).toContain("Render retry receipt references the source job and render status exposes the retry as queued.");
+    expect(retry?.calls).toEqual(["motion.job.retry"]);
+    expect(retry?.verify).toContain("Retry creates a new linked job rather than changing terminal source evidence.");
   });
 
   it("finds render queue panel workflows from natural wording", () => {
@@ -485,8 +510,8 @@ describe("motion action catalog", () => {
     expect(action?.id).toBe("motion.render.queue");
     expect(action?.permission).toBe("read_motion");
     expect(action?.calls).toEqual(["motion.render.queue", "motion.receipts.read"]);
-    expect(action?.verify).toContain("Render queue panel returns job state, progress, control receipts, and available cancel/retry actions.");
-    expect(action?.verify).toContain("Render status and queue rows expose compact quality-manifest gate status when present.");
+    expect(action?.verify).toContain("Historical render receipt rows expose persisted state, progress, and control annotations; they are not a live coordinator queue.");
+    expect(action?.verify).toContain("Historical render status and receipt-history rows expose compact quality-manifest gate status when present.");
   });
 
   it("finds prompt queue cancel and retry workflows from natural wording", () => {
@@ -928,6 +953,10 @@ describe("motion action catalog", () => {
     expect(action?.verify).toContain("Timeline layer create receipt includes layer id, stack index, optional track ref, changed paths, inserted track refs, and validation result.");
   });
 
+  it("routes bounded point-cloud authoring to the existing typed layer-create action", () => {
+    expect(findAction("create a bounded point cloud")?.id).toBe("motion.timeline.layer.create");
+  });
+
   it("finds typed timeline layer split edits from natural wording", () => {
     const action = findAction("split clip at playhead");
 
@@ -1187,7 +1216,7 @@ describe("motion action catalog", () => {
     expect(action?.permission).toBe("read_motion");
     expect(action?.mutates).toBe(false);
     expect(action?.calls).toEqual(["motion.audio.panel"]);
-    expect(action?.verify).toContain("Audio panel returns resolved audio inputs, automation counts, track controls, ducking, and export-preset compatibility warnings.");
+    expect(action?.verify).toContain("Audio panel returns resolved audio inputs, automation counts, track controls, document-master declaration, ducking, and export-preset compatibility warnings.");
   });
 
   it("finds typed timeline layer track assignments from natural wording", () => {
@@ -1304,7 +1333,7 @@ describe("motion action catalog", () => {
     expect(plan.verify).toEqual(expect.arrayContaining([
       "Batch render receipt includes per-row output paths, preset, and statuses.",
       "Each row render receipt includes final media facts for the selected preset.",
-      "Render status returns queue-style job state and progress derived from host receipts."
+      "Historical render status summarizes completed receipt evidence; it is neither a live queue nor live progress."
     ]));
   });
 
@@ -1341,7 +1370,8 @@ describe("motion action catalog", () => {
       "motion.receipts.read"
     ]);
     expect(plan.verify).toEqual(expect.arrayContaining([
-      "Script-to-Cut connector receipt includes script, render, quality, and Cut import plan evidence.",
+      "Committed P2B Script-to-Cut receipt binds rendered media, artifact handle, render receipt, and Cut import plan evidence.",
+      "Separate quality check receipt includes representative-frame visual and alpha facts.",
       "Quality check receipt includes representative-frame visual and alpha facts."
     ]));
   });

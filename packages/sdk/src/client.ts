@@ -1,6 +1,6 @@
 /** Runtime-validated Motion SDK client over an injected local or remote transport. */
 import { JOB_STATES } from "@shellx-motion/core";
-import { canonicalJson, motionSdkCacheKey } from "./cache";
+import { motionSdkCacheKey } from "./cache";
 import { isKeyingOperation, validateKeyingOutput, validateKeyingRequest } from "./keying-client";
 import { validateTrackingOutput, validateTrackingRequest } from "./tracking-client";
 import { createAuthoringClientBindings } from "./authoring-client-bindings";
@@ -9,30 +9,25 @@ import {
   validateAuthoringOutput,
   validateAuthoringRequest,
 } from "./authoring-client-validation";
-import { validRenderArtifact, validRequestedCutHandoff } from "./render-client-guards";
-import { validateSpatialTimelineEdit } from "./spatial-timeline-normalize";
-import { timelineEditReceiptOperation } from "./timeline-receipt";
+import { validRenderArtifact, validRequestedCutHandoff, validRequestedGpuPostRenderReuse, validRequestedRenderFrames } from "./render-client-guards";
+import { validateRevisionTransaction, validateRevisionTransactionPlan, validRevisionTransactionOutput, validRevisionTransactionPlanOutput, validateTimelineEdit, validTimelineEditOutput } from "./client-timeline-revision-validation";
+import { renderRequestValidationError } from "./render-request-validation";
+import { renderCachePlanRequestError, validRenderCachePlanOutput } from "./render-cache-plan-client";
+import { validMotionValidationReport } from "./validation-report";
 import { ALLOWED_OPERATION_FIELDS, REQUIRED_OPERATION_FIELDS } from "./client-operation-fields";
-import {
-  MOTION_SDK_SCHEMA,
-  type MotionSdkClient,
-  type MotionSdkError,
-  type MotionSdkOperation,
-  type MotionSdkRequestMap,
-  type MotionSdkResponseMap,
-  type MotionSdkResult,
-  type MotionSdkTransport,
-  type MotionSdkTransportRequest
-} from "./types";
+import { MOTION_SDK_SCHEMA, type MotionSdkClient, type MotionSdkError, type MotionSdkOperation, type MotionSdkRequestMap, type MotionSdkResponseMap, type MotionSdkResult, type MotionSdkTransport, type MotionSdkTransportRequest } from "./types";
 export function createMotionSdk(transport: MotionSdkTransport): MotionSdkClient {
   return {
     validate: (input) => execute(transport, "validate", input),
     compile: (input) => execute(transport, "compile", input),
     preview: (input) => execute(transport, "preview", input),
     render: (input) => execute(transport, "render", input),
+    renderCachePlan: (input) => execute(transport, "renderCachePlan", input),
     status: (input) => execute(transport, "status", input),
     cancel: (input) => execute(transport, "cancel", input),
     timelineEdit: (input) => execute(transport, "timelineEdit", input),
+    revisionTransactionPlan: (input) => execute(transport, "revisionTransactionPlan", input),
+    revisionTransaction: (input) => execute(transport, "revisionTransaction", input),
     trackingRequest: (input) => execute(transport, "trackingRequest", input),
     trackingInspect: (input) => execute(transport, "trackingInspect", input),
     trackingApply: (input) => execute(transport, "trackingApply", input),
@@ -53,7 +48,7 @@ async function execute<K extends MotionSdkOperation>(
   operation: K,
   input: MotionSdkRequestMap[K]
 ): Promise<MotionSdkResult<MotionSdkResponseMap[K]>> {
-  const requestError = validateRequest(operation, input);
+  const requestError = validateMotionSdkRequestInput(operation, input);
   if (requestError) return failure(`sdk-${operation}-invalid`, "0".repeat(64), requestError);
   let cacheKey: string;
   try {
@@ -82,18 +77,36 @@ async function execute<K extends MotionSdkOperation>(
   return { ok: true, output: envelope.output, requestId, cacheKey };
 }
 
-function validateRequest(operation: MotionSdkOperation, value: unknown): MotionSdkError | null {
+export function validateMotionSdkRequestInput(operation: MotionSdkOperation, value: unknown): MotionSdkError | null {
   const record = plainRecord(value);
   if (!record) return invalid(`SDK ${operation} input must be a plain object.`);
   const unknown = Object.keys(record).find((key) => !ALLOWED_OPERATION_FIELDS[operation].includes(key));
   if (unknown) return invalid(`SDK ${operation} input contains unsupported field ${unknown}.`);
   for (const key of REQUIRED_OPERATION_FIELDS[operation]) {
+    // Most SDK operation fields are paths/ids and therefore required non-blank strings. The
+    // atomic revision endpoint intentionally has two typed aggregate fields; their closed shape is
+    // checked below by validateRevisionTransaction, not mistaken for a missing string here.
+    if ((operation === "revisionTransaction" || operation === "revisionTransactionPlan") && (key === "base" || key === "steps")) {
+      if (!Object.hasOwn(record, key) || record[key] === undefined) return invalid(`SDK ${operation} requires ${key}.`);
+      continue;
+    }
     if (typeof record[key] !== "string" || !(record[key] as string).trim()) return invalid(`SDK ${operation} requires ${key}.`);
   }
   if (operation === "compile" && (!("script" in record) || record.script === undefined)) return invalid("SDK compile requires script.");
+  if (operation === "preview" && record.lane !== undefined && record.lane !== "browser" && record.lane !== "gpu") {
+    return invalid("SDK preview lane must be browser or gpu.");
+  }
   if (operation === "timelineEdit") {
     const editError = validateTimelineEdit(record.edit);
     if (editError) return editError;
+  }
+  if (operation === "revisionTransaction") {
+    const revisionError = validateRevisionTransaction(record);
+    if (revisionError) return revisionError;
+  }
+  if (operation === "revisionTransactionPlan") {
+    const revisionError = validateRevisionTransactionPlan(record);
+    if (revisionError) return revisionError;
   }
   if (operation === "trackingRequest") {
     const trackingError = validateTrackingRequest(record);
@@ -120,12 +133,13 @@ function validateRequest(operation: MotionSdkOperation, value: unknown): MotionS
   if (keyingError) return keyingError;
   const authoringError = validateAuthoringRequest(operation, record);
   if (authoringError) return authoringError;
-  if (operation === "render" && record.cutHandoff !== undefined) {
-    const cut = plainRecord(record.cutHandoff);
-    if (!cut || Object.keys(cut).some((key) => key !== "target" && key !== "mode")
-      || cut.target !== "shellx-cut" || cut.mode !== "rendered_media") {
-      return invalid("SDK render cutHandoff must request shellx-cut rendered_media.");
-    }
+  if (operation === "render") {
+    const renderError = renderRequestValidationError(record);
+    if (renderError) return invalid(renderError);
+  }
+  if (operation === "renderCachePlan") {
+    const planError = renderCachePlanRequestError(record);
+    if (planError) return invalid(planError);
   }
   for (const key of ["createdAt", "workflowPath", "artifactRoot", "receiptsRoot", "qualityManifestPath", "jobId", "reason", "createdBy"] as const) {
     if (key in record && (typeof record[key] !== "string" || !(record[key] as string).trim())) return invalid(`SDK ${operation} ${key} must be a non-empty string.`);
@@ -167,7 +181,7 @@ function validateOutput(operation: MotionSdkOperation, value: unknown, requestIn
     compile: ["packageRoot", "receiptPath"],
     preview: ["packageId", "motionId", "receiptId"],
     render: ["jobId", "state", "packageId", "motionId", "preset"],
-    cancel: ["targetJobId", "state", "receiptId"]
+    cancel: ["targetJobId", "state"]
   };
   for (const key of requiredStrings[operation] ?? []) {
     if (typeof record[key] !== "string" || !(record[key] as string).trim()) return invalidTransport(`SDK ${operation} output requires ${key}.`);
@@ -176,20 +190,36 @@ function validateOutput(operation: MotionSdkOperation, value: unknown, requestIn
     && !validPackageIdentity(record.package)) {
     return invalidTransport(`SDK ${operation} output requires a valid package identity.`);
   }
-  if (operation === "preview" && !validPreviewFrame(record.frame)) return invalidTransport("SDK preview output requires a valid frame identity.");
+  if (operation === "validate" && !validMotionValidationReport(record.validation, plainRecord)) {
+    return invalidTransport("SDK validate output requires a valid two-stage Motion validation report.");
+  }
+  if (operation === "preview" && (!validPreviewFrame(record.frame) || (record.lane !== "browser" && record.lane !== "gpu"))) return invalidTransport("SDK preview output requires a valid lane and frame identity.");
   if (operation === "render" && record.artifact !== undefined && !validRenderArtifact(record.artifact, record)) {
     return invalidTransport("SDK render artifact identity is invalid or does not match the render.");
   }
   if (operation === "render" && !validRequestedCutHandoff(record, requestInput)) {
     return invalidTransport("SDK render Cut handoff/reference identity is invalid or does not match the request and artifact.");
   }
+  if (operation === "render" && !validRequestedRenderFrames(record, requestInput)) {
+    return invalidTransport("SDK render retained frames must be present only for keepFrames requests and have a valid directory/count.");
+  }
+  if (operation === "render" && !validRequestedGpuPostRenderReuse(record, requestInput)) {
+    return invalidTransport("SDK GPU post-render reuse identity is invalid or does not match the completed GPU artifact.");
+  }
   if (operation === "render" && !jobState(record.state)) return invalidTransport("SDK render output state is invalid.");
+  if (operation === "renderCachePlan" && !validRenderCachePlanOutput(record)) return invalidTransport("SDK renderCachePlan output is invalid or disclosed a path.");
   if (operation === "status" && (!Array.isArray(record.jobs) || !record.jobs.every(validJob) || !validStateCounts(record.stateCounts, record.jobs))) {
     return invalidTransport("SDK status output requires valid jobs and stateCounts.");
   }
-  if (operation === "cancel" && record.state !== "cancelled") return invalidTransport("SDK cancel output state must be cancelled.");
+  if (operation === "cancel" && (!nonEmpty(record.targetJobId) || !jobState(record.state) || record.cancelRequested !== true)) return invalidTransport("SDK cancel output requires the actual live state and cancelRequested=true.");
   if (operation === "timelineEdit" && (!validPackageIdentity(record.package) || !validTimelineEditOutput(record, requestInput))) {
     return invalidTransport("SDK timelineEdit output requires a valid package, edit, and passed receipt identity.");
+  }
+  if (operation === "revisionTransaction" && (!validPackageIdentity(record.package) || !validRevisionTransactionOutput(record, requestInput))) {
+    return invalidTransport("SDK revisionTransaction output requires a verified package, final hashes, typed step summaries, and passed transaction receipt.");
+  }
+  if (operation === "revisionTransactionPlan" && !validRevisionTransactionPlanOutput(record, requestInput)) {
+    return invalidTransport("SDK revisionTransactionPlan output requires an exact base, deterministic final hashes, typed step summaries, and compact passed validation.");
   }
   if (isKeyingOperation(operation) && (!nonEmpty(record.packageRoot) || !validPackageIdentity(record.package))) {
     return invalidTransport(`SDK ${operation} output requires a package root and valid package identity.`);
@@ -216,90 +246,6 @@ function validPreviewFrame(value: unknown): boolean {
   return Boolean(record && nonEmpty(record.path) && sha256(record.sha256) && positive(record.width) && positive(record.height)
     && typeof record.atMs === "number" && Number.isFinite(record.atMs) && record.atMs >= 0
     && (record.mediaType === "image/png" || record.mediaType === "image/jpeg"));
-}
-
-function validateTimelineEdit(value: unknown): MotionSdkError | null {
-  const spatialError = validateSpatialTimelineEdit(value);
-  if (spatialError !== false) return spatialError ? invalid(`SDK timelineEdit ${spatialError}`) : null;
-  const edit = plainRecord(value);
-  if (!edit) return invalid("SDK timelineEdit edit must be a plain object.");
-  const kind = edit.kind;
-  const allowedFields = kind === "rich.set" ? ["kind", "layerId", "path", "value"]
-    : kind === "keyframe.upsert" ? ["kind", "layerId", "target", "atMs", "value", "easing"]
-    : kind === "keyframe.delete" ? ["kind", "layerId", "target", "atMs"]
-      : kind === "keyframe.range.delete" ? ["kind", "layerId", "target", "startMs", "endMs"]
-      : kind === "keyframe.move" ? ["kind", "layerId", "target", "fromMs", "toMs"]
-        : kind === "keyframe.easing.apply" ? ["kind", "layerId", "target", "easing", "atMs", "startMs", "endMs"]
-          : kind === "keyframe.shift" || kind === "keyframe.duplicate" ? ["kind", "layerId", "target", "deltaMs", "startMs", "endMs"]
-            : kind === "keyframe.scale" ? ["kind", "layerId", "target", "scale", "originMs", "startMs", "endMs"]
-              : kind === "keyframe.distribute" || kind === "keyframe.reverse" ? ["kind", "layerId", "target", "startMs", "endMs"]
-                : kind === "keyframe.snap" ? ["kind", "layerId", "target", "fps", "mode", "startMs", "endMs"] : null;
-  if (!allowedFields) return invalid("SDK timelineEdit edit kind is unsupported.");
-  const unknown = Object.keys(edit).find((key) => !allowedFields.includes(key));
-  if (unknown) return invalid(`SDK timelineEdit edit contains unsupported field ${unknown}.`);
-  for (const key of (kind === "rich.set" ? ["layerId", "path"] : ["layerId", "target"]) as Array<"layerId" | "path" | "target">) {
-    if (!nonEmpty(edit[key]) || String(edit[key]).length > 128 || String(edit[key]) !== String(edit[key]).trim()) return invalid(`SDK timelineEdit edit requires bounded ${key}.`);
-  }
-  if (kind === "rich.set"
-    && !(typeof edit.value === "number" && Number.isFinite(edit.value))
-    && typeof edit.value !== "boolean"
-    && !(typeof edit.value === "string" && edit.value.trim().length > 0 && edit.value.length <= 128 && edit.value === edit.value.trim())) {
-    return invalid("SDK timelineEdit rich.set requires a finite number, boolean, or bounded string value.");
-  }
-  if (kind === "keyframe.upsert") {
-    if (!nonNegative(edit.atMs)) return invalid("SDK timelineEdit keyframe.upsert requires non-negative atMs.");
-    if (!(typeof edit.value === "number" && Number.isFinite(edit.value))
-      && !(typeof edit.value === "string" && edit.value.trim().length > 0 && edit.value.length <= 128 && edit.value === edit.value.trim())) {
-      return invalid("SDK timelineEdit keyframe.upsert requires a finite number or bounded string value.");
-    }
-  }
-  if (kind === "keyframe.delete" && !nonNegative(edit.atMs)) {
-    return invalid("SDK timelineEdit keyframe.delete requires non-negative atMs.");
-  }
-  if (kind === "keyframe.move" && (!nonNegative(edit.fromMs) || !nonNegative(edit.toMs))) {
-    return invalid("SDK timelineEdit keyframe.move requires non-negative fromMs and toMs.");
-  }
-  if ((kind === "keyframe.shift" || kind === "keyframe.duplicate")
-    && !(typeof edit.deltaMs === "number" && Number.isFinite(edit.deltaMs) && edit.deltaMs !== 0)) {
-    return invalid(`SDK timelineEdit ${kind} requires finite non-zero deltaMs.`);
-  }
-  if (kind === "keyframe.scale"
-    && !(typeof edit.scale === "number" && Number.isFinite(edit.scale) && edit.scale > 0 && edit.scale !== 1 && nonNegative(edit.originMs))) {
-    return invalid("SDK timelineEdit keyframe.scale requires positive non-unit scale and non-negative originMs.");
-  }
-  if (kind === "keyframe.snap") {
-    if (edit.fps !== undefined && !(typeof edit.fps === "number" && Number.isFinite(edit.fps) && edit.fps > 0)) {
-      return invalid("SDK timelineEdit keyframe.snap fps must be positive.");
-    }
-    if (edit.mode !== undefined && edit.mode !== "nearest" && edit.mode !== "floor" && edit.mode !== "ceil") {
-      return invalid("SDK timelineEdit keyframe.snap mode is unsupported.");
-    }
-  }
-  if (kind === "keyframe.easing.apply" && !nonEmpty(edit.easing)) {
-    return invalid("SDK timelineEdit keyframe.easing.apply requires easing.");
-  }
-  if (edit.easing !== undefined && (!nonEmpty(edit.easing) || String(edit.easing).length > 128 || String(edit.easing) !== String(edit.easing).trim())) {
-    return invalid("SDK timelineEdit easing must be a bounded string.");
-  }
-  for (const key of ["atMs", "startMs", "endMs"] as const) {
-    if (key in edit && !nonNegative(edit[key])) return invalid(`SDK timelineEdit ${key} must be non-negative.`);
-  }
-  if (typeof edit.startMs === "number" && typeof edit.endMs === "number" && edit.startMs > edit.endMs) {
-    return invalid("SDK timelineEdit startMs must not exceed endMs.");
-  }
-  return null;
-}
-function validTimelineEditOutput(output: Record<string, unknown>, requestInput: unknown): boolean {
-  if (!nonEmpty(output.packageRoot) || validateTimelineEdit(output.edit)) return false;
-  const request = plainRecord(requestInput);
-  if (!request || validateTimelineEdit(request.edit) || canonicalJson(output.edit) !== canonicalJson(request.edit)) return false;
-  const edit = plainRecord(output.edit);
-  const receipt = plainRecord(output.receipt);
-  const pkg = plainRecord(output.package);
-  const expectedOperation = timelineEditReceiptOperation(edit?.kind);
-  return Boolean(receipt && expectedOperation && receipt.schema === "shellx-motion/receipt@1"
-    && nonEmpty(receipt.id) && receipt.packageId === pkg?.packageId && receipt.operation === expectedOperation && receipt.status === "passed"
-    && nonEmpty(receipt.path) && sha256(receipt.sha256));
 }
 
 function validJob(value: unknown): boolean {

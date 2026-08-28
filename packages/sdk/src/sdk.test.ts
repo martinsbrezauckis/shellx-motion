@@ -88,16 +88,18 @@ describe("ShellX Motion SDK", () => {
     const thrown = await createMotionSdk({ execute: async () => { throw new Error("connection reset"); } }).validate({ packageRoot: "/pkg" });
     expect(thrown).toMatchObject({ ok: false, error: { code: "transport_error", retryable: true, message: "connection reset" } });
 
-    const swapped = await createMotionSdk(fakeTransport((request) => successfulOutput(request.operation), { cacheKey: SHA_B }))
-      .status({ receiptsRoot: "/receipts" });
+    const swapped = await createMotionSdk(fakeTransport((request) => successfulOutput(request.operation), { cacheKey: SHA_B })).status({ receiptsRoot: "/receipts" });
     expect(swapped).toMatchObject({ ok: false, error: { code: "invalid_transport_response", message: "Transport response cacheKey does not match the request." } });
 
+    for (const validation of [{ ...validationReport(), structural: "failed", semantic: "passed" }, { ...validationReport(), structural: "not_run", semantic: "failed" }, { ...validationReport(), structural: "passed", semantic: "not_run" }]) {
+      const invalidStages = await createMotionSdk(fakeTransport(() => ({ ...successfulOutput("validate"), validation }))).validate({ packageRoot: "/pkg" });
+      expect(invalidStages).toMatchObject({ ok: false, error: { code: "invalid_transport_response", message: "SDK validate output requires a valid two-stage Motion validation report." } });
+    }
     const malformed = await createMotionSdk(fakeTransport(() => ({
       ...successfulOutput("render"),
       artifact: { ...successfulOutput("render").artifact, motionId: "motion_swapped" }
     }))).render({ packageRoot: "/pkg", outputPath: "/out/final.webm", preset: "webm-vp9" });
     expect(malformed).toMatchObject({ ok: false, error: { code: "invalid_transport_response", message: "SDK render artifact identity is invalid or does not match the render." } });
-
     const missingCutBinding = await createMotionSdk(fakeTransport(() => successfulOutput("render"))).render({
       packageRoot: "/pkg",
       outputPath: "/out/final.webm",
@@ -108,7 +110,6 @@ describe("ShellX Motion SDK", () => {
       ok: false,
       error: { code: "invalid_transport_response", message: "SDK render Cut handoff/reference identity is invalid or does not match the request and artifact." }
     });
-
     const swappedEditReceipt = await createMotionSdk(fakeTransport(() => successfulOutput("timelineEdit"))).timelineEdit({
       packageRoot: "/pkg",
       outDir: "/edited",
@@ -118,7 +119,6 @@ describe("ShellX Motion SDK", () => {
       ok: false,
       error: { code: "invalid_transport_response", message: "SDK timelineEdit output requires a valid package, edit, and passed receipt identity." }
     });
-
     const swappedTrackingLayer = await createMotionSdk(fakeTransport(() => ({
       ...successfulOutput("trackingApply"), layerId: "other-layer"
     }))).trackingApply({
@@ -222,7 +222,7 @@ describe("ShellX Motion SDK", () => {
     const transport = createMotionSdkHandlerTransport({
       validate: async (_input, request) => {
         expect(request.cacheKey).toMatch(/^[a-f0-9]{64}$/);
-        return { ok: true, output: { package: packageIdentity(), warnings: [] } };
+        return { ok: true, output: { package: packageIdentity(), validation: validationReport(), warnings: [] } };
       }
     });
     const sdk = createMotionSdk(transport);
@@ -337,10 +337,10 @@ function fakeTransport(
 
 function successfulOutput<K extends MotionSdkOperation>(operation: K): MotionSdkResponseMap[K] {
   const outputs: Partial<MotionSdkResponseMap> = {
-    validate: { package: packageIdentity(), warnings: [] },
+    validate: { package: packageIdentity(), validation: validationReport(), warnings: [] },
     compile: { packageRoot: "/motion/compiled/package", package: packageIdentity(), receiptPath: "/motion/compiled/receipt.json", warnings: [] },
     preview: {
-      packageId: "pkg_sdk", motionId: "motion_sdk", receiptId: "preview-1", warnings: [],
+      packageId: "pkg_sdk", motionId: "motion_sdk", lane: "browser", receiptId: "preview-1", warnings: [],
       frame: { path: "/motion/preview/frame.png", sha256: SHA_C, width: 1280, height: 720, atMs: 125, mediaType: "image/png" }
     },
     render: {
@@ -351,7 +351,7 @@ function successfulOutput<K extends MotionSdkOperation>(operation: K): MotionSdk
       jobs: [{ jobId: "render-1", state: "running", packageId: "pkg_sdk", operation: "render.final", receiptId: "render-receipt-1", retryCount: 0, warnings: [] }],
       stateCounts: { running: 1 }, warnings: []
     },
-    cancel: { targetJobId: "render-1", state: "cancelled", receiptId: "render-cancel-1", warnings: [] },
+    cancel: { targetJobId: "render-1", state: "running", cancelRequested: true, warnings: [] },
     timelineEdit: {
       packageRoot: "/motion/edited",
       package: packageIdentity(),
@@ -417,6 +417,7 @@ function successfulOutput<K extends MotionSdkOperation>(operation: K): MotionSdk
   };
   return outputs[operation] as MotionSdkResponseMap[K];
 }
+const validationReport = () => ({ contract: "shellx-motion/motion-validation@1" as const, structural: "passed" as const, semantic: "passed" as const, renderability: "not_proven" as const });
 
 function packageIdentity() {
   return { packageId: "pkg_sdk", motionId: "motion_sdk", durationMs: 2_000, fps: 30, width: 1280, height: 720, manifestSha256: SHA_A, motionSha256: SHA_B };

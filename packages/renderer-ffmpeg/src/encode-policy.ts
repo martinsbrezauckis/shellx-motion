@@ -43,6 +43,7 @@ import {
   type HardwareProbeResolverInput,
   type ResolvedHardwareProbe
 } from "./index.js";
+import { assertSelfContainedFfmpegMediaInputs } from "./ffmpeg-media-input-fence.js";
 
 /** Default bounded cache lifetime (5 minutes) — long enough to serve a batch, short enough to pick up a binary swap. */
 const DEFAULT_ENCODE_POLICY_TTL_MS = 5 * 60 * 1000;
@@ -161,6 +162,20 @@ export interface EncodeImageSequenceWithPolicyInput extends EncodeImageSequenceI
  */
 export async function encodeImageSequenceWithPolicy(input: EncodeImageSequenceWithPolicyInput): Promise<EncodeResult> {
   const { cache, ttlMs, ffmpegVersion, policyNow, ...encodeInput } = input;
+  const mediaPaths = [
+    ...(encodeInput.audio ? [encodeInput.audio.path] : []),
+    ...(encodeInput.audioPath ? [encodeInput.audioPath] : []),
+    ...(encodeInput.audioTracks ?? []).map((audio) => audio.path)
+  ];
+  try {
+    await assertSelfContainedFfmpegMediaInputs(mediaPaths, encodeInput.inputRoots ?? []);
+  } catch (error) {
+    return {
+      ok: false,
+      command: { executable: resolveFfmpegExecutable(), args: [], shell: false },
+      error: { code: "unsafe_input_path", message: error instanceof Error ? error.message : String(error) }
+    };
+  }
   const usedCache = cache ?? defaultEncodePolicyCache;
   const now = policyNow ?? Date.now;
   const forceSoftwareEncode = encodeInput.forceSoftwareEncode ?? envForceSoftwareEncode();

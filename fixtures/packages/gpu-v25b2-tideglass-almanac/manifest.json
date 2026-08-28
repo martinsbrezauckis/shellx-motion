@@ -1,0 +1,27 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_v25b2_tideglass_almanac",
+  "name": "Tideglass Almanac — V25-B2 Hybrid Segmented Delivery Fixture",
+  "motion": "motion.json",
+  "assets": [
+    "assets/tideglass-almanac.glsl"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "gpu"
+    ],
+    "hosts": [
+      "motion"
+    ]
+  },
+  "workflow": "v25-b2-restricted-shader-hybrid-segmented-source-fixture",
+  "metadata": {
+    "recipe": "templates/generators/tideglass-almanac/recipe.json",
+    "v25Batch": "V25-B2",
+    "sourceAssetPolicy": "original-declarative-json-and-restricted-glsl-no-binaries",
+    "hybridSurface": "one-isolated-restricted-glsl-texture",
+    "segmentFrames": 90,
+    "acceptance": "native-qualified-restricted-glsl-resume-cold-replay-accepted"
+  }
+}

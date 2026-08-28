@@ -84,7 +84,7 @@
         "id": { "type": "string", "minLength": 1 },
         "kind": {
           "$comment": "Rectangles, ellipses and stars are kind \"shape\" with a shape field; there is no \"rect\" or \"ellipse\" layer kind.",
-          "enum": ["adjustment", "audio", "camera", "caption", "environment", "image", "particles", "scene3d", "shader", "shape", "text", "video", "web"]
+          "enum": ["adjustment", "audio", "camera", "canvas", "caption", "environment", "group", "html", "image", "particles", "points", "scene3d", "shader", "shape", "text", "video", "web"]
         },
         "startMs": { "type": "number" },
         "durationMs": { "type": "number" }

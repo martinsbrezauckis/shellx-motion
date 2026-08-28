@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromium } from "playwright-core";
 import type { Browser, BrowserContext, ConsoleMessage, Page } from "playwright-core";
+import type { DerivedOutputPublication } from "@shellx-motion/core";
 import {
-  captureDeterministicScreenshot,
+  captureDeterministicScreenshotBuffer,
   isTransientCaptureScreenshotError,
   type DeterministicScreenshotOptions,
 } from "./browser-screenshot-integrity";
@@ -17,10 +15,42 @@ import {
   settleGeneratedMotionKeying,
   type BrowserKeyingEvidence,
 } from "./generated-keying";
+import {
+  generatedMatteShapeGeometry,
+  generatedShapeKind,
+  renderGeneratedSvgShape,
+  svgGradientDef,
+} from "./generated-svg-shapes";
 import { cssVectorMaskStyle, generatedVectorMaskDefinition } from "./generated-vector-masks";
-import { browserPackageFingerprint, canonicalPathForBrowserSafety, isPathInsideOrEqual } from "./browser-package-safety";
-import { attachBrowserRedirectGuard } from "./browser-redirect-guard";
-import { remoteOrigin, type BrowserFrameNetworkState } from "./browser-network-state";
+import {
+  isBrowserStreamingSessionOptions,
+  registerBrowserStreamingFrameRender,
+  type InternalBrowserStreamingFrame
+} from "./browser-streaming-session-registry";
+import { browserPackageFingerprint, canonicalPathForBrowserSafety, isPathInsideOrEqual, readBrowserPackageFile } from "./browser-package-safety";
+import {
+  admittedBrowserFulfillmentFingerprint,
+  admittedBrowserPackageFulfillment,
+  assertAdmittedBrowserPackageDocuments,
+  createBrowserPackageFulfillment,
+  type BrowserPackageFulfillment
+} from "./browser-package-fulfillment";
+import { admitGpuHybridDataOnlyDocument, type GpuHybridDataOnlyDocumentEvidence } from "./gpu-browser-hybrid-html-policy";
+import { publishBrowserOutput } from "./browser-output-publication";
+import { browserOutputPathFor, browserScreenshotOptions } from "./browser-output-path";
+import { injectBrowserCaptureBase, packageRootBaseHref, safeBrowserCaptureFileToken } from "./browser-capture-html-document";
+import {
+  attachBrowserRedirectGuard,
+  MAX_BROWSER_REMOTE_AGGREGATE_BYTES,
+  MAX_BROWSER_REMOTE_CONCURRENT_RESPONSES,
+  MAX_BROWSER_REMOTE_RESPONSE_BYTES,
+} from "./browser-redirect-guard";
+import { assertBrowserRemoteResponsePolicy, blockedWebSocketAuthority, remoteOrigin, type BrowserFrameNetworkState, type BrowserNetworkEvidence } from "./browser-network-state";
+import {
+  appendBrowserNetworkReceiptWarnings,
+  BrowserConsoleReceiptDiagnostics,
+  type BrowserConsoleDiagnostics
+} from "./browser-receipt-diagnostics";
 import { authorizeBrowserRouteRequest, createBrowserDocumentSchemeMemory, type BrowserDocumentSchemeMemory } from "./browser-route-policy";
 import {
   renderGeneratedScene3D,
@@ -34,12 +64,48 @@ import {
 import { createFrameLaneNotes, frameLaneAudioHandoff, noteUnrenderedLayer, type FrameLaneAudioHandoff, type FrameLaneNotes } from "./frame-lane-handoff";
 import { prepareCompositingRenderPackage } from "./render-compositing";
 import { effectiveProceduralLayerAtMs, effectiveProceduralLayersAtMs } from "./procedural-layers";
+import {
+  bindManifestTypographyFontAssets,
+  collectMotionTypographyEvidence,
+  enforceTypographyAttestationPolicy,
+  htmlTypographyWarning,
+  motionFontProvenance,
+  unverifiedHtmlTypographyEvidence,
+  type BrowserTypographyEvidence
+} from "./typography-attestation";
 import { fixedScene3DRuntimeScript } from "./scene3d-runtime-script";
+import { fixedPointsRuntimeScript, renderGeneratedPointCloud } from "./generated-points";
+import { fixedTrailRuntimeScript, renderGeneratedParticleTrailCanvas, settleGeneratedMotionTrails } from "./generated-trails";
+import { applyBrowserStyledTextRunStyles, renderBrowserStyledTextRuns } from "./styled-text-runs";
+import { collectBrowserTextFitEvidence, type BrowserTextFitEvidence } from "./generated-text-fit";
+import { boundedBrowserFrameTimeout, resolveBrowserFrameTimeoutMs } from "./browser-frame-timeout";
+import { ENFORCED_UNTRUSTED_BROWSER_EXECUTION } from "./enforced-untrusted-browser";
+import { launchOwnedBrowserSession } from "./browser-owned-session-launch";
+import { resolveChromiumLaunchArgs } from "./browser-launch-args";
+import {
+  createCheckpointStoryboardTerminalBoundarySession,
+  type CheckpointStoryboardTerminalBoundaryEvidence,
+} from "./checkpoint-storyboard-terminal-boundary";
+import {
+  assertNoStructuralPrivatePublication,
+  resolveRendererPrivateOutputPublication
+} from "./private-output-publication";
+export { chromiumRuntimeSandboxEvidence } from "./browser-owned-session-launch";
+export { resolveChromiumLaunchArgs } from "./browser-launch-args";
+export {
+  BROWSER_FRAME_TIMEOUT_POLICY,
+  resolveBrowserFrameTimeoutMs,
+  type BrowserFrameTimeoutViewport
+} from "./browser-frame-timeout";
 import {
   assertLocalMotionFrameBudget,
   assertReadableMotionKeyframes,
   assertLocalMotionFrameCountBudget,
-  BROWSER_CAPABILITY,
+  AgentScriptProvenanceRefusal,
+  APPROVED_AGENT_SCRIPT_MODE,
+  activeScriptLayers,
+  agentScriptExecutionEvidenceForDataOnly,
+  assertMotionPointCapacity,
   browserExecutableCandidates,
   canonicalJson,
   compareCodeUnits,
@@ -48,51 +114,125 @@ import {
   scanMarkupAttributeTagPairs,
   defaultLocalMotionJobGovernor,
   ENVIRONMENT_SCHEMA,
+  evaluateMotionParticles,
+  evaluateMotionTrail,
   hashFile,
   interpolateNumber,
-  isAudioOnlyFrameLaneUnsupported,
   isSupportedMotionColorString,
-  matchRendererCapability,
   MAX_RESTRICTED_SHADER_BYTES,
   MAX_ENVIRONMENT_LAYERS,
   MAX_FOG_DEPTH_LAYERS,
   MAX_RAIN_DEPTH_LAYERS,
   MAX_SNOW_DEPTH_LAYERS,
   MAX_WATER_WAVE_OCTAVES,
-  findMotionBrowserExecutable,
-  motionBrowserOverrideProblem,
-  MOTION_BROWSER_OVERRIDE_ENV_VAR,
-  parseMotionPathViewBox,
+  motionBehaviorLaneRefusal,
+  motionLayoutGapAnimationLaneRefusal,
+  motionRelationLaneRefusal,
+  motionScene3DAnimationLaneRefusal,
   previewReceiptStatus,
+  particleRandom,
+  planMotionTrailStroke,
   resolveNetworkTarget,
+  readBoundedStableFile,
   resolveEasing,
   resolvePackageAsset,
-  validateMotionPathData,
   type NetworkAddressResolver,
   type MotionLayer,
+  type MotionBrowserExecutableLocation,
+  type AgentScriptExecutionEvidence,
+  type AgentScriptProvenanceAuthority,
   type MotionKeyframe,
   type LocalMotionJobEvidence,
   type LocalMotionJobGovernor,
+  type LocalMotionRuntimeSandboxEvidence,
+  type MotionHostRenderCapacity,
   type MotionFontAsset,
   type MotionTransition,
   type MotionPackage,
   type OperationReceipt,
   type ReceiptArtifact,
-  childEnvironment
 } from "@shellx-motion/core";
-
-// Re-export the single-source browser capability (owned by @shellx-motion/core) so existing
-// consumers can keep importing it from this package. The runtime gate in
-// createMotionBrowserRenderSession consumes it directly.
-export { BROWSER_CAPABILITY } from "@shellx-motion/core";
+// Re-export Core capabilities for existing consumers; the runtime gates consume them here.
+export { BROWSER_CAPABILITY, GPU_CAPABILITY } from "@shellx-motion/core";
+import { approvedAgentEntryInitGuard, bindApprovedAgentScriptEntry, resolveApprovedAgentScriptPackage } from "./approved-agent-script-session-binding";
+import { assertEnforcedBrowserDataOnly, bindHostBrowserSessionFactory, browserFrameRendererForSessionFactory } from "./host-bound-browser-session";
+import { assertBrowserLaneCapability } from "./browser-capability-gate";
+import { GltfPbrFinalEntrypointError, gltfPbrFinalEntrypointRefusal } from "./gltf-pbr-final-entrypoint-refusal";
+export type { MotionBrowserRenderSessionFactory } from "./host-bound-browser-session";
+/** Trusted renderer-host policy token for the Linux-only enforced-untrusted browser profile. */
+export { ENFORCED_UNTRUSTED_BROWSER_EXECUTION } from "./enforced-untrusted-browser";
+export { createApprovedAgentScriptProvenanceAuthority } from "./approved-agent-script-authority";
+export type { ApprovedAgentScriptAuthorityOptions } from "./approved-agent-script-authority";
 export { captureDeterministicScreenshot } from "./browser-screenshot-integrity";
+export { createGpuPreviewSession, createGpuPointsPreviewSession, renderMotionGpuPreview, renderMotionGpuPointsPreview } from "./gpu-points-preview";
+export type { GpuPreviewFrame, GpuPreviewFrameOptions, GpuPreviewOneShotOptions, GpuPreviewResult, GpuPreviewSession, GpuPreviewSessionCleanupEvidence, GpuPreviewSessionOptions, GpuPointsPreviewFrame, GpuPointsPreviewFrameOptions, GpuPointsPreviewResult, GpuPointsPreviewSession, GpuPointsPreviewSessionOptions } from "./gpu-points-preview";
+export { resolveGpuEffectModuleStaticPlanForUse, gpuEffectModuleFinalReceiptEvidence, type GpuEffectModuleUseAuthority, type GpuEffectModuleBeginUseLease, type GpuEffectModuleUseResolution, type GpuEffectModuleFinalReceiptEvidence, type GpuPreviewEffectModuleReceiptEvidence } from "./gpu-effect-module-use-authority";
+export type { GpuPreviewCfrFrameSelection, GpuPreviewDecodedVideoFrame, GpuPreviewDecodedVideoFrameBatch, GpuPreviewVideoFrameProvider, GpuPreviewVideoFrameProviderEvidence, GpuPreviewVideoProviderCleanupEvidence, GpuPreviewVideoProviderOpenContext, GpuPreviewVideoProviderProbe, GpuPreviewVideoTextureSlot, OpenGpuPreviewVideoFrameProvider } from "./gpu-preview-video-frame-provider";
+export { createGpuStreamingFrameProducer, GpuStreamingProducerBusyError, GpuStreamingProducerCapabilityError, GpuStreamingProducerCleanupError, GpuStreamingProducerContainmentError, GpuStreamingProducerRuntimeError, type GpuBrowserProcessTreeContainment, type GpuReadbackTransportEvidence, type GpuStreamingFrameProducer, type GpuStreamingFrameProducerEvidence, type GpuStreamingFrameProducerInput, type GpuStreamingFrameProducerMetrics, type GpuStreamingFrameRange, type GpuStreamingFrameRangeEvidence, type GpuStreamingFrameSink, type GpuStreamingJobContext, type GpuStreamingStaticPlan, type GpuStreamingStaticPlanEvidence } from "./gpu-streaming-producer"; export { GpuSceneResourceError, prepareGpuSceneResources, type PreparedGpuSceneResources } from "./gpu-scene-resources";
+export { createGpuFrameRenderSession, type GpuFrameRenderSession, type GpuFrameRenderSessionOpenResult } from "./gpu-frame-renderer";
+export { prepareGpuSegmentedHybridAdmission } from "./gpu-segmented-hybrid-admission"; export { gpuSegmentedHybridAdmissionIdentityProblem } from "./gpu-segmented-hybrid-admission-identity";
+export { bootstrapGpuSegmentedHybridAdmission } from "./gpu-segmented-hybrid-bootstrap";
+export { openGpuSegmentedHybridRangeCapture } from "./gpu-segmented-hybrid-range";
+export type {
+  GpuSegmentedHybridAdmissionIdentity,
+  GpuSegmentedHybridAdmissionInput,
+  GpuSegmentedHybridBrowserIdentity,
+  GpuSegmentedHybridBrowserPreparation,
+  GpuSegmentedHybridPreparationIdentity,
+  GpuSegmentedHybridLedgerEntry,
+  GpuSegmentedHybridRangeCapture,
+  GpuSegmentedHybridRangeCaptureInput,
+  GpuSegmentedHybridRangeCleanupEvidence,
+  GpuSegmentedHybridRangeLedger,
+  GpuSegmentedHybridRangeScheduleEntry,
+} from "./gpu-segmented-hybrid-types";
+export { GpuSegmentedHybridAdmission, GpuSegmentedHybridPreparation } from "./gpu-segmented-hybrid-types";
+export { GPU_PAGE_PIPELINE_CATALOG } from "./gpu-page-pipeline-catalog";
+export { fingerprintGpuStaticScene } from "./gpu-provenance";
+export { gpuLoadedPackageInputHashes } from "./gpu-loaded-input-hashes";
+export { gpuBrowserProcessContainmentEvidence, isGpuBrowserProcess, isPrecontainedGpuBrowser } from "./gpu-process-containment";
+export { gpuSessionDynamicImageMetricsProblem, isGpuSessionResources } from "./gpu-streaming-producer-session-resources";
+export type { GpuDecodedVideoFrame, GpuDecodedVideoFrameBatch, GpuVideoFrameProvider, GpuVideoFrameProviderEvidence } from "./gpu-video-frame-provider"; export { probeMotionBrowserVersion } from "./browser-version-probe"; export { assessGpuHardwareReadiness, GPU_ACTIVE_HOST_PROOF_SCHEMA, GPU_HARDWARE_READINESS_SCHEMA } from "./gpu-hardware-readiness"; export type { GpuActiveHostProof, GpuHardwareReadiness, GpuHardwareReadinessInput, GpuHardwareReadinessRefusal, GpuHardwareReadinessRefusalCode, GpuHardwareReadinessStatus, GpuHardwareSupportedPlatform } from "./gpu-hardware-readiness";
 export type { DeterministicScreenshotOptions, DeterministicScreenshotPage } from "./browser-screenshot-integrity";
+export {
+  BrowserTypographyAttestationError,
+  browserTypographyAttestationRefusal
+} from "./typography-attestation";
+export type {
+  BrowserTypographyAttestation,
+  BrowserTypographyEvidence,
+  BrowserTypographyFontAssetEvidence,
+  BrowserTypographyLayerEvidence,
+  BrowserTypographyRunEvidence,
+  BrowserTypographyPreflightRefusal,
+  BrowserTypographyScopeEvidence
+} from "./typography-attestation";
+/** One-frame-at-a-time browser producer for a pre-admitted final-video encoder job. */
+export {
+  BrowserStreamingProducerBusyError,
+  BrowserStreamingProducerCapabilityError,
+  BrowserStreamingProducerCleanupError,
+  createBrowserStreamingFrameProducer
+} from "./browser-streaming-producer";
+export type {
+  BrowserStreamingFrameProducer,
+  BrowserStreamingFrameProducerEvidence,
+  BrowserStreamingFrameProducerInput,
+  BrowserStreamingFrameProducerMetrics,
+  BrowserStreamingFrameRange,
+  BrowserStreamingFrameRangeEvidence,
+  BrowserStreamingFrameSink,
+  BrowserStreamingProcessMonitoringEvidence,
+  BrowserStreamingSessionEvidence,
+  BrowserStreamingTerminalFrameEvidence
+} from "./browser-streaming-producer";
 // Network egress policy lives in its own module (see its header for the invariant reasoning);
 // re-exported here so the package API surface is unchanged by the extraction.
 export { authorizeBrowserRedirectHop } from "./browser-redirect-guard";
 export { authorizeBrowserRouteRequest, createBrowserDocumentSchemeMemory } from "./browser-route-policy";
 export type { BrowserDocumentSchemeMemory, BrowserRoutePolicy, RoutedBrowserRequest } from "./browser-route-policy";
-export type { BrowserFrameNetworkState } from "./browser-network-state";
+export type { BrowserFrameNetworkState, BrowserNetworkEvidence } from "./browser-network-state";
+export type { BrowserConsoleDiagnostics } from "./browser-receipt-diagnostics";
 
 export interface BrowserPreflightResult {
   ok: boolean;
@@ -111,17 +251,10 @@ export interface BrowserNetworkAccessOptions {
   resolver?: NetworkAddressResolver;
 }
 
-export interface BrowserNetworkEvidence {
-  policy: "host-approved-origins";
-  allowPrivateNetwork: boolean;
-  resolutionTimeoutMs: number;
-  approvedOrigins: string[];
-  pins: Array<{ hostname: string; address: string; family: 4 | 6 }>;
-}
-
 export interface HtmlComposition {
   compositionId: string;
   source: string;
+  sourceLayerId: string;
   startMs: number;
   durationMs: number;
   layers: Array<{ id: string; startMs: number; durationMs: number }>;
@@ -153,7 +286,9 @@ export interface BrowserFrameResult {
     workflowDrift?: unknown;
     captureReadiness?: BrowserCaptureReadiness;
     network?: BrowserNetworkEvidence;
+    scriptExecution?: AgentScriptExecutionEvidence;
     typography?: BrowserTypographyEvidence;
+    consoleDiagnostics?: BrowserConsoleDiagnostics;
     textFit?: BrowserTextFitEvidence;
     temporalSampling?: BrowserTemporalSamplingEvidence;
     shaders?: BrowserShaderEvidence;
@@ -163,6 +298,8 @@ export interface BrowserFrameResult {
     webglResources?: BrowserWebGLResourceEvidence;
     artifacts?: ReceiptArtifact[];
     resources?: LocalMotionJobEvidence;
+    /** Exact-D C6C private terminal frame evidence; absent from ordinary Browser renders. */
+    terminalBoundary?: CheckpointStoryboardTerminalBoundaryEvidence;
   };
   receipt: OperationReceipt;
 }
@@ -237,42 +374,7 @@ export interface BrowserTemporalSamplingEvidence {
   layers: Array<{ layerId: string; layerType: string; samples: number; shutterAngle: number; shutterDurationMs: number }>;
 }
 
-export interface BrowserTypographyEvidence {
-  fontProbe: "canvas-metric";
-  layers: Array<{
-    layerId: string;
-    direction: "ltr" | "rtl";
-    lang: string | null;
-    requestedFontFamily: string | null;
-    resolvedFontFamily: string;
-    primaryFontAvailable: boolean | null;
-  }>;
-  fallbackLayerIds: string[];
-}
-
-export interface BrowserTextFitEvidence {
-  policy: "rendered-glyph-bounds";
-  atMs: number;
-  visibilityThreshold: 0.5;
-  checkedLayerCount: number;
-  uncheckedLayerIds: string[];
-  allowedCropLayerIds: string[];
-  autoFittedLayerIds: string[];
-  failedLayerIds: string[];
-  layers: Array<{
-    layerId: string;
-    policy: "safe" | "allow-crop" | "auto-fit";
-    safeAreaId: string | null;
-    status: "passed" | "allowed-crop" | "auto-fitted" | "failed";
-    requestedFontSize: number;
-    appliedFontSize: number;
-    minFontSize: number | null;
-    sampleCount: number;
-    visibleSampleCount: number;
-    internalOverflowPx: { horizontal: number; vertical: number };
-    safeAreaOverflowPx: { top: number; right: number; bottom: number; left: number };
-  }>;
-}
+export type { BrowserTextFitEvidence } from "./generated-text-fit";
 
 export class BrowserFontFallbackPolicyError extends Error {
   readonly code = "font_fallback_limit_exceeded";
@@ -313,8 +415,30 @@ export interface BrowserRenderSessionOptions {
   networkAccess?: BrowserNetworkAccessOptions;
   /** Trusted host/test override; packages cannot supply resource policy. */
   governor?: LocalMotionJobGovernor;
+  hostCapacity?: MotionHostRenderCapacity;
+  /**
+   * Renderer-host-only Linux policy for data-only packages from an untrusted source.
+   *
+   * The embedding host must resolve this from trusted local configuration; never copy a package,
+   * CLI, Debug/MCP, or SDK field into it. Those agent/package surfaces deliberately do not expose
+   * this choice.
+   */
+  untrustedExecution?: typeof ENFORCED_UNTRUSTED_BROWSER_EXECUTION;
+  agentScriptAuthority?: AgentScriptProvenanceAuthority;
   /** Test/host seam for instrumenting the one browser launch owned by a session. */
-  launchBrowser?: (options: { executablePath: string; headless: true; args: string[] }) => Promise<Browser>;
+  launchBrowser?: (options: { executablePath: string; headless: true; args: string[]; env: Record<string, string> }) => Promise<Browser>;
+  /**
+   * Host-only capability for a browser owned by an already-open GPU runtime.
+   *
+   * This session may create and close only its own BrowserContexts; it never
+   * closes the borrowed Browser or launches another Chromium process.  The
+   * option is deliberately absent from all caller/package contracts, and an
+   * enforced-untrusted browser cannot be borrowed because its sandbox boundary
+   * is a distinct launch-time contract.
+   */
+  borrowedGpuBrowser?: Browser;
+  /** Internal GPU-only static-document admission; generic browser rendering never enables it. */
+  hybridDataOnlySource?: string;
   /**
    * Stable owner identity for this session's jobs, used for visibility and never for scheduling.
    *
@@ -351,6 +475,10 @@ export interface BrowserFrameBatchOptions {
 export interface MotionBrowserRenderSession {
   readonly browserVersion: string;
   readonly metrics: Readonly<BrowserRenderSessionMetrics>;
+  /** Session-owned verdict resolved from the current host authority before Chromium launch. */
+  readonly scriptExecution: Readonly<AgentScriptExecutionEvidence>;
+  /** Present only for GPU hybrid sessions after cached strict data-only admission. */
+  readonly hybridDataOnlyDocument?: Readonly<GpuHybridDataOnlyDocumentEvidence>;
   renderFrame(options: Omit<BrowserFrameOptions, "networkAccess">): Promise<BrowserFrameResult>;
   renderFrames(
     frames: Array<Omit<BrowserFrameOptions, "networkAccess">>,
@@ -496,13 +624,23 @@ export async function preflightBrowserPackage(
   pkg: MotionPackage,
   networkAccess: BrowserNetworkAccessOptions = {}
 ): Promise<BrowserPreflightResult> {
-  return (await prepareBrowserNetworkPolicy(pkg, networkAccess)).preflight;
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "browser");
+  if (layoutGapAnimationRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [layoutGapAnimationRefusal.message] };
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "browser");
+  if (scene3dAnimationRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [scene3dAnimationRefusal.message] };
+  const relationRefusal = motionRelationLaneRefusal(pkg.motion, "browser");
+  if (relationRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [relationRefusal.message] };
+  const behaviorRefusal = motionBehaviorLaneRefusal(pkg.motion, "browser");
+  if (behaviorRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [behaviorRefusal.message] };
+  return (await prepareBrowserNetworkPolicy(pkg, networkAccess, admittedBrowserPackageFulfillment(pkg))).preflight;
 }
 
 async function prepareBrowserNetworkPolicy(
   pkg: MotionPackage,
-  networkAccess: BrowserNetworkAccessOptions
+  networkAccess: BrowserNetworkAccessOptions,
+  fulfillment?: BrowserPackageFulfillment
 ): Promise<PreparedBrowserNetworkPolicy> {
+  const effectiveFulfillment = fulfillment ?? admittedBrowserPackageFulfillment(pkg);
   const htmlEntries: string[] = [];
   const blockedOrigins: string[] = [];
   const warnings: string[] = [];
@@ -527,7 +665,12 @@ async function prepareBrowserNetworkPolicy(
       actualOrigins.add(origin);
     } else {
       htmlEntries.push(source);
-      const html = await readFile(resolvePackageAsset(pkg, source), "utf8");
+      const html = (await readGeneratedPackageFile(
+        pkg,
+        effectiveFulfillment,
+        resolvePackageAsset(pkg, source),
+        { label: `Browser layer ${layer.id} HTML` }
+      )).bytes.toString("utf8");
       for (const htmlOrigin of remoteOriginsInHtml(html)) actualOrigins.add(htmlOrigin);
     }
   }
@@ -575,7 +718,9 @@ async function prepareBrowserNetworkPolicy(
       .map(([hostname, address]) => ({ hostname, ...address }))
       // Code-unit order, not localeCompare: pin order is part of BrowserNetworkEvidence, which is
       // written into the render receipt and hashed with it.
-      .sort((left, right) => compareCodeUnits(left.hostname, right.hostname))
+      .sort((left, right) => compareCodeUnits(left.hostname, right.hostname)),
+    responsePolicy: { maxResponseBytes: MAX_BROWSER_REMOTE_RESPONSE_BYTES, maxAggregateBytes: MAX_BROWSER_REMOTE_AGGREGATE_BYTES,
+      maxConcurrentResponses: MAX_BROWSER_REMOTE_CONCURRENT_RESPONSES, contentTypes: "bounded-render-media" },
   };
   return {
     preflight: {
@@ -590,7 +735,13 @@ async function prepareBrowserNetworkPolicy(
   };
 }
 
-export async function loadHtmlComposition(pkg: MotionPackage): Promise<HtmlComposition> {
+export async function loadHtmlComposition(pkg: MotionPackage, fulfillment?: BrowserPackageFulfillment): Promise<HtmlComposition> {
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "browser");
+  if (layoutGapAnimationRefusal) throw new Error(layoutGapAnimationRefusal.message);
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "browser");
+  if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message);
+  const relationRefusal = motionRelationLaneRefusal(pkg.motion, "browser");
+  if (relationRefusal) throw new Error(relationRefusal.message);
   const layer = browserLayers(pkg)[0];
   if (!layer) {
     throw new Error(`Package ${pkg.manifest.id} does not contain a browser layer.`);
@@ -601,10 +752,16 @@ export async function loadHtmlComposition(pkg: MotionPackage): Promise<HtmlCompo
     throw new Error(`Browser layer ${layer.id} does not reference a local HTML source.`);
   }
 
-  const html = await readFile(resolvePackageAsset(pkg, source), "utf8");
+  const html = (await readGeneratedPackageFile(
+    pkg,
+    fulfillment,
+    resolvePackageAsset(pkg, source),
+    { label: `Browser layer ${layer.id} HTML` }
+  )).bytes.toString("utf8");
   return {
     compositionId: attr(html, "data-composition-id") ?? pkg.motion.id,
     source,
+    sourceLayerId: layer.id,
     startMs: Number(attr(html, "data-start") ?? layer.startMs),
     durationMs: Number(attr(html, "data-duration") ?? layer.durationMs),
     layers: htmlDataAttributeRecords(html)
@@ -624,6 +781,14 @@ interface BrowserSessionExecution {
   browser: Browser;
   preparedNetwork: PreparedBrowserNetworkPolicy;
   metrics: BrowserRenderSessionMetrics;
+  scriptExecution: AgentScriptExecutionEvidence;
+  /**
+   * GPU hybrid admission covers one fully inspected data-only document.  It
+   * deliberately does not recursively admit embedded composition documents.
+   */
+  readonly hybridDataOnly: boolean;
+  approvedAgentEntryUrl?: string;
+  packageFulfillment: BrowserPackageFulfillment;
   acquireContext(
     viewport: { width: number; height: number; deviceScaleFactor: number },
     networkState: BrowserFrameNetworkState
@@ -641,30 +806,43 @@ async function renderBrowserFrameInSession(
   pkg: MotionPackage,
   options: Omit<BrowserFrameOptions, "networkAccess">,
   execution: BrowserSessionExecution,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onPng?: (png: Buffer) => void
 ): Promise<BrowserFrameResult> {
+  assertNoStructuralPrivatePublication(options);
   const preparedNetwork = execution.preparedNetwork;
   const preflight = preparedNetwork.preflight;
   if (!preflight.ok) {
     throw new Error(preflight.warnings.join("; "));
   }
 
+  const privateOutputPublication = resolveRendererPrivateOutputPublication(options);
   const createdAt = options.now?.() ?? new Date().toISOString();
-  const outputPath = outputPathFor(pkg, options);
-  const composition = await loadHtmlComposition(pkg);
-  const captureHtml = await prepareBrowserCaptureHtml(pkg, composition.source, options.outDir);
+  const outputPath = browserOutputPathFor(pkg, options, privateOutputPublication?.stagingPath);
+  const composition = await loadHtmlComposition(pkg, execution.packageFulfillment);
+  const captureHtml = await prepareBrowserCaptureHtml(
+    pkg,
+    composition.source,
+    options.outDir,
+    execution.packageFulfillment,
+    execution.scriptExecution.activeMode !== APPROVED_AGENT_SCRIPT_MODE && !execution.hybridDataOnly,
+    privateOutputPublication
+  );
   const warnings = [...preflight.warnings];
   if (options.workflow?.networkPolicy === "allow") {
     warnings.push("Workflow networkPolicy=allow is constrained by the host-approved origin policy.");
   }
   const networkState: BrowserFrameNetworkState = {
+    ...(execution.approvedAgentEntryUrl ? { approvedAgentEntryUrl: execution.approvedAgentEntryUrl, approvedAgentEntryInitialNavigationPending: true } : {}),
     blockedRequests: [],
     blockedWebSocketRequests: [],
     blockedExternalFileRequest: false,
     blockedDowngradeRedirects: [],
     blockedSecondaryPages: [],
     blockedForeignPageRequests: [],
-    redirectGuardFailures: []
+    blockedSecondaryCodeRequests: [],
+    redirectGuardFailures: [],
+    blockedResponsePolicies: [], admittedResponseBytes: 0, activeResponseCount: 0,
   };
   const viewport = viewportFor(pkg, options.workflow);
   const workflowHash = options.workflow ? hashBrowserCaptureWorkflow(options.workflow) : undefined;
@@ -677,14 +855,17 @@ async function renderBrowserFrameInSession(
   let lease: BrowserContextLease | undefined;
   let page: Page | undefined;
   let consoleHandler: ((message: ConsoleMessage) => void) | undefined;
+  const consoleDiagnostics = new BrowserConsoleReceiptDiagnostics();
   let leaseDiscarded = false;
+  let capturedPng: Buffer | undefined;
   try {
     lease = await execution.acquireContext(viewport, networkState);
     if (signal?.aborted) throw abortReason(signal);
     page = lease.page;
     consoleHandler = (message) => {
-      if (message.type() === "warning" || message.type() === "error") {
-        warnings.push(`console.${message.type()}: ${message.text()}`);
+      const severity = message.type();
+      if (severity === "warning" || severity === "error") {
+        consoleDiagnostics.observe(severity);
       }
     };
     page.on("console", consoleHandler);
@@ -705,12 +886,16 @@ async function renderBrowserFrameInSession(
     captureReadiness = await waitForBrowserCaptureReadiness(page);
     textFit = await collectBrowserTextFitEvidence(page, pkg, options.atMs);
     enforceTextFitPolicy(textFit);
-    typography = await collectBrowserTypographyEvidence(page);
+    typography = unverifiedHtmlTypographyEvidence(composition.sourceLayerId);
+    warnings.push(htmlTypographyWarning());
+    enforceTypographyAttestationPolicy(pkg, typography);
     warnings.push(...fontFallbackWarnings(typography));
     enforceFontFallbackPolicy(pkg, typography);
     if (workflowTrace) workflowTrace.captureReadiness = captureReadiness;
-    await mkdir(dirname(outputPath), { recursive: true });
-    await captureDeterministicScreenshot(page, screenshotOptions(outputPath, options.format));
+    assertBrowserRemoteResponsePolicy(networkState);
+    capturedPng = await captureDeterministicScreenshotBuffer(page, browserScreenshotOptions(outputPath, options.format));
+    if (onPng) onPng(capturedPng);
+    else await publishBrowserOutput(outputPath, capturedPng, privateOutputPublication);
   } catch (error) {
     if ((classifyBrowserFrameFailure(error) === "transient" || page?.isClosed()) && lease) {
       leaseDiscarded = true;
@@ -723,29 +908,12 @@ async function renderBrowserFrameInSession(
     if (!leaseDiscarded) lease?.release();
   }
 
-  for (const origin of [...new Set(networkState.blockedRequests)]) {
-    warnings.push(`Blocked undeclared browser request: ${origin}`);
-  }
-  for (const transition of [...new Set(networkState.blockedDowngradeRedirects)]) {
-    warnings.push(`Blocked HTTPS-to-HTTP browser redirect downgrade: ${transition}`);
-  }
-  for (const url of [...new Set(networkState.blockedWebSocketRequests)]) {
-    warnings.push(`Blocked browser WebSocket request: ${url}`);
-  }
-  for (const origin of [...new Set(networkState.blockedForeignPageRequests)]) {
-    warnings.push(`Blocked browser request from a page other than the captured page: ${origin}`);
-  }
-  for (const origin of [...new Set(networkState.blockedSecondaryPages)]) {
-    warnings.push(`Blocked browser popup or secondary page: ${origin}`);
-  }
-  for (const reason of [...new Set(networkState.redirectGuardFailures)]) {
-    warnings.push(`Browser redirect guard stopped enforcing mid-render: ${reason}`);
-  }
-  if (networkState.blockedExternalFileRequest) {
-    warnings.push("Blocked external browser file request.");
-  }
+  const consoleEvidence = consoleDiagnostics.evidence();
+  const consoleWarning = consoleDiagnostics.receiptWarning();
+  if (consoleWarning) warnings.push(consoleWarning);
+  appendBrowserNetworkReceiptWarnings(warnings, networkState);
 
-  const outputHash = await hashFile(outputPath);
+  const outputHash = capturedPng ? sha256(capturedPng) : await hashFile(outputPath);
   const output = {
     path: outputPath,
     sha256: outputHash,
@@ -756,10 +924,12 @@ async function renderBrowserFrameInSession(
     browser: { name: "chromium", version: browserVersion },
     viewport,
     network: preparedNetwork.evidence,
+    scriptExecution: execution.scriptExecution,
     ...(options.workflow ? { workflow: summarizeBrowserWorkflow(options.workflow) } : {}),
     ...(workflowTrace ? { workflowTrace } : {}),
     ...(captureReadiness ? { captureReadiness } : {}),
     ...(typography ? { typography } : {}),
+    ...(consoleEvidence ? { consoleDiagnostics: consoleEvidence } : {}),
     ...(textFit ? { textFit } : {}),
     ...(captureHtml.artifacts.length > 0 ? { artifacts: captureHtml.artifacts } : {})
   };
@@ -774,6 +944,7 @@ async function renderBrowserFrameInSession(
       status: previewReceiptStatus({ warnings }),
       packageId: pkg.manifest.id,
       inputHashes: {
+        ...execution.packageFulfillment.inputHashes(),
         motion: sha256(JSON.stringify(pkg.motion)),
         html: sha256(JSON.stringify(composition)),
         ...(captureHtml.artifactSha256 ? { "browser-capture-html": captureHtml.artifactSha256 } : {}),
@@ -792,10 +963,13 @@ async function renderGeneratedMotionBrowserFrameInSession(
   pkg: MotionPackage,
   options: Omit<BrowserFrameOptions, "networkAccess">,
   execution: BrowserSessionExecution,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onPng?: (png: Buffer) => void
 ): Promise<BrowserFrameResult> {
+  assertNoStructuralPrivatePublication(options);
+  const privateOutputPublication = resolveRendererPrivateOutputPublication(options);
   const createdAt = options.now?.() ?? new Date().toISOString();
-  const outputPath = outputPathFor(pkg, options);
+  const outputPath = browserOutputPathFor(pkg, options, privateOutputPublication?.stagingPath);
   const preparedNetwork = execution.preparedNetwork;
   if (!preparedNetwork.preflight.ok) {
     throw new Error(preparedNetwork.preflight.warnings.join("; "));
@@ -811,9 +985,11 @@ async function renderGeneratedMotionBrowserFrameInSession(
     blockedDowngradeRedirects: [],
     blockedSecondaryPages: [],
     blockedForeignPageRequests: [],
-    redirectGuardFailures: []
+    blockedSecondaryCodeRequests: [],
+    redirectGuardFailures: [],
+    blockedResponsePolicies: [], admittedResponseBytes: 0, activeResponseCount: 0,
   };
-  const generated = await buildGeneratedMotionHtml(pkg, options.atMs);
+  const generated = await buildGeneratedMotionHtmlWithFulfillment(pkg, options.atMs, execution.packageFulfillment);
   warnings.push(...generated.warnings);
   const viewport = viewportFor(pkg, options.workflow);
   const workflowHash = options.workflow ? hashBrowserCaptureWorkflow(options.workflow) : undefined;
@@ -828,18 +1004,22 @@ async function renderGeneratedMotionBrowserFrameInSession(
   let lease: BrowserContextLease | undefined;
   let page: Page | undefined;
   let consoleHandler: ((message: ConsoleMessage) => void) | undefined;
+  const consoleDiagnostics = new BrowserConsoleReceiptDiagnostics();
   let leaseDiscarded = false;
+  let capturedPng: Buffer | undefined;
   try {
     lease = await execution.acquireContext(viewport, networkState);
     if (signal?.aborted) throw abortReason(signal);
     page = lease.page;
     consoleHandler = (message) => {
-      if ((message.type() === "warning" || message.type() === "error") && !isIgnorableBrowserConsoleMessage(message)) {
-        warnings.push(`console.${message.type()}: ${message.text()}`);
+      const severity = message.type();
+      if ((severity === "warning" || severity === "error") && !isIgnorableBrowserConsoleMessage(message)) {
+        consoleDiagnostics.observe(severity);
       }
     };
     page.on("console", consoleHandler);
     await page.setContent(generated.html, { waitUntil: "load" });
+    await applyBrowserStyledTextRunStyles(page);
     await page.evaluate((atMs) => {
       document.documentElement.setAttribute("data-shellx-motion-time", String(atMs));
       (globalThis as Record<string, unknown>).__SHELLX_MOTION_TIME_MS__ = atMs;
@@ -850,6 +1030,8 @@ async function renderGeneratedMotionBrowserFrameInSession(
     await settleGeneratedMotionShaders(page);
     await settleGeneratedMotionScenes3D(page);
     await settleGeneratedMotionEnvironments(page);
+    await settleGeneratedMotionPoints(page);
+    await settleGeneratedMotionTrails(page);
     webglResources = await freezeGeneratedMotionWebGLSurfaces(page);
     await settleGeneratedMotionMedia(page, options.atMs);
     keying = await settleGeneratedMotionKeying(page);
@@ -857,12 +1039,19 @@ async function renderGeneratedMotionBrowserFrameInSession(
     captureReadiness = await waitForBrowserCaptureReadiness(page);
     textFit = await collectBrowserTextFitEvidence(page, pkg, options.atMs);
     enforceTextFitPolicy(textFit);
-    typography = await collectBrowserTypographyEvidence(page);
+    typography = bindManifestTypographyFontAssets(
+      pkg,
+      await collectMotionTypographyEvidence(page, captureReadiness?.fonts ?? "error"),
+      generated.assetHashes
+    );
+    enforceTypographyAttestationPolicy(pkg, typography);
     warnings.push(...fontFallbackWarnings(typography));
     enforceFontFallbackPolicy(pkg, typography);
     if (workflowTrace) workflowTrace.captureReadiness = captureReadiness;
-    await mkdir(dirname(outputPath), { recursive: true });
-    await captureDeterministicScreenshot(page, screenshotOptions(outputPath, options.format));
+    assertBrowserRemoteResponsePolicy(networkState);
+    capturedPng = await captureDeterministicScreenshotBuffer(page, browserScreenshotOptions(outputPath, options.format));
+    if (onPng) onPng(capturedPng);
+    else await publishBrowserOutput(outputPath, capturedPng, privateOutputPublication);
   } catch (error) {
     if ((classifyBrowserFrameFailure(error) === "transient" || page?.isClosed()) && lease) {
       leaseDiscarded = true;
@@ -875,36 +1064,26 @@ async function renderGeneratedMotionBrowserFrameInSession(
     if (!leaseDiscarded) lease?.release();
   }
 
-  for (const origin of [...new Set(networkState.blockedRequests)]) {
-    warnings.push(`Blocked undeclared browser request: ${origin}`);
-  }
-  for (const transition of [...new Set(networkState.blockedDowngradeRedirects)]) {
-    warnings.push(`Blocked HTTPS-to-HTTP browser redirect downgrade: ${transition}`);
-  }
-  for (const url of [...new Set(networkState.blockedWebSocketRequests)]) {
-    warnings.push(`Blocked browser WebSocket request: ${url}`);
-  }
-  for (const origin of [...new Set(networkState.blockedForeignPageRequests)]) {
-    warnings.push(`Blocked browser request from a page other than the captured page: ${origin}`);
-  }
-  for (const origin of [...new Set(networkState.blockedSecondaryPages)]) {
-    warnings.push(`Blocked browser popup or secondary page: ${origin}`);
-  }
-  for (const reason of [...new Set(networkState.redirectGuardFailures)]) {
-    warnings.push(`Browser redirect guard stopped enforcing mid-render: ${reason}`);
-  }
-  if (networkState.blockedExternalFileRequest) {
-    warnings.push("Blocked external browser file request.");
-  }
+  const consoleEvidence = consoleDiagnostics.evidence();
+  const consoleWarning = consoleDiagnostics.receiptWarning();
+  if (consoleWarning) warnings.push(consoleWarning);
+  appendBrowserNetworkReceiptWarnings(warnings, networkState);
 
   const inputHashes: Record<string, string> = {
+    ...execution.packageFulfillment.inputHashes(),
     motion: sha256(JSON.stringify(pkg.motion)),
     ...(workflowHash ? { workflow: workflowHash } : {})
   };
   for (const assetRef of generated.assetRefs) {
-    inputHashes[assetRef] = generated.assetHashes[assetRef] ?? await hashFile(resolvePackageAsset(pkg, assetRef));
+    inputHashes[assetRef] = generated.assetHashes[assetRef]
+      ?? (await readGeneratedPackageFile(
+        pkg,
+        execution.packageFulfillment,
+        resolvePackageAsset(pkg, assetRef),
+        { label: `Browser receipt asset ${assetRef}` }
+      )).sha256;
   }
-  const outputHash = await hashFile(outputPath);
+  const outputHash = capturedPng ? sha256(capturedPng) : await hashFile(outputPath);
   const output = {
     path: outputPath,
     sha256: outputHash,
@@ -915,10 +1094,12 @@ async function renderGeneratedMotionBrowserFrameInSession(
     browser: { name: "chromium", version: browserVersion },
     viewport,
     network: preparedNetwork.evidence,
+    scriptExecution: execution.scriptExecution,
     ...(options.workflow ? { workflow: summarizeBrowserWorkflow(options.workflow) } : {}),
     ...(workflowTrace ? { workflowTrace } : {}),
     ...(captureReadiness ? { captureReadiness } : {}),
     ...(typography ? { typography } : {}),
+    ...(consoleEvidence ? { consoleDiagnostics: consoleEvidence } : {}),
     ...(textFit ? { textFit } : {}),
     ...(generated.temporalSampling ? { temporalSampling: generated.temporalSampling } : {}),
     ...(generated.shaders ? { shaders: generated.shaders } : {}),
@@ -974,13 +1155,6 @@ function boundedBrowserFrameConcurrency(value = 2): number {
   return value;
 }
 
-function boundedBrowserFrameTimeout(value = 30_000): number {
-  if (!Number.isInteger(value) || value < 100 || value > 120_000) {
-    throw new Error("Browser per-frame timeout must be an integer from 100 to 120000ms.");
-  }
-  return value;
-}
-
 function boundedBrowserFrameAttempts(value = 2): number {
   if (!Number.isInteger(value) || value < 1 || value > 3) {
     throw new Error("Browser frame attempts must be an integer from 1 to 3.");
@@ -988,70 +1162,99 @@ function boundedBrowserFrameAttempts(value = 2): number {
   return value;
 }
 
-/**
- * Runtime capability gate for the browser lane, mirroring the native lane's `matchRendererCapability`
- * check at render entry (renderer-native applies the same gate before rasterizing a frame).
- *
- * The browser lane is the deterministic frame lane that feeds the final ffmpeg encode, so audio
- * layers/features are legitimately unsupported here and are muxed downstream — those are tolerated
- * (`isAudioOnlyFrameLaneUnsupported`). Any other unsupported layer type or feature is a genuine
- * mismatch: fail closed with a deterministic error rather than silently rendering a frame that
- * drops the requested content.
- *
- * @param pkg The (already compositing-prepared) package about to be rendered.
- * @throws Error when the motion document uses a non-audio layer type/feature the browser lane cannot render.
- */
-function assertBrowserLaneCapability(pkg: MotionPackage): void {
-  const capability = matchRendererCapability(pkg.motion, BROWSER_CAPABILITY);
-  if (capability.ok) return;
-  const blocking = capability.unsupported.filter((item) => !isAudioOnlyFrameLaneUnsupported(item.feature));
-  if (blocking.length === 0) return;
-  const unsupportedLayerCount = new Set(blocking.map((item) => item.layerId)).size;
-  throw new Error(
-    `Browser lane cannot render ${blocking.length} unsupported ${blocking.length === 1 ? "feature" : "features"} `
-    + `across ${unsupportedLayerCount} ${unsupportedLayerCount === 1 ? "layer" : "layers"}: `
-    + `${blocking.map((item) => item.reason).join("; ")}`
-  );
-}
-
 export async function createMotionBrowserRenderSession(
   sourcePackage: MotionPackage,
   options: BrowserRenderSessionOptions = {}
 ): Promise<MotionBrowserRenderSession> {
-  const pkg = prepareCompositingRenderPackage(sourcePackage);
-  assertLocalMotionFrameBudget(viewportFor(pkg, undefined));
-  assertBrowserLaneCapability(pkg);
+  const terminalBoundarySession = await createCheckpointStoryboardTerminalBoundarySession(sourcePackage, options);
+  if (terminalBoundarySession) return terminalBoundarySession;
+  assertAdmittedBrowserPackageDocuments(sourcePackage);
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(sourcePackage.motion, "browser");
+  if (layoutGapAnimationRefusal) throw new Error(layoutGapAnimationRefusal.message);
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(sourcePackage.motion, "browser");
+  if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message);
+  const relationRefusal = motionRelationLaneRefusal(sourcePackage.motion, "browser");
+  if (relationRefusal) throw new Error(relationRefusal.message);
+  const pbrRefusal = gltfPbrFinalEntrypointRefusal(sourcePackage, "browser-preview");
+  if (pbrRefusal) throw new GltfPbrFinalEntrypointError(pbrRefusal);
+  const behaviorRefusal = motionBehaviorLaneRefusal(sourcePackage.motion, "browser");
+  if (behaviorRefusal) throw new Error(behaviorRefusal.message);
+  // Network policy is an admission boundary in its own right.  Run it before
+  // provenance resolution so an external active-layer source is reported as
+  // the host-policy refusal it is, rather than being masked by the separate
+  // approved-entry requirement for package-local script bytes.
+  const admittedFulfillment = admittedBrowserPackageFulfillment(sourcePackage);
+  if (admittedFulfillment && activeScriptLayers(sourcePackage.motion).length > 0) {
+    throw new AgentScriptProvenanceRefusal("Admitted-package browser execution refuses active agent scripts because their authority still requires package path resolution.");
+  }
+  const sourceNetwork = await prepareBrowserNetworkPolicy(sourcePackage, options.networkAccess ?? {}, admittedFulfillment);
+  if (!sourceNetwork.preflight.ok) {
+    throw new Error(sourceNetwork.preflight.warnings.join("; "));
+  }
+  const scriptResolution = await resolveApprovedAgentScriptPackage(sourcePackage, options.agentScriptAuthority);
+  const releaseOnFailure = async <T>(operation: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      await scriptResolution.release();
+      throw error;
+    }
+  };
+  const pkg = await releaseOnFailure(() => prepareCompositingRenderPackage(scriptResolution.package));
+  const scriptExecution = bindApprovedAgentScriptEntry(scriptResolution.evidence, browserLayers(pkg)[0]?.source);
+  const approvedAgentEntryUrl = scriptExecution.entry ? pathToFileURL(resolvePackageAsset(pkg, scriptExecution.entry.path)).href : undefined;
+  await releaseOnFailure(() => assertLocalMotionFrameBudget(viewportFor(pkg, undefined)));
+  await releaseOnFailure(() => assertMotionPointCapacity(pkg.motion.layers, options.hostCapacity));
+  await releaseOnFailure(() => assertBrowserLaneCapability(pkg));
   // Rendering a document whose keyframes the evaluator silently drops produces a motionless file and
   // a `passed` receipt — the defect this gate exists to make impossible. Core owns the verdict.
-  assertReadableMotionKeyframes(pkg.motion);
-  const preparedNetwork = await prepareBrowserNetworkPolicy(pkg, options.networkAccess ?? {});
+  await releaseOnFailure(() => assertReadableMotionKeyframes(pkg.motion));
+  const packageFulfillment = admittedFulfillment ?? await releaseOnFailure(() => createBrowserPackageFulfillment(pkg.root));
+  const hybridDataOnlySource = options.hybridDataOnlySource;
+  const hybridDataOnlyDocument = hybridDataOnlySource
+    ? await releaseOnFailure(() => admitGpuHybridDataOnlyDocument({
+      source: hybridDataOnlySource,
+      sourcePath: resolvePackageAsset(pkg, hybridDataOnlySource),
+      fulfillment: packageFulfillment,
+    }))
+    : undefined;
+  const preparedNetwork = await releaseOnFailure(() => prepareBrowserNetworkPolicy(pkg, options.networkAccess ?? {}, packageFulfillment));
   if (!preparedNetwork.preflight.ok) {
+    await scriptResolution.release();
     throw new Error(preparedNetwork.preflight.warnings.join("; "));
   }
-  const packageRootPath = await canonicalPathForBrowserSafety(pkg.root);
-  const packageFingerprint = await browserPackageFingerprint(packageRootPath);
-  const launchOptions = {
-    executablePath: findBrowserExecutable(),
-    headless: true as const,
-    // Motion owns its own interrupt policy. Playwright's defaults install SIGINT/SIGTERM/SIGHUP
-    // handlers that call process.exit(130) as soon as a signal arrives, which killed the host
-    // before a cancelled render could finish tearing down and report what happened — observed as
-    // Ctrl-C producing no output at all. Motion still closes the browser on abort; it just does
-    // so on its own terms.
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
-    args: [...resolveChromiumLaunchArgs(), ...preparedNetwork.chromiumArgs],
-    // Playwright passes the parent environment to the browser process when `env` is
-    // omitted, so Chromium -- which renders package-controlled HTML and runs package-controlled
-    // JavaScript -- was started holding SHELLX_MOTION_DEBUG_TOKEN. Redacted here.
-    env: childEnvironment()
-  };
-  const browser = options.launchBrowser
-    ? await options.launchBrowser(launchOptions)
-    : await chromium.launch(launchOptions);
+  const enforcedUntrustedExecution = options.untrustedExecution === ENFORCED_UNTRUSTED_BROWSER_EXECUTION;
+  if (options.borrowedGpuBrowser && (enforcedUntrustedExecution || options.launchBrowser)) {
+    await scriptResolution.release();
+    throw new Error("A borrowed GPU browser cannot combine with a separate browser launch or the enforced-untrusted browser profile.");
+  }
+  if (enforcedUntrustedExecution) await releaseOnFailure(() => assertEnforcedBrowserDataOnly(scriptExecution));
+  const packageRootPath = packageFulfillment.rootPath;
+  const admittedPackageFingerprint = admittedBrowserFulfillmentFingerprint(packageFulfillment);
+  const packageFingerprint = admittedPackageFingerprint ?? await releaseOnFailure(() => browserPackageFingerprint(packageRootPath));
+  const borrowedGpuBrowser = options.borrowedGpuBrowser;
+  let browser: Browser;
+  let sessionSandboxEvidence: LocalMotionRuntimeSandboxEvidence | undefined;
+  if (borrowedGpuBrowser) {
+    browser = borrowedGpuBrowser;
+  } else {
+    const chromiumArgs = [...resolveChromiumLaunchArgs(), ...preparedNetwork.chromiumArgs];
+    try {
+      const launched = await releaseOnFailure(() => launchOwnedBrowserSession({
+        motion: pkg.motion, packageRoot: packageRootPath, chromiumArgs,
+        networkAccessRequested: (options.networkAccess?.approvedOrigins?.length ?? 0) > 0 || options.networkAccess?.allowPrivateNetwork === true,
+        enforcedUntrustedExecution,
+        ...(options.launchBrowser ? { launchBrowser: options.launchBrowser } : {})
+      }));
+      browser = launched.browser;
+      sessionSandboxEvidence = launched.sandboxEvidence;
+    } catch (error) {
+      await scriptResolution.release();
+      throw error;
+    }
+  }
   const metrics: BrowserRenderSessionMetrics = {
-    browserLaunches: 1,
+    browserLaunches: borrowedGpuBrowser ? 0 : 1,
     framesRendered: 0,
     contextsCreated: 0,
     pagesCreated: 0,
@@ -1082,12 +1285,13 @@ export async function createMotionBrowserRenderSession(
         deviceScaleFactor: viewport.deviceScaleFactor,
         serviceWorkers: "block"
       });
+      if (approvedAgentEntryUrl) await context.addInitScript({ content: approvedAgentEntryInitGuard(approvedAgentEntryUrl) });
       worker = { key, context, busy: true, networkState, documentScheme: createBrowserDocumentSchemeMemory() };
       contextPool.push(worker);
       metrics.contextsCreated += 1;
       try {
         await context.routeWebSocket("**/*", async (webSocket) => {
-          worker!.networkState?.blockedWebSocketRequests.push(webSocket.url());
+          worker!.networkState?.blockedWebSocketRequests.push(blockedWebSocketAuthority(webSocket.url()));
           await webSocket.close({ code: 1008, reason: "Browser WebSocket egress is disabled." });
         });
         await disableBrowserPeerConnections(context);
@@ -1105,11 +1309,32 @@ export async function createMotionBrowserRenderSession(
           // response-stage guard attached below.
           const verdict = await authorizeBrowserRouteRequest(
             route.request(),
-            { allowedOrigins: preparedNetwork.allowedOrigins, packageRootPath, renderPage: worker!.page, documentScheme: worker!.documentScheme },
+            {
+              allowedOrigins: preparedNetwork.allowedOrigins,
+              packageRootPath,
+              packageFileUrlPermitted: (url) => packageFulfillment.canFulfillFileUrl(url),
+              renderPage: worker!.page,
+              documentScheme: worker!.documentScheme,
+              denySecondaryExecutableRequests: scriptExecution.activeMode === APPROVED_AGENT_SCRIPT_MODE,
+              approvedAgentEntryUrl: state.approvedAgentEntryUrl
+            },
             state
           );
           if (verdict === "continue") {
-            await route.continue();
+            const requestUrl = route.request().url();
+            if (requestUrl.startsWith("file:")) {
+              try {
+                const fulfilled = await packageFulfillment.readFileUrl(requestUrl, "Browser route request");
+                await route.fulfill({ status: 200, contentType: fulfilled.contentType, body: fulfilled.bytes });
+              } catch {
+                // A pathname that passed lexical admission but cannot be stable-read is not an
+                // admissible input.  Do not fall back to Chromium's live file loader.
+                state.blockedExternalFileRequest = true;
+                await route.abort("blockedbyclient");
+              }
+            } else {
+              await route.continue();
+            }
           } else {
             // "blockedbyclient", not the default "failed": Chromium auto-reloads an error page
             // produced by a generic network failure, and the retry re-issued a refused cleartext
@@ -1161,13 +1386,30 @@ export async function createMotionBrowserRenderSession(
       }
     };
   };
-  const execution: BrowserSessionExecution = { browser, preparedNetwork, metrics, acquireContext };
-  const pending = new Set<Promise<BrowserFrameResult>>();
-  const frameCache = new Map<string, { path: string; sha256: string; result: BrowserFrameResult }>();
+  const execution: BrowserSessionExecution = {
+    browser,
+    preparedNetwork,
+    metrics,
+    scriptExecution,
+    hybridDataOnly: hybridDataOnlyDocument !== undefined,
+    approvedAgentEntryUrl,
+    packageFulfillment,
+    acquireContext
+  };
+  const pending = new Set<Promise<unknown>>();
+  // The materialized PNG-sequence API retains entries here for its existing reuse contract. The
+  // streaming producer explicitly disables it: it hands one PNG buffer to its sink and releases it
+  // before advancing, so retaining a session cache would reintroduce the sequence-memory path it avoids.
+  const frameCache = isBrowserStreamingSessionOptions(options)
+    ? undefined
+    : new Map<string, { path: string; sha256: string; result: BrowserFrameResult }>();
   let closed = false;
+  let admittedEvidenceJobId: string | undefined;
   let browserClose: Promise<void> | undefined;
   const terminateBrowser = () => {
-    browserClose ??= browser.close();
+    browserClose ??= borrowedGpuBrowser
+      ? Promise.all(contextPool.map((worker) => worker.context.close())).then(() => undefined)
+      : browser.close();
     return browserClose;
   };
 
@@ -1175,6 +1417,8 @@ export async function createMotionBrowserRenderSession(
     frameOptions: Omit<BrowserFrameOptions, "networkAccess">,
     signal?: AbortSignal
   ): Promise<BrowserFrameResult> => {
+    assertNoStructuralPrivatePublication(frameOptions);
+    const privateOutputPublication = resolveRendererPrivateOutputPublication(frameOptions);
     if (closed) {
       return Promise.reject(new Error("Motion browser render session is closed."));
     }
@@ -1188,29 +1432,31 @@ export async function createMotionBrowserRenderSession(
       viewport: viewportFor(pkg, frameOptions.workflow),
       workflow: frameOptions.workflow ? hashBrowserCaptureWorkflow(frameOptions.workflow) : null
     }));
-    const cached = frameCache.get(cacheKey);
+    const cached = frameCache?.get(cacheKey);
     if (cached) {
       const reuse = (async () => {
-        if (await browserPackageFingerprint(packageRootPath) !== packageFingerprint) {
+        if (!admittedPackageFingerprint && await browserPackageFingerprint(packageRootPath) !== packageFingerprint) {
           throw new Error("Browser render package changed during the active session; create a new session.");
         }
-        let cachedHash: string | undefined;
+        let cachedFile: Awaited<ReturnType<typeof readBoundedStableFile>> | undefined;
         try {
-          cachedHash = await hashFile(cached.path);
+          cachedFile = await readBoundedStableFile(cached.path, { label: "Browser frame cache entry", maxBytes: 512 * 1024 * 1024 });
         } catch {
-          cachedHash = undefined;
+          cachedFile = undefined;
         }
-        if (cachedHash !== cached.sha256) {
-          frameCache.delete(cacheKey);
+        if (cachedFile?.sha256 !== cached.sha256) {
+          frameCache?.delete(cacheKey);
           return renderOne(frameOptions, signal);
         }
-        const outputPath = outputPathFor(pkg, frameOptions);
-        await mkdir(dirname(outputPath), { recursive: true });
-        if (resolve(outputPath) !== resolve(cached.path)) await copyFile(cached.path, outputPath);
+        const outputPath = browserOutputPathFor(pkg, frameOptions, privateOutputPublication?.stagingPath);
+        const outputHash = resolve(outputPath) === resolve(cached.path)
+          ? cachedFile.sha256
+          : await publishBrowserOutput(outputPath, Buffer.from(cachedFile.bytes), privateOutputPublication);
         metrics.framesRendered += 1;
         metrics.frameCacheHits += 1;
         const result = structuredClone(cached.result);
         result.output.path = outputPath;
+        result.output.sha256 = outputHash;
         result.output.renderSession = { ...metrics };
         result.receipt.createdAt = frameOptions.now?.() ?? new Date().toISOString();
         result.receipt.output = result.output;
@@ -1232,7 +1478,7 @@ export async function createMotionBrowserRenderSession(
       metrics.framesRendered += 1;
       result.output.renderSession = { ...metrics, activeFrames: metrics.activeFrames - 1 };
       result.receipt.output = result.output;
-      frameCache.set(cacheKey, {
+      frameCache?.set(cacheKey, {
         path: result.output.path,
         sha256: result.output.sha256,
         result: structuredClone(result)
@@ -1249,10 +1495,43 @@ export async function createMotionBrowserRenderSession(
     return render;
   };
 
-  return {
+  const renderOneUnderAdmission = (
+    frameOptions: Omit<BrowserFrameOptions, "networkAccess">,
+    signal: AbortSignal
+  ): Promise<InternalBrowserStreamingFrame> => {
+    if (closed) return Promise.reject(new Error("Motion browser render session is closed."));
+    if (signal.aborted) return Promise.reject(abortReason(signal));
+    assertLocalMotionFrameBudget(viewportFor(pkg, frameOptions.workflow));
+    metrics.activeFrames += 1;
+    metrics.peakConcurrentFrames = Math.max(metrics.peakConcurrentFrames, metrics.activeFrames);
+    let capturedPng: Buffer | undefined;
+    const render = (browserLayers(pkg).length > 0
+      ? renderBrowserFrameInSession(pkg, frameOptions, execution, signal, (png) => { capturedPng = png; })
+      : renderGeneratedMotionBrowserFrameInSession(pkg, frameOptions, execution, signal, (png) => { capturedPng = png; })
+    ).then((result) => {
+      if (!capturedPng) throw new Error("Browser streamed frame did not produce a validated PNG buffer.");
+      metrics.framesRendered += 1;
+      result.output.renderSession = { ...metrics, activeFrames: metrics.activeFrames - 1 };
+      result.receipt.output = result.output;
+      return { result, png: capturedPng };
+    }).finally(() => {
+      metrics.activeFrames -= 1;
+    });
+    pending.add(render);
+    void render.then(
+      () => pending.delete(render),
+      () => pending.delete(render)
+    );
+    return render;
+  };
+
+  const session: MotionBrowserRenderSession = {
     browserVersion: browser.version(),
     metrics,
+    scriptExecution,
+    ...(hybridDataOnlyDocument ? { hybridDataOnlyDocument } : {}),
     renderFrame(frameOptions) {
+      assertNoStructuralPrivatePublication(frameOptions);
       return (options.governor ?? defaultLocalMotionJobGovernor).run({
         lane: "browser",
         operation: "browser.preview.frame",
@@ -1270,7 +1549,7 @@ export async function createMotionBrowserRenderSession(
           memoryLimit: "rss-monitor",
           reasonCode: "worker_process_unavailable",
         });
-        reportSandbox(chromiumRuntimeSandboxEvidence(launchOptions.args));
+        if (sessionSandboxEvidence) reportSandbox(sessionSandboxEvidence);
         watchProcess(process.pid);
         const abortFrame = () => {
           closed = true;
@@ -1287,6 +1566,7 @@ export async function createMotionBrowserRenderSession(
     },
     async renderFrames(frames, batchOptions = {}) {
       if (closed) throw new Error("Motion browser render session is closed.");
+      for (const frame of frames) assertNoStructuralPrivatePublication(frame);
       assertLocalMotionFrameCountBudget(frames.length);
       if (frames.length === 0) return [];
       const governed = await (options.governor ?? defaultLocalMotionJobGovernor).run({
@@ -1305,10 +1585,12 @@ export async function createMotionBrowserRenderSession(
           memoryLimit: "rss-monitor",
           reasonCode: "worker_process_unavailable",
         });
-        reportSandbox(chromiumRuntimeSandboxEvidence(launchOptions.args));
+        if (sessionSandboxEvidence) reportSandbox(sessionSandboxEvidence);
         watchProcess(process.pid);
         const maxConcurrency = boundedBrowserFrameConcurrency(batchOptions.maxConcurrency);
-        const perFrameTimeoutMs = boundedBrowserFrameTimeout(batchOptions.perFrameTimeoutMs);
+        const requestedPerFrameTimeoutMs = batchOptions.perFrameTimeoutMs === undefined
+          ? undefined
+          : boundedBrowserFrameTimeout(batchOptions.perFrameTimeoutMs);
         const maxFrameAttempts = boundedBrowserFrameAttempts(batchOptions.maxFrameAttempts);
         const batchController = new AbortController();
         const failBatch = (error: unknown) => {
@@ -1328,6 +1610,8 @@ export async function createMotionBrowserRenderSession(
             const index = nextIndex;
             nextIndex += 1;
             if (index >= frames.length) return;
+            const perFrameTimeoutMs = requestedPerFrameTimeoutMs
+              ?? resolveBrowserFrameTimeoutMs(viewportFor(pkg, frames[index].workflow));
             const timeoutController = new AbortController();
             const relayAbort = () => timeoutController.abort(abortReason(batchController.signal));
             batchController.signal.addEventListener("abort", relayAbort, { once: true });
@@ -1382,13 +1666,48 @@ export async function createMotionBrowserRenderSession(
     },
     async close() {
       closed = true;
-      await terminateBrowser();
-      await Promise.allSettled([...pending]);
+      try {
+        await terminateBrowser();
+        await Promise.allSettled([...pending]);
+      } finally {
+        await scriptResolution.release();
+      }
     }
   };
+  registerBrowserStreamingFrameRender(session, async (frameOptions, job) => {
+    if (job.admission !== "pre-acquired") {
+      throw new Error("Browser streaming producer requires a pre-acquired job context.");
+    }
+    // Playwright does not expose Chromium's PID; monitoring Node covers Chromium descendants on
+    // Linux/macOS and the owning Node process on Windows. The outer encoder owns the evidence.
+    if (admittedEvidenceJobId !== job.jobId) {
+      job.watchProcess(process.pid);
+      if (sessionSandboxEvidence) job.reportSandbox?.(sessionSandboxEvidence);
+      admittedEvidenceJobId = job.jobId;
+    }
+    const abortFrame = () => {
+      closed = true;
+      void terminateBrowser().catch(() => undefined);
+    };
+    job.signal.addEventListener("abort", abortFrame, { once: true });
+    if (job.signal.aborted) abortFrame();
+    try {
+      return await renderOneUnderAdmission(frameOptions, job.signal);
+    } finally {
+      job.signal.removeEventListener("abort", abortFrame);
+    }
+  });
+  return session;
 }
 
 export async function renderBrowserFrame(pkg: MotionPackage, options: BrowserFrameOptions): Promise<BrowserFrameResult> {
+  assertNoStructuralPrivatePublication(options);
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "browser");
+  if (layoutGapAnimationRefusal) throw new Error(layoutGapAnimationRefusal.message);
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "browser");
+  if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message);
+  const relationRefusal = motionRelationLaneRefusal(pkg.motion, "browser");
+  if (relationRefusal) throw new Error(relationRefusal.message);
   if (browserLayers(pkg).length === 0) {
     throw new Error(`Package ${pkg.manifest.id} does not contain a browser layer.`);
   }
@@ -1399,6 +1718,7 @@ export async function renderMotionBrowserFrame(
   pkg: MotionPackage,
   options: BrowserFrameOptions
 ): Promise<BrowserFrameResult> {
+  assertNoStructuralPrivatePublication(options);
   const session = await createMotionBrowserRenderSession(pkg, { networkAccess: options.networkAccess });
   try {
     return await session.renderFrame(options);
@@ -1407,22 +1727,35 @@ export async function renderMotionBrowserFrame(
   }
 }
 
+export function createHostBoundBrowserFrameRenderer(host: { agentScriptAuthority?: AgentScriptProvenanceAuthority }): (pkg: MotionPackage, options: BrowserFrameOptions) => Promise<BrowserFrameResult> { return browserFrameRendererForSessionFactory(createHostBoundBrowserRenderSessionFactory(host)); }
+export function createHostBoundBrowserRenderSessionFactory(host: { agentScriptAuthority?: AgentScriptProvenanceAuthority }) { return bindHostBrowserSessionFactory(createMotionBrowserRenderSession, host.agentScriptAuthority); }
+
 async function prepareBrowserCaptureHtml(
   pkg: MotionPackage,
   source: string,
-  outDir: string
+  outDir: string,
+  fulfillment: BrowserPackageFulfillment,
+  allowCompositionInlining = true,
+  privateArtifactPublication?: DerivedOutputPublication
 ): Promise<BrowserCaptureHtmlPreparation> {
   const sourcePath = resolvePackageAsset(pkg, source);
-  const html = await readFile(sourcePath, "utf8");
-  const inlineResult = await inlineBrowserCompositionSources(pkg, sourcePath, html);
+  const html = (await fulfillment.readPath(sourcePath, "Browser capture HTML")).bytes.toString("utf8");
+  if (!allowCompositionInlining && scanMarkupAttributeTagPairs(html, "data-composition-src").length > 0) {
+    throw new AgentScriptProvenanceRefusal("Approved-agent-entry script sources cannot inline secondary package compositions.");
+  }
+  const inlineResult = await inlineBrowserCompositionSources(pkg, sourcePath, html, fulfillment);
   if (inlineResult.sourceCount === 0) return { artifacts: [] };
 
   const preparedHtml = injectBrowserCaptureBase(inlineResult.html, packageRootBaseHref(pkg.root));
   const artifactSha256 = sha256(preparedHtml);
-  const artifactDir = join(resolve(outDir), "browser-capture-html");
-  const artifactPath = join(artifactDir, `${safeFileToken(pkg.manifest.id)}-${artifactSha256.slice(0, 16)}.html`);
-  await mkdir(artifactDir, { recursive: true });
-  await writeFile(artifactPath, preparedHtml, "utf8");
+  const artifactDir = privateArtifactPublication
+    ? await privateBrowserCaptureArtifactDirectory(outDir, privateArtifactPublication)
+    : join(resolve(outDir), "browser-capture-html");
+  const artifactPath = join(artifactDir, `${safeBrowserCaptureFileToken(pkg.manifest.id)}-${artifactSha256.slice(0, 16)}.html`);
+  // Companion HTML follows the same private directory-child policy as the primary PNG. This
+  // must not become a separately writable structural artifact path just because it is evidence.
+  const verifiedArtifactSha256 = await publishBrowserOutput(artifactPath, Buffer.from(preparedHtml), privateArtifactPublication);
+  if (verifiedArtifactSha256 !== artifactSha256) throw new Error("Browser capture HTML changed while its private evidence bytes were verified.");
   const artifacts: ReceiptArtifact[] = [{
     role: "browser_capture_html",
     path: artifactPath,
@@ -1433,10 +1766,20 @@ async function prepareBrowserCaptureHtml(
   return { html: preparedHtml, artifactPath, artifactSha256, artifacts };
 }
 
+async function privateBrowserCaptureArtifactDirectory(outDir: string, publication: DerivedOutputPublication): Promise<string> {
+  if (publication.kind === "file") return await publication.createPrivateCompanionDirectory("browser-capture-html");
+  const candidate = resolve(outDir);
+  if (!isPathInsideOrEqual(publication.stagingPath, candidate)) {
+    throw new Error("Browser private artifact output must remain below its governed directory stage.");
+  }
+  return join(candidate, "browser-capture-html");
+}
+
 async function inlineBrowserCompositionSources(
   pkg: MotionPackage,
   sourcePath: string,
-  html: string
+  html: string,
+  fulfillment: BrowserPackageFulfillment
 ): Promise<{ html: string; sourceCount: number }> {
   // Bounded scan, not a regex. This used
   // `/<([A-Za-z][\w:-]*)\b([^>]*\bdata-composition-src\s*=\s*(["'])([^"']+)\3[^>]*)>([\s\S]*?)<\/\1>/gi`,
@@ -1457,7 +1800,7 @@ async function inlineBrowserCompositionSources(
   for (const match of matches) {
     const compositionSource = match.value;
     const compositionPath = await resolveBrowserCompositionSource(pkg, sourcePath, compositionSource);
-    const compositionHtml = await readFile(compositionPath, "utf8");
+    const compositionHtml = (await fulfillment.readPath(compositionPath, "Browser composition HTML")).bytes.toString("utf8");
     const cleanAttrs = removeFirstMarkupAttribute(match.attrText, "data-composition-src");
     output += html.slice(lastIndex, match.start);
     output += `<${match.tagName}${cleanAttrs} data-shellx-motion-inlined-composition-src="${escapeAttr(compositionSource)}">${compositionHtml}</${match.tagName}>`;
@@ -1479,28 +1822,7 @@ async function resolveBrowserCompositionSource(pkg: MotionPackage, sourcePath: s
   if (!isPathInsideOrEqual(packageRootPath, canonicalTarget)) {
     throw new Error(`Browser composition source escapes the Motion package root: ${compositionSource}`);
   }
-  return canonicalTarget;
-}
-
-function injectBrowserCaptureBase(html: string, href: string): string {
-  if (/<base\b/i.test(html)) return html;
-  const base = `<base href="${escapeAttr(href)}">`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b[^>]*>/i, (head) => `${head}\n${base}`);
-  }
-  if (/<html\b[^>]*>/i.test(html)) {
-    return html.replace(/<html\b[^>]*>/i, (root) => `${root}\n<head>${base}</head>`);
-  }
-  return `<head>${base}</head>\n${html}`;
-}
-
-function packageRootBaseHref(packageRoot: string): string {
-  const href = pathToFileURL(resolve(packageRoot)).href;
-  return href.endsWith("/") ? href : `${href}/`;
-}
-
-function safeFileToken(value: string): string {
-  return value.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "capture";
+  return targetPath;
 }
 
 async function waitForBrowserCaptureReadiness(page: Page): Promise<BrowserCaptureReadiness> {
@@ -1868,26 +2190,25 @@ function browserLayers(pkg: MotionPackage): MotionLayer[] {
   return pkg.motion.layers.filter((layer) => layer.type === "web" || layer.type === "html" || layer.type === "canvas");
 }
 
-function screenshotOptions(path: string, format: BrowserFrameFormat | undefined): DeterministicScreenshotOptions {
-  return {
-    path,
-    animations: "disabled",
-    caret: "hide",
-    ...(format ? { type: format } : {}),
-    ...(format === "jpeg" ? { quality: 92 } : { omitBackground: true })
-  };
+/**
+ * Deterministic, output-free MotionIR lowering seam. Render sessions consume
+ * this directly; tests use it to pin legacy HTML bytes when package-output
+ * topology is intentionally unavailable on the current host.
+ */
+export async function buildGeneratedMotionHtml(pkg: MotionPackage, atMs: number): Promise<{ html: string; assetRefs: string[]; assetHashes: Record<string, string>; warnings: string[]; audioHandoff?: FrameLaneAudioHandoff; temporalSampling?: BrowserTemporalSamplingEvidence; shaders?: BrowserShaderEvidence; scenes3d?: BrowserScene3DEvidence; environments?: BrowserEnvironmentEvidence }> {
+  return await buildGeneratedMotionHtmlWithFulfillment(pkg, atMs);
 }
 
-function outputPathFor(pkg: MotionPackage, options: { atMs: number; outDir: string; outputPath?: string; format?: BrowserFrameFormat }): string {
-  const extension = options.format === "jpeg" ? "jpg" : "png";
-  const outputPath = resolve(options.outputPath ?? join(options.outDir, `${pkg.manifest.id}-browser-${options.atMs}.${extension}`));
-  if (!isPathInsideOrEqual(options.outDir, outputPath)) {
-    throw new Error("Browser output path must be inside outDir.");
-  }
-  return outputPath;
-}
-
-async function buildGeneratedMotionHtml(pkg: MotionPackage, atMs: number): Promise<{ html: string; assetRefs: string[]; assetHashes: Record<string, string>; warnings: string[]; audioHandoff?: FrameLaneAudioHandoff; temporalSampling?: BrowserTemporalSamplingEvidence; shaders?: BrowserShaderEvidence; scenes3d?: BrowserScene3DEvidence; environments?: BrowserEnvironmentEvidence }> {
+/** Private renderer-session path: admitted packages never reopen a pathname for any asset. */
+async function buildGeneratedMotionHtmlWithFulfillment(pkg: MotionPackage, atMs: number, fulfillment?: BrowserPackageFulfillment): Promise<{ html: string; assetRefs: string[]; assetHashes: Record<string, string>; warnings: string[]; audioHandoff?: FrameLaneAudioHandoff; temporalSampling?: BrowserTemporalSamplingEvidence; shaders?: BrowserShaderEvidence; scenes3d?: BrowserScene3DEvidence; environments?: BrowserEnvironmentEvidence }> {
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "browser");
+  if (layoutGapAnimationRefusal) throw new Error(layoutGapAnimationRefusal.message);
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "browser");
+  if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message);
+  const relationRefusal = motionRelationLaneRefusal(pkg.motion, "browser");
+  if (relationRefusal) throw new Error(relationRefusal.message);
+  const behaviorRefusal = motionBehaviorLaneRefusal(pkg.motion, "browser");
+  if (behaviorRefusal) throw new Error(behaviorRefusal.message);
   const assetRefs = new Set<string>();
   const assetHashes = new Map<string, string>();
   // Two channels, not one: `notes.warnings` derives the frame receipt's status, `audioHandoff`
@@ -1896,7 +2217,7 @@ async function buildGeneratedMotionHtml(pkg: MotionPackage, atMs: number): Promi
   const shaderLayers = new Map<string, BrowserShaderEvidence["layers"][number]>();
   const scene3dLayers = new Map<string, BrowserScene3DEvidence["layers"][number]>();
   const environmentLayers = new Map<string, BrowserEnvironmentEvidence["layers"][number]>();
-  const fontFaceCss = await generatedFontFaceCss(pkg, assetRefs, assetHashes);
+  const fontFaceCss = await generatedFontFaceCss(pkg, assetRefs, assetHashes, fulfillment);
   const activeLayers = effectiveProceduralLayersAtMs(pkg.motion, atMs)
     .filter((layer) => isLayerActive(layer, atMs));
   const camera = activeLayers.find((layer) => layer.type === "camera");
@@ -1907,6 +2228,8 @@ async function buildGeneratedMotionHtml(pkg: MotionPackage, atMs: number): Promi
     generatedMatteDefinition(pkg, layer, index, atMs)
   ]).filter(Boolean).join("\n");
   const hasKeying = renderLayers.some((layer) => Boolean(layer.keying));
+  const hasPoints = renderLayers.some((layer) => layer.type === "points");
+  const hasTrails = renderLayers.some((layer) => layer.type === "particles" && Boolean(readRecord(layer.effects).trail));
   const sourceLayers = new Map(pkg.motion.layers.map((layer) => [layer.id, layer]));
   const renderedLayers = await Promise.all(renderLayers.map(async (layer, index) => ({
     layer,
@@ -1917,11 +2240,13 @@ async function buildGeneratedMotionHtml(pkg: MotionPackage, atMs: number): Promi
       layer,
       index,
       assetRefs,
+      assetHashes,
       notes,
       atMs,
       shaderLayers,
       scene3dLayers,
-      environmentLayers
+      environmentLayers,
+      fulfillment
     )
   })));
   const sceneLayers = renderedLayers.filter(({ layer }) => layer.type !== "adjustment");
@@ -1994,6 +2319,8 @@ ${adjustmentHtml}
 ${shaders ? restrictedShaderRuntimeScript() : ""}
 ${scenes3d ? fixedScene3DRuntimeScript() : ""}
 ${environments ? fixedEnvironmentRuntimeScript() : ""}
+${hasPoints ? fixedPointsRuntimeScript() : ""}
+${hasTrails ? fixedTrailRuntimeScript() : ""}
 ${hasKeying ? generatedKeyingRuntimeScript() : ""}
 </body>
 </html>`
@@ -2006,17 +2333,19 @@ function renderGeneratedLayerWithMotionBlur(
   layer: MotionLayer,
   index: number,
   assetRefs: Set<string>,
+  assetHashes: Map<string, string>,
   notes: FrameLaneNotes,
   atMs: number,
   shaderLayers: Map<string, BrowserShaderEvidence["layers"][number]>,
   scene3dLayers: Map<string, BrowserScene3DEvidence["layers"][number]>,
-  environmentLayers: Map<string, BrowserEnvironmentEvidence["layers"][number]>
+  environmentLayers: Map<string, BrowserEnvironmentEvidence["layers"][number]>,
+  fulfillment?: BrowserPackageFulfillment
 ): Promise<string> | string {
   const motionBlur = readRecord(readRecord(layer.effects).motionBlur);
   const samples = readNumber(motionBlur.samples);
   const shutterAngle = readNumber(motionBlur.shutterAngle);
   if (samples === null || !Number.isInteger(samples) || shutterAngle === null || samples < 2 || samples > 8 || (sourceLayer.type === "video" && samples > 4) || shutterAngle <= 0 || shutterAngle > 360) {
-    return renderGeneratedLayer(pkg, layer, index, assetRefs, notes, atMs, shaderLayers, scene3dLayers, environmentLayers);
+    return renderGeneratedLayer(pkg, layer, index, assetRefs, assetHashes, notes, atMs, shaderLayers, scene3dLayers, environmentLayers, fulfillment);
   }
   const sampleCount = Math.floor(samples);
   const shutterDurationMs = (1000 / pkg.motion.fps) * (shutterAngle / 360);
@@ -2028,7 +2357,7 @@ function renderGeneratedLayerWithMotionBlur(
   const sampleOpacity = formatSvgTransformNumber(1 / sampleCount);
   const renderedSamples = sampleTimes.map((sampleAtMs) => {
     const sampleLayer: MotionLayer = { ...effectiveProceduralLayerAtMs(pkg.motion, sourceLayer.id, sampleAtMs), blendMode: "normal" };
-    const html = renderGeneratedLayer(pkg, sampleLayer, index, assetRefs, notes, sampleAtMs, shaderLayers, scene3dLayers, environmentLayers);
+    const html = renderGeneratedLayer(pkg, sampleLayer, index, assetRefs, assetHashes, notes, sampleAtMs, shaderLayers, scene3dLayers, environmentLayers, fulfillment);
     return Promise.resolve(html).then((sampleHtml) => `<div data-motion-blur-sample="${formatSvgTransformNumber(sampleAtMs)}" style="position:absolute;inset:0;opacity:${sampleOpacity};mix-blend-mode:plus-lighter">${sampleHtml}</div>`);
   });
   return Promise.all(renderedSamples).then((sampleHtml) => `<section data-motion-blur="true" data-motion-blur-samples="${sampleCount}" data-motion-blur-shutter-angle="${formatSvgTransformNumber(shutterAngle)}" style="position:absolute;inset:0;z-index:${index};isolation:isolate;${groupBlendStyle}">${sampleHtml.join("")}</section>`);
@@ -2075,7 +2404,7 @@ function motionBlurEvidence(pkg: MotionPackage, atMs: number): BrowserTemporalSa
 const MAX_EMBEDDED_FONT_BYTES = 16 * 1024 * 1024;
 const MAX_TOTAL_EMBEDDED_FONT_BYTES = 64 * 1024 * 1024;
 
-async function generatedFontFaceCss(pkg: MotionPackage, assetRefs: Set<string>, assetHashes: Map<string, string>): Promise<string> {
+async function generatedFontFaceCss(pkg: MotionPackage, assetRefs: Set<string>, assetHashes: Map<string, string>, fulfillment?: BrowserPackageFulfillment): Promise<string> {
   const faces = pkg.motion.assets
     .map((asset) => readMotionFontAsset(asset))
     .filter((asset): asset is MotionFontAsset => asset !== null);
@@ -2092,23 +2421,17 @@ async function generatedFontFaceCss(pkg: MotionPackage, assetRefs: Set<string>, 
     }
     const format = fontFormatFor(face.source.path, face.source.mimeType);
     const assetPath = resolvePackageAsset(pkg, face.source.path);
-    const before = await lstat(assetPath);
-    if (!before.isFile() || before.isSymbolicLink()) throw new Error(`Package font asset ${face.id} must be a regular non-symlink file.`);
-    if (before.size <= 0 || before.size > MAX_EMBEDDED_FONT_BYTES) {
+    const file = await readGeneratedPackageFile(pkg, fulfillment, assetPath, { label: `Package font asset ${face.id}`, maxBytes: MAX_EMBEDDED_FONT_BYTES });
+    if (file.byteLength <= 0) {
       throw new Error(`Package font asset ${face.id} must be between 1 and ${MAX_EMBEDDED_FONT_BYTES} bytes.`);
     }
-    totalBytes += before.size;
+    totalBytes += file.byteLength;
     if (totalBytes > MAX_TOTAL_EMBEDDED_FONT_BYTES) {
       throw new Error(`Package font assets exceed the ${MAX_TOTAL_EMBEDDED_FONT_BYTES}-byte render limit.`);
     }
-    const bytes = await readFile(assetPath);
-    const after = await lstat(assetPath);
-    if (!sameFileIdentity(before, after) || bytes.byteLength !== before.size) {
-      throw new Error(`Package font asset ${face.id} changed while it was being prepared.`);
-    }
     assetRefs.add(face.source.path);
-    assetHashes.set(face.source.path, createHash("sha256").update(bytes).digest("hex"));
-    rules.push(`@font-face{font-family:${JSON.stringify(face.family)};src:url(data:${face.source.mimeType};base64,${bytes.toString("base64")}) format(${JSON.stringify(format)});font-weight:${face.weight ?? 400};font-style:${face.style ?? "normal"};font-display:block}`);
+    rememberBrowserAssetHash(assetHashes, face.source.path, file.sha256);
+    rules.push(`@font-face{font-family:${JSON.stringify(face.family)};src:url(data:${face.source.mimeType};base64,${file.bytes.toString("base64")}) format(${JSON.stringify(format)});font-weight:${face.weight ?? 400};font-style:${face.style ?? "normal"};font-display:block}`);
   }
   return rules.join("\n");
 }
@@ -2151,32 +2474,49 @@ function fontFormatFor(path: string, mimeType: MotionFontAsset["source"]["mimeTy
   throw new Error(`Package font asset extension does not match ${mimeType}.`);
 }
 
-function sameFileIdentity(before: Awaited<ReturnType<typeof lstat>>, after: Awaited<ReturnType<typeof lstat>>): boolean {
-  return before.isFile()
-    && after.isFile()
-    && !before.isSymbolicLink()
-    && !after.isSymbolicLink()
-    && String(before.dev) === String(after.dev)
-    && String(before.ino) === String(after.ino)
-    && before.size === after.size
-    && before.mtimeMs === after.mtimeMs;
-}
-
 function renderGeneratedLayer(
   pkg: MotionPackage,
   layer: MotionLayer,
   index: number,
   assetRefs: Set<string>,
+  assetHashes: Map<string, string>,
   notes: FrameLaneNotes,
   atMs: number,
   shaderLayers: Map<string, BrowserShaderEvidence["layers"][number]>,
   scene3dLayers: Map<string, BrowserScene3DEvidence["layers"][number]>,
-  environmentLayers: Map<string, BrowserEnvironmentEvidence["layers"][number]>
+  environmentLayers: Map<string, BrowserEnvironmentEvidence["layers"][number]>,
+  fulfillment?: BrowserPackageFulfillment
 ): Promise<string> | string {
   if (layer.type === "shape") return renderGeneratedShape(pkg, layer, index, atMs);
-  if (layer.type === "particles") return renderGeneratedParticles(layer, index, atMs);
+  if (layer.type === "particles") return renderGeneratedParticles(pkg, layer, index, atMs);
+  if (layer.type === "points") {
+    const metrics = layerBoxMetrics(layer, { defaultWidth: pkg.motion.width, defaultHeight: pkg.motion.height });
+    const width = metrics.width ?? pkg.motion.width;
+    const height = metrics.height ?? pkg.motion.height;
+    const trail = evaluateMotionTrail({ layer, atMs });
+    const scale = readNumber(metrics.transform.scale) ?? 1;
+    planMotionTrailStroke({
+      segments: trail.segments,
+      transform: {
+        x: metrics.x, y: metrics.y, scale,
+        originX: readNumber(metrics.transform.originX) ?? width / 2,
+        originY: readNumber(metrics.transform.originY) ?? height / 2,
+        rotation: readNumber(metrics.transform.rotation) ?? 0
+      },
+      clip: { width: pkg.motion.width, height: pkg.motion.height }
+    });
+    return renderGeneratedPointCloud({
+      layer,
+      atMs,
+      width,
+      height,
+      style: boxStyle(layer, index, { defaultWidth: pkg.motion.width, defaultHeight: pkg.motion.height }, atMs),
+      resolveColor: (value) => cssColor(value, pkg, "#ffffff"),
+      trails: trail.segments,
+    });
+  }
   if (layer.type === "adjustment") return renderGeneratedAdjustment(pkg, layer, index, atMs);
-  if (layer.type === "shader") return renderGeneratedShader(pkg, layer, index, assetRefs, atMs, shaderLayers);
+  if (layer.type === "shader") return renderGeneratedShader(pkg, layer, index, assetRefs, assetHashes, atMs, shaderLayers, fulfillment);
   if (layer.type === "scene3d") {
     const metrics = layerBoxSize(layer, { defaultWidth: pkg.motion.width, defaultHeight: pkg.motion.height });
     return renderGeneratedScene3D({
@@ -2189,9 +2529,9 @@ function renderGeneratedLayer(
     });
   }
   if (layer.type === "environment") return renderGeneratedEnvironment(pkg, layer, index, atMs, environmentLayers);
-  if (layer.type === "text" || layer.type === "caption") return renderGeneratedText(pkg, layer, index, atMs);
-  if (layer.type === "image") return renderGeneratedImage(pkg, layer, index, assetRefs, atMs);
-  if (layer.type === "video") return renderGeneratedVideo(pkg, layer, index, assetRefs, atMs);
+  if (layer.type === "text" || layer.type === "caption") return renderGeneratedText(pkg, layer, index, atMs, assetHashes);
+  if (layer.type === "image") return renderGeneratedImage(pkg, layer, index, assetRefs, assetHashes, atMs, fulfillment);
+  if (layer.type === "video") return renderGeneratedVideo(pkg, layer, index, assetRefs, assetHashes, atMs, fulfillment);
 
   noteUnrenderedLayer(notes, layer);
   return "";
@@ -2238,8 +2578,10 @@ async function renderGeneratedShader(
   layer: MotionLayer,
   index: number,
   assetRefs: Set<string>,
+  assetHashes: Map<string, string>,
   atMs: number,
-  shaderLayers: Map<string, BrowserShaderEvidence["layers"][number]>
+  shaderLayers: Map<string, BrowserShaderEvidence["layers"][number]>,
+  fulfillment?: BrowserPackageFulfillment
 ): Promise<string> {
   const shader = readRecord(layer.shader);
   const fragmentAssetId = readString(shader.fragmentAssetId);
@@ -2256,15 +2598,9 @@ async function renderGeneratedShader(
     throw new Error(`Shader asset ${fragmentAssetId} is not declared in manifest.assets: ${assetRef}`);
   }
   const assetPath = resolvePackageAsset(pkg, assetRef);
-  const before = await lstat(assetPath);
-  if (!before.isFile() || before.isSymbolicLink()) throw new Error(`Shader asset ${fragmentAssetId} must be a regular non-symlink file.`);
-  if (before.size <= 0 || before.size > MAX_RESTRICTED_SHADER_BYTES) {
+  const file = await readGeneratedPackageFile(pkg, fulfillment, assetPath, { label: `Shader asset ${fragmentAssetId}`, maxBytes: MAX_RESTRICTED_SHADER_BYTES });
+  if (file.byteLength <= 0) {
     throw new Error(`Shader asset ${fragmentAssetId} must be between 1 and ${MAX_RESTRICTED_SHADER_BYTES} bytes.`);
-  }
-  const bytes = await readFile(assetPath);
-  const after = await lstat(assetPath);
-  if (!sameFileIdentity(before, after) || bytes.byteLength !== before.size) {
-    throw new Error(`Shader asset ${fragmentAssetId} changed while it was being prepared.`);
   }
   const uniforms = Object.fromEntries(Object.entries(readRecord(shader.uniforms))
     .filter((entry): entry is [string, number] => readNumber(entry[1]) !== null)
@@ -2272,8 +2608,9 @@ async function renderGeneratedShader(
     // GENERATED GLSL and the key order of the base64 data-motion-shader-uniforms attribute, so a
     // locale-sensitive comparator changed the emitted shader text itself, not just a hash of it.
     .sort(([left], [right]) => compareCodeUnits(left, right)));
-  const fragmentSource = compileRestrictedFragmentShader(new TextDecoder("utf-8", { fatal: true }).decode(bytes), Object.keys(uniforms));
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const fragmentSource = compileRestrictedFragmentShader(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes), Object.keys(uniforms));
+  const sha256 = file.sha256;
+  rememberBrowserAssetHash(assetHashes, assetRef, sha256);
   const seed = (readNumber(shader.seed) ?? 0) >>> 0;
   const metrics = layerBoxSize(layer, { defaultWidth: pkg.motion.width, defaultHeight: pkg.motion.height });
   const canvasWidth = Math.max(1, Math.round(metrics.width));
@@ -2281,7 +2618,7 @@ async function renderGeneratedShader(
   assertLocalMotionFrameBudget({ width: canvasWidth, height: canvasHeight });
   const fallbackColor = cssColor(readString(shader.fallbackColor) ?? "#000000", pkg, "#000000");
   assetRefs.add(assetRef);
-  shaderLayers.set(layer.id, { layerId: layer.id, assetRef, sha256, bytes: bytes.byteLength, seed, uniformCount: Object.keys(uniforms).length });
+  shaderLayers.set(layer.id, { layerId: layer.id, assetRef, sha256, bytes: file.byteLength, seed, uniformCount: Object.keys(uniforms).length });
   return `<canvas data-layer-id="${escapeAttr(layer.id)}" data-motion-shader="true" data-motion-shader-state="pending" data-motion-shader-fragment="${Buffer.from(fragmentSource).toString("base64")}" data-motion-shader-uniforms="${Buffer.from(JSON.stringify(uniforms)).toString("base64")}" data-motion-shader-time="${formatSvgTransformNumber(atMs / 1000)}" data-motion-shader-seed="${seed}" width="${canvasWidth}" height="${canvasHeight}" data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, undefined, atMs)}display:block;background:${fallbackColor}"></canvas>`;
 }
 
@@ -3181,59 +3518,38 @@ function renderGeneratedShape(pkg: MotionPackage, layer: MotionLayer, index: num
       // These shapes are drawn as SVG, which cannot take a CSS gradient string. Pass the declared
       // gradient through so the SVG path can emit a real paint server for it; without this a
       // gradient on an ellipse was accepted, validated, and silently ignored.
-      gradient: svgGradientDef(layer, pkg, `grad-${index}`)
-    });
+      gradient: svgGradientDef(layer, pkg, `grad-${index}`, { escapeAttr, formatNumber: formatSvgTransformNumber, cssColor })
+    }, { escapeAttr, boxStyle });
   }
   return `<div data-layer-id="${escapeAttr(layer.id)}" data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, undefined, atMs)}background:${gradient ?? fill};border:${strokeWidth} solid ${stroke};border-radius:${radius};${align}${shadow ? `${shadow};` : ""}">${labelHtml}</div>`;
 }
 
-function renderGeneratedParticles(layer: MotionLayer, index: number, atMs: number): string {
-  const emitter = readRecord(layer.emitter);
+function renderGeneratedParticles(pkg: MotionPackage, layer: MotionLayer, index: number, atMs: number): string {
+  const emitter = layer.emitter;
+  if (!emitter) return "";
   const metrics = layerBoxMetrics(layer);
   const width = metrics.width ?? 100;
   const height = metrics.height ?? 100;
-  const seed = (readNumber(emitter.seed) ?? 0) >>> 0;
-  const count = Math.min(1000, Math.max(1, Math.floor(readNumber(emitter.count) ?? 1)));
-  const lifetimeMs = Math.min(60_000, Math.max(1, readNumber(emitter.lifetimeMs) ?? 1000));
-  const minSize = Math.min(256, Math.max(0.1, readNumber(emitter.minSize) ?? 2));
-  const maxSize = Math.min(256, Math.max(minSize, readNumber(emitter.maxSize) ?? 8));
-  const minSpeed = Math.min(2000, Math.max(0, readNumber(emitter.minSpeed) ?? 20));
-  const maxSpeed = Math.min(2000, Math.max(minSpeed, readNumber(emitter.maxSpeed) ?? 80));
-  const direction = readNumber(emitter.direction) ?? -90;
-  const spread = Math.min(360, Math.max(0, readNumber(emitter.spread) ?? 45));
-  const gravity = Math.min(5000, Math.max(-5000, readNumber(emitter.gravity) ?? 0));
-  const color = readString(emitter.color) ?? "#ffffff";
-  const secondaryColor = readString(emitter.secondaryColor) ?? color;
-  const radius = emitter.shape === "square" ? "0" : "50%";
-  const fadeOut = emitter.fadeOut !== false;
-  const localMs = Math.max(0, atMs - layer.startMs);
+  const samples = evaluateMotionParticles({ emitter, atMs, startMs: layer.startMs, width, height });
+  const trail = evaluateMotionTrail({ layer, atMs, particleDimensions: { width, height } });
+  const scale = readNumber(metrics.transform.scale) ?? 1;
+  planMotionTrailStroke({
+    segments: trail.segments,
+    transform: {
+      x: metrics.x, y: metrics.y, scale,
+      originX: readNumber(metrics.transform.originX) ?? width / 2,
+      originY: readNumber(metrics.transform.originY) ?? height / 2,
+      rotation: readNumber(metrics.transform.rotation) ?? 0
+    },
+    clip: { width: pkg.motion.width, height: pkg.motion.height }
+  });
+  const trailCanvas = renderGeneratedParticleTrailCanvas({ layerId: layer.id, width, height, segments: trail.segments });
   const particles: string[] = [];
-  for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
-    const phaseMs = particleRandom(seed, particleIndex, 0) * lifetimeMs;
-    const ageMs = (localMs + phaseMs) % lifetimeMs;
-    const ageRatio = ageMs / lifetimeMs;
-    const angleDegrees = direction + (particleRandom(seed, particleIndex, 1) - 0.5) * spread;
-    const angleRadians = angleDegrees * Math.PI / 180;
-    const speed = minSpeed + particleRandom(seed, particleIndex, 2) * (maxSpeed - minSpeed);
-    const size = minSize + particleRandom(seed, particleIndex, 3) * (maxSize - minSize);
-    const ageSeconds = ageMs / 1000;
-    const x = width / 2 + Math.cos(angleRadians) * speed * ageSeconds - size / 2;
-    const y = height / 2 + Math.sin(angleRadians) * speed * ageSeconds + 0.5 * gravity * ageSeconds * ageSeconds - size / 2;
-    const opacity = fadeOut ? Math.max(0, 1 - ageRatio) : 1;
-    const particleColor = particleRandom(seed, particleIndex, 4) < 0.5 ? color : secondaryColor;
-    particles.push(`<span aria-hidden="true" style="position:absolute;left:${formatSvgTransformNumber(x)}px;top:${formatSvgTransformNumber(y)}px;width:${formatSvgTransformNumber(size)}px;height:${formatSvgTransformNumber(size)}px;border-radius:${radius};background:${particleColor};opacity:${formatSvgTransformNumber(opacity)}"></span>`);
+  for (const particle of samples) {
+    const radius = particle.shape === "square" ? "0" : "50%";
+    particles.push(`<span aria-hidden="true" style="position:absolute;left:${formatSvgTransformNumber(particle.x)}px;top:${formatSvgTransformNumber(particle.y)}px;width:${formatSvgTransformNumber(particle.size)}px;height:${formatSvgTransformNumber(particle.size)}px;border-radius:${radius};background:${particle.color};opacity:${formatSvgTransformNumber(particle.opacity)}"></span>`);
   }
-  return `<div data-layer-id="${escapeAttr(layer.id)}" data-motion-particles="true" data-particle-count="${count}" data-particle-seed="${seed}" data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, undefined, atMs)}">${particles.join("")}</div>`;
-}
-
-function particleRandom(seed: number, particleIndex: number, channel: number): number {
-  let value = (seed ^ Math.imul(particleIndex + 1, 0x9e3779b1) ^ Math.imul(channel + 1, 0x85ebca6b)) >>> 0;
-  value ^= value >>> 16;
-  value = Math.imul(value, 0x7feb352d);
-  value ^= value >>> 15;
-  value = Math.imul(value, 0x846ca68b);
-  value ^= value >>> 16;
-  return (value >>> 0) / 0x1_0000_0000;
+  return `<div data-layer-id="${escapeAttr(layer.id)}" data-motion-particles="true" data-particle-count="${samples.length}" data-particle-seed="${emitter.seed >>> 0}" data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, undefined, atMs)}">${trailCanvas}${particles.join("")}</div>`;
 }
 
 function cssGradient(layer: MotionLayer, pkg: MotionPackage): string | null {
@@ -3257,144 +3573,14 @@ function cssGradient(layer: MotionLayer, pkg: MotionPackage): string | null {
   return `linear-gradient(${formatSvgTransformNumber(angle)}deg, ${cssStops.join(", ")})`;
 }
 
-/**
- * An SVG paint server for a layer's declared gradient, or null when it declares none.
- *
- * SVG shapes cannot take the CSS gradient string the rect path uses, so the same declaration is
- * emitted as `<linearGradient>` / `<radialGradient>`. `objectBoundingBox` units keep it aligned to
- * the shape regardless of the layer's size.
- *
- * The id must be unique per layer within a frame; the caller passes the layer index for that.
- */
-function svgGradientDef(layer: MotionLayer, pkg: MotionPackage, id: string): { id: string; def: string } | null {
-  const gradient = readRecord(layer.gradient);
-  const rawStops = Array.isArray(gradient.stops) ? gradient.stops : [];
-  if ((gradient.type !== "linear" && gradient.type !== "radial") || rawStops.length < 2 || rawStops.length > 16) return null;
-  const stops: string[] = [];
-  for (const value of rawStops) {
-    const stop = readRecord(value);
-    const offset = readNumber(stop.offset);
-    if (offset === null || offset < 0 || offset > 1) return null;
-    const color = cssColor(stop.color, pkg, "transparent");
-    stops.push(`<stop offset="${escapeAttr(formatSvgTransformNumber(offset * 100))}%" stop-color="${escapeAttr(color)}"/>`);
-  }
-  if (gradient.type === "radial") {
-    const cx = clamp(readNumber(gradient.centerX) ?? 0.5, 0, 1) * 100;
-    const cy = clamp(readNumber(gradient.centerY) ?? 0.5, 0, 1) * 100;
-    return {
-      id,
-      def: `<radialGradient id="${escapeAttr(id)}" cx="${escapeAttr(formatSvgTransformNumber(cx))}%" cy="${escapeAttr(formatSvgTransformNumber(cy))}%" r="50%">${stops.join("")}</radialGradient>`
-    };
-  }
-  // CSS measures the angle clockwise from "to top"; SVG wants an explicit vector. Convert once
-  // here so an author's `angle` means the same thing on every shape kind.
-  const angle = readNumber(gradient.angle) ?? 180;
-  const radians = ((angle - 90) * Math.PI) / 180;
-  const x1 = 50 - Math.cos(radians) * 50, y1 = 50 - Math.sin(radians) * 50;
-  const x2 = 50 + Math.cos(radians) * 50, y2 = 50 + Math.sin(radians) * 50;
-  return {
-    id,
-    def: `<linearGradient id="${escapeAttr(id)}" x1="${escapeAttr(formatSvgTransformNumber(x1))}%" y1="${escapeAttr(formatSvgTransformNumber(y1))}%" x2="${escapeAttr(formatSvgTransformNumber(x2))}%" y2="${escapeAttr(formatSvgTransformNumber(y2))}%">${stops.join("")}</linearGradient>`
-  };
-}
-
-type GeneratedSvgShapeKind = "ellipse" | "triangle" | "star" | "path";
-
-function generatedShapeKind(layer: MotionLayer): string | null {
-  const shape = readString(layer.shape);
-  if (shape === "freeform" && generatedShapePath(layer)) return "path";
-  return shape;
-}
-
-function renderGeneratedSvgShape(input: {
-  shapeKind: GeneratedSvgShapeKind;
-  layer: MotionLayer;
-  index: number;
-  atMs: number;
-  fill: string;
-  stroke: string;
-  strokeWidth: string;
-  shadow: string | null;
-  labelHtml: string;
-  align: string;
-  gradient?: { id: string; def: string } | null;
-}): string {
-  const viewBox = generatedShapeViewBox(input.layer);
-  const paint = input.gradient ? `url(#${input.gradient.id})` : input.fill;
-  const svg = [
-    `<svg aria-hidden="true" viewBox="${escapeAttr(viewBox)}" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;">`,
-    input.gradient ? `<defs>${input.gradient.def}</defs>` : "",
-    generatedSvgShapeElement(input.shapeKind, input.layer, paint, input.stroke, input.strokeWidth),
-    "</svg>"
-  ].join("");
-
-  return `<div data-layer-id="${escapeAttr(input.layer.id)}" data-start="${input.layer.startMs}" data-duration="${input.layer.durationMs}" style="${boxStyle(input.layer, input.index, undefined, input.atMs)}${input.align}${input.shadow ? `${input.shadow};` : ""}">${svg}${input.labelHtml}</div>`;
-}
-
-function generatedSvgShapeElement(
-  shapeKind: GeneratedSvgShapeKind,
-  layer: MotionLayer,
-  fill: string,
-  stroke: string,
-  strokeWidth: string
-): string {
-  const linecap = cssSvgStrokeLinecap(readRecord(layer.style).strokeLinecap);
-  const paintAttrs = `fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${escapeAttr(strokeWidth)}" stroke-linecap="${linecap}" vector-effect="non-scaling-stroke"`;
-  if (shapeKind === "ellipse") return `<ellipse cx="50" cy="50" rx="50" ry="50" ${paintAttrs}></ellipse>`;
-  if (shapeKind === "triangle") return `<polygon points="50,0 0,100 100,100" ${paintAttrs}></polygon>`;
-  if (shapeKind === "star") return `<polygon points="${escapeAttr(generatedStarPoints())}" ${paintAttrs}></polygon>`;
-
-  const pathData = generatedShapePath(layer);
-  if (!pathData) {
-    throw new Error(`Browser generated path shape ${layer.id} requires an x-path string.`);
-  }
-  return `<path d="${escapeAttr(pathData)}" ${paintAttrs}></path>`;
-}
-
-function cssSvgStrokeLinecap(value: unknown): "butt" | "round" | "square" {
-  const linecap = readString(value)?.trim().toLowerCase();
-  return linecap === "round" || linecap === "square" ? linecap : "butt";
-}
-
-function generatedStarPoints(): string {
-  const points: string[] = [];
-  for (let index = 0; index < 10; index += 1) {
-    const angle = (-Math.PI / 2) + (index * Math.PI / 5);
-    const radius = index % 2 === 0 ? 50 : 22.5;
-    const x = 50 + (Math.cos(angle) * radius);
-    const y = 50 + (Math.sin(angle) * radius);
-    points.push(`${formatSvgPoint(x)},${formatSvgPoint(y)}`);
-  }
-  return points.join(" ");
-}
-
-function formatSvgPoint(value: number): string {
-  return Number(value.toFixed(3)).toString();
-}
-
-function generatedShapePath(layer: MotionLayer): string | null {
-  return readString(layer["x-path"]) ?? readString(readRecord(layer.style).path);
-}
-
-function generatedShapeViewBox(layer: MotionLayer): string {
-  const value = readString(layer["x-path-viewBox"]);
-  if (!value) return "0 0 100 100";
-  const parts = value.trim().split(/\s+/).map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part)) || parts[2] <= 0 || parts[3] <= 0) {
-    throw new Error(`Browser generated path shape ${layer.id} has an invalid x-path-viewBox.`);
-  }
-  return parts.map((part) => Number(part.toFixed(4)).toString()).join(" ");
-}
-
-function renderGeneratedText(pkg: MotionPackage, layer: MotionLayer, index: number, atMs: number): string {
-  const style = readRecord(layer.style);
-  const text = readString(layer.text) ?? "";
-  const justifyContent = cssTextVerticalAlign(style.verticalAlign ?? style.alignY);
-  const direction = htmlTextDirection(style.direction, text);
-  const lang = htmlTextLanguage(style.lang ?? readRecord(layer).lang);
-  const requestedFont = requestedFontFamily(style.fontFamily);
+function renderGeneratedText(pkg: MotionPackage, layer: MotionLayer, index: number, atMs: number, assetHashes: ReadonlyMap<string, string>): string {
+  const style = readRecord(layer.style), textRuns = layer.textRuns, text = textRuns ? textRuns.runs.map((run) => run.text).join("") : readString(layer.text) ?? "";
+  const justifyContent = cssTextVerticalAlign(style.verticalAlign ?? style.alignY), direction = htmlTextDirection(style.direction, text), lang = htmlTextLanguage(style.lang ?? readRecord(layer).lang);
+  const requestedFont = textRuns ? null : requestedFontFamily(resolveToken(style.fontFamily, pkg));
+  const fontProvenance = textRuns ? "manifest-bound" : motionFontProvenance(pkg, requestedFont);
   const textFitAttrs = generatedTextFitAttributes(layer);
-  return `<div data-layer-id="${escapeAttr(layer.id)}" data-motion-text="true"${textFitAttrs}${direction ? ` dir="${direction}"` : ""}${lang ? ` lang="${escapeAttr(lang)}"` : ""}${requestedFont ? ` data-requested-font-family="${escapeAttr(requestedFont)}"` : ""} data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, { defaultWidth: null, defaultHeight: null }, atMs)}${textStyle(style, pkg)}display:flex;flex-direction:column;justify-content:${justifyContent};white-space:pre-wrap;overflow:hidden;"><span style="display:block;width:100%">${escapeHtml(text)}</span></div>`;
+  const content = textRuns ? renderBrowserStyledTextRuns({ textRuns, fontAssets: pkg.motion.assets.map(readMotionFontAsset).filter((asset): asset is MotionFontAsset => asset !== null), assetHashes, resolveColor: (value, fallback) => cssColor(value, pkg, fallback) }) : escapeHtml(text);
+  return `<div data-layer-id="${escapeAttr(layer.id)}" data-motion-text="true" data-motion-font-provenance="${fontProvenance}"${textRuns ? " data-motion-text-runs=\"true\"" : ""}${textFitAttrs}${direction ? ` dir="${direction}"` : ""}${lang ? ` lang="${escapeAttr(lang)}"` : ""}${requestedFont ? ` data-requested-font-family="${escapeAttr(requestedFont)}"` : ""} data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, { defaultWidth: null, defaultHeight: null }, atMs)}${textStyle(style, pkg)}display:flex;flex-direction:column;justify-content:${justifyContent};white-space:pre-wrap;overflow:hidden;"><span style="display:block;width:100%">${content}</span></div>`;
 }
 
 function generatedTextFitAttributes(layer: MotionLayer): string {
@@ -3412,7 +3598,7 @@ function generatedTextFitAttributes(layer: MotionLayer): string {
   ].join("");
 }
 
-async function renderGeneratedImage(pkg: MotionPackage, layer: MotionLayer, index: number, assetRefs: Set<string>, atMs: number): Promise<string> {
+async function renderGeneratedImage(pkg: MotionPackage, layer: MotionLayer, index: number, assetRefs: Set<string>, assetHashes: Map<string, string>, atMs: number, fulfillment?: BrowserPackageFulfillment): Promise<string> {
   const asset = assetForLayer(pkg, layer, "Image");
   const source = readRecord(asset.source);
   const assetRef = readString(source.path);
@@ -3420,12 +3606,11 @@ async function renderGeneratedImage(pkg: MotionPackage, layer: MotionLayer, inde
     throw new Error(`Image layer ${layer.id} does not reference a package asset path.`);
   }
   const assetPath = resolvePackageAsset(pkg, assetRef);
-  if (!existsSync(assetPath)) {
-    throw new Error(`Image layer ${layer.id} references a missing package asset: ${assetRef}`);
-  }
+  const file = await readGeneratedPackageFile(pkg, fulfillment, assetPath, { label: `Image layer ${layer.id} package asset`, missingMessage: `Image layer ${layer.id} references a missing package asset: ${assetRef}` });
   assetRefs.add(assetRef);
+  rememberBrowserAssetHash(assetHashes, assetRef, file.sha256);
   const mimeType = readString(source.mimeType) ?? mimeTypeForAsset(assetRef);
-  const dataUrl = `data:${mimeType};base64,${(await readFile(assetPath)).toString("base64")}`;
+  const dataUrl = `data:${mimeType};base64,${file.bytes.toString("base64")}`;
   const objectFit = browserObjectFit(layer);
   const style = readRecord(layer.style);
   const radius = cssBorderRadius(style, pkg);
@@ -3453,7 +3638,7 @@ async function renderGeneratedImage(pkg: MotionPackage, layer: MotionLayer, inde
   return `<img data-layer-id="${escapeAttr(layer.id)}"${motionKeyingDataAttribute(layer)} data-start="${layer.startMs}" data-duration="${layer.durationMs}" src="${escapeAttr(dataUrl)}" alt="" style="${boxStyle(layer, index, undefined, atMs)}display:block;object-fit:${objectFit};border-radius:${radius};${shadow ? `${shadow};` : ""}">`;
 }
 
-async function renderGeneratedVideo(pkg: MotionPackage, layer: MotionLayer, index: number, assetRefs: Set<string>, atMs: number): Promise<string> {
+async function renderGeneratedVideo(pkg: MotionPackage, layer: MotionLayer, index: number, assetRefs: Set<string>, assetHashes: Map<string, string>, atMs: number, fulfillment?: BrowserPackageFulfillment): Promise<string> {
   const asset = assetForLayer(pkg, layer, "Video");
   const source = readRecord(asset.source);
   const assetRef = readString(source.path);
@@ -3461,12 +3646,11 @@ async function renderGeneratedVideo(pkg: MotionPackage, layer: MotionLayer, inde
     throw new Error(`Video layer ${layer.id} does not reference a package asset path.`);
   }
   const assetPath = resolvePackageAsset(pkg, assetRef);
-  if (!existsSync(assetPath)) {
-    throw new Error(`Video layer ${layer.id} references a missing package asset: ${assetRef}`);
-  }
+  const file = await readGeneratedPackageFile(pkg, fulfillment, assetPath, { label: `Video layer ${layer.id} package asset`, missingMessage: `Video layer ${layer.id} references a missing package asset: ${assetRef}` });
   assetRefs.add(assetRef);
+  rememberBrowserAssetHash(assetHashes, assetRef, file.sha256);
   const mimeType = readString(source.mimeType) ?? mimeTypeForAsset(assetRef);
-  const dataUrl = `data:${mimeType};base64,${(await readFile(assetPath)).toString("base64")}`;
+  const dataUrl = `data:${mimeType};base64,${file.bytes.toString("base64")}`;
   const objectFit = browserObjectFit(layer);
   const style = readRecord(layer.style);
   const radius = cssBorderRadius(style, pkg);
@@ -3500,6 +3684,35 @@ async function renderGeneratedVideo(pkg: MotionPackage, layer: MotionLayer, inde
     return `<div data-layer-id="${escapeAttr(layer.id)}" data-start="${layer.startMs}" data-duration="${layer.durationMs}" style="${boxStyle(layer, index, undefined, atMs)}border-radius:${radius};${shadow ? `${shadow};` : ""}"><video ${videoAttrs} style="${videoStyle}"></video></div>`;
   }
   return `<video ${videoAttrs} style="${boxStyle(layer, index, undefined, atMs)}display:block;object-fit:${objectFit};border-radius:${radius};${shadow ? `${shadow};` : ""}"></video>`;
+}
+
+/**
+ * All generated-browser package reads converge here. If Core attached its internal admitted
+ * execution snapshot, this function chooses only copied snapshot bytes; it never falls back to
+ * the logical package root, which may deliberately be the eventual public output location.
+ */
+async function readGeneratedPackageFile(
+  pkg: MotionPackage,
+  fulfillment: BrowserPackageFulfillment | undefined,
+  path: string,
+  options: { label: string; maxBytes?: number; missingMessage?: string }
+) {
+  const effectiveFulfillment = fulfillment ?? admittedBrowserPackageFulfillment(pkg);
+  if (effectiveFulfillment) {
+    try {
+      const file = await effectiveFulfillment.readPath(path, options.label);
+      if (options.maxBytes !== undefined && file.byteLength > options.maxBytes) {
+        throw new Error(`${options.label} exceeds its ${options.maxBytes}-byte limit.`);
+      }
+      return file;
+    } catch (error) {
+      if (options.missingMessage && error instanceof Error && error.message.includes("is absent from the admitted browser package snapshot")) {
+        throw new Error(options.missingMessage);
+      }
+      throw error;
+    }
+  }
+  return await readBrowserPackageFile(pkg.root, path, options);
 }
 
 export function videoMediaTimeMsForLayer(layer: Pick<MotionLayer, "startMs" | "trimStartMs" | "trimDurationMs" | "loop" | "playbackRate" | "keyframes">, atMs: number): number {
@@ -3549,26 +3762,6 @@ function integratePlaybackInterval(keyframes: MotionKeyframe[], startMs: number,
 
 function playbackRateAtMs(keyframes: MotionKeyframe[], atMs: number): number {
   return finitePositiveNumberOr(interpolateNumber(keyframes, atMs) ?? undefined, 1);
-}
-
-export function resolveChromiumLaunchArgs(env: Record<string, string | undefined> = process.env): string[] {
-  const args = ["--disable-gpu"];
-  const noSandbox = env.SHELLX_MOTION_CHROMIUM_NO_SANDBOX?.trim().toLowerCase();
-  if (noSandbox === "1" || noSandbox === "true" || noSandbox === "yes") {
-    args.push("--no-sandbox");
-  }
-  return args;
-}
-
-export function chromiumRuntimeSandboxEvidence(args: readonly string[]) {
-  const disabled = args.includes("--no-sandbox");
-  return {
-    schema: "shellx-motion/runtime-sandbox@1" as const,
-    provider: "chromium" as const,
-    status: disabled ? "disabled" as const : "requested" as const,
-    scope: "browser-process" as const,
-    ...(disabled ? { reasonCode: "trusted_host_opt_out" as const } : {}),
-  };
 }
 
 async function settleGeneratedMotionMedia(page: Page, atMs: number): Promise<void> {
@@ -3672,6 +3865,20 @@ async function settleGeneratedMotionEnvironments(page: Page): Promise<void> {
     .map((canvas) => ({ layerId: canvas.dataset.layerId ?? "(unknown)", error: canvas.dataset.motionEnvironmentError ?? "environment execution failed" })), selector);
   if (failures.length > 0) {
     throw new Error(`Fixed environment render failed: ${failures.map((failure) => `${failure.layerId}: ${failure.error}`).join("; ")}`);
+  }
+}
+
+async function settleGeneratedMotionPoints(page: Page): Promise<void> {
+  const selector = "canvas[data-motion-points='true']";
+  await page.waitForFunction((pointSelector) => {
+    const points = Array.from(document.querySelectorAll<HTMLCanvasElement>(pointSelector));
+    return points.every((canvas) => canvas.dataset.motionPointsState === "ready" || canvas.dataset.motionPointsState === "error");
+  }, selector, { timeout: 5_000 });
+  const failures = await page.evaluate((pointSelector) => Array.from(document.querySelectorAll<HTMLCanvasElement>(pointSelector))
+    .filter((canvas) => canvas.dataset.motionPointsState === "error")
+    .map((canvas) => ({ layerId: canvas.dataset.layerId ?? "(unknown)", error: canvas.dataset.motionPointsError ?? "point drawing failed" })), selector);
+  if (failures.length > 0) {
+    throw new Error(`Points render failed: ${failures.map((failure) => `${failure.layerId}: ${failure.error}`).join("; ")}`);
   }
 }
 
@@ -3803,6 +4010,12 @@ function layerBoxSize(layer: MotionLayer, defaults: { defaultWidth: number; defa
     width: metrics.width ?? defaults.defaultWidth,
     height: metrics.height ?? defaults.defaultHeight
   };
+}
+
+function rememberBrowserAssetHash(hashes: Map<string, string>, assetRef: string, sha256: string): void {
+  const prior = hashes.get(assetRef);
+  if (prior && prior !== sha256) throw new Error(`Browser package asset changed while preparing the frame: ${assetRef}`);
+  hashes.set(assetRef, sha256);
 }
 
 type BrowserObjectFit = "fill" | "contain" | "cover" | "none" | "scale-down";
@@ -3977,6 +4190,10 @@ function formatSvgTransformNumber(value: number): string {
   return Number(value.toFixed(9)).toString();
 }
 
+function formatSvgPoint(value: number): string {
+  return Number(value.toFixed(3)).toString();
+}
+
 function cssMatteStyle(layer: MotionLayer, index: number): string | null {
   const matte = readRecord(layer.matte);
   const type = readString(matte.type);
@@ -4005,7 +4222,7 @@ function generatedMatteDefinition(pkg: MotionPackage, consumer: MotionLayer, ind
   const sourceBox = layerBoxMetrics(effectiveSource);
   const sourceWidth = sourceBox.width ?? 100;
   const sourceHeight = sourceBox.height ?? 100;
-  const geometry = generatedMatteShapeGeometry(effectiveSource);
+  const geometry = generatedMatteShapeGeometry(effectiveSource, { escapeAttr });
   const scaleX = sourceWidth / geometry.viewBox.width;
   const scaleY = sourceHeight / geometry.viewBox.height;
   const offsetX = sourceBox.x - consumerBox.x - (geometry.viewBox.x * scaleX);
@@ -4019,21 +4236,6 @@ function generatedMatteDefinition(pkg: MotionPackage, consumer: MotionLayer, ind
   const fill = luma ? sourceFill : inverted ? "black" : "white";
   const shape = `<g transform="matrix(${matrix})"${filterAttr}>${geometry.element.replace("MATTE_FILL", fill)}</g>`;
   return `${filter}<mask id="${matteMaskId(index)}" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="${formatSvgTransformNumber(consumerWidth)}" height="${formatSvgTransformNumber(consumerHeight)}" style="mask-type:luminance">${background}${shape}</mask>`;
-}
-
-function generatedMatteShapeGeometry(layer: MotionLayer): { viewBox: { x: number; y: number; width: number; height: number }; element: string } {
-  const shapeKind = generatedShapeKind(layer);
-  const unitViewBox = { x: 0, y: 0, width: 100, height: 100 };
-  if (shapeKind === "rect") return { viewBox: unitViewBox, element: "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"MATTE_FILL\"></rect>" };
-  if (shapeKind === "ellipse") return { viewBox: unitViewBox, element: "<ellipse cx=\"50\" cy=\"50\" rx=\"50\" ry=\"50\" fill=\"MATTE_FILL\"></ellipse>" };
-  if (shapeKind === "triangle") return { viewBox: unitViewBox, element: "<polygon points=\"50,0 0,100 100,100\" fill=\"MATTE_FILL\"></polygon>" };
-  if (shapeKind === "star") return { viewBox: unitViewBox, element: `<polygon points="${escapeAttr(generatedStarPoints())}" fill="MATTE_FILL"></polygon>` };
-  if (shapeKind === "path") {
-    const path = validateMotionPathData(generatedShapePath(layer), `Browser matte source ${layer.id}`);
-    const viewBox = parseMotionPathViewBox(generatedShapeViewBox(layer), `Browser matte source ${layer.id} viewBox`);
-    return { viewBox, element: `<path d="${escapeAttr(path)}" fill="MATTE_FILL"></path>` };
-  }
-  throw new Error(`Browser matte source ${layer.id} uses unsupported shape ${shapeKind ?? "missing"}.`);
 }
 
 function matteMaskId(index: number): string {
@@ -4165,221 +4367,6 @@ function htmlTextLanguage(value: unknown): string | null {
 
 function containsRtlText(text: string): boolean {
   return /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/u.test(text);
-}
-
-async function collectBrowserTypographyEvidence(page: Page): Promise<BrowserTypographyEvidence> {
-  const layers = await page.evaluate(() => {
-    const genericFamilies = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui"]);
-    return [...document.querySelectorAll<HTMLElement>("[data-motion-text='true']")].map((element) => {
-      const computed = getComputedStyle(element);
-      const requestedFontFamily = element.dataset.requestedFontFamily?.trim() || null;
-      const primaryFont = requestedFontFamily
-        ?.split(",", 1)[0]
-        ?.trim()
-        .replace(/^['"]|['"]$/g, "") || null;
-      let primaryFontAvailable: boolean | null = null;
-      if (primaryFont) {
-        try {
-          if (genericFamilies.has(primaryFont.toLowerCase())) {
-            primaryFontAvailable = true;
-          } else {
-            const context = document.createElement("canvas").getContext("2d");
-            const sample = "mmmmmmmmmmlliWW 0123456789 مرحبا 漢字";
-            const safeFont = primaryFont.replace(/["\\\n\r]/g, "");
-            primaryFontAvailable = Boolean(context && safeFont && ["monospace", "sans-serif", "serif"].some((fallback) => {
-              context.font = `72px ${fallback}`;
-              const baseline = context.measureText(sample).width;
-              context.font = `72px "${safeFont}", ${fallback}`;
-              return Math.abs(context.measureText(sample).width - baseline) > 0.01;
-            }));
-          }
-        } catch {
-          primaryFontAvailable = false;
-        }
-      }
-      return {
-        layerId: element.dataset.layerId ?? "",
-        direction: computed.direction === "rtl" ? "rtl" as const : "ltr" as const,
-        lang: element.getAttribute("lang"),
-        requestedFontFamily,
-        resolvedFontFamily: computed.fontFamily,
-        primaryFontAvailable
-      };
-    });
-  });
-  const seenLayerIds = new Set<string>();
-  const uniqueLayers = layers.filter((layer) => {
-    if (!layer.layerId) return true;
-    if (seenLayerIds.has(layer.layerId)) return false;
-    seenLayerIds.add(layer.layerId);
-    return true;
-  });
-  return {
-    fontProbe: "canvas-metric",
-    layers: uniqueLayers,
-    fallbackLayerIds: uniqueLayers
-      .filter((layer) => layer.primaryFontAvailable === false)
-      .map((layer) => layer.layerId)
-  };
-}
-
-async function collectBrowserTextFitEvidence(
-  page: Page,
-  pkg: MotionPackage,
-  atMs: number
-): Promise<BrowserTextFitEvidence> {
-  const safeAreas = Object.fromEntries(Object.entries(pkg.motion.safeAreas ?? {}).map(([id, area]) => [id, {
-    top: typeof area.top === "number" ? area.top : 0,
-    right: typeof area.right === "number" ? area.right : 0,
-    bottom: typeof area.bottom === "number" ? area.bottom : 0,
-    left: typeof area.left === "number" ? area.left : 0
-  }]));
-  // tsx/esbuild keepNames can reference this helper after Playwright serializes a
-  // complex callback. Production bundles inline it, while source-driven CLI runs do not.
-  await page.evaluate("globalThis.__name = function(target) { return target; }");
-  const evidence = await page.evaluate(({ safeAreas, atMs }) => {
-    type FitPolicy = "safe" | "allow-crop" | "auto-fit";
-    type Overflow = { top: number; right: number; bottom: number; left: number };
-    const round = (value: number) => Math.max(0, Number(value.toFixed(3)));
-    const root = document.querySelector<HTMLElement>("main") ?? document.body;
-    const rootRect = root.getBoundingClientRect();
-    const elements = [...document.querySelectorAll<HTMLElement>("[data-motion-text='true']")];
-    const uncheckedLayerIds = [...new Set(elements
-      .filter((element) => element.dataset.textFitPolicy === "unchecked" || !element.dataset.textFitPolicy)
-      .map((element) => element.dataset.layerId ?? "<unknown>"))].sort();
-    const groups = new Map<string, HTMLElement[]>();
-    for (const element of elements) {
-      const policy = element.dataset.textFitPolicy;
-      if (policy !== "safe" && policy !== "allow-crop" && policy !== "auto-fit") continue;
-      const layerId = element.dataset.layerId ?? "<unknown>";
-      const group = groups.get(layerId) ?? [];
-      group.push(element);
-      groups.set(layerId, group);
-    }
-    const ownVisible = (element: HTMLElement): boolean => {
-      const style = getComputedStyle(element);
-      return style.display !== "none"
-        && style.visibility !== "hidden"
-        && Number(style.opacity || "1") >= 0.5
-        && element.getClientRects().length > 0;
-    };
-    const glyphRect = (element: HTMLElement): DOMRect => {
-      const target = element.querySelector("span") ?? element;
-      const range = document.createRange();
-      range.selectNodeContents(target);
-      const measured = range.getBoundingClientRect();
-      return measured.width > 0 || measured.height > 0 ? measured : target.getBoundingClientRect();
-    };
-    const safeRect = (safeAreaId: string | null): { top: number; right: number; bottom: number; left: number } => {
-      const area = safeAreaId ? safeAreas[safeAreaId] : undefined;
-      return {
-        top: rootRect.top + (area?.top ?? 0),
-        right: rootRect.right - (area?.right ?? 0),
-        bottom: rootRect.bottom - (area?.bottom ?? 0),
-        left: rootRect.left + (area?.left ?? 0)
-      };
-    };
-    const measureElement = (element: HTMLElement, area: ReturnType<typeof safeRect>) => {
-      const rect = glyphRect(element);
-      return {
-        internalHorizontal: round(element.scrollWidth - element.clientWidth),
-        internalVertical: round(element.scrollHeight - element.clientHeight),
-        safe: {
-          top: round(area.top - rect.top),
-          right: round(rect.right - area.right),
-          bottom: round(rect.bottom - area.bottom),
-          left: round(area.left - rect.left)
-        } satisfies Overflow
-      };
-    };
-    const maxOverflow = (measurements: ReturnType<typeof measureElement>[]) => measurements.reduce((max, current) => ({
-      internalHorizontal: Math.max(max.internalHorizontal, current.internalHorizontal),
-      internalVertical: Math.max(max.internalVertical, current.internalVertical),
-      safe: {
-        top: Math.max(max.safe.top, current.safe.top),
-        right: Math.max(max.safe.right, current.safe.right),
-        bottom: Math.max(max.safe.bottom, current.safe.bottom),
-        left: Math.max(max.safe.left, current.safe.left)
-      }
-    }), { internalHorizontal: 0, internalVertical: 0, safe: { top: 0, right: 0, bottom: 0, left: 0 } });
-    const fits = (measurement: ReturnType<typeof maxOverflow>): boolean => measurement.internalHorizontal <= 0.5
-      && measurement.internalVertical <= 0.5
-      && measurement.safe.top <= 0.5
-      && measurement.safe.right <= 0.5
-      && measurement.safe.bottom <= 0.5
-      && measurement.safe.left <= 0.5;
-    // Code-unit order, not localeCompare: text-fit diagnostics are reported per layer and land in
-    // receipt evidence, so their order must not follow whatever locale the browser process
-    // inherited. The comparison is written out rather than calling `compareCodeUnits`: this
-    // callback is serialized and executed INSIDE the page, where nothing from the Node module
-    // scope exists — importing the shared helper here throws `compareCodeUnits is not defined`
-    // at runtime, which no typecheck catches.
-    const layers = [...groups.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map(([layerId, samples]) => {
-      const first = samples[0];
-      const policy = first.dataset.textFitPolicy as FitPolicy;
-      const safeAreaId = first.dataset.textFitSafeArea || null;
-      const area = safeRect(safeAreaId);
-      const visibleSamples = samples.filter(ownVisible);
-      const requestedFontSizes = new Map(samples.map((element) => [
-        element,
-        Number.parseFloat(getComputedStyle(element).fontSize) || 0
-      ]));
-      const requestedFontSize = Math.max(0, ...requestedFontSizes.values());
-      const parsedMinFontSize = Number.parseFloat(first.dataset.textFitMinFontSize ?? "");
-      const minFontSize = policy === "auto-fit" ? (Number.isFinite(parsedMinFontSize) ? parsedMinFontSize : 12) : null;
-      let appliedFontSize = requestedFontSize;
-      let measured = maxOverflow(visibleSamples.map((element) => measureElement(element, area)));
-      if (policy === "auto-fit" && visibleSamples.length > 0 && !fits(measured)) {
-        let shrinkBy = 0;
-        while ([...requestedFontSizes.values()].some((size) => (
-          size - shrinkBy > Math.min(size, minFontSize ?? 12)
-        ))) {
-          shrinkBy += 1;
-          for (const element of samples) {
-            const requested = requestedFontSizes.get(element) ?? requestedFontSize;
-            element.style.fontSize = `${Math.max(Math.min(requested, minFontSize ?? 12), requested - shrinkBy)}px`;
-          }
-          appliedFontSize = Math.max(0, ...samples.map((element) => Number.parseFloat(getComputedStyle(element).fontSize) || 0));
-          measured = maxOverflow(visibleSamples.map((element) => measureElement(element, area)));
-          if (fits(measured)) break;
-        }
-      }
-      const didFit = visibleSamples.length === 0 || policy === "allow-crop" || fits(measured);
-      const autoFitted = policy === "auto-fit" && appliedFontSize < requestedFontSize && didFit;
-      return {
-        layerId,
-        policy,
-        safeAreaId,
-        status: policy === "allow-crop"
-          ? "allowed-crop" as const
-          : didFit
-            ? autoFitted ? "auto-fitted" as const : "passed" as const
-            : "failed" as const,
-        requestedFontSize: round(requestedFontSize),
-        appliedFontSize: round(appliedFontSize),
-        minFontSize: minFontSize === null ? null : round(minFontSize),
-        sampleCount: samples.length,
-        visibleSampleCount: visibleSamples.length,
-        internalOverflowPx: {
-          horizontal: measured.internalHorizontal,
-          vertical: measured.internalVertical
-        },
-        safeAreaOverflowPx: measured.safe
-      };
-    });
-    return {
-      policy: "rendered-glyph-bounds" as const,
-      atMs,
-      visibilityThreshold: 0.5 as const,
-      checkedLayerCount: layers.length,
-      uncheckedLayerIds,
-      allowedCropLayerIds: layers.filter((layer) => layer.status === "allowed-crop").map((layer) => layer.layerId),
-      autoFittedLayerIds: layers.filter((layer) => layer.status === "auto-fitted").map((layer) => layer.layerId),
-      failedLayerIds: layers.filter((layer) => layer.status === "failed").map((layer) => layer.layerId),
-      layers
-    };
-  }, { safeAreas, atMs });
-  return evidence;
 }
 
 function enforceTextFitPolicy(evidence: BrowserTextFitEvidence): void {
@@ -4723,19 +4710,12 @@ async function disableBrowserPeerConnections(context: BrowserContext): Promise<v
  * next candidate, so the error says which pin was rejected. "Set SHELLX_MOTION_BROWSER" would be
  * useless advice to someone who just did.
  */
-function findBrowserExecutable(): string {
-  const found = findMotionBrowserExecutable();
-  if (!found) {
-    throw new Error(motionBrowserOverrideProblem()
-      ?? `No Chrome/Chromium executable found for browser renderer. Set ${MOTION_BROWSER_OVERRIDE_ENV_VAR}.`);
-  }
-  return found;
-}
-
 // Re-exported from core (which owns the search order) so existing importers of this package keep
 // working, and so there is still exactly one list.
 export { browserExecutableCandidates };
+export { runGpuActiveHardwareProbe, GPU_ACTIVE_HARDWARE_PROBE_OPERATION, GPU_ACTIVE_HARDWARE_PROBE_TIMEOUT_MS, GPU_ACTIVE_HARDWARE_PROOF_VALID_FOR_MS } from "./gpu-active-hardware-probe";
+export type { GpuActiveHardwareProbeResult, GpuActiveHardwareProbeServices } from "./gpu-active-hardware-probe";
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }

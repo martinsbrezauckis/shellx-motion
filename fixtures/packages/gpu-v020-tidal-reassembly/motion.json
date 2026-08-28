@@ -1,0 +1,135 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_v020_tidal_reassembly",
+  "name": "Tidal Reassembly — V0.2 Particle Motion Sample",
+  "durationMs": 8000,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "background": "#071018",
+  "safeAreas": {
+    "copy": { "top": 80, "right": 112, "bottom": 80, "left": 112 }
+  },
+  "markers": [
+    { "id": "origins", "atMs": 0, "label": "Three origins enter" },
+    { "id": "confluence", "atMs": 1200, "label": "Living data confluence" },
+    { "id": "stitch", "atMs": 3000, "label": "Liquid reassembly" },
+    { "id": "impact", "atMs": 5760, "label": "Impact and disintegration" }
+  ],
+  "layers": [
+    {
+      "id": "tidal-night",
+      "type": "shape",
+      "shape": "rect",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.54,
+        "centerY": 0.5,
+        "stops": [
+          { "offset": 0, "color": "#17353A" },
+          { "offset": 0.46, "color": "#0B1E2A" },
+          { "offset": 1, "color": "#071018" }
+        ]
+      }
+    },
+    {
+      "id": "undertow",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#1B5A59",
+      "opacity": 0.1,
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": { "x": 470, "y": 210, "width": 980, "height": 660 },
+      "effects": { "glow": { "radius": 38, "color": "#4ED3BD" } },
+      "keyframes": {
+        "transform.scale": [
+          { "atMs": 0, "value": 0.92 },
+          { "atMs": 3080, "value": 1.04, "easing": "ease-in-out" },
+          { "atMs": 8000, "value": 0.96, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "tide-field",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 8000,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "originX": 960, "originY": 540 },
+      "emitter": {
+        "seed": 20260815,
+        "count": 100000,
+        "lifetimeMs": 8000,
+        "shape": "circle",
+        "color": "#A8F6D3",
+        "secondaryColor": "#FF8359",
+        "minSize": 0.65,
+        "maxSize": 1.9,
+        "minSpeed": 24,
+        "maxSpeed": 92,
+        "direction": 0,
+        "spread": 38,
+        "gravity": 0,
+        "fadeOut": true,
+        "field": {
+          "schema": "shellx-motion/particle-field@2",
+          "sources": [
+            { "kind": "flow", "angleDeg": -8, "strength": 0.14 },
+            { "kind": "turbulence", "scale": 1.7, "strength": 0.16 },
+            { "kind": "collision", "axis": "y", "position": 0.9, "restitution": 0.42 },
+            { "kind": "impact", "centerX": 0.58, "centerY": 0.5, "radius": 0.2, "strength": 0.58, "startProgress": 0.72, "durationProgress": 0.22 }
+          ]
+        },
+        "origins": [
+          { "x": 0.14, "y": 0.34, "weight": 0.36, "directionOffsetDeg": 8, "speedScale": 0.86 },
+          { "x": 0.86, "y": 0.32, "weight": 0.36, "directionOffsetDeg": 172, "speedScale": 0.82 },
+          { "x": 0.5, "y": 0.84, "weight": 0.28, "directionOffsetDeg": -92, "speedScale": 0.94 }
+        ],
+        "trail": { "durationMs": 36, "samples": 2, "opacity": 0.07 },
+        "shading": { "mode": "glow", "sizeJitter": 0.22, "opacityJitter": 0.2, "glow": 0.12 }
+      }
+    },
+    {
+      "id": "liquid-core",
+      "type": "shape",
+      "shape": "ellipse",
+      "fill": "#F6F3E8",
+      "opacity": 0.07,
+      "startMs": 0,
+      "durationMs": 5600,
+      "transform": { "x": 842, "y": 422, "width": 236, "height": 236, "originX": 118, "originY": 118 },
+      "effects": { "glow": { "radius": 28, "color": "#A8F6D3" } },
+      "keyframes": {
+        "transform.scale": [
+          { "atMs": 0, "value": 0.38 },
+          { "atMs": 3000, "value": 1.1, "easing": "ease-in-out" },
+          { "atMs": 5600, "value": 1.35, "easing": "ease-in" }
+        ],
+        "opacity": [
+          { "atMs": 0, "value": 0 },
+          { "atMs": 1400, "value": 0.14, "easing": "ease-out" },
+          { "atMs": 5600, "value": 0, "easing": "ease-in" }
+        ]
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 8000,
+      "effects": {
+        "vignette": { "amount": 0.62, "softness": 0.66, "color": "#04080E" },
+        "filmGrain": { "amount": 0.07, "size": 2, "seed": 20260815 }
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "templates/generators/tidal-reassembly/generate.py",
+    "workflow": "fixed-data-only-v2-particle-reassembly"
+  }
+}

@@ -28,6 +28,8 @@ export interface MotionScene3DMeshObject extends MotionScene3DObjectBase {
     meshIndex: number;
     primitiveIndex: number;
     materialIndex?: number;
+    /** Exact canonical vertex/index bytes produced by the bounded glTF lowering. */
+    geometrySha256: string;
   };
 }
 

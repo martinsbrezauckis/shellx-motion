@@ -5,7 +5,9 @@ import {
   timelineLayerTrackFade,
   timelineLayerTrackPan,
   timelineLayerTrackVolume,
+  motionAudioFadeCurve,
   type MotionAudioDucking,
+  type MotionAudioMasterBus,
   type MotionKeyframe,
   type MotionLayer,
   type MotionPackage
@@ -16,24 +18,29 @@ const DEFAULT_DUCK_TO_VOLUME = 0.35;
 const DEFAULT_DUCK_ATTACK_MS = 120;
 const DEFAULT_DUCK_RELEASE_MS = 250;
 
-export function packageAudioEncodeInput(pkg: MotionPackage): { audio?: FfmpegAudioInput; audioTracks?: FfmpegAudioInput[] } {
+export function packageAudioEncodeInput(pkg: MotionPackage): { audio?: FfmpegAudioInput; audioTracks?: FfmpegAudioInput[]; audioMaster?: MotionAudioMasterBus } {
   const audioInputs = resolvePackageAudioInputs(pkg);
-  return audioInputs.length > 1
-    ? { audioTracks: audioInputs }
-    : audioInputs.length === 1
-      ? { audio: audioInputs[0] }
-      : {};
+  const audioMaster = pkg.motion.audio?.master ? structuredClone(pkg.motion.audio.master) : undefined;
+  return {
+    ...(audioInputs.length > 1
+      ? { audioTracks: audioInputs }
+      : audioInputs.length === 1
+        ? { audio: audioInputs[0] }
+        : {}),
+    ...(audioMaster ? { audioMaster } : {})
+  };
 }
 
 export function resolvePackageAudioInputs(pkg: MotionPackage): FfmpegAudioInput[] {
   const hasSoloedTrack = hasSoloedTimelineTrack(pkg);
-  return pkg.motion.layers
+  const timelineLayers = globalTimelineLayers(pkg.motion.layers, pkg.motion.durationMs);
+  return timelineLayers
     .filter((layer) => layer.startMs < pkg.motion.durationMs && layer.startMs + layer.durationMs > 0)
-    .map((layer): FfmpegAudioInput | null => packageLayerAudioInput(pkg, layer, hasSoloedTrack))
+    .map((layer): FfmpegAudioInput | null => packageLayerAudioInput(pkg, layer, hasSoloedTrack, timelineLayers))
     .filter((audio): audio is FfmpegAudioInput => audio !== null);
 }
 
-function packageLayerAudioInput(pkg: MotionPackage, layer: MotionLayer, hasSoloedTrack: boolean): FfmpegAudioInput | null {
+function packageLayerAudioInput(pkg: MotionPackage, layer: MotionLayer, hasSoloedTrack: boolean, timelineLayers: readonly MotionLayer[]): FfmpegAudioInput | null {
   if (layer.type !== "audio" && !(layer.type === "video" && layer.includeAudio === true)) return null;
   if (hasSoloedTrack && !timelineLayerSoloedTrackId(pkg.motion, layer)) return null;
   if (timelineLayerMutedTrackId(pkg.motion, layer)) return null;
@@ -45,7 +52,7 @@ function packageLayerAudioInput(pkg: MotionPackage, layer: MotionLayer, hasSoloe
   const ducking = readAudioDucking(layer.ducking);
   const volumeKeyframes = Array.isArray(layer.keyframes?.volume)
     ? layer.keyframes.volume
-    : duckingVolumeKeyframes(pkg, ducking);
+    : duckingVolumeKeyframes(pkg, ducking, timelineLayers);
   const panKeyframes = Array.isArray(layer.keyframes?.pan) ? layer.keyframes.pan : undefined;
   return {
     path: resolvePackageAsset(pkg, ref),
@@ -62,6 +69,7 @@ function packageLayerAudioInput(pkg: MotionPackage, layer: MotionLayer, hasSoloe
     ...(typeof layer.muted === "boolean" ? { muted: layer.muted } : {}),
     ...(fade.fadeInMs !== undefined ? { fadeInMs: fade.fadeInMs } : {}),
     ...(fade.fadeOutMs !== undefined ? { fadeOutMs: fade.fadeOutMs } : {}),
+    ...(fade.fadeCurve !== undefined ? { fadeCurve: fade.fadeCurve } : {}),
     ...(typeof layer.normalizeLoudness === "boolean" ? { normalizeLoudness: layer.normalizeLoudness } : {}),
     ...(typeof layer.playbackRate === "number" ? { playbackRate: layer.playbackRate } : {}),
     ...(ducking ? { ducking } : {}),
@@ -86,7 +94,7 @@ function readAudioDucking(value: unknown): MotionAudioDucking | undefined {
   };
 }
 
-function duckingVolumeKeyframes(pkg: MotionPackage, ducking: MotionAudioDucking | undefined): MotionKeyframe[] | undefined {
+function duckingVolumeKeyframes(pkg: MotionPackage, ducking: MotionAudioDucking | undefined, timelineLayers: readonly MotionLayer[]): MotionKeyframe[] | undefined {
   if (!ducking) return undefined;
   // "sidechain" ducking is realized by the FFmpeg sidechaincompress filter at
   // render time, so it must NOT be pre-lowered into volume keyframes here.
@@ -95,7 +103,7 @@ function duckingVolumeKeyframes(pkg: MotionPackage, ducking: MotionAudioDucking 
   const duckToVolume = ducking.duckToVolume ?? DEFAULT_DUCK_TO_VOLUME;
   const attackMs = ducking.attackMs ?? DEFAULT_DUCK_ATTACK_MS;
   const releaseMs = ducking.releaseMs ?? DEFAULT_DUCK_RELEASE_MS;
-  const intervals = mergedDuckingIntervals(pkg, ducking, attackMs, releaseMs);
+  const intervals = mergedDuckingIntervals(pkg, ducking, attackMs, releaseMs, timelineLayers);
   if (intervals.length === 0) return undefined;
   const keyframes: MotionKeyframe[] = [];
   for (const interval of intervals) {
@@ -122,9 +130,9 @@ interface DuckingInterval {
   releaseEndMs: number;
 }
 
-function mergedDuckingIntervals(pkg: MotionPackage, ducking: MotionAudioDucking, attackMs: number, releaseMs: number): DuckingInterval[] {
+function mergedDuckingIntervals(pkg: MotionPackage, ducking: MotionAudioDucking, attackMs: number, releaseMs: number, timelineLayers: readonly MotionLayer[]): DuckingInterval[] {
   const intervals = ducking.triggerLayerIds
-    .map((layerId) => pkg.motion.layers.find((layer) => layer.id === layerId))
+    .map((layerId) => timelineLayers.find((layer) => layer.id === layerId))
     .filter((layer): layer is MotionLayer => Boolean(layer))
     .map((layer) => {
       const duckStartMs = Math.max(0, Math.min(pkg.motion.durationMs, layer.startMs));
@@ -149,6 +157,35 @@ function mergedDuckingIntervals(pkg: MotionPackage, ducking: MotionAudioDucking,
     last.releaseEndMs = Math.max(last.releaseEndMs, interval.releaseEndMs);
   }
   return merged;
+}
+
+/** Expands bounded group-local timing into the global audio timeline. */
+function globalTimelineLayers(layers: readonly MotionLayer[], durationMs: number): MotionLayer[] {
+  const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  const owned = new Set<string>();
+  for (const layer of layers) if (layer.type === "group") {
+    for (const childId of layer.childLayerIds ?? []) owned.add(childId);
+  }
+  const result: MotionLayer[] = [];
+  const visit = (layer: MotionLayer, parentStartMs: number, parentEndMs: number, ancestry: readonly string[]): void => {
+    const startMs = parentStartMs + layer.startMs;
+    const endMs = Math.min(durationMs, parentEndMs, startMs + layer.durationMs);
+    if (endMs <= startMs || startMs >= durationMs || endMs <= 0) return;
+    if (layer.type !== "group") {
+      result.push(startMs === layer.startMs && endMs - startMs === layer.durationMs
+        ? layer
+        : { ...layer, startMs, durationMs: endMs - startMs });
+      return;
+    }
+    if (ancestry.includes(layer.id) || ancestry.length >= 4) return;
+    const nextAncestry = [...ancestry, layer.id];
+    for (const childId of layer.childLayerIds ?? []) {
+      const child = byId.get(childId);
+      if (child) visit(child, startMs, endMs, nextAncestry);
+    }
+  };
+  for (const layer of layers) if (!owned.has(layer.id)) visit(layer, 0, durationMs, []);
+  return result;
 }
 
 function coalesceDuckingKeyframes(keyframes: MotionKeyframe[]): MotionKeyframe[] {
@@ -194,11 +231,16 @@ function effectiveAudioLayerPan(pkg: MotionPackage, layer: MotionLayer): number 
   return typeof layer.pan === "number" ? layer.pan : timelineLayerTrackPan(pkg.motion, layer);
 }
 
-function effectiveAudioLayerFade(pkg: MotionPackage, layer: MotionLayer): { fadeInMs?: number; fadeOutMs?: number } {
+function effectiveAudioLayerFade(pkg: MotionPackage, layer: MotionLayer): { fadeInMs?: number; fadeOutMs?: number; fadeCurve?: "linear" | "equal-power" } {
   const trackFade = timelineLayerTrackFade(pkg.motion, layer);
+  const hasFade = typeof layer.fadeInMs === "number"
+    || typeof layer.fadeOutMs === "number"
+    || trackFade.fadeInMs !== undefined
+    || trackFade.fadeOutMs !== undefined;
   return {
     ...(typeof layer.fadeInMs === "number" ? { fadeInMs: layer.fadeInMs } : trackFade.fadeInMs !== undefined ? { fadeInMs: trackFade.fadeInMs } : {}),
-    ...(typeof layer.fadeOutMs === "number" ? { fadeOutMs: layer.fadeOutMs } : trackFade.fadeOutMs !== undefined ? { fadeOutMs: trackFade.fadeOutMs } : {})
+    ...(typeof layer.fadeOutMs === "number" ? { fadeOutMs: layer.fadeOutMs } : trackFade.fadeOutMs !== undefined ? { fadeOutMs: trackFade.fadeOutMs } : {}),
+    ...(hasFade ? { fadeCurve: motionAudioFadeCurve(layer.fadeCurve) } : {})
   };
 }
 

@@ -33,6 +33,33 @@ are on an installed build. There is no `motion` binary in either form; dotted
 names such as `motion.render.final` are Debug API / MCP command ids, not shell
 commands.
 
+## Verify the public source release
+
+After installing dependencies, run `pnpm test`. It is the test contract for the
+published source tree: it needs neither Git metadata nor the withheld
+`templates/generators/` authoring sources. The canonical implementation checkout
+also has `pnpm run test:implementation` for Git-snapshot and generator coverage;
+that maintainer gate is not a public-source command.
+
+### POSIX source-checkout permissions
+
+Motion intentionally refuses a source checkout or worktree that is group- or
+world-writable when it validates or performs local copy-on-write work. If your
+normal `umask` is `0002`, make a fresh clone private before installing
+dependencies and running the commands below:
+
+```bash
+umask 0077
+git clone https://github.com/martinsbrezauckis/shellx-motion.git shellx-motion
+
+# Or, for the clone you just created under umask 0002:
+chmod go-w shellx-motion
+```
+
+Apply the same rule to each worktree root. This protects local output authority;
+it does not permit changing ownership or weakening the fail-closed topology
+checks for shared ancestors.
+
 Rendering to final media (MP4/WebM/GIF/stills) needs **FFmpeg** and **FFprobe**.
 Motion resolves them from `PATH` by default; you can also point
 `SHELLX_MOTION_FFMPEG` and `SHELLX_MOTION_FFPROBE` at explicit executables. The
@@ -42,18 +69,34 @@ neither.
 ## Start Motion
 
 ```bash
-pnpm start
+pnpm start -- \
+  --authoring-input-root /absolute/path/to/packages \
+  --authoring-output-root /absolute/path/to/revisions \
+  --render-package-root /absolute/path/to/packages \
+  --render-input-root /absolute/path/to/render-inputs \
+  --render-output-root /absolute/path/to/renders
 ```
 
 This is the normal human entry point. It creates or reuses one private local access key, starts the
-engine with local create/edit/render access, and opens an already-unlocked Workbench. Use
-**Connections** to add Motion to an agent, copy a generic MCP command, or copy the Debug API address
-and key. Remote publishing remains unavailable. See [Connect an agent](connections.md).
+engine with a local `write_local` ceiling, and opens an already-unlocked Workbench. The two
+authoring-root flags are host-owned: existing packages to edit must be under the input root, and new
+packages or revisions must be under the output root. The three render-root flags separately bound
+caller-steered server/MCP/SDK package reads, external render inputs used by cache planning and
+final/batch work, and caller-supplied preview, cache-plan, final, or batch destinations. Missing
+authoring roots refuse caller-steered creation/editing; a missing relevant render root refuses the
+external operation before its read or destination reservation. A preview with no destination uses
+host-owned scratch instead. Human Browse selections can grant the exact selected render locations
+for that server session. Standalone CLI preview/render commands remain local-host operations and do
+not need server flags. Use **Connections** to add Motion to an agent, copy a generic MCP command, or
+copy the Debug API address and key. Remote publishing remains unavailable. See [Connect an
+agent](connections.md).
 
 ## Five commands: validate, inspect, preview, render, verify
 
+`validate` runs the ordered structural and runtime-semantic checks described in [Motion document validation](MOTION_VALIDATION.md). It does not prove a renderer produced an artifact; run preview or render and inspect its receipt for that evidence.
+
 ```bash
-# 1. Validate a package (schema, asset containment, manifest).
+# 1. Validate a package (structural schema, runtime semantics, asset containment, manifest).
 pnpm --filter @shellx-motion/cli run cli -- validate fixtures/packages/lower-third
 
 # 2. Inspect its timeline and identity before touching it.
@@ -88,14 +131,22 @@ the exit code, is what a render actually produced. See
   command emits none at all:
   - Package-producing automation and `render-batch` put the receipt inside the package they created, at
     `<--out package>/receipts/`.
-  - `preview` and `capture-browser` write the receipt beside the frame, in the
-    `--out` directory.
+  - `preview` writes the receipt beside the frame in its `--out` directory.
+    `capture-browser` instead requires an absent `--out` directory and publishes
+    one closed capture bundle containing the frame, receipt, and any requested
+    trace or recording evidence. A returned capture is valid only when that
+    bundle contains the matching receipt and primary frame. When recording is
+    requested, `--recording-manifest` and `--recording-frames-dir` must name
+    distinct leaves strictly below `--out`; the workflow catalog remains an
+    external post-capture observer.
   - `render` returns the receipt inline **and writes it beside the delivered
     artifact** as `<packageId>-render.receipt.json`. For an image-sequence output,
     the receipt is written inside the output directory. Prefer the returned
     `receiptPath` over reconstructing either location.
-  - `validate` emits **no** receipt and creates no `receipts/` directory; step 1
-    above returns its result in the envelope only.
+  - `validate` remains read-only for the package. Pass `--receipts-root <host-store>`
+    to retain its passed or failed `package.validate` receipt; the store must be
+    outside the package. Without that explicit governed destination, step 1 returns
+    its result in the envelope only and creates no `receipts/` directory.
 
   A receipt records input hashes, the renderer lane, output hashes, warnings, and
   pass/fail gates — it is the trust record for the operation, not a log. See
@@ -105,6 +156,10 @@ Step 4's `render` uses the default `--frame-lane browser`, so it needs Chromium.
 Add `--frame-lane native` to encode from native-drawn frames instead. Note that
 `--lane` and `--frame-lane` mean different things — see
 [Rendering lanes](rendering.md#choosing-a-lane) before scripting either.
+File-video delivery streams frames directly to FFmpeg by default; it does not
+leave a PNG sequence behind. For a final-video FFmpeg render, pass `--keep-frames`
+only when retaining those source PNGs is intentional. `--frames-dir` names a materialized frame location,
+but does not itself request retention.
 
 ## The Engine Room workbench
 
@@ -113,18 +168,42 @@ It drives the same package, preview, timeline, render, queue, and receipt contra
 Cut — it does not keep a second project model. Start it through the human launcher:
 
 ```bash
-pnpm start
+pnpm start -- \
+  --authoring-input-root /absolute/path/to/packages \
+  --authoring-output-root /absolute/path/to/revisions \
+  --render-package-root /absolute/path/to/packages \
+  --render-input-root /absolute/path/to/render-inputs \
+  --render-output-root /absolute/path/to/renders
 ```
 
 Human users select packages, receipt folders, quality manifests, and render destinations through
 native **Browse** actions. Agent automation can separately declare trusted reference collections
-with repeated `--template-root` flags. A catalog request alone never widens the file boundary,
-because an agent-supplied path is not the same thing as host launch configuration.
+with repeated `--template-root` flags. Package creation and copy-on-write edits require the paired
+`--authoring-input-root` and `--authoring-output-root` launch configuration shown above; a catalog
+request, HTTP body, or MCP tool argument never widens either root.
 
-Start Motion opens a one-use launch URL, clears that value from the browser address, and exchanges it
-for the persistent per-user key. Ordinary Workbench URLs still show the manual Connect field when no
-session is present. The **Connections** page exposes one-click agent setup and copyable local MCP and
-Debug API details without writing the key into agent configuration.
+Package archive/extract, review/support bundles and tracking requests use the same host authority
+by concrete path role, including through the server SDK. Inputs remain under authoring inputs,
+created packages/archives/review outputs and explicit receipt files under authoring outputs, while
+support delivery remains host-owned scratch.
+
+Caller-steered package reads and render work also require the separate package/input/output render
+roots shown above, or the exact locations a person selects through the native package,
+quality-manifest, and render-output Browse actions during that session. This covers read/draft/render
+package paths, caller-named preview and cache-plan destinations, cache/final/batch external inputs,
+and final/batch outputs. A preview that omits its destination stays in host-owned scratch. A request
+can ask for a chooser; it cannot choose its result or turn its own path field into authority.
+Browse/catalog aliases and root arrays are checked element by element; template roots authorize
+catalog/plan only, not general package reads or rendering.
+
+Start Motion writes the one-use bootstrap value into an owner-only local `launch.html` handoff and
+passes only its non-secret `file:` URL to the operating-system opener. The page transfers the value
+to the Workbench, which clears it from the browser address and exchanges it for the persistent
+per-user key. Motion removes the handoff after a successful claim, opener failure, or shutdown, and
+the server consumes the value before cleanup so a cleanup failure cannot make it reusable. Ordinary
+Workbench URLs still show the manual Connect field when no session is present. The **Connections**
+page exposes one-click agent setup and copyable local MCP and Debug API details without writing the
+key into agent configuration.
 
 The Engine Room includes this documentation viewer, a receipts history built from
 the `motion.receipts.*` commands, a **reveal in file manager** action on receipt

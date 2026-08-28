@@ -7,9 +7,9 @@
 Motion converts **HTML to video**, **JSON to MP4**, and **Lottie to MP4**. Give it a design, a data
 file, or an animation, and it renders finished video: MP4, WebM, GIF, or a PNG sequence.
 
-It is built to be operated by an AI agent rather than by a person clicking a timeline. Every
-capability is a typed command an agent can discover and call, over MCP, HTTP, or the CLI. It runs
-on your own machine — your files never leave it.
+It is built to be operated by an AI agent rather than by a person clicking a timeline. Its typed
+Debug/MCP control plane and its documented CLI and SDK subsets run on your own machine — your files
+never leave it.
 
 **[Overview and demo films](https://theshellx.com/motion)** · **[Manual](https://docs.theshellx.com/manual/motion/)** — every command, searchable, generated from this repository.
 
@@ -25,6 +25,14 @@ on your own machine — your files never leave it.
 
 FFmpeg encodes the frames; Motion decides what those frames contain — what is drawn, when, and how
 it moves. That composition step is the part Motion adds.
+
+**Typography has an explicit trust boundary.** Chromium is Motion's production text authority only
+for generated MotionIR text that uses manifest-declared package font bytes; those bytes are
+checked, hashed, embedded, loaded, and fallback-attested in the receipt. HTML, web, and canvas
+layers remain useful but can draw arbitrary or dynamic text Motion cannot observe, so their
+typography is marked unverified and cannot pass a `maxFontFallbacks` attestation. This does not
+promise arbitrary host fonts or cross-host pixel parity. The native lane is intentionally limited
+to block-glyph preview text and refuses non-deliverable text rather than silently switching lanes.
 
 
 ## Watch it move
@@ -50,9 +58,22 @@ AI-generated illustrations at author time; every frame is Motion's own raster.</
 
 ## Why this one
 
-**Agent-native, not agent-bolted-on.** 169 typed Debug API commands and 155 discoverable actions,
-reachable over MCP, HTTP, WebSocket, or the CLI. An agent asks *"what can I do about snow
-intensity?"* and gets a callable plan back, instead of guessing at a GUI.
+**Agent-native, not agent-bolted-on.** The surface matrix is deliberate, rather than a universal
+parity claim:
+
+| Surface | Current callable inventory |
+|---|---|
+| Debug API / HTTP / WebSocket / MCP | **300** typed commands; MCP exposes the full registry. |
+| CLI | **234 direct CLI** `debug` routes, plus **7 semantic CLI equivalents** (`connector catalog`, `package-create`, `validate`, `doctor`, `doctor --probe-gpu`, `job get`, `job list`). **59 named Debug/MCP commands deliberately have no CLI route**: `motion.agent.snapshot`, `motion.connector.submit`, `motion.job.submit/events/cancel/retry`, `motion.keying.inspect/apply/remove`, `motion.roto.upsert/tracking.detach/remove`, `motion.package.script.author`, `motion.timeline.checkpoint-storyboard.create/inspect/revise/remove/archive/materialize/detach/behavior.resolve/behavior.detach/relation.resolve/relation.detach/relation-action.resolve/relation-action.detach/lifecycle.resolve/lifecycle.detach/geometry-morph.resolve/geometry-morph.detach/retained-trace.resolve/retained-trace.detach/retained-trace.preview/retained-trace.review.bind/preview/creative-review.bind/preview-quality.review`, `motion.timeline.relations.inspect/upsert/enabled.set/remove/detach/bake`, `motion.timeline.relation-actions.inspect/upsert/remove/apply`, `motion.timeline.scene3d-animation.inspect/track.upsert/track.remove/keyframe.upsert/keyframe.delete/keyframe.move`, and `motion.timeline.layout-gap-animation.inspect/track.upsert/track.remove/keyframe.upsert/keyframe.delete/keyframe.move`. |
+| Local SDK | **35 dedicated local-SDK operations**, a typed subset rather than a generic Debug-command proxy. |
+| Action discovery | **174 discoverable actions**. |
+
+An agent asks *"what can I do about snow intensity?"* and gets a callable plan back, instead of
+guessing at a GUI.
+
+The static registry is the complete protocol inventory. Authority-bound tools remain discoverable
+and fail closed with `capability_unavailable` when their trusted host service is absent; the host
+cannot turn catalog or request data into authority.
 
 **Local-first and self-hosted.** Your footage, brand assets, and prompts never leave the machine.
 The server binds loopback only; remote publishing is not enabled.
@@ -75,8 +96,11 @@ the safe path: the importer strips `<script>` and reports it, rather than carryi
 **Permission tiers that actually bind.** Six of them, from `read_motion` up to `push_remote`. The
 grant is a ceiling the host sets at launch; a caller may ask for less, never more.
 
-**Receipts, not vibes.** Every operation writes a receipt with input hashes, artifacts, and outcome.
-When an agent claims it rendered something, the receipt is how you check.
+**Receipts, not vibes.** Evidence-producing operations return their declared receipts, but
+persistence is scoped: renders write beside their output when a receipt destination is known,
+previews write under their output directory, and validation writes only to an explicit or
+host-governed receipt root. Read-only discovery and state commands emit no receipt. When an agent
+claims it rendered something, the render receipt is how you check.
 
 **Two deterministic render lanes.** A browser lane and a fixture-proven fallback, with an explicit
 capability probe that tells you what your machine can actually do *before* you ask it to — rather
@@ -87,8 +111,8 @@ fallback or lossiness, never silently downgraded.
 
 | | |
 |---|---|
-| **12 template families** | Cinematic titles, kinetic type, data and metric cards, tracked callouts, keyed promos, launch bumpers — each held to a published [quality bar](docs/public/TEMPLATE_QUALITY_BAR.md). Reference material for agents and hosts via CLI/SDK/MCP, deliberately not a Workbench gallery |
-| **Full authoring surface** | Layers, tracks, scenes, captions, transitions, masks, mattes, effects, gradients, spatial paths, easing curves, precomposition |
+| **12 public template families** | Fifteen source families exist; three remain withheld pending quality requalification. The public twelve cover cinematic titles, kinetic type, data and metric cards, tracked callouts, keyed promos, and launch bumpers, each held to a published [quality bar](docs/public/TEMPLATE_QUALITY_BAR.md). Full template catalog/plan/apply/media-replace routes are Debug/MCP and CLI; the SDK can generically validate, render, or edit a caller-selected template package, but has no dedicated template catalog, plan, apply, or media-replace API. Deliberately not a Workbench gallery. |
+| **Full authoring surface** | Layers, tracks, scenes, captions, transitions, masks, mattes, effects, gradients, spatial paths, and easing curves. Grouped/precomposed Motion timelines are supported by the strict WebGPU lane with bounded local timelines and isolated compositing, direct scene preview, raw-RGBA FFmpeg final delivery, and durable segmented finals for non-hybrid scenes or exactly one governed hybrid texture; actual adapter readiness remains a live host fact. |
 | **Real video output** | H.264/HEVC MP4 and VP9/AV1 WebM where your FFmpeg supports them, plus audio and captions |
 | **A human Workbench** | A local browser UI over the same Debug API contracts the agents use — not a second, drifting project model |
 | **Host connectors** | First-party integration with ShellX Cut and Design Studio, with plan/receipt provenance across the boundary |
@@ -110,8 +134,11 @@ run <code>pnpm run template-pack:proof</code> to regenerate them yourself.</sup>
 New here? [`docs/public/quickstart.md`](docs/public/quickstart.md) is the shortest real path.
 **Handing this repository to an AI agent? Point it at [`AGENTS.md`](AGENTS.md)** — the start path,
 the two invocation forms, and the traps, in one page. [`skill/shellx-motion/SKILL.md`](skill/shellx-motion/SKILL.md)
-is the full operating contract, and [`docs/public/index.json`](docs/public/index.json) is the
-machine-readable index of every public document.
+is the full operating contract. [`docs/public/RENDERING_SAMPLES.md`](docs/public/RENDERING_SAMPLES.md)
+maps each public rendering family to checked packages or workflow evidence, and calls out the
+families that are release-blocking, if any. [`docs/public/index.json`](docs/public/index.json) is the
+machine-readable source index for the curated human Workbench documentation; agent-only reference
+pages are intentionally excluded from that Workbench index.
 Want the honest limits? [`docs/public/FEATURES.md`](docs/public/FEATURES.md) documents what exists
 *and* what does not.
 
@@ -148,17 +175,37 @@ pnpm install
 pnpm build
 ```
 
-**Start Motion**
+**Test**
 
 ```bash
-pnpm start
+pnpm test
 ```
 
-This is the normal human entry point. It creates one private per-user access key, starts Motion with
-local create/edit/render access, publishes the live loopback port for agent bridges, and opens an
-already-unlocked Workbench in the default browser. Open **Connections** to add Motion to a supported
-agent or copy the command for another MCP client. The same key protects Workbench, MCP, and the
-Debug API; it is not written into agent configuration. Remote publishing is not enabled.
+This is the public source-release test contract: it runs from the generated
+export after installation and does not require Git metadata or the withheld
+`templates/generators/` authoring tree. In the canonical implementation checkout,
+maintainers additionally run `pnpm run test:implementation`; it retains the
+Git-snapshot and generator gates and is intentionally not a public-release command.
+
+**Start Motion**
+
+```text
+pnpm start -- \
+  --authoring-input-root /absolute/path/to/packages \
+  --authoring-output-root /absolute/path/to/revisions \
+  --render-package-root /absolute/path/to/packages \
+  --render-input-root /absolute/path/to/render-inputs \
+  --render-output-root /absolute/path/to/renders
+```
+
+This is the normal human entry point. It creates one private per-user access key, publishes the live
+loopback port for agent bridges, and opens an already-unlocked Workbench in the default browser. The
+host-owned authoring roots bound package creation and copy-on-write revisions; the separate render
+roots bound server/MCP package reads, external render inputs, and destinations. Omit a required root
+class and that operation fails closed; a human Browse result can grant only its exact location for
+the current session. Open **Connections** to add Motion to a supported agent or copy the command for
+another MCP client. The same key protects Workbench, MCP, and the Debug API; it is not written into
+agent configuration. Remote publishing is not enabled.
 
 `pnpm install` must run esbuild's postinstall script — it places the platform binary that the
 TypeScript runner needs. This repo declares that in `pnpm-workspace.yaml`, so it happens without
@@ -180,6 +227,27 @@ TypeScript source so tests and smokes run without a build step, so the built out
 `.ts` files. `scripts/verify-install.mjs` documents this in full. Every example in this repository's
 docs that is written as `shellx-motion <command>` takes the `pnpm --filter …` prefix instead when you
 run it from here.
+
+**POSIX checkout authority.** Motion's local validation and copy-on-write paths deliberately refuse
+a source checkout or worktree that is group- or world-writable. A team-oriented `umask 0002` commonly
+creates a fresh clone as `0775`; make the checkout private before `pnpm install` and before running
+the validation examples below. Either clone under a private umask, or repair only the clone you just
+created:
+
+```bash
+umask 0077
+git clone https://github.com/martinsbrezauckis/shellx-motion.git shellx-motion
+
+# For a clone already made with umask 0002:
+chmod go-w shellx-motion
+```
+
+Keep each worktree root private as well. This is an authority requirement for local COW outputs, not
+a request to relax shared-directory protection or to change ownership of parent directories.
+
+On Windows, the equivalent check reads the checkout DACL and refuses a route where an unrelated
+principal can modify descendants. Use a current-user-private checkout for validation; do not weaken
+the check or recursively rewrite a shared workspace's permissions merely to make a command pass.
 
 There is no `motion` binary in either form. The `@shellx-motion/cli` package publishes exactly one
 `bin`, `shellx-motion` — that is the command surface. The debug server package separately publishes
@@ -208,8 +276,12 @@ not work here cannot stay documented here.
 
 **Advanced server launch** (for hosts that need to choose a narrower grant):
 
-```bash
-pnpm --filter @shellx-motion/debug-server run serve -- --tier render_motion --trusted-local-tier
+```text
+pnpm --filter @shellx-motion/debug-server run serve -- \
+  --tier render_motion --trusted-local-tier \
+  --render-package-root /absolute/path/to/packages \
+  --render-input-root /absolute/path/to/render-inputs \
+  --render-output-root /absolute/path/to/renders
 ```
 
 It binds loopback only and prints a startup manifest with the URL, the workbench URL, and the
@@ -219,6 +291,12 @@ never a higher one. There are six tiers, in this order:
 ```text
 read_motion < draft_motion < render_motion < edit_motion < write_local < push_remote
 ```
+
+The three render-root flags are host policy, not caller data: package trees, external
+rows/workflow/quality inputs, and final/batch destinations must remain inside their respective
+roots. The loopback server refuses final/batch rendering when a required class is absent. A native
+Workbench chooser can grant only the exact location a person selects for that session. Standalone
+CLI render commands remain local-host operations and do not need these server flags.
 
 **`write_local` ranks above `edit_motion`, not below it** — the intuitive reading is the wrong one,
 and it costs you a session. `edit_motion` mutates a package that already exists
@@ -238,7 +316,9 @@ every command, and `docs/public/DEBUG_API_COMMANDS.md` is generated from it. Rea
 
 Start with [`skill/shellx-motion/SKILL.md`](skill/shellx-motion/SKILL.md). Exact CLI calls, bounded
 environment examples, permission tiers, verification rules, and connector ownership are in
-[`skill/shellx-motion/references/cli.md`](skill/shellx-motion/references/cli.md).
+[`skill/shellx-motion/references/cli.md`](skill/shellx-motion/references/cli.md). Then use
+[`docs/public/RENDERING_SAMPLES.md`](docs/public/RENDERING_SAMPLES.md) to choose a checked package
+or workflow without inferring support from a pre-baked example.
 
 The machine-readable contracts are:
 
@@ -248,18 +328,25 @@ The machine-readable contracts are:
 - `schemas/cut-import-plan.schema.json` (`shellx-motion/cut-import-plan@1`) for the Cut connector
   plan, and `schemas/canvas-frame-selection.schema.json`
   (`shellx-motion/canvas-frame-selection@1`) for the Canvas frame-selection connector input.
+- `schemas/canvas-bridge-package.schema.json`
+  (`shellx-motion/canvas-bridge-package@1`) for the exported Canvas-to-Motion package envelope:
+  manifest, Motion document, export receipt, and integration evidence. It composes the three
+  referenced package schemas rather than duplicating them.
 
-There is no schema file for the Canvas bridge *export* payload. The integration protocol advertises
-`shellx-motion/canvas-bridge-package@1` (`packages/core/src/integration-protocol.ts`), but that
-payload's only definition is the TypeScript type in `packages/connectors/src/canvas-bridge.ts`. Read
-that source, not a schema, before producing or consuming it.
+The bridge command writes a Canvas frame-selection document first; that file remains governed by
+`canvas-frame-selection.schema.json`. Converting it into a Motion package produces the canonical
+`canvas-bridge-package@1` envelope. The package writer retains an id-less in-process compatibility
+path for callers predating this schema, but external hosts should only exchange the versioned
+envelope.
 
 Human-readable current-state references are:
 
 - [`docs/public/FEATURES.md`](docs/public/FEATURES.md) for implemented capabilities and honest boundaries;
 - [`docs/public/DEBUG_API.md`](docs/public/DEBUG_API.md) for transports, authentication, discovery, and calls;
 - [`docs/public/DEBUG_API_COMMANDS.md`](docs/public/DEBUG_API_COMMANDS.md) for the complete schema-generated
-  debug command, permission, and mutation index.
+  debug command, permission, and mutation index;
+- [`docs/public/SBOM.md`](docs/public/SBOM.md) for the deterministic dependency inventory, its artifact
+  policy, and its deliberate native/runtime limits.
 
 Run `pnpm docs:check` with other local checks. It fails when the generated command reference no
 longer matches `schemas/debug.json`; regenerate deliberately with `pnpm docs:debug-api`.
@@ -274,8 +361,13 @@ pnpm --filter @shellx-motion/cli run cli -- actions plan "change snow intensity 
 
 For the local standalone workbench, use the normal human launcher:
 
-```bash
-pnpm start
+```text
+pnpm start -- \
+  --authoring-input-root /absolute/path/to/packages \
+  --authoring-output-root /absolute/path/to/revisions \
+  --render-package-root /absolute/path/to/packages \
+  --render-input-root /absolute/path/to/render-inputs \
+  --render-output-root /absolute/path/to/renders
 ```
 
 It opens an already-unlocked Workbench. The **Connections** page shows one-click supported-agent
@@ -297,4 +389,5 @@ MIT covers ShellX Motion's own code and assets. Third-party material redistribut
 repository is recorded separately in [`NOTICE`](NOTICE) — currently the bundled Inter WOFF2 files
 under the SIL Open Font License 1.1, shipped inside every package that renders with Inter. `NOTICE` also states the provenance of the generated,
 synthetic, and rendered sample media, and the runtime boundary for FFmpeg, Chromium, and
-`playwright-core`. Redistribute `NOTICE` alongside `LICENSE`.
+`playwright-core` plus the pinned deterministic Rapier provider. Redistribute `NOTICE` alongside
+`LICENSE`.

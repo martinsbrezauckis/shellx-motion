@@ -9,6 +9,7 @@ import {
 import { basename, join } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { booleanArg, finiteNumberArg, nonNegativeNumberArg, stringArg } from "./args.js";
+import { qualityPathPolicyFailure } from "./render-quality-path-policy.js";
 
 export interface QualityMedia {
   width: number;
@@ -52,10 +53,16 @@ export interface RenderQualityCheckServices {
   qualityInputRoots?: string[];
   qualityOutputRoots?: string[];
   isQualityPathInsideRoots?: (path: string, roots: string[]) => Promise<boolean>;
+  snapshotQualityMedia?: (inputPath: string, inputRoots: string[]) => Promise<{ path: string; root: string; sha256: string; release(): Promise<void> }>;
   probeQualityMedia?: (inputPath: string, inputRoots: string[]) => Promise<QualityMedia>;
   measureQualityAudio?: (inputPath: string, inputRoots: string[]) => Promise<QualityAudioLevels>;
   runQualityManifest?: (input: {
     inputPath: string;
+    /** Caller-visible path and immutable hash retained in manifest receipts. */
+    receiptInputPath?: string;
+    receiptInputHash?: string;
+    /** Caller-visible file name used for manifest-derived output names and public results. */
+    displayInputPath?: string;
     manifestPath: string;
     media: QualityMedia;
     outDir: string;
@@ -77,6 +84,7 @@ export interface RenderQualityCheckServices {
     id: string;
     packageId: string;
     inputPath: string;
+    inputHash?: string;
     output: Record<string, unknown>;
     warnings: string[];
     status?: OperationReceipt["status"];
@@ -189,13 +197,22 @@ export async function dispatchRenderQualityCheckCommand(
   });
   if (unsafePath) return unsafePath;
 
-  let media: QualityMedia;
+  let snapshot: { path: string; root: string; sha256: string; release(): Promise<void> } | undefined;
   try {
-    media = await services.probeQualityMedia!(inputPath, inputRoots);
+    snapshot = await services.snapshotQualityMedia!(inputPath, inputRoots);
   } catch (error) {
     return commandFailure("ffmpeg_failed", error);
   }
-  const failureBase = { services, packageId, inputPath, receiptsRoot };
+  const admittedInputPath = snapshot.path;
+  const admittedInputRoots = [snapshot.root];
+  try {
+  let media: QualityMedia;
+  try {
+    media = await services.probeQualityMedia!(admittedInputPath, admittedInputRoots);
+  } catch (error) {
+    return commandFailure("ffmpeg_failed", error);
+  }
+  const failureBase = { services, packageId, inputPath, inputHash: snapshot.sha256, receiptsRoot };
   if (expectWidth !== null && media.width !== expectWidth) {
     return qualityFailure({ ...failureBase, code: "media_quality_failed", message: `Media width is ${media.width}; expected ${expectWidth}.`, output: { inputPath, media, checks } });
   }
@@ -212,7 +229,7 @@ export async function dispatchRenderQualityCheckCommand(
       return qualityFailure({ ...failureBase, code: "audio_quality_failed", message: "Expected at least one audio stream for audio peak check, but media has none.", output: { inputPath, media, checks } });
     }
     try {
-      audioLevels = await services.measureQualityAudio!(inputPath, inputRoots);
+    audioLevels = await services.measureQualityAudio!(admittedInputPath, admittedInputRoots);
     } catch (error) {
       return commandFailure("ffmpeg_failed", error);
     }
@@ -223,8 +240,10 @@ export async function dispatchRenderQualityCheckCommand(
   }
 
   if (manifestPath) {
-    return services.runQualityManifest!({
-      inputPath, manifestPath, media, outDir, inputRoots, receiptsRoot, packageId,
+    return await services.runQualityManifest!({
+      inputPath: admittedInputPath, receiptInputPath: inputPath, receiptInputHash: snapshot.sha256,
+      displayInputPath: inputPath,
+      manifestPath, media, outDir, inputRoots: [...admittedInputRoots, ...inputRoots], receiptsRoot, packageId,
       defaults: {
         minBrightPixels: minBrightPixels ?? 0,
         minEdgePixels: minEdgePixels ?? 0,
@@ -243,7 +262,7 @@ export async function dispatchRenderQualityCheckCommand(
   let visualDiff: QualityVisualDiff | undefined;
   if (visualRequested && framePath) {
     if (!framePathArg) {
-      const extracted = await services.extractQualityFrame!({ inputPath, media, framePath, atMs, inputRoots });
+      const extracted = await services.extractQualityFrame!({ inputPath: admittedInputPath, media, framePath, atMs, inputRoots: admittedInputRoots });
       if (!extracted.ok) return { ok: false, error: { code: extracted.code, message: extracted.message }, warnings: [] };
     }
     const inspected = await services.analyzeQualityFrame!(framePath);
@@ -285,7 +304,7 @@ export async function dispatchRenderQualityCheckCommand(
   const output = qualityOutput({ inputPath, media, audioLevels, framePath: framePath ?? undefined, atMs, quality, baselinePath: baselinePath ?? undefined, visualDiff, checks });
   const receiptId = `quality-check-${hashBuffer(Buffer.from(JSON.stringify({ inputPath, media, audioLevels, framePath, quality, baselinePath, visualDiff, checks }), "utf8")).slice(0, 16)}`;
   const warnings = quality && quality.blankFrames > 0 ? ["Extracted frame is blank or visually empty."] : [];
-  const receipt = await services.createQualityReceipt!({ id: receiptId, packageId, inputPath, output, warnings });
+  const receipt = await services.createQualityReceipt!({ id: receiptId, packageId, inputPath, inputHash: snapshot.sha256, output, warnings });
   const hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
   return {
     ok: true, receiptId,
@@ -293,6 +312,9 @@ export async function dispatchRenderQualityCheckCommand(
     result: { ok: true, ...output, receipt, ...(hostReceiptPath ? { hostReceiptPath } : {}) },
     warnings
   };
+  } finally {
+    await snapshot.release();
+  }
 }
 
 function qualityOutput(input: {
@@ -323,12 +345,13 @@ async function qualityFailure(input: {
   message: string;
   packageId: string;
   inputPath: string;
+  inputHash?: string;
   receiptsRoot?: string;
   output: Record<string, unknown>;
 }): Promise<MotionDebugResult> {
   const output = { ...input.output, error: { code: input.code, message: input.message } };
   const receiptId = `quality-check-${hashBuffer(Buffer.from(JSON.stringify({ inputPath: input.inputPath, output, status: "failed" }), "utf8")).slice(0, 16)}`;
-  const receipt = await input.services.createQualityReceipt!({ id: receiptId, packageId: input.packageId, inputPath: input.inputPath, output, warnings: [input.message], status: "failed" });
+  const receipt = await input.services.createQualityReceipt!({ id: receiptId, packageId: input.packageId, inputPath: input.inputPath, inputHash: input.inputHash, output, warnings: [input.message], status: "failed" });
   const hostReceiptPath = input.receiptsRoot ? await input.services.writeReceipt!(input.receiptsRoot, receipt) : undefined;
   return {
     ok: false,
@@ -349,7 +372,7 @@ function requiredCapabilities(
     receiptsRoot?: string;
   }
 ): MotionDebugResult | null {
-  if (!services.probeQualityMedia || !services.isQualityPathInsideRoots) return capabilityUnavailable("Quality media analysis is unavailable.");
+  if (!services.probeQualityMedia || !services.snapshotQualityMedia || !services.isQualityPathInsideRoots) return capabilityUnavailable("Quality media analysis is unavailable.");
   if (input.needsReceiptBuilder && !services.createQualityReceipt) return capabilityUnavailable("Quality receipt construction is unavailable.");
   if (input.needsAudio && !services.measureQualityAudio) return capabilityUnavailable("Quality audio analysis is unavailable.");
   if (input.needsManifest && !services.runQualityManifest) return capabilityUnavailable("Quality manifest execution is unavailable.");
@@ -357,32 +380,6 @@ function requiredCapabilities(
   if (input.needsFrameExtraction && !services.extractQualityFrame) return capabilityUnavailable("Quality frame extraction is unavailable.");
   if (input.needsCompare && !services.compareQualityFrames) return capabilityUnavailable("Quality baseline comparison is unavailable.");
   if (input.receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Quality receipt persistence is unavailable.");
-  return null;
-}
-
-async function qualityPathPolicyFailure(input: {
-  services: RenderQualityCheckServices;
-  manifestPath: string | null;
-  framePath: string | null;
-  baselinePath: string | null;
-  outDir?: string;
-  receiptsRoot?: string;
-}): Promise<MotionDebugResult | null> {
-  const inputRoots = input.services.qualityInputRoots ?? [];
-  const outputRoots = input.services.qualityOutputRoots ?? [];
-  const checks: Array<{ path: string | null | undefined; roots: string[]; label: string }> = [
-    { path: input.manifestPath, roots: inputRoots, label: "manifestPath" },
-    { path: input.framePath, roots: inputRoots, label: "framePath" },
-    { path: input.baselinePath, roots: inputRoots, label: "baselinePath" },
-    { path: input.outDir, roots: outputRoots, label: "outDir" },
-    { path: input.receiptsRoot, roots: outputRoots, label: "receiptsRoot" }
-  ];
-  for (const check of checks) {
-    if (!check.path) continue;
-    if (check.roots.length === 0 || !await input.services.isQualityPathInsideRoots!(check.path, check.roots)) {
-      return invalidArgs(`motion.quality.check ${check.label} must be inside a trusted quality ${check.label === "outDir" || check.label === "receiptsRoot" ? "output" : "input"} root.`);
-    }
-  }
   return null;
 }
 

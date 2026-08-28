@@ -139,8 +139,8 @@ const OPERATION_REQUIREMENTS: Record<MotionRequirementOperation, MotionOperation
           + " a fixed uppercase block-glyph set and no font rasterizer, so a DELIVERY render refuses"
           + " (`native_text_not_deliverable`) any package whose text is lowercase or names a font"
           + " family, and it cannot draw browser-only layers (HTML/web sources, capture workflows)."
-          + " It is also CLI-only — `motion.render.final` accepts frameLane \"browser\" alone, so an"
-          + " agent on the debug transport needs Chromium installed."
+          + " The typed `motion.render.final` surface accepts frameLane \"native\" too; browser"
+          + " workflows still require frameLane \"browser\"."
       }
     }
   },

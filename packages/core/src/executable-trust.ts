@@ -16,11 +16,11 @@
  * --------------
  * A directory may contribute an executable only when the set of principals who can change what is
  * inside it is a subset of {this user, root}. Concretely, for the directory itself (the TERMINAL
- * directory — a cache root, or one build directory inside it):
+ * directory — a cache root, build, or layout component inside it):
  *
  *   1. its owner is this process's uid, or root (uid 0);
  *   2. it is not writable by "other";
- *   3. it is not writable by "group", unless that group is this process's own primary group.
+ *   3. it is not writable by "group".
  *
  * and for every ANCESTOR up to the filesystem root, the same, except that group/other write is
  * tolerated when the sticky bit is set.
@@ -33,16 +33,6 @@
  *     refusing root-owned directories would refuse `/ms-playwright` in every official Playwright
  *     container image.
  *
- *   - THE PRIMARY-GROUP CARVE-OUT is a deliberate, narrow exception to "reject group-writable".
- *     Fedora/RHEL/Arch ship umask 002 with user-private groups, so a perfectly private
- *     `~/.cache/ms-playwright` is mode 0775 owned by `user:user` on a large share of Linux
- *     desktops. Refusing that would report "no browser" to users who have one, which is a worse
- *     product than the residual it closes: a *shared* cache is shared through a group the account
- *     holds as a SUPPLEMENTARY group, not through its own private primary group. Making another
- *     account a member of a user's private group is an administrator's explicit grant of exactly
- *     this access, and is out of scope. Residual, stated plainly: a host that sets a job account's
- *     PRIMARY group to a shared group defeats this clause.
- *
  *   - STICKY RESCUES ANCESTORS ONLY. The attack on an ancestor is renaming or deleting the
  *     directory below it and substituting your own; the sticky bit is precisely the rule that
  *     forbids that to non-owners, which is why `mkdtemp` under a 1777 `/tmp` is safe. The attack on
@@ -52,21 +42,18 @@
  *
  * WINDOWS
  * -------
- * `node:fs` exposes no ACL information, and `Stats.uid`/`Stats.mode` on win32 are synthesised
- * values that carry no ownership fact at all — evaluating the rule there would either pass
- * everything or fail everything, and both are lies. So on a platform with no `process.getuid` this
- * module returns "trusted" and says so, and the callers' remaining defences (a strict
- * `chromium-<digits>` name rule and symlink containment) are what stand. `%LOCALAPPDATA%` is
- * per-user by construction; the real residual is a `PLAYWRIGHT_BROWSERS_PATH` aimed at a Windows
- * share, which needs an ACL check this runtime cannot perform.
+ * `node:fs` exposes no ACL information, and `Stats.uid`/`Stats.mode` on win32 are synthesised.
+ * Callers that discover executables must therefore refuse such directories or use another
+ * platform-specific authority. The Playwright-cache caller fails closed on win32; this low-level
+ * POSIX predicate returns null only because it has no Windows ownership fact to evaluate.
  *
  * DEPENDENCIES / CALLERS
  * ----------------------
  * `node:fs` / `node:path` / `node:process` only, so it stays usable from a failure path.
- * Primary caller: `browser-executable.ts`'s Playwright cache scan.
+ * Primary caller: `playwright-browser-cache.ts`.
  */
-import { realpathSync, statSync, type Stats } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { lstatSync, realpathSync, statSync, type Stats } from "node:fs";
+import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 
 /** Mode bit: writable by users outside the owner and the group. */
 const OTHER_WRITABLE = 0o002;
@@ -78,11 +65,6 @@ const STICKY = 0o1000;
 /** This process's uid, or null on a platform that has none (win32). */
 function processUid(): number | null {
   return typeof process.getuid === "function" ? process.getuid() : null;
-}
-
-/** This process's PRIMARY gid, or null on a platform that has none (win32). */
-function processGid(): number | null {
-  return typeof process.getgid === "function" ? process.getgid() : null;
 }
 
 /**
@@ -102,8 +84,36 @@ function writableByOthersReason(stats: Stats, uid: number, allowSticky: boolean)
   }
   const rescued = allowSticky && (stats.mode & STICKY) !== 0;
   if ((stats.mode & OTHER_WRITABLE) !== 0 && !rescued) return "it is world-writable";
-  if ((stats.mode & GROUP_WRITABLE) !== 0 && !rescued && stats.gid !== processGid()) {
-    return `it is writable by group ${stats.gid}, which is not this user's primary group`;
+  if ((stats.mode & GROUP_WRITABLE) !== 0 && !rescued) return "it is group-writable";
+  return null;
+}
+
+/**
+ * Reject a path that reaches its target through a symbolic link.
+ *
+ * `realpathSync` alone is deliberately not enough: it tells us WHERE a link lands, but the
+ * Playwright cache admission rule needs the logical cache layout itself to be canonical. A link
+ * inside an otherwise trusted build can be retargeted by whoever controls that link, so every
+ * component is inspected with `lstatSync` before the ownership walk follows anything.
+ */
+function nonCanonicalPathReason(path: string): string | null {
+  const absolute = resolve(path);
+  const parsed = parse(absolute);
+  const parts = relative(parsed.root, absolute).split(sep).filter(Boolean);
+  let current = parsed.root;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = current === parsed.root ? `${parsed.root}${parts[index]}` : `${current}${sep}${parts[index]}`;
+    let facts: Stats;
+    try {
+      facts = lstatSync(current);
+    } catch {
+      return index === parts.length - 1
+        ? "it could not be resolved on this filesystem"
+        : "one of its parent directories could not be resolved on this filesystem";
+    }
+    if (facts.isSymbolicLink()) {
+      return index === parts.length - 1 ? "it is a symbolic link" : "one of its parent directories is a symbolic link";
+    }
   }
   return null;
 }
@@ -127,8 +137,10 @@ function writableByOthersReason(stats: Stats, uid: number, allowSticky: boolean)
  */
 export function untrustedExecutableDirectoryReason(
   directory: string,
-  options: { ancestors?: boolean } = {}
+  options: { ancestors?: boolean; trustedAncestor?: string } = {}
 ): string | null {
+  const canonicalReason = nonCanonicalPathReason(directory);
+  if (canonicalReason) return canonicalReason;
   const uid = processUid();
   // See the WINDOWS section of the module header: there is no ownership fact to read here.
   if (uid === null) return null;
@@ -138,6 +150,13 @@ export function untrustedExecutableDirectoryReason(
     current = realpathSync(resolve(directory));
   } catch {
     return "it could not be resolved on this filesystem";
+  }
+  const trustedAncestor = options.trustedAncestor === undefined ? undefined : resolve(options.trustedAncestor);
+  if (trustedAncestor !== undefined) {
+    const suffix = relative(trustedAncestor, current);
+    if (suffix === ".." || suffix.startsWith(`..${sep}`) || isAbsolute(suffix)) {
+      return "it is outside the host-verified trusted ancestor";
+    }
   }
 
   let terminal = true;
@@ -154,11 +173,43 @@ export function untrustedExecutableDirectoryReason(
     // and the callers that print this sentence must not republish a home directory to do so.
     if (reason) return terminal ? reason : `one of its parent directories is untrusted: ${reason}`;
     if (terminal && options.ancestors === false) return null;
+    if (trustedAncestor !== undefined && current === trustedAncestor) return null;
     terminal = false;
     const parent = dirname(current);
     if (parent === current) return null;
     current = parent;
   }
+}
+
+/**
+ * Decide whether a discovered executable leaf may be run.
+ *
+ * This is intentionally separate from the directory predicate: a directory can be trusted while
+ * a group-writable regular file inside it can still be replaced in place. Callers that already
+ * checked every parent component may pass `ancestors: false` to avoid repeating that walk.
+ */
+export function untrustedExecutableFileReason(
+  file: string,
+  options: { ancestors?: boolean } = {}
+): string | null {
+  const canonicalReason = nonCanonicalPathReason(file);
+  if (canonicalReason) return canonicalReason;
+
+  let facts: Stats;
+  try {
+    facts = lstatSync(resolve(file));
+  } catch {
+    return "it could not be resolved on this filesystem";
+  }
+  if (!facts.isFile()) return "it is not a regular file";
+  if ((facts.mode & 0o111) === 0) return "it is not executable";
+
+  const uid = processUid();
+  if (uid === null) return null;
+  const reason = writableByOthersReason(facts, uid, false);
+  if (reason) return reason;
+  if (options.ancestors === false) return null;
+  return untrustedExecutableDirectoryReason(dirname(file));
 }
 
 /**

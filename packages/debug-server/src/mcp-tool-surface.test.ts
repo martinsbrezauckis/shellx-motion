@@ -11,16 +11,33 @@
  * "an MCP client can call 166" are different claims and both need proving.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEBUG_COMMANDS } from "@shellx-motion/debug-api";
-import { startMotionDebugServer } from "./index";
+import { motionCapabilityCatalog } from "@shellx-motion/core";
+import { startMotionDebugServer, type MotionDebugServerOptions } from "./index";
 
 const servers: Array<{ close: () => Promise<void> }> = [];
+const scratchRoots: string[] = [];
+const LOWER_THIRD = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
+  await Promise.all(scratchRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function mcpServer() {
-  const handle = await startMotionDebugServer({ host: "127.0.0.1", port: 0, grantedTier: "read_motion" });
+async function scratch(prefix: string): Promise<string> {
+  const root = await mkdtemp(resolve(tmpdir(), `shellx-motion-mcp-${prefix}-`));
+  scratchRoots.push(root);
+  return root;
+}
+
+async function mcpServer(
+  grantedTier: "read_motion" | "edit_motion" | "render_motion" = "read_motion",
+  context?: MotionDebugServerOptions["context"]
+) {
+  const handle = await startMotionDebugServer({ host: "127.0.0.1", port: 0, grantedTier, context });
   servers.push(handle);
   const call = async (method: string, params: unknown = {}) => {
     const response = await fetch(new URL("/rpc", handle.url), {
@@ -63,6 +80,110 @@ describe("MCP tool surface", () => {
       expect(DEBUG_COMMANDS).toContain(tool.title as never);
       expect(toolNameFor(tool.title as string)).toBe(tool.name);
     }
+  }, 45_000);
+
+  it("publishes keepFrames, streams default video, and refuses non-video retention over real MCP calls", async () => {
+    const outputRoot = await scratch("streaming");
+    const { call } = await mcpServer("render_motion", {
+      renderPackageRoots: [LOWER_THIRD],
+      renderInputRoots: [LOWER_THIRD],
+      renderOutputRoots: [outputRoot]
+    });
+    const listed = await call("tools/list");
+    const renderTool = listed.body.result.tools.find((tool: { name: string }) => tool.name === "motion_render_final");
+    expect(renderTool).toMatchObject({
+      inputSchema: { properties: { args: { properties: { keepFrames: { type: "boolean" } } } } }
+    });
+
+    const { body } = await call("tools/call", {
+      name: "motion_render_final",
+      arguments: {
+        args: {
+          packageRoot: LOWER_THIRD,
+          outputPath: resolve(outputRoot, "mcp-streamed-final.mp4"),
+          dryRun: true
+        }
+      }
+    });
+    expect(body.result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        ok: true,
+        command: "motion.render.final",
+        result: {
+          dryRun: true,
+          frameTransport: { delivery: "streamed", reason: "stream_default" },
+          ffmpeg: { shell: false, args: expect.arrayContaining(["-f", "image2pipe", "-i", "pipe:0"]) }
+        }
+      }
+    });
+
+    const refused = await call("tools/call", {
+      name: "motion_render_final",
+      arguments: {
+        args: {
+          packageRoot: LOWER_THIRD,
+          outputPath: resolve(outputRoot, "mcp-keep-frames-refusal.png"),
+          preset: "png-frame",
+          keepFrames: true,
+          dryRun: true
+        }
+      }
+    });
+    expect(refused.body.result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        ok: false,
+        error: { code: "invalid_args", message: "motion.render.final keepFrames requires a final-video FFmpeg preset." }
+      }
+    });
+  }, 45_000);
+
+  it("carries the closed durable segmented dry-run through the elevated MCP wire without rendering", async () => {
+    const outputRoot = await scratch("segmented");
+    const renderContext = {
+      renderPackageRoots: [LOWER_THIRD],
+      renderInputRoots: [LOWER_THIRD],
+      renderOutputRoots: [outputRoot]
+    };
+    const { call } = await mcpServer("render_motion", renderContext);
+    const listed = await call("tools/list");
+    const renderTool = listed.body.result.tools.find((tool: { name: string }) => tool.name === "motion_render_final");
+    expect(renderTool).toMatchObject({
+      inputSchema: { properties: { args: { properties: { segmented: {
+        type: "object", required: ["segmentFrames"], additionalProperties: false,
+        properties: { segmentFrames: { type: "number" }, resume: { type: "boolean" } }
+      } } } } }
+    });
+
+    const elevated = await call("tools/call", {
+      name: "motion_render_final",
+      arguments: { args: {
+        packageRoot: LOWER_THIRD,
+        outputPath: resolve(outputRoot, "mcp-segmented-final-dry-run.mp4"),
+        segmented: { segmentFrames: 48, resume: true },
+        dryRun: true
+      } }
+    });
+    expect(elevated.body.result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        ok: true,
+        command: "motion.render.final",
+        result: { dryRun: true, lane: "ffmpeg", segmented: { segmentFrames: 48, resume: true, store: "derived-from-output" } }
+      }
+    });
+    expect(JSON.stringify(elevated.body)).not.toContain("segments.ffconcat");
+
+    const { call: lowerTierCall } = await mcpServer("read_motion", renderContext);
+    const lowerTier = await lowerTierCall("tools/call", {
+      name: "motion_render_final",
+      arguments: { args: { packageRoot: LOWER_THIRD, outputPath: resolve(outputRoot, "mcp-segmented-final-denied.mp4"), segmented: { segmentFrames: 48 }, dryRun: true } }
+    });
+    expect(lowerTier.body.result).toMatchObject({
+      isError: true,
+      structuredContent: { ok: false, error: { code: "permission_denied" } }
+    });
   }, 45_000);
 
   it("annotates every tool from the canonical mutation contract", async () => {
@@ -110,6 +231,74 @@ describe("MCP tool surface", () => {
     expect(JSON.parse(body.result.content[0].text)).toMatchObject({ ok: true });
   }, 45_000);
 
+  it("returns the same canonical connector catalog through a read-only MCP tool without coordinator authority", async () => {
+    const { call } = await mcpServer("read_motion", { jobView: null });
+    const listed = await call("tools/list");
+    const catalogTool = listed.body.result.tools.find((tool: { name: string }) => tool.name === "motion_connector_catalog");
+    expect(catalogTool).toMatchObject({
+      title: "motion.connector.catalog",
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: { properties: { args: { type: "object", properties: {}, additionalProperties: false } } }
+    });
+
+    const { body } = await call("tools/call", { name: "motion_connector_catalog", arguments: { args: {} } });
+    const coreCatalog = motionCapabilityCatalog();
+    expect(body.result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        ok: true,
+        command: "motion.connector.catalog",
+        result: { ok: true, catalog: coreCatalog }
+      }
+    });
+    expect(body.result.structuredContent.result.catalog).toEqual(coreCatalog);
+    expect(body.result.structuredContent.result.catalog).toMatchObject({
+      schema: coreCatalog.schema,
+      fingerprint: coreCatalog.fingerprint
+    });
+  }, 45_000);
+
+  it("carries bounded analytic particle fields through the existing layer-create MCP tool", async () => {
+    const outDir = await mkdtemp(resolve(tmpdir(), "shellx-motion-mcp-particle-field-"));
+    const { call } = await mcpServer("edit_motion", {
+      authoringInputRoots: [LOWER_THIRD],
+      authoringOutputRoots: [outDir]
+    });
+    try {
+      const { body } = await call("tools/call", {
+        name: "motion_timeline_layer_create",
+        arguments: {
+          args: {
+            packageRoot: LOWER_THIRD,
+            outDir,
+            createdBy: "mcp-particle-field-test",
+            layer: {
+              id: "mcp-orbital-dust", type: "particles", startMs: 0, durationMs: 300,
+              transform: { x: 0, y: 0, width: 64, height: 36 },
+              emitter: {
+                seed: 11, count: 24, lifetimeMs: 300, color: "#ffffff",
+                field: { schema: "shellx-motion/particle-field@1", sources: [
+                  { kind: "radial", centerX: 0.5, centerY: 0.5, strength: -0.3, softening: 0.2 }
+                ] }
+              }
+            }
+          }
+        }
+      });
+
+      expect(body.result).toMatchObject({
+        isError: false,
+        structuredContent: {
+          ok: true,
+          command: "motion.timeline.layer.create",
+          result: { action: "created", layerId: "mcp-orbital-dust", validation: { ok: true } }
+        }
+      });
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+    }
+  }, 45_000);
+
   it("reports an unknown tool as an error instead of pretending it ran", async () => {
     const { call } = await mcpServer();
 
@@ -123,10 +312,16 @@ describe("MCP tool surface", () => {
     const { call } = await mcpServer();
 
     // The server was started at read_motion; rendering needs render_motion.
-    const { body } = await call("tools/call", { name: "motion_render_final", arguments: { args: {} } });
+    const { body } = await call("tools/call", {
+      name: "motion_render_final",
+      arguments: { args: { packageRoot: LOWER_THIRD } }
+    });
 
-    const payload = body.result?.structuredContent ?? body.result ?? body.error;
-    expect(JSON.stringify(payload)).toMatch(/permission_denied|capability_unavailable|invalid_args/);
+    expect(body.result).toMatchObject({
+      isError: true,
+      structuredContent: { ok: false, error: { code: "permission_denied" } }
+    });
+    expect(JSON.stringify(body)).not.toContain("Configured render package roots must not be empty");
   }, 45_000);
 
   it("rejects an unauthenticated request", async () => {

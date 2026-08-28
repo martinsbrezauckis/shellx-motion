@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLocalMotionSdk } from "./local.js";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support.js";
 
 const roots: string[] = [];
 
@@ -19,7 +20,10 @@ describe("local compositing SDK", () => {
     const removedRoot = join(root, "removed");
     await writePackage(sourceRoot);
     const sourceMotion = await readFile(join(sourceRoot, "motion.json"), "utf8");
-    const sdk = createLocalMotionSdk();
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [root],
+      outputRoots: [root],
+    }));
 
     const before = await sdk.compositingInspect({ packageRoot: sourceRoot });
     expect(before).toMatchObject({
@@ -114,7 +118,7 @@ async function fixtureRoot(): Promise<string> {
 }
 
 async function writePackage(root: string): Promise<void> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",
     id: "sdk-compositing",

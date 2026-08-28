@@ -1,10 +1,10 @@
 /**
- * Regenerate docs/public/DEBUG_API_COMMANDS.md from schemas/debug.json.
+ * Regenerate docs/public/DEBUG_API_COMMANDS.md from schemas/debug.json and the debug coverage fixture.
  *
  * Role: the human-readable face of the published debug contract. It renders one argument
- * table per command (names, types, required flag, aliases, defaults, allowed values) plus the
- * shared `argEnums` dictionary, so a reader never has to open TypeScript source to learn what
- * a command takes.
+ * table per command (names, types, required flag, aliases, defaults, allowed values), the shared
+ * `argEnums` dictionary, and the deliberately limited debug-coverage gate scope, so a reader never
+ * has to open TypeScript source to learn what a command takes or what that gate proves.
  *
  * Run `pnpm docs:debug-api` to write it and `pnpm docs:check` to fail on drift.
  */
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const schemaPath = resolve(repoRoot, "schemas/debug.json");
+const coverageFixturePath = resolve(repoRoot, "fixtures/debug/coverage.expected.json");
 const outputPath = resolve(repoRoot, "docs/public/DEBUG_API_COMMANDS.md");
 const checkOnly = process.argv.includes("--check");
 
@@ -21,6 +22,7 @@ const schema = JSON.parse(await readFile(schemaPath, "utf8"));
 const commands = schema.commands;
 const contracts = schema.contracts;
 const argEnums = schema.argEnums ?? {};
+const coverageFixture = JSON.parse(await readFile(coverageFixturePath, "utf8"));
 
 if (!Array.isArray(commands) || !commands.every((command) => typeof command === "string")) {
   throw new Error("schemas/debug.json commands must be an array of strings.");
@@ -40,6 +42,30 @@ if (commandSet.size !== commands.length) {
   throw new Error("schemas/debug.json contains duplicate command names.");
 }
 
+if (!coverageFixture || typeof coverageFixture !== "object" || Array.isArray(coverageFixture)
+  || !Array.isArray(coverageFixture.visibleSurfaces)
+  || coverageFixture.visibleSurfaces.length === 0
+  || !coverageFixture.visibleSurfaces.every((surface) => typeof surface === "string" && surface.length > 0)
+  || !Array.isArray(coverageFixture.requiredCommands)
+  || coverageFixture.requiredCommands.length === 0
+  || !coverageFixture.requiredCommands.every((command) => typeof command === "string" && command.length > 0)) {
+  throw new Error("fixtures/debug/coverage.expected.json must declare non-empty string visibleSurfaces and requiredCommands arrays.");
+}
+
+const coverageVisibleSurfaces = coverageFixture.visibleSurfaces;
+const coverageRequiredCommands = coverageFixture.requiredCommands;
+if (new Set(coverageVisibleSurfaces).size !== coverageVisibleSurfaces.length) {
+  throw new Error("fixtures/debug/coverage.expected.json contains duplicate visibleSurfaces.");
+}
+if (new Set(coverageRequiredCommands).size !== coverageRequiredCommands.length) {
+  throw new Error("fixtures/debug/coverage.expected.json contains duplicate requiredCommands.");
+}
+const unregisteredCoverageCommands = coverageRequiredCommands.filter((command) => !commandSet.has(command));
+if (unregisteredCoverageCommands.length > 0) {
+  throw new Error(`Debug coverage fixture names commands absent from schemas/debug.json: ${unregisteredCoverageCommands.join(", ")}`);
+}
+const commandsOutsideCoverageScope = commands.length - coverageRequiredCommands.length;
+
 const contractByCommand = new Map();
 for (const contract of contracts) {
   if (!contract || typeof contract.command !== "string") {
@@ -53,6 +79,9 @@ for (const contract of contracts) {
   }
   if (typeof contract.domain !== "string" || typeof contract.permission !== "string" || typeof contract.mutates !== "boolean") {
     throw new Error(`Debug contract ${contract.command} is missing domain, permission, or mutates metadata.`);
+  }
+  if (contract.purpose !== undefined && (typeof contract.purpose !== "string" || contract.purpose.trim().length === 0)) {
+    throw new Error(`Debug contract ${contract.command} has an empty agent purpose.`);
   }
   for (const [name, property] of Object.entries(contract.argsSchema?.properties ?? {})) {
     if (property.enumRef && !Object.hasOwn(argEnums, property.enumRef)) {
@@ -112,6 +141,14 @@ function argumentLines(contract) {
     );
   }
   lines.push("");
+  for (const [keyword, wording] of [["anyOf", "At least one input shape is required"], ["oneOf", "Exactly one input shape is required"]]) {
+    const variants = schema[keyword];
+    if (!Array.isArray(variants) || variants.length === 0) continue;
+    const alternatives = variants
+      .map((alternative) => (alternative.required ?? []).map((name) => `\`${name}\``).join(" + "))
+      .filter(Boolean);
+    if (alternatives.length > 0) lines.push(`${wording}: ${alternatives.join("; ")}.`, "");
+  }
   // `additionalProperties` is ENFORCED on every transport, so this sentence has to say what the
   // server actually does. It used to read "Any other argument is ignored." under
   // `additionalProperties: false` — the exact opposite of the behaviour, on the ~158 commands that
@@ -128,7 +165,7 @@ function argumentLines(contract) {
 const lines = [
   "# ShellX Motion Debug API commands",
   "",
-  "> Generated from `schemas/debug.json`. Do not edit this file by hand. Run",
+  "> Generated from `schemas/debug.json` and `fixtures/debug/coverage.expected.json`. Do not edit this file by hand. Run",
   "> `pnpm docs:debug-api` to regenerate it and `pnpm docs:check` to detect drift.",
   "",
   `Current contract: **${commands.length} commands** across **${domains.size} domains**.`,
@@ -147,8 +184,23 @@ const lines = [
   "[Argument value enumerations](#argument-value-enumerations). Every allowed-value list here is",
   "enforced on the wire, not merely advertised.",
   "",
+  "## Debug coverage gate scope",
+  "",
+  "`pnpm debug:coverage` is a static parity gate for the fixture-defined Workbench surface map, not a",
+  "general test-coverage command. It requires each named surface to map at least one command and the",
+  "map's unique command IDs to exactly equal the fixture's required-command list.",
+  "",
+  `Its exact command scope is **${coverageRequiredCommands.length} / ${commands.length} registered Debug API commands**: ${coverageRequiredCommands.length} fixture-required command IDs across ${coverageVisibleSurfaces.length} named surfaces (${coverageVisibleSurfaces.map((surface) => `\`${surface}\``).join(", ")}). The other ${commandsOutsideCoverageScope} registered commands are outside this gate's scope.`,
+  "",
+  "It does not execute handlers, prove action-discovery completeness, validate receipts, or measure",
+  "unit or line coverage. The gate's JSON output repeats its scope, numerator, denominator, and fixture",
+  "parity so a passing result cannot be read as all-command execution coverage.",
+  "",
   "The same contract is available at runtime: `motion.actions.guide` and `motion.actions.plan`",
-  "return each planned step with its arguments, required set, and allowed values attached.",
+  "return each planned step with its arguments, direct required set, alternative required groups, and allowed values attached.",
+  "A reviewed `Purpose` appears only where an agent-facing semantic distinction has been audited;",
+  "it is sourced from the same action-catalog wording used by action plans and MCP tool listings,",
+  "not maintained as separate documentation prose.",
   ""
 ];
 
@@ -160,6 +212,7 @@ for (const [domain, domainContracts] of [...domains.entries()].sort(([left], [ri
   lines.push("");
   for (const contract of domainContracts) {
     lines.push(`### \`${contract.command}\``, "", `Tier \`${contract.permission}\` · mutates: ${contract.mutates ? "yes" : "no"}`, "");
+    if (contract.purpose) lines.push(`**Purpose:** ${contract.purpose}`, "");
     lines.push(...argumentLines(contract));
   }
 }

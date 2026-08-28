@@ -15,7 +15,9 @@
  * render time on another machine. A name-shaped denylist cannot leak a secret it has not been
  * taught about — but it also cannot break a render, and the minimum safety requirement is
  * exactly this: "at minimum strip `SHELLX_MOTION_DEBUG_TOKEN` and any `*_TOKEN` / `*_SECRET` /
- * `*_KEY` before every spawn."
+ * `*_KEY` before every spawn."  Some operating-system capability handles do not have a
+ * credential-shaped name at all (for example, a Kerberos cache or an X11 authority file), so the
+ * named capability set below is an equally important part of the default boundary.
  *
  * Callers that genuinely need a variable a pattern would strip pass it explicitly through `extra`,
  * which is applied AFTER redaction — so handing a child a credential becomes a deliberate, greppable
@@ -53,12 +55,38 @@ const SECRET_NAME_PATTERNS: readonly RegExp[] = [
 
 /** Names stripped regardless of shape, because they are known credentials that do not match above. */
 const ALWAYS_STRIP: ReadonlySet<string> = new Set([
-  "SHELLX_MOTION_DEBUG_TOKEN",
+  "shellx_motion_debug_token",
   "npm_config__auth",
-  "npm_config__authToken",
-  "NODE_AUTH_TOKEN",
-  "GH_TOKEN",
-  "GITHUB_TOKEN"
+  "npm_config__authtoken",
+  "node_auth_token",
+  "gh_token",
+  "github_token",
+  // Authentication agents, caches, and key material.  Some are already covered by the patterns
+  // above; retaining the literal names makes this protection auditable and protects aliases such
+  // as KRB5CCNAME that have no secret-shaped component.
+  "ssh_auth_sock",
+  "ssh_agent_pid",
+  "krb5ccname",
+  "krb5_ktname",
+  "krb5_config",
+  "gpg_agent_info",
+  "gpg_tty",
+  "gnupghome",
+  "netrc",
+  "git_askpass",
+  "git_ssh_command",
+  // Cluster, container, cloud, and desktop authority locations.  A child that can read one of
+  // these paths or talk to the named socket can act with the operator's existing authority.
+  "kubeconfig",
+  "docker_config",
+  "docker_host",
+  "docker_context",
+  "aws_config_file",
+  "aws_shared_credentials_file",
+  "azure_config_dir",
+  "cloudsdk_config",
+  "google_application_credentials",
+  "xauthority"
 ]);
 
 /**
@@ -70,7 +98,7 @@ const ALWAYS_STRIP: ReadonlySet<string> = new Set([
  * @returns True when the name is withheld from child processes by default.
  */
 export function isSecretEnvName(name: string): boolean {
-  if (ALWAYS_STRIP.has(name)) return true;
+  if (ALWAYS_STRIP.has(name.toLowerCase())) return true;
   return SECRET_NAME_PATTERNS.some((pattern) => pattern.test(name));
 }
 
@@ -78,7 +106,9 @@ export function isSecretEnvName(name: string): boolean {
  * The parent environment with credential-shaped variables removed, plus any explicit additions.
  *
  * @param options.extra Variables to set on the child AFTER redaction. A value here is passed through
- *        verbatim even if its name looks like a secret: that is the deliberate-exception path.
+ *        verbatim even if its name looks like a secret: that is the deliberate-exception path. Only
+ *        an owning host should use it, and the exact provider or desktop requirement must be named
+ *        beside that call site.
  * @param options.source Environment to redact. Defaults to `process.env`; injectable for tests.
  * @returns A new environment object. The input is never mutated.
  */

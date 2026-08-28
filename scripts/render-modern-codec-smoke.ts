@@ -9,6 +9,7 @@ import {
   resolveFfmpegExecutable,
   type FfmpegExportPreset
 } from "../packages/renderer-ffmpeg/src/index";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
 const CONFIG = {
   "mp4-hevc": { extension: "mp4", codec: "hevc", encoders: ["libx265"], pixelFormat: "yuv420p10le", containerMagic: "ftyp" },
@@ -21,13 +22,14 @@ const preset: Extract<FfmpegExportPreset, "mp4-hevc" | "webm-av1"> = requestedPr
 const config = CONFIG[preset];
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const commandId = preset === "mp4-hevc" ? "render-hevc:smoke" : "render-av1:smoke";
-const outDir = join(repoRoot, ".scratch", commandId.replace(":", "-"));
+const outDir = join(await preparePrivateRepoScratch(repoRoot), commandId.replace(":", "-"));
 const framesDir = join(outDir, "frames");
 const outputPath = join(outDir, `modern-codec.${config.extension}`);
 
 // Fast host gate: synthesize deterministic visible frames, select a compiled software encoder, then prove the emitted stream facts.
+await assertPrivateRepoScratchPath(repoRoot, outDir);
 await rm(outDir, { recursive: true, force: true });
-await mkdir(framesDir, { recursive: true });
+await mkdir(framesDir, { recursive: true, mode: 0o700 });
 await runProcess(resolveFfmpegExecutable(), [
   "-hide_banner",
   "-loglevel",

@@ -1,11 +1,10 @@
 /**
  * The two Debug API surfaces that were telling an author its animation existed when it did not.
  *
- * `motion.package.validate` answered `valid: true` for a package storing 309 keyframes as `{ t, v }`
- * — it ran the shallow package reader and a layer-type check, and never asked whether the animation
- * could run. Running the schema validator on the same file directly reported 618 errors, so the
- * knowledge existed in the system and never reached the author. It refuses now, from the same core
- * check the timeline evaluator gates on.
+ * `motion.package.validate` once answered `valid: true` for a package storing keyframes as `{ t, v }`.
+ * It now stops at structural stage one, while the timeline panel separately explains why those
+ * keyframes cannot animate. Validation must not imply semantic/renderability work after structural
+ * failure.
  *
  * `motion.timeline.easing.panel` is the keyframe panel's twin (fixed in fcd41d8): it mapped every
  * stored entry through, so it sorted on a NaN comparator, emitted `atMs: undefined` usage refs, and
@@ -76,30 +75,21 @@ async function writePackage(keyframes: Record<string, unknown>): Promise<string>
 }
 
 describe("motion.package.validate refuses animation the engine cannot run", () => {
-  it("refuses a package whose keyframes would be silently dropped, and gives the exact paths", async () => {
+  it("refuses a package whose keyframes fail structural stage one", async () => {
     const packageRoot = await writePackage(UNREADABLE_KEYFRAMES);
 
     const result = await dispatchDebugCommand("motion.package.validate", { packageRoot }, { tier: "read_motion" });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.code).toBe("keyframes_unreadable");
-    expect(result.error.message).toContain("4 of 4 keyframes cannot be read by the timeline evaluator");
-    expect(result.error.message).toContain('keyframe time is written as "t"');
-    // Naming the correct form is the point: a refusal the author cannot act on is barely better
-    // than the silence it replaced.
-    expect(result.error.suggestedAction).toContain('{ "atMs": <milliseconds>, "value": <number or string> }');
+    expect(result.error.code).toBe("invalid_motion_document");
     const body = result.result as Record<string, unknown>;
     expect(body.valid).toBe(false);
-    expect(body.unreadableKeyframeCount).toBe(4);
-    expect(body.totalKeyframeCount).toBe(4);
-    expect(body.unreadableKeyframeTargetCount).toBe(2);
-    expect((body.unreadableKeyframes as Array<{ path: string }>).map((entry) => entry.path)).toEqual([
-      "/layers/0/keyframes/opacity/0",
-      "/layers/0/keyframes/opacity/1",
-      "/layers/0/keyframes/transform.x/0",
-      "/layers/0/keyframes/transform.x/1"
-    ]);
+    expect(body.validation).toMatchObject({ structural: "failed", semantic: "not_run", renderability: "not_proven" });
+    expect(body.schemaErrors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "/layers/0/keyframes/opacity/0/atMs" }),
+      expect.objectContaining({ path: "/layers/0/keyframes/transform.x/0/value" }),
+    ]));
   });
 
   it("refuses when only part of one track is unreadable", async () => {
@@ -111,7 +101,8 @@ describe("motion.package.validate refuses animation the engine cannot run", () =
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.message).toContain("1 of 3 keyframes cannot be read");
+    const body = result.result as Record<string, unknown>;
+    expect(body.validation).toMatchObject({ structural: "failed", semantic: "not_run" });
   });
 
   it("still validates a correctly authored package, with no new warning", async () => {

@@ -74,11 +74,18 @@ const helper = await import(/* @vite-ignore */ helperUrl) as {
   readDeliveredMedia(path: string, label: string, minBytes?: number): Promise<Buffer>;
   smokeJobIdentity(smoke: string): { jobId: string; callerId: string };
   FONT_FALLBACK_ADVISORY: RegExp;
+  GIF_PALETTEGEN_DUPLICATE_COLOUR_ADVISORY: RegExp;
   MOTION_DENSITY_ADVISORY: RegExp;
 };
 
 const FONT_FALLBACK = "Browser renderer used a font fallback for text layer title.";
 const MOTION_DENSITY = "Rendered motion is static for 74.4% of its duration (2.233s of 3.000s across 1 frozen run, longest 2.233s).";
+const GIF_PALETTEGEN_DUPLICATE_COLOURS = [
+  "[Parsed_palettegen_1 @ [address]] Duped color: FF7BA4B3",
+  "[Parsed_palettegen_1 @ [address]] Duped color: FF88B4C2",
+  "[Parsed_palettegen_1 @ [address]] Duped color: FF95C6D4",
+  "[Parsed_palettegen_1 @ [address]] Duped color: FF96C8D5"
+].join(" ");
 
 describe("canonical receipt-status to job-outcome mapping", () => {
   it("maps a warned success onto a succeeded job, and refuses words outside the contract", () => {
@@ -117,6 +124,20 @@ describe("scripts/render-smoke-status.ts acceptance rule", () => {
 
   it("refuses a warning status with no warning behind it", () => {
     expect(() => accept({ status: "warning", warnings: [] })).toThrow(/must carry its warning/);
+  });
+
+  it("admits only the exact normalized palettegen duplicate-colour sequence for the GIF smoke", () => {
+    const gifAdvisories = [...advisories, helper.GIF_PALETTEGEN_DUPLICATE_COLOUR_ADVISORY] as const;
+    const acceptGif = (warnings: string[]) => helper.assertReceiptSucceeded({ status: "warning", warnings }, {
+      label: "GIF probe",
+      expectedAdvisories: gifAdvisories
+    });
+    expect(acceptGif([FONT_FALLBACK, MOTION_DENSITY, GIF_PALETTEGEN_DUPLICATE_COLOURS]).matchedAdvisories)
+      .toEqual([FONT_FALLBACK, MOTION_DENSITY, GIF_PALETTEGEN_DUPLICATE_COLOURS]);
+    expect(() => acceptGif([FONT_FALLBACK, "[Parsed_palettegen_1 @ [address]] Duped color: FF7BA4B3 unexpected detail"]))
+      .toThrow(/carries a warning this smoke does not declare/);
+    expect(() => acceptGif(["[Parsed_paletteuse_1 @ [address]] Duped color: FF7BA4B3"]))
+      .toThrow(/none of its warnings match an advisory this smoke expects/);
   });
 
   it("refuses every status the contract does not map onto a succeeded job", () => {

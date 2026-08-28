@@ -15,13 +15,25 @@ export class AuthoringRootPolicyError extends Error {
   }
 }
 
+/** Return the host-selected lexical input root containing one already-admitted path. */
+export function configuredAuthoringInputRoot(
+  path: string,
+  roots: string[] | undefined,
+  subject = "Authoring input file",
+): string {
+  const lexical = resolve(path);
+  const root = roots?.map((candidate) => resolve(candidate)).find((candidate) => isInside(candidate, lexical));
+  if (!root) throw new AuthoringRootPolicyError(`${subject} must be inside an approved authoring input root and may not traverse symbolic links.`);
+  return root;
+}
+
 /** Enforce a host-configured input boundary without disclosing rejected paths. */
 export async function assertConfiguredAuthoringInputRoot(
   path: string,
   roots: string[] | undefined,
+  subject = "Procedural package",
 ): Promise<void> {
-  if (roots === undefined) return;
-  const message = "Procedural package must be inside an approved authoring input root and may not traverse symbolic links.";
+  const message = `${subject} must be inside an approved authoring input root and may not traverse symbolic links.`;
   try {
     const approved = await canonicalizeRoots(roots);
     const lexical = resolve(path);
@@ -40,13 +52,38 @@ export async function assertConfiguredAuthoringInputRoot(
   }
 }
 
+/** Enforce the input boundary for a caller-supplied regular file immediately before opening it. */
+export async function assertConfiguredAuthoringInputFile(
+  path: string,
+  roots: string[] | undefined,
+  subject = "Authoring input file",
+): Promise<void> {
+  const message = `${subject} must be a regular file inside an approved authoring input root and may not traverse symbolic links.`;
+  try {
+    const approved = await canonicalizeRoots(roots);
+    const lexical = resolve(path);
+    const entry = await lstat(lexical);
+    if (!entry.isFile() || entry.isSymbolicLink()) throw new AuthoringRootPolicyError(message);
+    const canonical = await realpath(lexical);
+    for (const root of approved) {
+      if (isInside(root.lexical, lexical)
+        && isInside(root.canonical, canonical)
+        && await hasNoSymlinkBelowRoot(root.lexical, lexical)) return;
+    }
+    throw new AuthoringRootPolicyError(message);
+  } catch (error) {
+    if (error instanceof AuthoringRootPolicyError) throw error;
+    throw new AuthoringRootPolicyError(message);
+  }
+}
+
 /** Enforce a host-configured output boundary for existing or not-yet-created directories. */
 export async function assertConfiguredAuthoringOutputRoot(
   path: string,
   roots: string[] | undefined,
+  subject = "Procedural package output",
 ): Promise<void> {
-  if (roots === undefined) return;
-  const message = "Procedural package output must be inside an approved authoring output root and may not traverse symbolic links.";
+  const message = `${subject} must be inside an approved authoring output root and may not traverse symbolic links.`;
   try {
     const approved = await canonicalizeRoots(roots);
     const lexical = resolve(path);
@@ -70,8 +107,64 @@ export async function assertConfiguredAuthoringOutputRoot(
   }
 }
 
-async function canonicalizeRoots(roots: string[]): Promise<ApprovedRoot[]> {
-  if (roots.length === 0) throw new AuthoringRootPolicyError("Configured authoring roots must not be empty.");
+/** Fail closed and validate both sides of one copy-on-write package edit. */
+export async function assertConfiguredAuthoringPackageEditRoots(
+  inputRoot: string,
+  outputRoot: string,
+  inputRoots: string[] | undefined,
+  outputRoots: string[] | undefined,
+  subject = "Motion package edit",
+): Promise<void> {
+  if (!inputRoots?.length || !outputRoots?.length) {
+    throw new AuthoringRootPolicyError(`${subject} requires host-approved authoring input and output roots.`);
+  }
+  await assertConfiguredAuthoringInputRoot(inputRoot, inputRoots, `${subject} packageRoot`);
+  await assertConfiguredAuthoringOutputRoot(outputRoot, outputRoots, `${subject} outDir`);
+}
+
+/** Fail closed before creating a package at a caller-named output path. */
+export async function assertConfiguredAuthoringPackageCreateRoot(
+  outputRoot: string,
+  inputRoots: string[] | undefined,
+  outputRoots: string[] | undefined,
+  subject = "Motion package create",
+): Promise<void> {
+  if (!inputRoots?.length || !outputRoots?.length) {
+    throw new AuthoringRootPolicyError(`${subject} requires host-approved authoring input and output roots.`);
+  }
+  await assertConfiguredAuthoringOutputRoot(outputRoot, outputRoots, `${subject} packageRoot`);
+}
+
+/** Enforce the output boundary for one file without permitting a pre-existing symlink leaf. */
+export async function assertConfiguredAuthoringOutputFile(
+  path: string,
+  roots: string[] | undefined,
+  subject = "Authoring output file",
+): Promise<void> {
+  const message = `${subject} must be inside an approved authoring output root and may not traverse symbolic links.`;
+  try {
+    const approved = await canonicalizeRoots(roots);
+    const lexical = resolve(path);
+    const entry = await lstat(lexical).catch((error: unknown) => {
+      if (isMissingPathError(error)) return null;
+      throw error;
+    });
+    if (entry && (!entry.isFile() || entry.isSymbolicLink())) throw new AuthoringRootPolicyError(message);
+    const canonical = entry ? await realpath(lexical) : await canonicalPathForSafety(lexical);
+    for (const root of approved) {
+      if (isInside(root.lexical, lexical)
+        && isInside(root.canonical, canonical)
+        && await hasNoSymlinkBelowRoot(root.lexical, lexical, true)) return;
+    }
+    throw new AuthoringRootPolicyError(message);
+  } catch (error) {
+    if (error instanceof AuthoringRootPolicyError) throw error;
+    throw new AuthoringRootPolicyError(message);
+  }
+}
+
+async function canonicalizeRoots(roots: string[] | undefined): Promise<ApprovedRoot[]> {
+  if (!roots?.length) throw new AuthoringRootPolicyError("Configured authoring roots must not be empty.");
   return Promise.all(roots.map(async (root) => {
     const lexical = resolve(root);
     const entry = await lstat(lexical);

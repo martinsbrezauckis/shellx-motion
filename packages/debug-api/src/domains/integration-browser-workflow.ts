@@ -2,8 +2,8 @@ import {
   buildBrowserRecordingManifest,
   browserRecordingSampleTimes,
   hashBuffer,
-  MAX_BROWSER_WORKFLOW_TOTAL_WAIT_MS,
-  MAX_BROWSER_WORKFLOW_WAIT_MS,
+  isPublicationCommitUncertain,
+  OutputDirectoryReservation,
   type BrowserRecordingManifest,
   type BrowserRecordingManifestFrame,
   type BrowserWorkflowDriftSummary,
@@ -17,9 +17,17 @@ import {
   type BrowserFrameFormat,
   type BrowserFrameResult
 } from "@shellx-motion/renderer-browser";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { booleanArg, nonNegativeNumberArg, objectArg, positiveIntegerArg, stringArg } from "./args.js";
+import {
+  AuthoringRootPolicyError,
+  assertConfiguredAuthoringOutputFile,
+  assertConfiguredAuthoringOutputRoot
+} from "./authoring-root-policy.js";
+import { isInsideAnyTrustedInputRoot } from "./trusted-input-path.js";
+import { parseBrowserWorkflow, readBrowserWorkflowArg } from "./browser-workflow-parse.js";
+export { parseBrowserWorkflow, readBrowserWorkflowArg } from "./browser-workflow-parse.js";
 
 export type BrowserFrameRenderer = (
   pkg: MotionPackage,
@@ -36,7 +44,6 @@ export type BrowserFrameRenderer = (
 export interface BrowserWorkflowServices {
   browserFrameRenderer?: BrowserFrameRenderer;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
-  ensureDirectory?: (path: string) => Promise<void>;
   workflowCatalogUpserter?: (input: {
     catalogPath: string;
     capture: {
@@ -55,7 +62,13 @@ export interface BrowserWorkflowServices {
     };
   }) => Promise<{ catalogPath: string; drift: BrowserWorkflowDriftSummary }>;
   scratchRoot?: string;
+  qualityInputRoots?: string[];
+  /** Host-configured output roots for caller-selected browser capture evidence. */
+  authoringOutputRoots?: string[];
+  isPathInsideTrustedRoot?: (root: string, path: string) => Promise<boolean>;
   readJson?: (path: string) => Promise<unknown>;
+  /** Core-owned no-clobber publication for immutable browser workflow evidence. */
+  publishJsonSidecar?: (path: string, value: unknown) => Promise<void>;
   writeJson?: (path: string, value: unknown) => Promise<void>;
 }
 
@@ -98,13 +111,20 @@ export async function dispatchBrowserWorkflowCommand(
   }
   if (!services.browserFrameRenderer) return capabilityUnavailable("Browser frame rendering is unavailable.");
   if (!services.packageLoader) return capabilityUnavailable("Motion package loading is unavailable.");
-  if (!services.ensureDirectory) return capabilityUnavailable("Browser capture directory creation is unavailable.");
-  if (!services.writeJson) return capabilityUnavailable("Browser capture receipt persistence is unavailable.");
+  const publishSidecar = services.publishJsonSidecar;
+  if (!publishSidecar) return capabilityUnavailable("Browser capture receipt persistence is unavailable.");
   if (catalogPath && !services.workflowCatalogUpserter) return capabilityUnavailable("Browser workflow catalog persistence is unavailable.");
 
   const workflowArg = readBrowserWorkflowArg(args, "workflow");
   if (workflowArg === false) return invalidArgs("workflow must be a shellx-motion/browser-workflow@1 object.");
   const workflowPath = stringArg(args, "workflowPath") ?? undefined;
+  if (workflowPath) {
+    if (!services.isPathInsideTrustedRoot) return capabilityUnavailable("Browser workflow trusted-path validation is unavailable.");
+    const roots = [packageRoot, services.scratchRoot ?? ".scratch", ...(services.qualityInputRoots ?? [])];
+    if (!await isInsideAnyTrustedInputRoot(workflowPath, roots, services.isPathInsideTrustedRoot)) {
+      return invalidArgs("motion.browser.workflow.capture workflowPath must be inside packageRoot or a trusted debug input root.");
+    }
+  }
   if (workflowPath && !services.readJson) return capabilityUnavailable("Browser workflow file reading is unavailable.");
   let workflow = workflowArg ?? undefined;
   if (!workflow && workflowPath) {
@@ -117,10 +137,27 @@ export async function dispatchBrowserWorkflowCommand(
     }
   }
 
+  const outputPolicyRefusal = await browserWorkflowOutputPolicy({
+    outDir
+  }, services);
+  if (outputPolicyRefusal) return outputPolicyRefusal;
+
   let pkg: MotionPackage | undefined;
   try {
     pkg = await services.packageLoader(packageRoot);
-    await services.ensureDirectory(outDir);
+    const captureOutput = await OutputDirectoryReservation.acquire(outDir, { allowExistingContents: true });
+    const auxiliaryOutputRefusal = await browserWorkflowAuxiliaryOutputPolicy({
+      outDir,
+      ...(outputPath ? { outputPath } : {}),
+      ...(catalogPath ? { catalogPath } : {}),
+      ...(recordingManifestPath ? { recordingManifestPath } : {}),
+      ...(recordingFramesDir ? { recordingFramesDir } : {})
+    }, services);
+    if (auxiliaryOutputRefusal) return auxiliaryOutputRefusal;
+    const recordingFramesOutput = recordingFramesDir
+      ? await OutputDirectoryReservation.acquire(recordingFramesDir, { allowExistingContents: true })
+      : undefined;
+    await captureOutput.assertCurrent();
     const capture = await services.browserFrameRenderer(pkg, {
       atMs,
       outDir,
@@ -132,7 +169,8 @@ export async function dispatchBrowserWorkflowCommand(
       ? join(outDir, `${pkg.manifest.id}-browser-workflow.trace.json`)
       : undefined;
     if (workflowTracePath && capture.output.workflowTrace) {
-      await services.writeJson(workflowTracePath, capture.output.workflowTrace);
+      await captureOutput.assertCurrent();
+      await publishSidecar(workflowTracePath, capture.output.workflowTrace);
       capture.output.workflowTracePath = workflowTracePath;
     }
     const receiptPath = join(outDir, `${pkg.manifest.id}-browser-capture.receipt.json`);
@@ -176,8 +214,8 @@ export async function dispatchBrowserWorkflowCommand(
         manifestPath: recordingManifestPath,
         sampleCount: recordingSampleCountArg ?? 3,
         primaryCapture: capture,
-        writeJson: services.writeJson,
-        ensureDirectory: services.ensureDirectory,
+        publishJsonSidecar: publishSidecar,
+        framesOutput: recordingFramesOutput!,
         ...(workflowTracePath ? { workflowTracePath } : {}),
         ...(workflowCatalog ? { workflowCatalogPath: workflowCatalog.catalogPath } : {})
       });
@@ -207,7 +245,8 @@ export async function dispatchBrowserWorkflowCommand(
       ...(objectArg(capture.receipt.output) ?? {}),
       ...capture.output
     };
-    await services.writeJson(receiptPath, capture.receipt);
+    await captureOutput.assertCurrent();
+    await publishSidecar(receiptPath, capture.receipt);
     const result = {
       ok: true,
       command: "browser.workflow.capture",
@@ -264,8 +303,20 @@ export async function dispatchBrowserWorkflowCommand(
       warnings: capture.receipt.warnings
     };
   } catch (error) {
+    if (isPublicationCommitUncertain(error)) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          detail: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence }
+        },
+        result: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence },
+        warnings: []
+      };
+    }
     if (error instanceof BrowserWorkflowReplayError && pkg) {
-      return writeDebugBrowserWorkflowReplayFailure({ pkg, outDir, error, writeJson: services.writeJson });
+      return writeDebugBrowserWorkflowReplayFailure({ pkg, outDir, error, publishJsonSidecar: publishSidecar });
     }
     return {
       ok: false,
@@ -278,17 +329,11 @@ export async function dispatchBrowserWorkflowCommand(
   }
 }
 
-export function readBrowserWorkflowArg(args: unknown, key: string): BrowserCaptureWorkflow | false | null {
-  const record = objectArg(args);
-  if (!record || !Object.hasOwn(record, key)) return null;
-  return parseBrowserWorkflow(record[key]);
-}
-
 async function writeDebugBrowserWorkflowReplayFailure(input: {
   pkg: MotionPackage;
   outDir: string;
   error: BrowserWorkflowReplayError;
-  writeJson: (path: string, value: unknown) => Promise<void>;
+  publishJsonSidecar: (path: string, value: unknown) => Promise<void>;
 }): Promise<MotionDebugResult> {
   const workflowTracePath = join(input.outDir, `${input.pkg.manifest.id}-browser-workflow.trace.json`);
   const receiptPath = join(input.outDir, `${input.pkg.manifest.id}-browser-capture.receipt.json`);
@@ -312,8 +357,8 @@ async function writeDebugBrowserWorkflowReplayFailure(input: {
     artifacts,
     warnings: [input.error.message]
   };
-  await input.writeJson(workflowTracePath, input.error.trace);
-  await input.writeJson(receiptPath, receipt);
+  await input.publishJsonSidecar(workflowTracePath, input.error.trace);
+  await input.publishJsonSidecar(receiptPath, receipt);
   return {
     ok: false,
     error: {
@@ -333,16 +378,17 @@ async function writeDebugBrowserRecordingManifest(input: {
   manifestPath: string;
   sampleCount: number;
   primaryCapture: Awaited<ReturnType<BrowserFrameRenderer>>;
-  writeJson: (path: string, value: unknown) => Promise<void>;
-  ensureDirectory: (path: string) => Promise<void>;
+  publishJsonSidecar: (path: string, value: unknown) => Promise<void>;
+  framesOutput: OutputDirectoryReservation;
   workflowTracePath?: string;
   workflowCatalogPath?: string;
 }): Promise<BrowserRecordingManifest> {
-  await input.ensureDirectory(input.framesDir);
+  await input.framesOutput.assertCurrent();
   const sampleTimes = browserRecordingSampleTimes({ durationMs: input.pkg.motion.durationMs, sampleCount: input.sampleCount });
   const frames: BrowserRecordingManifestFrame[] = [];
   for (const [index, atMs] of sampleTimes.entries()) {
     const outputPath = join(input.framesDir, `${String(index).padStart(6, "0")}.png`);
+    await input.framesOutput.assertCurrent();
     const frame = await input.renderer(input.pkg, {
       atMs,
       outDir: input.framesDir,
@@ -392,137 +438,71 @@ async function writeDebugBrowserRecordingManifest(input: {
     ...(captureReadiness ? { captureReadiness } : {}),
     ...(workflow ? { workflow } : {})
   });
-  await input.ensureDirectory(dirname(input.manifestPath));
-  await input.writeJson(input.manifestPath, manifest);
+  await input.publishJsonSidecar(input.manifestPath, manifest);
   return manifest;
+}
+
+async function browserWorkflowOutputPolicy(
+  input: { outDir: string },
+  services: BrowserWorkflowServices
+): Promise<MotionDebugResult | null> {
+  try {
+    if (services.authoringOutputRoots !== undefined) {
+      await assertConfiguredAuthoringOutputRoot(input.outDir, services.authoringOutputRoots, "Browser workflow output");
+      return null;
+    }
+
+    // A render_motion host without authoring roots still has a host-owned capture root. Its
+    // default capture directory remains usable, while optional evidence stays subordinate to the
+    // admitted capture directory instead of becoming an arbitrary secondary write authority.
+    if (!services.isPathInsideTrustedRoot) {
+      return capabilityUnavailable("Browser workflow output path policy is unavailable.");
+    }
+    const captureRoot = services.scratchRoot ?? ".scratch/debug-browser-workflow";
+    if (!await services.isPathInsideTrustedRoot(captureRoot, input.outDir)) {
+      return invalidArgs("Browser workflow output must be inside the trusted debug capture root.");
+    }
+    return null;
+  } catch (error) {
+    if (error instanceof AuthoringRootPolicyError) return invalidArgs(error.message);
+    throw error;
+  }
+}
+
+async function browserWorkflowAuxiliaryOutputPolicy(
+  input: {
+    outDir: string;
+    outputPath?: string;
+    catalogPath?: string;
+    recordingManifestPath?: string;
+    recordingFramesDir?: string;
+  },
+  services: BrowserWorkflowServices
+): Promise<MotionDebugResult | null> {
+  try {
+    // render_motion owns one admitted capture directory, not a generic write capability over the
+    // wider host root. Traces, receipts, manifests, and frame samples stay co-located with their
+    // capture. The mutable catalog is deliberately separate: it must stay under the dedicated
+    // host-owned scratch root so an admitted capture directory never grants force-update access
+    // to arbitrary pre-existing JSON within a broad authoring root.
+    if (input.outputPath) await assertConfiguredAuthoringOutputFile(input.outputPath, [input.outDir], "Browser workflow output file");
+    if (input.recordingManifestPath) await assertConfiguredAuthoringOutputFile(input.recordingManifestPath, [input.outDir], "Browser recording manifest");
+    if (input.recordingFramesDir) await assertConfiguredAuthoringOutputRoot(input.recordingFramesDir, [input.outDir], "Browser recording frames");
+    if (input.catalogPath) {
+      const catalogRoot = services.scratchRoot ?? ".scratch/debug-browser-workflow";
+      await assertConfiguredAuthoringOutputFile(input.catalogPath, [catalogRoot], "Browser workflow catalog");
+    }
+    return null;
+  } catch (error) {
+    if (error instanceof AuthoringRootPolicyError) {
+      return invalidArgs("Browser workflow auxiliary output must be inside the admitted capture output directory or trusted debug scratch root.");
+    }
+    throw error;
+  }
 }
 
 function browserWorkflowDriftWarning(drift: BrowserWorkflowDriftSummary): string {
   return `Browser workflow drift detected for ${drift.key}: baseline ${drift.baselineOutputSha256} != current ${drift.currentOutputSha256}.`;
-}
-
-export function parseBrowserWorkflow(value: unknown): BrowserCaptureWorkflow | false {
-  const record = objectArg(value);
-  if (!record
-    || !Object.hasOwn(record, "schema")
-    || !Object.hasOwn(record, "steps")
-    || record.schema !== "shellx-motion/browser-workflow@1"
-    || !Array.isArray(record.steps)) return false;
-  const steps = readBrowserWorkflowSteps(record.steps);
-  if (!steps) return false;
-  const viewportValue = Object.hasOwn(record, "viewport") ? record.viewport : undefined;
-  const viewport = readBrowserWorkflowViewport(viewportValue);
-  if (viewportValue !== undefined && !viewport) return false;
-  const networkPolicyValue = Object.hasOwn(record, "networkPolicy") ? record.networkPolicy : undefined;
-  const networkPolicy = readBrowserWorkflowNetworkPolicy(networkPolicyValue);
-  if (networkPolicyValue !== undefined && !networkPolicy) return false;
-  const cursorValue = Object.hasOwn(record, "cursor") ? record.cursor : undefined;
-  const cursor = readBrowserWorkflowCursor(cursorValue);
-  if (cursorValue !== undefined && !cursor) return false;
-  return {
-    schema: "shellx-motion/browser-workflow@1",
-    steps,
-    ...(viewport ? { viewport } : {}),
-    ...(networkPolicy ? { networkPolicy } : {}),
-    ...(cursor ? { cursor } : {})
-  };
-}
-
-function readBrowserWorkflowSteps(value: unknown[]): BrowserCaptureWorkflow["steps"] | null {
-  const steps: BrowserCaptureWorkflow["steps"] = [];
-  let totalWaitMs = 0;
-  for (const step of value) {
-    const record = objectArg(step);
-    if (!record || !Object.hasOwn(record, "action") || typeof record.action !== "string") return null;
-    if (record.action === "wait") {
-      if (!Object.hasOwn(record, "ms") || typeof record.ms !== "number" || !Number.isFinite(record.ms) || record.ms < 0) return null;
-      if (record.ms > MAX_BROWSER_WORKFLOW_WAIT_MS) return null;
-      totalWaitMs += record.ms;
-      if (totalWaitMs > MAX_BROWSER_WORKFLOW_TOTAL_WAIT_MS) return null;
-      steps.push({ action: "wait", ms: record.ms });
-      continue;
-    }
-    if (record.action === "click") {
-      if (!Object.hasOwn(record, "selector") || typeof record.selector !== "string") return null;
-      steps.push({ action: "click", selector: record.selector });
-      continue;
-    }
-    if (record.action === "type") {
-      if (!Object.hasOwn(record, "selector") || !Object.hasOwn(record, "text") || typeof record.selector !== "string" || typeof record.text !== "string") return null;
-      steps.push({ action: "type", selector: record.selector, text: record.text });
-      continue;
-    }
-    if (record.action === "press") {
-      if (!Object.hasOwn(record, "selector") || !Object.hasOwn(record, "key") || typeof record.selector !== "string" || typeof record.key !== "string") return null;
-      steps.push({ action: "press", selector: record.selector, key: record.key });
-      continue;
-    }
-    if (record.action === "scroll") {
-      const x = Object.hasOwn(record, "x") ? record.x : undefined;
-      const y = Object.hasOwn(record, "y") ? record.y : undefined;
-      if (x !== undefined && (typeof x !== "number" || !Number.isFinite(x))) return null;
-      if (y !== undefined && (typeof y !== "number" || !Number.isFinite(y))) return null;
-      steps.push({
-        action: "scroll",
-        ...(typeof x === "number" ? { x } : {}),
-        ...(typeof y === "number" ? { y } : {})
-      });
-      continue;
-    }
-    if (record.action === "verify") {
-      const text = Object.hasOwn(record, "text") ? record.text : undefined;
-      if (!Object.hasOwn(record, "selector") || typeof record.selector !== "string" || (text !== undefined && typeof text !== "string")) return null;
-      steps.push({ action: "verify", selector: record.selector, ...(typeof text === "string" ? { text } : {}) });
-      continue;
-    }
-    return null;
-  }
-  return steps;
-}
-
-function readBrowserWorkflowViewport(value: unknown): BrowserCaptureWorkflow["viewport"] | null {
-  const record = objectArg(value);
-  if (!record) return null;
-  if (!Object.hasOwn(record, "width") || typeof record.width !== "number" || !Number.isFinite(record.width) || record.width <= 0) return null;
-  if (!Object.hasOwn(record, "height") || typeof record.height !== "number" || !Number.isFinite(record.height) || record.height <= 0) return null;
-  const deviceScaleFactor = Object.hasOwn(record, "deviceScaleFactor") ? record.deviceScaleFactor : undefined;
-  if (deviceScaleFactor !== undefined
-    && (typeof deviceScaleFactor !== "number" || !Number.isFinite(deviceScaleFactor) || deviceScaleFactor <= 0)) return null;
-  return {
-    width: record.width,
-    height: record.height,
-    ...(typeof deviceScaleFactor === "number" ? { deviceScaleFactor } : {})
-  };
-}
-
-function readBrowserWorkflowNetworkPolicy(value: unknown): BrowserCaptureWorkflow["networkPolicy"] | null {
-  return value === "blocked-unless-declared" || value === "allow" ? value : null;
-}
-
-function readBrowserWorkflowCursor(value: unknown): BrowserCaptureWorkflow["cursor"] | null {
-  const record = objectArg(value);
-  if (!record) return null;
-  const visible = Object.hasOwn(record, "visible") ? record.visible : undefined;
-  if (visible !== undefined && typeof visible !== "boolean") return null;
-  const cursor: NonNullable<BrowserCaptureWorkflow["cursor"]> = {
-    ...(typeof visible === "boolean" ? { visible } : {})
-  };
-  const cursorPath = Object.hasOwn(record, "path") ? record.path : undefined;
-  if (cursorPath !== undefined) {
-    if (!Array.isArray(cursorPath)) return null;
-    const path: Array<{ x: number; y: number; atMs: number }> = [];
-    for (const item of cursorPath) {
-      const point = objectArg(item);
-      if (!point
-        || !Object.hasOwn(point, "x") || !Object.hasOwn(point, "y") || !Object.hasOwn(point, "atMs")
-        || typeof point.x !== "number" || !Number.isFinite(point.x)
-        || typeof point.y !== "number" || !Number.isFinite(point.y)
-        || typeof point.atMs !== "number" || !Number.isFinite(point.atMs) || point.atMs < 0) return null;
-      path.push({ x: point.x, y: point.y, atMs: point.atMs });
-    }
-    cursor.path = path;
-  }
-  return cursor;
 }
 
 function invalidArgs(message: string): MotionDebugResult {

@@ -206,7 +206,7 @@ assert(
 const reviewBundle = await dispatchDebugCommand(
   "motion.review.html.bundle",
   { packageRoot, outDir: reviewOutDir, receiptsRoot, title: "Evidence Surfaces Smoke" },
-  { tier: "write_local", scratchRoot: outDir, receiptsRoot }
+  { tier: "write_local", scratchRoot: outDir, receiptsRoot, artifactRoots: [outDir] }
 );
 assert(reviewBundle.ok, `motion.review.html.bundle failed: ${JSON.stringify(reviewBundle, null, 2)}`);
 const reviewHtmlPath = join(reviewOutDir, "review-html-bundle.html");

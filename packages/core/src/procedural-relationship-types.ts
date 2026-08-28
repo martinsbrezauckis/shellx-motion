@@ -7,6 +7,10 @@ export const MAX_PROCEDURAL_AUDIO_ENVELOPES = 16;
 export const MAX_PROCEDURAL_ENVELOPE_SAMPLES = 4_096;
 export const MAX_PROCEDURAL_BAKE_SAMPLES = 3_600;
 export const MAX_PROCEDURAL_ABS_VALUE = 1_000_000_000;
+/** Trig inputs are radians and must remain in this bounded, quantized range. */
+export const MAX_PROCEDURAL_TRIG_INPUT_RADIANS = 1_000_000;
+/** Every evaluated scalar is rounded to this many decimal places before it is observable or baked. */
+export const PROCEDURAL_VALUE_DECIMALS = 6;
 
 export const MOTION_PROCEDURAL_PROPERTIES = [
   "transform.x", "transform.y", "transform.width", "transform.height",
@@ -41,7 +45,7 @@ export interface ProceduralPropertyNode extends NodeBase { type: "property"; ref
 export interface ProceduralTimeNode extends NodeBase { type: "time"; unit: "seconds" | "milliseconds" }
 export interface ProceduralFrameNode extends NodeBase { type: "frame" }
 export interface ProceduralAudioEnvelopeNode extends NodeBase { type: "audio-envelope"; envelopeId: string }
-export interface ProceduralUnaryNode extends NodeBase { type: "abs" | "negate"; input: string }
+export interface ProceduralUnaryNode extends NodeBase { type: "abs" | "negate" | "sin" | "cos"; input: string }
 export interface ProceduralBinaryNode extends NodeBase {
   type: "add" | "subtract" | "multiply" | "divide" | "min" | "max";
   left: string;

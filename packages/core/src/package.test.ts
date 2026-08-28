@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { hashPackageFile, loadMotionPackage, resolvePackageAsset } from "./package";
+import { hashPackageFile, loadMotionPackage, readMotionDocument, readPackageManifest, readTemplateDocument, resolvePackageAsset } from "./package";
 
 describe("motion package loader", () => {
   const fixtureRoot = resolve("../../fixtures/packages/lower-third");
@@ -13,6 +13,46 @@ describe("motion package loader", () => {
     expect(pkg.root.replace(/\\/g, "/")).toMatch(/fixtures\/packages\/lower-third$/);
     expect(pkg.manifest.id).toBe("pkg_lower_third");
     expect(pkg.motion.id).toBe("motion_lower_third");
+  });
+
+  it("preserves JSON-absent optional fields as absent on parsed package documents", () => {
+    const manifest = readPackageManifest({
+      schema: "shellx-motion/package-manifest@1", id: "pkg_json_optional", name: "JSON optional", motion: "motion.json",
+      assets: [], sourceApp: "shellx-motion", compatibility: { lanes: ["browser"], hosts: ["motion"] },
+    });
+    const motion = readMotionDocument(minimalMotionDocument());
+    const template = readTemplateDocument({
+      schema: "shellx-motion/template@1", id: "template_json_optional", name: "JSON optional", motion: "motion.json",
+      compatibleLanes: ["browser"], params: [], controls: [], bindings: [],
+    });
+
+    expect(Object.hasOwn(manifest, "template")).toBe(false);
+    expect(Object.hasOwn(motion, "background")).toBe(false);
+    expect(Object.hasOwn(template, "compatibleHosts")).toBe(false);
+    expect(Object.hasOwn(template, "groups")).toBe(false);
+  });
+
+  it("refuses a manifest leaf symlink even when its target is otherwise valid", async () => {
+    const packageRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-manifest-link-"));
+    const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-manifest-target-"));
+    const manifest = {
+      schema: "shellx-motion/package-manifest@1",
+      id: "pkg_link_refusal",
+      name: "Manifest link refusal",
+      motion: "motion.json",
+      assets: [],
+      sourceApp: "shellx-motion",
+      compatibility: { lanes: ["browser"], hosts: ["motion"] }
+    };
+    await writeFile(join(outsideRoot, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(packageRoot, "motion.json"), `${JSON.stringify(minimalMotionDocument())}\n`);
+    try {
+      await symlink(join(outsideRoot, "manifest.json"), join(packageRoot, "manifest.json"), "file");
+    } catch {
+      return;
+    }
+
+    await expect(loadMotionPackage(packageRoot)).rejects.toThrow(/Package manifest must be a bounded regular non-symlink file/);
   });
 
   it("rejects asset path escapes", async () => {

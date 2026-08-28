@@ -10,7 +10,7 @@
  * Primary caller: `command-metadata.ts`.
  */
 import type { MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, LAYER_ID, PACKAGE_EDIT, TRACK_ID } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, LAYER_ID, PACKAGE_EDIT, readReceipt, TRACK_ID } from "./command-metadata-shared.js";
 
 const EDIT = ["packageRoot", "outDir"];
 const EDIT_TRACK = [...EDIT, "trackId"];
@@ -122,6 +122,22 @@ export const TIMELINE_TRACK_COMMAND_METADATA = {
     }),
     expectedReceipts: editReceipt("timeline.transition.upsert")
   },
+  "motion.timeline.transition.presets": {
+    argsSchema: argsSchema([], {}),
+    expectedReceipts: readReceipt("timeline.transition.presets")
+  },
+  "motion.timeline.transition.preset.apply": {
+    argsSchema: argsSchema([...EDIT, "layerId", "preset"], {
+      ...PACKAGE_EDIT,
+      ...LAYER_ID,
+      preset: { type: "string", enumRef: "transitionPreset", description: "Named transition preset to apply." },
+      durationMs: { type: "number", minimum: 0, description: "Preset duration in milliseconds; must be positive when supplied." },
+      direction: { type: "string", enumRef: "transitionDirection", description: "Optional direction override for directional presets." },
+      distance: { type: "number", minimum: 0, description: "Optional non-negative travel distance override in pixels." },
+      easing: { type: "string", enumRef: "easing", description: "Optional easing override for the preset." }
+    }),
+    expectedReceipts: editReceipt("timeline.transition.preset.apply")
+  },
   "motion.timeline.transition.delete": {
     argsSchema: argsSchema([...EDIT, "layerId", "edge"], {
       ...PACKAGE_EDIT,
@@ -133,7 +149,7 @@ export const TIMELINE_TRACK_COMMAND_METADATA = {
   "motion.timeline.caption.import": {
     argsSchema: argsSchema(EDIT, {
       ...PACKAGE_EDIT,
-      captionsPath: { type: "string", aliases: ["captionsFile", "path"], description: "Caption file to read. Required unless captionsText is given." },
+      captionsPath: { type: "string", aliases: ["captionsFile", "path"], description: "Caption file inside a host-approved authoring input root. Required unless captionsText is given." },
       captionsText: { type: "string", aliases: ["source"], description: "Inline caption text, in place of captionsPath." },
       format: { type: "string", enumRef: "captionFormat", description: "Caption source format; inferred from the file extension when omitted." },
       layerPrefix: { type: "string", description: "Prefix for generated caption layer ids." },

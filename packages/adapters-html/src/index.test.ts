@@ -14,8 +14,8 @@ describe("HTML snippet export adapter", () => {
 
   it("exports a standalone HyperFrames-style HTML composition with timing metadata and receipt evidence", async () => {
     const packageRoot = await writeHtmlExportPackage();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-"));
-    tempDirs.push(packageRoot, outDir);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-")); const outDir = join(outRoot, "export");
+    tempDirs.push(packageRoot, outRoot);
 
     const result = await writeHtmlSnippetExport({
       packageRoot,
@@ -75,22 +75,22 @@ describe("HTML snippet export adapter", () => {
     });
   });
 
-  it("refuses to write into non-empty output directories", async () => {
+  it("refuses to write into occupied output directories", async () => {
     const packageRoot = await writeHtmlExportPackage();
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-nonempty-"));
     tempDirs.push(packageRoot, outDir);
     await writeFile(join(outDir, "old.html"), "stale", "utf8");
 
     await expect(writeHtmlSnippetExport({ packageRoot, outDir })).rejects.toThrow(
-      "HTML snippet export outDir must be empty or absent before export."
+      "Final output already exists"
     );
   });
 
   it.skipIf(process.platform === "win32")("refuses export media symlinks that escape the Motion package", async () => {
     const packageRoot = await writeHtmlExportPackage();
     const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-export-outside-"));
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-html-export-symlink-"));
-    tempDirs.push(packageRoot, outsideRoot, outDir);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-export-symlink-")); const outDir = join(outRoot, "export");
+    tempDirs.push(packageRoot, outsideRoot, outRoot);
     await writeFile(join(outsideRoot, "logo.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", "utf8");
     await rm(join(packageRoot, "assets", "logo.svg"));
     await symlink(join(outsideRoot, "logo.svg"), join(packageRoot, "assets", "logo.svg"));
@@ -106,8 +106,8 @@ describe("HTML snippet export adapter", () => {
     motion.layers[1].keyframes = { opacity: [{ atMs: 0, value: 0 }, { atMs: 400, value: 1 }] };
     await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
     await loadMotionPackage(packageRoot);
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-html-lossiness-"));
-    tempDirs.push(packageRoot, outDir);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-lossiness-")); const outDir = join(outRoot, "export");
+    tempDirs.push(packageRoot, outRoot);
 
     const result = await writeHtmlSnippetExport({ packageRoot, outDir });
 
@@ -306,7 +306,7 @@ describe("HTML snippet export adapter", () => {
   });
 
   /**
-   * Regression for the staging TOCTOU (Codex security review, pre-0.1.0).
+   * Regression for the staging TOCTOU fixed before 0.1.0.
    *
    * The importer used to validate EVERY declared asset and only then copy them, path by path, with
    * `copyFile(sourcePath, destination)`. Because `copyFile` re-resolves the path and follows
@@ -591,7 +591,7 @@ function adversarialSnippet(body: string, noise = ""): string {
 
 async function writeHtmlExportPackage(): Promise<string> {
   const packageRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-export-package-"));
-  await mkdir(join(packageRoot, "assets"), { recursive: true });
+  await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(packageRoot, "assets", "logo.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"80\"><rect width=\"80\" height=\"80\" fill=\"#22c55e\"/></svg>", "utf8");
   await writeFile(join(packageRoot, "manifest.json"), `${JSON.stringify({
     schema: "shellx-motion/package-manifest@1",

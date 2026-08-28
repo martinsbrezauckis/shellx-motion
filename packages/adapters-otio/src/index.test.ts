@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadMotionPackage } from "@shellx-motion/core";
 import { exportMotionPackageToOtio, importOtioTimelineToMotionPackage } from "./index";
+import { publishOtioExportOutputs, publishOtioImportPackage } from "./otio-interchange";
 
 const tempDirs: string[] = [];
 
@@ -28,6 +29,8 @@ describe("OTIO adapter", () => {
     const receipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
     const videoTrack = timeline.tracks.children.find((track: any) => track.kind === "Video");
     const audioTrack = timeline.tracks.children.find((track: any) => track.kind === "Audio");
+
+    expect(receipt.output.otioSha256).toBe(result.otioSha256);
 
     expect(result).toMatchObject({
       ok: true,
@@ -245,6 +248,87 @@ describe("OTIO adapter", () => {
       ]
     });
   });
+
+  it("refuses OTIO export and import output symlink leaves without writing through them", async ({ skip }) => {
+    const packageRoot = await writeMotionPackage();
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-otio-output-symlink-"));
+    const outside = await mkdtemp(join(tmpdir(), "shellx-motion-otio-output-outside-"));
+    tempDirs.push(packageRoot, root, outside);
+    const outPath = join(root, "timeline.otio");
+    const receiptTarget = join(outside, "receipt-target.json");
+    const sourcePath = join(root, "incoming.otio");
+    const packageDir = join(root, "imported");
+
+    try {
+      await symlink(receiptTarget, `${outPath}.receipt.json`, "file");
+      await symlink(outside, packageDir, "dir");
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create symbolic links.");
+        return;
+      }
+      throw error;
+    }
+    await writeFile(sourcePath, `${JSON.stringify(otioFixture(), null, 2)}\n`, "utf8");
+
+    await expect(exportMotionPackageToOtio({ packageRoot, outPath })).rejects.toThrow(/already exists|symbolic link/i);
+    await expect(importOtioTimelineToMotionPackage({ otioPath: sourcePath, packageDir })).rejects.toThrow(/not a directory|symbolic link/i);
+
+    await expect(readFile(receiptTarget, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(outside, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a retargeted export parent before the staged receipt can publish", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-otio-export-retarget-"));
+    tempDirs.push(root);
+    const parent = join(root, "output");
+    const movedParent = join(root, "output-moved");
+    const outPath = join(parent, "timeline.otio");
+
+    await expect(publishOtioExportOutputs({
+      otioPath: outPath,
+      receiptPath: `${outPath}.receipt.json`,
+      timelineJson: "{\"OTIO_SCHEMA\":\"Timeline.1\"}\n",
+      receiptJson: "{\"operation\":\"otio.export\"}\n"
+    }, {
+      afterTimelinePublished: async () => {
+        await rename(parent, movedParent);
+        await mkdir(parent, { mode: 0o700 });
+        await writeFile(outPath, "competitor timeline", "utf8");
+      }
+    })).rejects.toThrow(/topology changed|unsafe parent/i);
+
+    await expect(readFile(outPath, "utf8")).resolves.toBe("competitor timeline");
+    await expect(readFile(`${outPath}.receipt.json`, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(movedParent, "timeline.otio"), "utf8")).resolves.toBe("{\"OTIO_SCHEMA\":\"Timeline.1\"}\n");
+  });
+
+  it("refuses a retargeted import parent without replacing the new destination", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-otio-import-retarget-"));
+    tempDirs.push(root);
+    const parent = join(root, "output");
+    const movedParent = join(root, "output-moved");
+    const packageDir = join(parent, "package");
+
+    await expect(publishOtioImportPackage({
+      packageDir,
+      manifestJson: "{\"id\":\"pkg\"}\n",
+      motionFileName: "motion.json",
+      motionJson: "{\"id\":\"motion\"}\n",
+      receiptJson: "{\"operation\":\"otio.import\"}\n"
+    }, {
+      beforeCommit: async () => {
+        await rename(parent, movedParent);
+        await mkdir(packageDir, { recursive: true, mode: 0o700 });
+        await writeFile(join(packageDir, "competitor.txt"), "caller output", "utf8");
+      }
+    })).rejects.toThrow(/topology changed/i);
+
+    await expect(readFile(join(packageDir, "competitor.txt"), "utf8")).resolves.toBe("caller output");
+    await expect(readFile(join(packageDir, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(movedParent, "package", "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("exports byte-identical OTIO regardless of the host locale", async () => {
     // Regression for a reproduced defect: track order and the intra-track clip tie-break sorted
     // with `String.prototype.localeCompare`, and both are written into the OTIO JSON that

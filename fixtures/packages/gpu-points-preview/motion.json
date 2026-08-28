@@ -1,0 +1,46 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_points_preview",
+  "name": "GPU Points Preview Fixture",
+  "durationMs": 1000,
+  "fps": 30,
+  "width": 96,
+  "height": 64,
+  "background": "#06101c00",
+  "layers": [
+    {
+      "id": "orbit",
+      "type": "points",
+      "startMs": 0,
+      "durationMs": 1000,
+      "color": "#ff8a1fcc",
+      "pointCloud": {
+        "points": [
+          { "x": 20, "y": 32, "size": 12, "opacity": 1 },
+          { "x": 48, "y": 16, "size": 8, "color": "#6ee7ffff", "opacity": 0.75 },
+          { "x": 76, "y": 32, "size": 6, "color": "#ffffff99", "opacity": 0.5 }
+        ],
+        "samples": [
+          {
+            "atMs": 0,
+            "positions": [
+              { "x": 20, "y": 32, "size": 12, "opacity": 1 },
+              { "x": 48, "y": 16, "size": 8, "opacity": 0.75 },
+              { "x": 76, "y": 32, "size": 6, "opacity": 0.5 }
+            ]
+          },
+          {
+            "atMs": 1000,
+            "positions": [
+              { "x": 76, "y": 32, "size": 12, "opacity": 1 },
+              { "x": 48, "y": 48, "size": 8, "opacity": 0.75 },
+              { "x": 20, "y": 32, "size": 6, "opacity": 0.5 }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "assets": [],
+  "provenance": { "sourceApp": "shellx-motion", "createdBy": "gpu-points-hardware-fixture" }
+}

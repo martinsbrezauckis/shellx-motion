@@ -1,0 +1,1411 @@
+{
+  "schema": "shellx-motion/rendering-sample-catalog@1",
+  "revision": 3,
+  "scope": "delivery-output-foundation",
+  "authoritativeCapabilitySet": {
+    "schema": "shellx-motion/published-rendering-capability-set@1",
+    "definition": "The delivery-output foundation covers every documented preview lane, each shipped export preset on the browser final route, the documented native still and native H.264 routes, the admitted GPU H.264 route, and the public mixed-preset batch route. Its primary MotionLayerType mapping is a discovery aid, not a complete public authoring-mutation or tool inventory.",
+    "sources": [
+      "docs/public/rendering.md",
+      "packages/core/src/export-presets.ts",
+      "packages/core/src/types.ts",
+      "docs/public/rendering-sample-family-authorities.json",
+      "schemas/rendering-sample-family-authorities.schema.json"
+    ],
+    "primaryLayerTypeFamilies": [
+      { "layerType": "text", "familyId": "family.2d-geometry-text-keyframes@1" },
+      { "layerType": "shape", "familyId": "family.2d-geometry-text-keyframes@1" },
+      { "layerType": "image", "familyId": "family.keying-and-roto@1" },
+      { "layerType": "video", "familyId": "family.tracking-and-stabilization@1" },
+      { "layerType": "caption", "familyId": "family.caption-import-and-delivery@1" },
+      { "layerType": "audio", "familyId": "family.audio-delivery@1" },
+      { "layerType": "web", "familyId": "family.html-css-and-canvas@1" },
+      { "layerType": "html", "familyId": "family.html-css-and-canvas@1" },
+      { "layerType": "canvas", "familyId": "family.html-css-and-canvas@1" },
+      { "layerType": "adjustment", "familyId": "family.governed-shader-and-hybrid-gpu-delivery@1" },
+      { "layerType": "camera", "familyId": "family.environments-and-depth@1" },
+      { "layerType": "particles", "familyId": "family.points-particles-trails@1" },
+      { "layerType": "points", "familyId": "family.points-particles-trails@1" },
+      { "layerType": "shader", "familyId": "family.governed-shader-and-hybrid-gpu-delivery@1" },
+      { "layerType": "scene3d", "familyId": "family.fixed-scene3d-and-gltf@1" },
+      { "layerType": "environment", "familyId": "family.environments-and-depth@1" },
+      { "layerType": "group", "familyId": "family.cutout-rig-bake@1" }
+    ]
+  },
+  "publicExport": {
+    "schemaPath": "schemas/rendering-sample-catalog.schema.json",
+    "catalogPath": "docs/public/rendering-sample-catalog.json",
+    "documentationPath": "docs/public/RENDERING_SAMPLES.md"
+  },
+  "capabilities": [
+    {
+      "id": "preview.native-png@1",
+      "title": "Native PNG preview",
+      "surface": "preview",
+      "requiredCompatibilityLanes": ["native"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "preview.browser-png@1",
+      "title": "Browser PNG preview",
+      "surface": "preview",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "preview.gpu-png@1",
+      "title": "Strict GPU PNG preview",
+      "surface": "preview",
+      "requiredCompatibilityLanes": ["gpu"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.native-png-still@1",
+      "title": "Native PNG still",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["native"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.native-mp4-h264@1",
+      "title": "Native-frame H.264 MP4",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["native"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-mp4-h264@1",
+      "title": "Browser-frame H.264 MP4",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-mp4-hevc@1",
+      "title": "Browser-frame HEVC MP4",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-webm-av1@1",
+      "title": "Browser-frame AV1 WebM",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-webm-vp9@1",
+      "title": "Browser-frame VP9 WebM",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-webm-vp9-alpha@1",
+      "title": "Browser-frame VP9-alpha WebM",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-gif@1",
+      "title": "Browser-frame GIF",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-mov-prores@1",
+      "title": "Browser-frame ProRes 4444 MOV",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-png-sequence@1",
+      "title": "Browser-frame PNG sequence",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-png-frame@1",
+      "title": "Browser-frame PNG still",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.browser-jpeg-frame@1",
+      "title": "Browser-frame JPEG still",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render.gpu-mp4-h264@1",
+      "title": "Strict GPU H.264 MP4",
+      "surface": "render",
+      "requiredCompatibilityLanes": ["gpu"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    },
+    {
+      "id": "render-batch.mixed-preset@1",
+      "title": "Mixed-preset batch render",
+      "surface": "render-batch",
+      "requiredCompatibilityLanes": ["browser"],
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "choosing-a-lane" }
+    }
+  ],
+  "samples": [
+    {
+      "id": "sample.procedural-relationships.native-preview@1",
+      "capabilityId": "preview.native-png@1",
+      "title": "Text-free native preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/procedural-relationships", "fingerprint": "5c92b49c252bbfaa8ea81ea59c69be9508056ac3a04ab303cdb80a3dc2df61d5" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "native", "--at-ms", "1000", "--out", "{out}/preview-native"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "native", "--at-ms", "1000", "--out", "{out}/preview-native"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-native/pkg_procedural_relationships-native-1000.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "Native is a bounded renderer; it refuses unsupported visual features and never falls back to browser pixels."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-preview@1",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Browser preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "750", "--out", "{out}/preview-browser"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "750", "--out", "{out}/preview-browser"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-browser/pkg_keyframed_lower_third-browser-750.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "Browser preview needs a discovered Chromium runtime and is not evidence of native or GPU pixel parity."
+    },
+    {
+      "id": "sample.gpu-points-preview@1",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Strict GPU points preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-points-preview", "fingerprint": "896bbe040dabfd54a0f6aa40020f864ccd053a0a80b273204b846977629d7fd5" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "500", "--out", "{out}/preview-gpu"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "500", "--out", "{out}/preview-gpu"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-gpu/pkg_gpu_points_preview-gpu-500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "GPU is strict and host-dependent: unsupported packages or unavailable WebGPU refuse rather than falling back."
+    },
+    {
+      "id": "sample.gpu-orbital-particle-trails-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Strict GPU particle-trail preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-g9-orbital-depth", "fingerprint": "59abc08d7d706432f0568d1791ce0674f37692ca81c53a56e37481ce46643e1b" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gpu-orbital"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gpu-orbital"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-gpu-orbital/pkg_gpu_g9_orbital_depth-gpu-3600.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This supplemental strict-GPU preview proves a declared particle trail source and receipt shape; it requires admitted WebGPU and does not establish compute-particle, browser, or native parity."
+    },
+    {
+      "id": "sample.tidal-reassembly.v2-particle-compute.gpu-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Tidal Reassembly v2 analytic particle-compute preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-v020-tidal-reassembly", "fingerprint": "4726ed6744e657391c78f8ec37cddc19ca756c4fef19f0bd99b5ed3aca44b4ee" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "5760", "--out", "{out}/preview-tidal-reassembly"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "5760", "--out", "{out}/preview-tidal-reassembly"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-tidal-reassembly/pkg_gpu_v020_tidal_reassembly-gpu-5760.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This supplemental source sample structurally pins the closed v2 analytic compute descriptor and expected strict-GPU preview receipt shape. It is not executed runtime proof, game physics, arbitrary compute, retained simulation state, browser/native parity, final delivery, or host qualification."
+    },
+    {
+      "id": "sample.fixed-scene3d.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Fixed declarative Scene3D preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/fixed-scene3d", "fingerprint": "9c05e8d93e516b08969f12638242f973ee57b28f754fde58341cda52e91dc2ec" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "600", "--out", "{out}/preview-fixed-scene3d"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "600", "--out", "{out}/preview-fixed-scene3d"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-fixed-scene3d/pkg_fixed_scene3d-browser-600.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This source-level sample proves a bounded declarative scene3d record and only names the expected browser artifact and receipt shape; it does not prove pixels, native or installed execution, or document scene3dAnimation@1."
+    },
+    {
+      "id": "sample.scene3d-animation.direct-gpu-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Direct Scene3D animation GPU PNG preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-scene3d-animation-preview", "fingerprint": "9892416cb26147cd99536dc600ca29153eca97f41264bdeacf873f37213c3418" },
+      "invocation": {
+        "kind": "renderer-browser-direct-api",
+        "packageLoader": { "module": "@shellx-motion/core", "export": "loadMotionPackage" },
+        "renderer": { "module": "@shellx-motion/renderer-browser", "export": "renderMotionGpuPreview" },
+        "sourcePaths": [
+          "packages/core/src/index.ts",
+          "packages/core/src/package.ts",
+          "packages/renderer-browser/src/index.ts",
+          "packages/renderer-browser/src/gpu-points-preview.ts",
+          "packages/renderer-browser/src/gpu-preview-output.ts"
+        ],
+        "atMs": 500,
+        "outDir": ".scratch/rendering-samples/gpu-scene3d-animation-preview"
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/gpu-scene3d-animation-preview/pkg_gpu_scene3d_animation_preview-gpu-500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.gpu.frame", "location": "inline-return" },
+      "limitations": "This source-only direct API sample binds a strict bounded GPU PNG preview and source/receipt evidence for persisted scene3dAnimation@1. It does not establish general glTF animation, browser/native parity, final media, installed qualification, or public-host qualification."
+    },
+    {
+      "id": "sample.gltf-orbital-scene3d.gpu-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Lowered glTF Scene3D mesh preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-g9-orbital-depth", "fingerprint": "59abc08d7d706432f0568d1791ce0674f37692ca81c53a56e37481ce46643e1b" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gltf-orbital"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gltf-orbital"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-gltf-orbital/pkg_gpu_g9_orbital_depth-gpu-3600.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This source-level GPU sample exposes the bounded lowered glTF mesh and its expected preview receipt shape; it does not prove a glTF import ran, pixels, native or installed execution, or document scene3dAnimation@1."
+    },
+    {
+      "id": "sample.gltf-orbital-package-boundary.gpu-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Lowered glTF package-source boundary",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-g9-orbital-depth", "fingerprint": "59abc08d7d706432f0568d1791ce0674f37692ca81c53a56e37481ce46643e1b" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gltf-orbital-package"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "3600", "--out", "{out}/preview-gltf-orbital-package"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-gltf-orbital-package/pkg_gpu_g9_orbital_depth-gpu-3600.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This source-level entry keeps the checked package asset boundary reviewable; it does not attest an import execution, rendered pixels, native or installed execution, or document scene3dAnimation@1."
+    },
+    {
+      "id": "sample.environment-rain-cinematic.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Cinematic rain environment preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/environment-rain-cinematic", "fingerprint": "09bcd2df759fefd98f3cb0a77a2fa222e009de749c104a3a54164f2aa3e5d61d" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "3200", "--out", "{out}/preview-environment-rain"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "3200", "--out", "{out}/preview-environment-rain"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-environment-rain/pkg_environment_rain_cinematic-browser-3200.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This browser preview proves the checked rain environment and its bounded motion-blur effect; it needs Chromium and does not establish native/GPU parity or a rendered delivery."
+    },
+    {
+      "id": "sample.rich-depth-promo.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Camera-backed rich depth preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/rich-depth-promo", "fingerprint": "691738b8cd7ecbf074743da10fd693e2ed774732ecfbd877f792e18c39a13128" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "800", "--out", "{out}/preview-rich-depth"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "800", "--out", "{out}/preview-rich-depth"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-rich-depth/pkg_rich_depth_promo-browser-800.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This browser preview proves declared camera-backed depth planes; it does not claim arbitrary 3D, glTF interchange, native/GPU parity, or a rendered delivery."
+    },
+    {
+      "id": "sample.compositing-graph-parity.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Typed compositing graph browser preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/compositing-graph-parity", "fingerprint": "bf69b4dc83aa306318f7fd02e1e72209fefe5d1dcfc4244a162daf1eb40b8038" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-compositing-graph"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-compositing-graph"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-compositing-graph/pkg_compositing_graph_parity-browser-500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This supplemental browser preview pins typed source, matte, blend, and output graph data; it needs Chromium and does not establish an executed parity result, arbitrary graph support, native/GPU parity, or a rendered delivery."
+    },
+    {
+      "id": "sample.compositing-direct-parity.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Direct compositing parity browser preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/compositing-direct-parity", "fingerprint": "c07612465736c7c838f2b6e2fd49322b8a0397206789771078e0f6a82b8971b4" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-compositing-direct"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-compositing-direct"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-compositing-direct/pkg_compositing_direct_parity-browser-500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This supplemental browser preview pins the direct alpha-matte, screen-blend, and blur source paired with the graph fixture; it needs Chromium and does not establish an executed parity result, native/GPU parity, or a rendered delivery."
+    },
+    {
+      "id": "sample.keyed-subject-promo.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Bounded chroma-key subject browser preview",
+      "source": { "kind": "motion-package", "path": "templates/shellx-product-pack/keyed-subject-promo", "fingerprint": "5e63057e5336caaaf0675cdf05f391767c87b47a8026873c2cc131b7d2b1785c" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "1500", "--out", "{out}/preview-keyed-subject"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "1500", "--out", "{out}/preview-keyed-subject"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-keyed-subject/pkg_shellx_keyed_subject_promo-browser-1500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This supplemental browser preview pins an image chroma key with bounded spill and matte cleanup. It does not use the poster or bundled-media provenance as render proof, does not register persisted roto, and does not establish a rendered output, installed-host qualification, or native/GPU parity."
+    },
+    {
+      "id": "sample.procedural-relationships.native-still@1",
+      "capabilityId": "render.native-png-still@1",
+      "title": "Native still render",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/procedural-relationships", "fingerprint": "5c92b49c252bbfaa8ea81ea59c69be9508056ac3a04ab303cdb80a3dc2df61d5" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "native", "--at-ms", "1000", "--out", "{out}/native-still.png"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "native", "--at-ms", "1000", "--out", "{out}/native-still.png"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/native-still.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "render --lane native writes one PNG still, not a video and not an image sequence."
+    },
+    {
+      "id": "sample.procedural-relationships.native-h264@1",
+      "capabilityId": "render.native-mp4-h264@1",
+      "title": "Native-frame H.264 delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/procedural-relationships", "fingerprint": "5c92b49c252bbfaa8ea81ea59c69be9508056ac3a04ab303cdb80a3dc2df61d5" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "native", "--preset", "mp4-h264", "--out", "{out}/native-h264.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "native", "--preset", "mp4-h264", "--out", "{out}/native-h264.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/native-h264.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "This route needs FFmpeg and a package admitted by native; it does not use Chromium."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-h264@1",
+      "capabilityId": "render.browser-mp4-h264@1",
+      "title": "Browser-frame H.264 delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mp4-h264", "--out", "{out}/browser-h264.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mp4-h264", "--out", "{out}/browser-h264.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-h264.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "The browser frame lane and an FFmpeg H.264 encoder must both be available; delivery receipts, not this fixture, prove a host render."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-hevc@1",
+      "capabilityId": "render.browser-mp4-hevc@1",
+      "title": "Browser-frame HEVC delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mp4-hevc", "--out", "{out}/browser-hevc.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mp4-hevc", "--out", "{out}/browser-hevc.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-hevc.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "HEVC is conditional on the local FFmpeg encoder probe; unsupported hosts refuse the preset rather than relabeling H.264."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-av1@1",
+      "capabilityId": "render.browser-webm-av1@1",
+      "title": "Browser-frame AV1 delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-av1", "--out", "{out}/browser-av1.webm"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-av1", "--out", "{out}/browser-av1.webm"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-av1.webm", "mediaType": "video/webm" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "AV1 is conditional on the local FFmpeg encoder probe and its software or hardware availability."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-vp9@1",
+      "capabilityId": "render.browser-webm-vp9@1",
+      "title": "Browser-frame VP9 delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-vp9", "--out", "{out}/browser-vp9.webm"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-vp9", "--out", "{out}/browser-vp9.webm"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-vp9.webm", "mediaType": "video/webm" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "VP9 delivery needs Chromium for frames and a locally supported FFmpeg VP9 encoder."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-vp9-alpha@1",
+      "capabilityId": "render.browser-webm-vp9-alpha@1",
+      "title": "Browser-frame VP9-alpha delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-vp9-alpha", "--out", "{out}/browser-vp9-alpha.webm"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "webm-vp9-alpha", "--out", "{out}/browser-vp9-alpha.webm"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-vp9-alpha.webm", "mediaType": "video/webm" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "This opaque fixture proves the VP9-alpha route shape only; use a separately qualified transparent package to claim surviving alpha pixels."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-gif@1",
+      "capabilityId": "render.browser-gif@1",
+      "title": "Browser-frame GIF delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "gif", "--out", "{out}/browser.gif"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "gif", "--out", "{out}/browser.gif"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser.gif", "mediaType": "image/gif" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "GIF has no delivered audio and uses the bounded generated palette route rather than a video container."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-prores@1",
+      "capabilityId": "render.browser-mov-prores@1",
+      "title": "Browser-frame ProRes 4444 delivery",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mov-prores", "--out", "{out}/browser-prores.mov"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "mov-prores", "--out", "{out}/browser-prores.mov"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-prores.mov", "mediaType": "video/quicktime" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "This opaque fixture proves the ProRes route shape only; transparent-pixel delivery needs its own qualified package and receipt."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-png-sequence@1",
+      "capabilityId": "render.browser-png-sequence@1",
+      "title": "Browser-frame PNG sequence",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "png-sequence", "--out", "{out}/browser-sequence"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "png-sequence", "--out", "{out}/browser-sequence"]
+      },
+      "expectedArtifact": { "kind": "directory", "path": ".scratch/rendering-samples/browser-sequence", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "inside-output-directory" },
+      "limitations": "PNG sequence delivery materializes a frame directory; it is not a streamed final-video output."
+    },
+    {
+      "id": "sample.keyframed-lower-third.browser-png-frame@1",
+      "capabilityId": "render.browser-png-frame@1",
+      "title": "Browser-frame PNG still",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/keyframed-lower-third", "fingerprint": "4cfc9e55fb742b6a9b96fc16f5fa38f01973d6f3793175b3c56600b232931389" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "png-frame", "--at-ms", "750", "--out", "{out}/browser-still.png"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "png-frame", "--at-ms", "750", "--out", "{out}/browser-still.png"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-still.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "A PNG-frame render is one browser-rasterized still; it does not claim video encoding or muxing."
+    },
+    {
+      "id": "sample.editable-lower-third.browser-jpeg@1",
+      "capabilityId": "render.browser-jpeg-frame@1",
+      "title": "Browser-frame JPEG still",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/editable-lower-third", "fingerprint": "f5ea13b3de9fc1dae66ebf733ef96cbecc01141cedea323f276eeefdbd101a93" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "jpeg-frame", "--at-ms", "750", "--out", "{out}/browser-still.jpg"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "browser", "--preset", "jpeg-frame", "--at-ms", "750", "--out", "{out}/browser-still.jpg"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/browser-still.jpg", "mediaType": "image/jpeg" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "JPEG delivery has no alpha channel and is a still output, not a final-video route."
+    },
+    {
+      "id": "sample.tideglass.gpu-h264@1",
+      "capabilityId": "render.gpu-mp4-h264@1",
+      "title": "Accepted restricted-GLSL GPU final",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-v25b2-tideglass-almanac", "fingerprint": "261bfb430a50c01e9cfa8f22af5fe1eb7effa7151be7d93dee08bbb31d9e46b7" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/gpu-h264.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/gpu-h264.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/gpu-h264.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "GPU final is strict raw-RGBA-to-FFmpeg delivery; it requires admitted hardware and refuses unsupported content or fallback lanes."
+    },
+    {
+      "id": "sample.batch-card.mixed-preset@1",
+      "capabilityId": "render-batch.mixed-preset@1",
+      "title": "Package-local data-row batch",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/batch-card", "fingerprint": "5eccac59b7c7e746693d3e01e2cf3ea9cb427eb806264519e8195d9392513897" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render-batch", "{samplePath}", "--out", "{out}/batch"],
+        "installed": ["shellx-motion", "render-batch", "{packageRoot}", "--out", "{out}/batch"]
+      },
+      "expectedArtifact": { "kind": "per-row-files", "path": ".scratch/rendering-samples/batch", "mediaType": "application/x-shellx-motion-batch" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.batch", "location": "inside-batch-output" },
+      "limitations": "Batch rows are package-local, output once per row, and must be checked through each row receipt rather than a guessed aggregate success."
+    },
+    {
+      "id": "sample.path-reveal-browser.family-evidence@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Browser path-reveal family evidence",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/path-reveal-browser", "fingerprint": "8b22ecfa83d19851fe2a87d95008c84cb4e41f1a6df988c2e1811daba2c53ebd" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "800", "--out", "{out}/preview-path-reveal"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "800", "--out", "{out}/preview-path-reveal"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-path-reveal/pkg_path_reveal_browser-browser-800.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This checked browser fixture proves one stroked single-subpath path and its rich-set-owned serialized reveal fields; it does not preserve a rich-set execution/revision receipt, register native behavior, multi-subpath or reverse reveals, GPU host qualification, or a rendered delivery."
+    },
+    {
+      "id": "sample.lottie-primitives-lowered.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Lowered Lottie primitive preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/lottie-primitives-lowered", "fingerprint": "0a1bb576be799445cdd016a576b8107f0ca7928732a644cab2dd759f8ffdb267" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "0", "--out", "{out}/lottie-primitives-preview"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "0", "--out", "{out}/lottie-primitives-preview"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/lottie-primitives-preview/pkg_lottie_3c9fe1f3ffd55847-browser-0.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This structurally checked package preserves one bounded static Lottie source plus lowering and diagnostics receipts. Browser preview needs Chromium; it is source evidence only and does not qualify an installed build, complete Lottie representation, or native/GPU parity."
+    },
+    {
+      "id": "sample.dotlottie-primitives-lowered.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Lowered dotLottie primitive preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/dotlottie-primitives-lowered", "fingerprint": "38977f264bda4ff4d6f3812a1fcd3e06661c6367cf8a436d9133785477fdf562" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "0", "--out", "{out}/dotlottie-primitives-preview"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "0", "--out", "{out}/dotlottie-primitives-preview"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/dotlottie-primitives-preview/pkg_dotlottie_daab0c4090a2321c-browser-0.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This structurally checked package preserves the selected dotLottie archive and animation plus lowering and diagnostics receipts. State machines remain preserved but never executed; browser preview needs Chromium and does not qualify an installed build, complete container representation, or native/GPU parity."
+    },
+    {
+      "id": "sample.tracked-callout-overlay.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Pre-baked tracked-callout browser preview",
+      "source": { "kind": "motion-package", "path": "templates/shellx-product-pack/tracked-callout-overlay", "fingerprint": "3c75f0e74ae65c4dda55a1887dd314619955bb0d33e0bbdd347d368cdd7ceb06" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "3500", "--out", "{out}/preview-tracked-callout"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "3500", "--out", "{out}/preview-tracked-callout"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-tracked-callout/pkg_shellx_tracked_callout_overlay-browser-3500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This browser sample pins an authored, pre-baked callout path over a package-local still. It is not source footage, a tracking-analysis lifecycle, a stabilization apply or verify receipt, a delivery render, native/GPU parity, or installed-build qualification; re-run tracking for replacement media."
+    },
+    {
+      "id": "sample.hyperframes-card.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Contained HTML and CSS web-card browser preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/hyperframes-card", "fingerprint": "992e0ee9b5f09bc247b6d1a8bcd9ea47d4109841567056b966739ab155bfd35f" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "1500", "--out", "{out}/preview-hyperframes-card"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "1500", "--out", "{out}/preview-hyperframes-card"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-hyperframes-card/pkg_hyperframes_card-browser-1500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This browser sample pins one package-local web layer and its contained HTML/CSS source. It is not an html-snippet-import execution or receipt, does not exercise canvas or executable script content, and does not qualify native/GPU pixels, delivery, or an installed build."
+    },
+    {
+      "id": "sample.second-take-cutout-pivot.gpu-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.gpu-png@1",
+      "title": "Cutout-pivot source evidence GPU preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-v25c-second-take", "fingerprint": "ba196b14199efbbb2064dc422d96737c929c5ea6d0343ddee8c9434e27ace2c9" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "gpu", "--at-ms", "4000", "--out", "{out}/preview-cutout-pivot"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "gpu", "--at-ms", "4000", "--out", "{out}/preview-cutout-pivot"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-cutout-pivot/pkg_gpu_v25c_second_take-gpu-4000.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This strict-GPU source sample pins an image subject's explicit pixel pivot and bounded x/scale tracks used when reviewing a cutout pose. It is not a motion.timeline.cutout.rig.bake run, rig input, bake receipt, crop-output proof, native/browser parity, delivery, or installed-host qualification."
+    },
+    {
+      "id": "sample.editable-lower-third.transitions.browser-preview@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "preview.browser-png@1",
+      "title": "Serialized transition source browser preview",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/editable-lower-third", "fingerprint": "f5ea13b3de9fc1dae66ebf733ef96cbecc01141cedea323f276eeefdbd101a93" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "preview", "{samplePath}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-transitions"],
+        "installed": ["shellx-motion", "preview", "{packageRoot}", "--lane", "browser", "--at-ms", "500", "--out", "{out}/preview-transitions"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/preview-transitions/pkg_editable_lower_third-browser-500.png", "mediaType": "image/png" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "preview.frame", "location": "beside-output" },
+      "limitations": "This browser source sample pins serialized slide and wipe transition data on an editable package. It is not a motion.timeline.transition.preset.apply execution or revision receipt, does not identify a chosen preset, and does not establish native/GPU parity, delivery, or installed-build qualification."
+    }
+  ],
+  "publicCapabilityFamilies": [
+    {
+      "id": "family.2d-geometry-text-keyframes@1",
+      "title": "2D geometry, text, and keyframes",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "authoring-and-animation" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.keyframe.upsert" },
+      "registration": "registered",
+      "sampleIds": ["sample.keyframed-lower-third.browser-preview@1"],
+      "limitation": "This package proves ordinary shape/text/keyframe authoring and its browser-preview receipt boundary; it does not prove all rich-layer or renderer-lane variants."
+    },
+    {
+      "id": "family.path-reveals@1",
+      "title": "Path geometry and reveals",
+      "documentation": { "path": "docs/public/path-reveals.md", "anchor": "browser-and-bounded-gpu-path-reveals" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.layer.rich.set" },
+      "registration": "registered",
+      "sampleIds": ["sample.path-reveal-browser.family-evidence@1"],
+      "limitation": "This checked browser source binds the public rich-set authority to a single-subpath serialized reveal contract and browser preview receipt shape; it does not claim a rich-set execution/revision receipt, native behavior, multi-subpath/reverse reveals, GPU host qualification, or rendered delivery."
+    },
+    {
+      "id": "family.environments-and-depth@1",
+      "title": "Environments and depth-aware composition",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.layer.create" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.environment-rain-cinematic.browser-preview@1",
+        "sample.rich-depth-promo.browser-preview@1"
+      ],
+      "limitation": "These paired browser-preview samples prove a bounded rain environment/effect and a separate camera-backed multi-plane depth composition; they do not claim a single combined fixture, arbitrary 3D, native/GPU parity, or a rendered delivery."
+    },
+    {
+      "id": "family.points-particles-trails@1",
+      "title": "Points, particles, and trails",
+      "documentation": { "path": "docs/public/trails.md", "anchor": "bounded-particles-and-points-trails" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.particles.emitter.trail.add" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.gpu-points-preview@1",
+        "sample.gpu-orbital-particle-trails-preview@1"
+      ],
+      "limitation": "These GPU-preview samples prove an ordered points layer plus a particles layer carrying the bounded static effects.trail record; they do not prove physics, persistent history, fixed-compute particles, or browser/native parity."
+    },
+    {
+      "id": "family.analytic-particle-field-compute@2",
+      "title": "Bounded analytic particle-field compute",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.particles.field.source.insert" },
+      "registration": "registered",
+      "sampleIds": ["sample.tidal-reassembly.v2-particle-compute.gpu-preview@1"],
+      "limitation": "This checked source fixture structurally binds one 100,000-particle particle-field@2 descriptor with weighted origins, four closed source kinds, analytic trail, fixed shading, and a strict GPU data-only manifest. It is bounded analytic compute, not game physics, arbitrary compute, retained physics, rendered delivery, or hardware/installed-host proof."
+    },
+    {
+      "id": "family.procedural-bindings@1",
+      "title": "Procedural bindings",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.procedural.relationship.set" },
+      "registration": "registered",
+      "sampleIds": ["sample.procedural-relationships.native-preview@1"],
+      "limitation": "This package proves the bounded procedural relationship document and its native-preview receipt boundary; it does not imply arbitrary expressions or browser/GPU parity."
+    },
+    {
+      "id": "family.compositing-graphs@1",
+      "title": "Compositing graphs",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.compositing.graph.set" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.compositing-graph-parity.browser-preview@1",
+        "sample.compositing-direct-parity.browser-preview@1"
+      ],
+      "limitation": "These paired browser-preview fixtures pin one data-only source/matte/blend/output graph and its direct alpha-matte/screen/blur counterpart. They do not claim an executed pixel-parity result, arbitrary graph code/plugins, native/GPU parity, or a rendered delivery."
+    },
+    {
+      "id": "family.governed-shader-and-hybrid-gpu-delivery@1",
+      "title": "Governed shader and hybrid GPU delivery",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.render.final" },
+      "registration": "registered",
+      "sampleIds": ["sample.tideglass.gpu-h264@1"],
+      "limitation": "This strict GPU final sample pins one checked restricted-GLSL shader and adjustment-layer source package. It does not claim arbitrary shader code, general hybrid content, a GPU on the current host, or every authoring mutation that can target these layer types."
+    },
+    {
+      "id": "family.keying-and-roto@1",
+      "title": "Keying and roto",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.keying.apply" },
+      "registration": "registered",
+      "sampleIds": ["sample.keyed-subject-promo.browser-preview@1"],
+      "limitation": "The supplemental browser package pins bounded chroma key, spill suppression, and matte cleanup. Separately, the checked source workflow copies one public PNG, upserts a tracked roto mask, and detaches that attachment through copy-on-write revisions with package and host receipts. This does not claim segmentation, arbitrary media/keying controls, generic installed-host authority, or rendered delivery."
+    },
+    {
+      "id": "family.tracking-and-stabilization@1",
+      "title": "Tracking and stabilization",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.analysis.tracking.request" },
+      "registration": "registered",
+      "sampleIds": ["sample.tracked-callout-overlay.browser-preview@1"],
+      "limitation": "The supplemental browser package pins an authored pre-baked tracked-callout path. Separately, the checked source workflow generates a bounded synthetic video and executes real request, inspect, apply, verify, and detach tracking lifecycle calls with receipts. This does not establish arbitrary footage quality, generic tracking models, installed-host authority, or rendered delivery."
+    },
+    {
+      "id": "family.fixed-scene3d-and-gltf@1",
+      "title": "Fixed 3D scenes and glTF import",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "interchange" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.scene3d.gltf.import" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.fixed-scene3d.browser-preview@1",
+        "sample.gltf-orbital-scene3d.gpu-preview@1",
+        "sample.gltf-orbital-package-boundary.gpu-preview@1"
+      ],
+      "limitation": "The supplemental source packages expose a fixed declarative Scene3D record plus a bounded lowered glTF mesh and package boundary. Separately, the checked triangle glTF CLI route creates a new package and adapter-lowering receipt after explicit write_local local authority. This does not claim generic glTF/GLB coverage, animation, materials outside the bounded importer subset, installed-host qualification, or rendered delivery."
+    },
+    {
+      "id": "family.scene3d-animation-gpu-preview@1",
+      "title": "Scene3D animation strict GPU preview",
+      "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motiontimelinescene3d-animationinspect" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.scene3d-animation.inspect" },
+      "registration": "registered",
+      "sampleIds": ["sample.scene3d-animation.direct-gpu-preview@1"],
+      "limitation": "This checked asset-free package binds persisted scene3dAnimation@1 source data to the direct renderer-browser strict GPU PNG preview and inline receipt shape only. It does not establish general glTF animation, browser/native parity, final media, installed qualification, or public-host qualification."
+    },
+    {
+      "id": "family.html-css-and-canvas@1",
+      "title": "Bounded HTML/CSS import and host-gated Canvas packaging",
+      "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motionhtmlsnippetimport" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.html.snippet.import" },
+      "registration": "registered",
+      "sampleIds": ["sample.hyperframes-card.browser-preview@1"],
+      "limitation": "The checked web package and separate workflows cover bounded HTML import plus a Linux-only host-authorized Canvas package path. They do not claim arbitrary executable Canvas, browser-native parity, Canvas availability on macOS or Windows, or a rendered delivery."
+    },
+    {
+      "id": "family.lottie-and-dotlottie@1",
+      "title": "Lottie and dotLottie import",
+      "documentation": { "path": "docs/public/FEATURES.md", "anchor": "interchange" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.lottie.import" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.lottie-primitives-lowered.browser-preview@1",
+        "sample.dotlottie-primitives-lowered.browser-preview@1"
+      ],
+      "limitation": "These paired checked lowered packages bind one static Lottie JSON input and one selected dotLottie archive to source/installed import forms, package outputs, and lowering/diagnostics receipt shapes; they do not qualify an installed build, complete format representation, executed state machines, or browser/native/GPU pixel parity."
+    },
+    {
+      "id": "family.templates-data-and-batch@1",
+      "title": "Templates, data, and batch authoring",
+      "documentation": { "path": "docs/public/templates.md", "anchor": "the-product-pack-12-families" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.template.catalog" },
+      "registration": "registered",
+      "sampleIds": [
+        "sample.editable-lower-third.browser-jpeg@1",
+        "sample.batch-card.mixed-preset@1"
+      ],
+      "limitation": "These paired samples prove a package template and package-local data rows rendered in batch; they do not claim every product-pack family or external data-import route."
+    },
+    {
+      "id": "family.cutout-rig-bake@1",
+      "title": "Cutout-rig bake",
+      "documentation": { "path": "docs/public/cutout-rigging.md", "anchor": "bounded-cutout-rig-bake" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.cutout.rig.bake" },
+      "registration": "registered",
+      "sampleIds": ["sample.second-take-cutout-pivot.gpu-preview@1"],
+      "limitation": "The supplemental strict-GPU source package pins an image subject's explicit pixel pivot and bounded pose tracks. Separately, the checked source workflow copies one public PNG into a deliberately static source package, runs the bounded data-only rig bake, and verifies package plus host receipts. This is not segmentation, a live hierarchy, generic installed-host authority, or rendered delivery."
+    },
+    {
+      "id": "family.transition-presets@1",
+      "title": "Transition presets",
+      "documentation": { "path": "docs/public/transition-presets.md", "anchor": "named-transition-presets" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.transition.preset.apply" },
+      "registration": "registered",
+      "sampleIds": ["sample.editable-lower-third.transitions.browser-preview@1"],
+      "limitation": "The checked package pins ordinary serialized slide and wipe transitions only. It deliberately does not claim a selected preset, preset-apply copy-on-write revision or receipt, native/GPU parity, delivery, or installed qualification."
+    },
+    {
+      "id": "family.audio-delivery@1",
+      "title": "Audio-layer final delivery",
+      "documentation": { "path": "docs/public/rendering.md", "anchor": "audio-master-verification-matrix" },
+      "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.render.final" },
+      "registration": "registered",
+      "sampleIds": [],
+      "limitation": "The checked source workflow creates a bounded WAV, muxes a browser-frame H.264 MP4, and verifies delivered audio. It does not claim arbitrary audio formats, a user-configured master edit, or an installed-host qualification."
+    },
+    {
+      "id": "family.caption-import-and-delivery@1",
+      "title": "Caption import and delivery",
+      "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motiontimelinecaptionimport" },
+      "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.caption.import" },
+      "registration": "registered",
+      "sampleIds": [],
+      "limitation": "The checked source workflow generates a bounded SRT, imports it into a copy-on-write package, and renders browser-frame H.264 media. It does not claim word timing, transcript generation, arbitrary caption styling, or installed-host qualification."
+    }
+  ],
+  "familySampleBindings": [
+    {
+      "familyId": "family.2d-geometry-text-keyframes@1",
+      "sampleId": "sample.keyframed-lower-third.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/keyframed-lower-third/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "shape" },
+          { "pointer": "/layers/2/type", "value": "text" },
+          { "pointer": "/layers/0/keyframes/transform.x/0/atMs", "value": 0 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.procedural-bindings@1",
+      "sampleId": "sample.procedural-relationships.native-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/procedural-relationships/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/relationships/schema", "value": "shellx-motion/procedural-relationships@1" },
+          { "pointer": "/relationships/relationships/0/nodes/0/type", "value": "time" },
+          { "pointer": "/relationships/relationships/0/target/property", "value": "transform.x" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.compositing-graphs@1",
+      "sampleId": "sample.compositing-graph-parity.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/compositing-graph-parity/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/compositing/schema", "value": "shellx-motion/compositing-graph@1" },
+          { "pointer": "/compositing/nodes/0/type", "value": "source" },
+          { "pointer": "/compositing/nodes/6/type", "value": "matte" },
+          { "pointer": "/compositing/nodes/7/type", "value": "blend" },
+          { "pointer": "/compositing/nodes/8/type", "value": "output" },
+          { "pointer": "/compositing/edges/0/from/nodeId", "value": "content" },
+          { "pointer": "/compositing/edges/0/to/nodeId", "value": "move" },
+          { "pointer": "/compositing/edges/4/from/nodeId", "value": "matte-source" },
+          { "pointer": "/compositing/edges/4/to/nodeId", "value": "matte" },
+          { "pointer": "/compositing/edges/4/to/port", "value": "matte" },
+          { "pointer": "/compositing/edges/5/to/nodeId", "value": "blend" },
+          { "pointer": "/compositing/edges/5/to/port", "value": "background" },
+          { "pointer": "/compositing/edges/6/to/port", "value": "foreground" },
+          { "pointer": "/compositing/edges/7/to/nodeId", "value": "output" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.compositing-graphs@1",
+      "sampleId": "sample.compositing-direct-parity.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/compositing-direct-parity/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/2/type", "value": "shape" },
+          { "pointer": "/layers/2/matte/type", "value": "alpha" },
+          { "pointer": "/layers/2/matte/sourceLayerId", "value": "direct-matte" },
+          { "pointer": "/layers/2/blendMode", "value": "screen" },
+          { "pointer": "/layers/2/effects/blur", "value": 3 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.governed-shader-and-hybrid-gpu-delivery@1",
+      "sampleId": "sample.tideglass.gpu-h264@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-v25b2-tideglass-almanac/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "camera" },
+          { "pointer": "/layers/2/type", "value": "shader" },
+          { "pointer": "/layers/2/shader/schema", "value": "shellx-motion/shader-plugin@1" },
+          { "pointer": "/layers/2/shader/language", "value": "glsl-es-100-expression" },
+          { "pointer": "/layers/6/type", "value": "adjustment" },
+          { "pointer": "/layers/6/effects/vignette/amount", "value": 0.68 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.keying-and-roto@1",
+      "sampleId": "sample.keyed-subject-promo.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "templates/shellx-product-pack/keyed-subject-promo/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/2/type", "value": "image" },
+          { "pointer": "/layers/2/keying/schema", "value": "shellx-motion/chroma-key@1" },
+          { "pointer": "/layers/2/keying/keyColor", "value": "#00ff00" },
+          { "pointer": "/layers/2/keying/similarity", "value": 0.2 },
+          { "pointer": "/layers/2/keying/smoothness", "value": 0.14 },
+          { "pointer": "/layers/2/keying/shadow", "value": 0.12 },
+          { "pointer": "/layers/2/keying/spillSuppression", "value": 0.72 },
+          { "pointer": "/layers/2/keying/spillBalance", "value": 0.08 },
+          { "pointer": "/layers/2/keying/edgeColorCorrection", "value": 0.34 },
+          { "pointer": "/layers/2/keying/matte/denoiseRadiusPx", "value": 1 },
+          { "pointer": "/layers/2/keying/matte/growShrinkPx", "value": -1 },
+          { "pointer": "/layers/2/keying/matte/chokePx", "value": 1 },
+          { "pointer": "/layers/2/keying/matte/featherPx", "value": 2 },
+          { "pointer": "/layers/2/keying/matte/blackClip", "value": 0.04 },
+          { "pointer": "/layers/2/keying/matte/whiteClip", "value": 0.96 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.templates-data-and-batch@1",
+      "sampleId": "sample.editable-lower-third.browser-jpeg@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/editable-lower-third/template.json",
+        "expectedJsonValues": [
+          { "pointer": "/schema", "value": "shellx-motion/template@1" },
+          { "pointer": "/params/0/type", "value": "text" },
+          { "pointer": "/bindings/0/target/kind", "value": "motion_path" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.templates-data-and-batch@1",
+      "sampleId": "sample.batch-card.mixed-preset@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/batch-card/data/rows.json",
+        "expectedJsonValues": [
+          { "pointer": "/schema", "value": "shellx-motion/data-rows@1" },
+          { "pointer": "/rows/0/id", "value": "ada" },
+          { "pointer": "/rows/1/id", "value": "grace" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.points-particles-trails@1",
+      "sampleId": "sample.gpu-points-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-points-preview/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "points" },
+          { "pointer": "/layers/0/pointCloud/points/0/x", "value": 20 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.points-particles-trails@1",
+      "sampleId": "sample.gpu-orbital-particle-trails-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-g9-orbital-depth/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/4/type", "value": "particles" },
+          { "pointer": "/layers/4/emitter/count", "value": 360 },
+          { "pointer": "/layers/4/effects/trail/durationMs", "value": 1500 },
+          { "pointer": "/layers/4/effects/trail/samples", "value": 6 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.analytic-particle-field-compute@2",
+      "sampleId": "sample.tidal-reassembly.v2-particle-compute.gpu-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-v020-tidal-reassembly/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/2/id", "value": "tide-field" },
+          { "pointer": "/layers/2/type", "value": "particles" },
+          { "pointer": "/layers/2/emitter/count", "value": 100000 },
+          { "pointer": "/layers/2/emitter/shape", "value": "circle" },
+          { "pointer": "/layers/2/emitter/field/schema", "value": "shellx-motion/particle-field@2" },
+          { "pointer": "/layers/2/emitter/field/sources/0/kind", "value": "flow" },
+          { "pointer": "/layers/2/emitter/field/sources/1/kind", "value": "turbulence" },
+          { "pointer": "/layers/2/emitter/field/sources/2/kind", "value": "collision" },
+          { "pointer": "/layers/2/emitter/field/sources/3/kind", "value": "impact" },
+          { "pointer": "/layers/2/emitter/origins/0/weight", "value": 0.36 },
+          { "pointer": "/layers/2/emitter/origins/1/weight", "value": 0.36 },
+          { "pointer": "/layers/2/emitter/origins/2/weight", "value": 0.28 },
+          { "pointer": "/layers/2/emitter/trail/samples", "value": 2 },
+          { "pointer": "/layers/2/emitter/shading/mode", "value": "glow" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.fixed-scene3d-and-gltf@1",
+      "sampleId": "sample.fixed-scene3d.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/fixed-scene3d/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/schema", "value": "shellx-motion/motion@1" },
+          { "pointer": "/layers/0/type", "value": "scene3d" },
+          { "pointer": "/layers/0/scene3d/schema", "value": "shellx-motion/scene3d@1" },
+          { "pointer": "/layers/0/scene3d/objects/0/primitive", "value": "plane" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.fixed-scene3d-and-gltf@1",
+      "sampleId": "sample.gltf-orbital-scene3d.gpu-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-g9-orbital-depth/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/1/type", "value": "scene3d" },
+          { "pointer": "/layers/1/scene3d/schema", "value": "shellx-motion/scene3d@2" },
+          { "pointer": "/layers/1/scene3d/objects/1/primitive", "value": "mesh" },
+          { "pointer": "/layers/1/scene3d/objects/1/source/format", "value": "gltf" },
+          { "pointer": "/layers/1/scene3d/objects/1/source/geometrySha256", "value": "81ba01c3f55b2e13c188b0fc43a0c5543b6b52f2940010314eec0474c50b33e5" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.fixed-scene3d-and-gltf@1",
+      "sampleId": "sample.gltf-orbital-package-boundary.gpu-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-g9-orbital-depth/manifest.json",
+        "expectedJsonValues": [
+          { "pointer": "/assets/0", "value": "assets/source/orbital-triangle.gltf" },
+          { "pointer": "/motion", "value": "motion.json" },
+          { "pointer": "/compatibility/lanes/0", "value": "gpu" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.scene3d-animation-gpu-preview@1",
+      "sampleId": "sample.scene3d-animation.direct-gpu-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-scene3d-animation-preview/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/schema", "value": "shellx-motion/motion@1" },
+          { "pointer": "/layers/0/id", "value": "world" },
+          { "pointer": "/layers/0/type", "value": "scene3d" },
+          { "pointer": "/layers/0/scene3d/schema", "value": "shellx-motion/scene3d@1" },
+          { "pointer": "/scene3dAnimation/schema", "value": "shellx-motion/scene3d-animation@1" },
+          { "pointer": "/scene3dAnimation/tracks/0/locator/layerId", "value": "world" },
+          { "pointer": "/scene3dAnimation/tracks/0/locator/scope", "value": "background" },
+          { "pointer": "/scene3dAnimation/tracks/0/keyframes/0/atUs", "value": 0 },
+          { "pointer": "/scene3dAnimation/tracks/1/locator/scope", "value": "lighting" },
+          { "pointer": "/scene3dAnimation/tracks/1/locator/property", "value": "intensity" },
+          { "pointer": "/scene3dAnimation/tracks/1/keyframes/0/atUs", "value": 500000 },
+          { "pointer": "/scene3dAnimation/tracks/1/keyframes/0/value", "value": 1.5 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.environments-and-depth@1",
+      "sampleId": "sample.environment-rain-cinematic.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/environment-rain-cinematic/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "environment" },
+          { "pointer": "/layers/0/environment/schema", "value": "shellx-motion/environment@1" },
+          { "pointer": "/layers/0/environment/kind", "value": "rain" },
+          { "pointer": "/layers/0/environment/ground/wetness", "value": 0.94 },
+          { "pointer": "/layers/0/effects/motionBlur/samples", "value": 3 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.environments-and-depth@1",
+      "sampleId": "sample.rich-depth-promo.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/rich-depth-promo/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "camera" },
+          { "pointer": "/layers/0/keyframes/transform.x/1/value", "value": 28 },
+          { "pointer": "/layers/1/depth", "value": -0.75 },
+          { "pointer": "/layers/3/depth", "value": 0.45 },
+          { "pointer": "/layers/5/depth", "value": 2.2 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.path-reveals@1",
+      "sampleId": "sample.path-reveal-browser.family-evidence@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/path-reveal-browser/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "shape" },
+          { "pointer": "/layers/0/shape", "value": "path" },
+          { "pointer": "/layers/0/x-path", "value": "M 64 180 C 160 40 480 40 576 180" },
+          { "pointer": "/layers/0/x-path-viewBox", "value": "0 0 640 360" },
+          { "pointer": "/layers/0/pathReveal/start", "value": 0 },
+          { "pointer": "/layers/0/pathReveal/end", "value": 0 },
+          { "pointer": "/layers/0/style/stroke", "value": "#8dfcff" },
+          { "pointer": "/layers/0/style/strokeWidth", "value": 8 },
+          { "pointer": "/layers/0/keyframes/pathReveal.end/0/value", "value": 0 },
+          { "pointer": "/layers/0/keyframes/pathReveal.end/1/atMs", "value": 800 },
+          { "pointer": "/layers/0/keyframes/pathReveal.end/2/value", "value": 1 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.lottie-and-dotlottie@1",
+      "sampleId": "sample.lottie-primitives-lowered.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/lottie-primitives-lowered/manifest.json",
+        "expectedJsonValues": [
+          { "pointer": "/sourceApp", "value": "lottie" },
+          { "pointer": "/data/adapter/id", "value": "adapter.lottie" },
+          { "pointer": "/data/adapter/source", "value": "source/input.lottie.json" },
+          { "pointer": "/data/adapter/loweringReceipt", "value": "receipts/adapter-lowering.receipt.json" }
+        ]
+      },
+      "interchangeEvidence": {
+        "kind": "import-output-evidence",
+        "source": { "path": "fixtures/imports/lottie-primitives/input.json", "mediaType": "application/json", "sha256": "3c9fe1f3ffd55847c0638888a326cf265f660d9332bdc61767b6ff244656b76d" },
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "debug", "lottie-import", "--tier", "write_local", "--trusted-local-tier", "--source", "fixtures/imports/lottie-primitives/input.json", "--out", ".scratch/rendering-samples/lottie-primitives-import"],
+        "installed": ["shellx-motion", "debug", "lottie-import", "--tier", "write_local", "--trusted-local-tier", "--source", "<input-file>", "--out", ".scratch/rendering-samples/lottie-primitives-import"],
+        "expectedArtifact": { "kind": "directory", "path": ".scratch/rendering-samples/lottie-primitives-import", "mediaType": "application/vnd.shellx.motion.package" },
+        "expectedReceipts": [
+          { "schema": "shellx-motion/receipt@1", "operation": "adapter.lower", "location": "inside-output-directory" },
+          { "schema": "shellx-motion/receipt@1", "operation": "adapter.diagnostics", "location": "inside-output-directory" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.lottie-and-dotlottie@1",
+      "sampleId": "sample.dotlottie-primitives-lowered.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/dotlottie-primitives-lowered/manifest.json",
+        "expectedJsonValues": [
+          { "pointer": "/sourceApp", "value": "dotlottie" },
+          { "pointer": "/data/adapter/id", "value": "adapter.lottie" },
+          { "pointer": "/data/adapter/source", "value": "source/input.lottie" },
+          { "pointer": "/data/adapter/container/schema", "value": "shellx-motion/dotlottie-source@1" },
+          { "pointer": "/data/adapter/container/resourcePolicy/stateMachines", "value": "preserved-not-executed" }
+        ]
+      },
+      "interchangeEvidence": {
+        "kind": "import-output-evidence",
+        "source": { "path": "fixtures/imports/dotlottie-primitives/input.lottie", "mediaType": "application/vnd.lottie", "sha256": "daab0c4090a2321c2045667a6c07dd1c7b5f17892245e49b34e993d112d873c7" },
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "debug", "dotlottie-import", "--tier", "write_local", "--trusted-local-tier", "--source", "fixtures/imports/dotlottie-primitives/input.lottie", "--out", ".scratch/rendering-samples/dotlottie-primitives-import"],
+        "installed": ["shellx-motion", "debug", "dotlottie-import", "--tier", "write_local", "--trusted-local-tier", "--source", "<input-file>", "--out", ".scratch/rendering-samples/dotlottie-primitives-import"],
+        "expectedArtifact": { "kind": "directory", "path": ".scratch/rendering-samples/dotlottie-primitives-import", "mediaType": "application/vnd.shellx.motion.package" },
+        "expectedReceipts": [
+          { "schema": "shellx-motion/receipt@1", "operation": "adapter.lower", "location": "inside-output-directory" },
+          { "schema": "shellx-motion/receipt@1", "operation": "adapter.diagnostics", "location": "inside-output-directory" }
+        ]
+      }
+    },
+    {
+      "familyId": "family.tracking-and-stabilization@1",
+      "sampleId": "sample.tracked-callout-overlay.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "templates/shellx-product-pack/tracked-callout-overlay/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/type", "value": "image" },
+          { "pointer": "/layers/0/assetRef", "value": "assets/samples/device-inspection.svg" },
+          { "pointer": "/layers/2/id", "value": "callout-ring" },
+          { "pointer": "/layers/2/keyframes/transform.x/2/value", "value": 1260 },
+          { "pointer": "/layers/4/id", "value": "callout-leader" },
+          { "pointer": "/layers/4/keyframes/transform.rotation/2/value", "value": -2 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.html-css-and-canvas@1",
+      "sampleId": "sample.hyperframes-card.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/hyperframes-card/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/id", "value": "html-composition" },
+          { "pointer": "/layers/0/type", "value": "web" },
+          { "pointer": "/layers/0/source", "value": "index.html" },
+          { "pointer": "/layers/0/allowedOrigins", "value": [] }
+        ]
+      }
+    },
+    {
+      "familyId": "family.cutout-rig-bake@1",
+      "sampleId": "sample.second-take-cutout-pivot.gpu-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/gpu-v25c-second-take/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/4/id", "value": "subject-vector" },
+          { "pointer": "/layers/4/type", "value": "image" },
+          { "pointer": "/layers/4/assetRef", "value": "assets/second-take-subject.svg" },
+          { "pointer": "/layers/4/transform/originX", "value": 360 },
+          { "pointer": "/layers/4/transform/originY", "value": 540 },
+          { "pointer": "/layers/4/keyframes/transform.scale/3/value", "value": 1.04 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.transition-presets@1",
+      "sampleId": "sample.editable-lower-third.transitions.browser-preview@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/editable-lower-third/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/layers/0/id", "value": "title" },
+          { "pointer": "/layers/0/transitions/in/type", "value": "slide" },
+          { "pointer": "/layers/0/transitions/in/direction", "value": "left" },
+          { "pointer": "/layers/0/transitions/in/distance", "value": 80 },
+          { "pointer": "/layers/0/transitions/in/durationMs", "value": 500 },
+          { "pointer": "/layers/2/id", "value": "accent" },
+          { "pointer": "/layers/2/transitions/in/type", "value": "wipe" },
+          { "pointer": "/layers/2/transitions/in/durationMs", "value": 350 }
+        ]
+      }
+    }
+  ],
+  "familyWorkflowBindings": [
+    {
+      "familyId": "family.keying-and-roto@1",
+      "title": "Checked chroma key, tracked roto, and detach workflow",
+      "kind": "package-script",
+      "packageScript": "keying-roto-workflow:smoke",
+      "scriptPath": "scripts/keying-roto-workflow-smoke.ts",
+      "sourceMarkers": ["motion.keying.apply", "motion.roto.upsert", "motion.roto.tracking.detach", "withTrustedWorkspaceAnchor"],
+      "inputPaths": ["fixtures/packages/gpu-material-admitted/assets/poster.png"],
+      "commandIds": ["motion.keying.apply", "motion.keying.inspect", "motion.roto.upsert", "motion.roto.tracking.detach"],
+      "receiptOperations": ["keying.apply", "roto.upsert", "roto.tracking.detach"],
+      "proofOutputs": [{ "path": "detached-package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This source-only workflow copies one checked public PNG into .scratch/rendering-samples, proves bounded chroma-key and tracked-roto copy-on-write edits with package and host receipts, then removes only the tracking attachment. It is not generic media keying, segmentation, or installed-host proof."
+    },
+    {
+      "familyId": "family.tracking-and-stabilization@1",
+      "title": "Request, inspect, apply, verify, and detach tracking lifecycle",
+      "kind": "package-script",
+      "packageScript": "tracking:smoke",
+      "scriptPath": "scripts/tracking-analysis-smoke.ts",
+      "sourceMarkers": ["motion.analysis.tracking.request", "motion.analysis.tracking.inspect", "motion.analysis.tracking.apply", "motion.analysis.tracking.verify", "motion.analysis.tracking.detach"],
+      "commandIds": ["motion.analysis.tracking.request", "motion.analysis.tracking.inspect", "motion.analysis.tracking.apply", "motion.analysis.tracking.verify", "motion.analysis.tracking.detach"],
+      "receiptOperations": ["analysis.tracking.request", "analysis.tracking.apply", "analysis.tracking.detach"],
+      "proofOutputs": [{ "path": "detached-package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This source-only workflow deterministically generates a tiny synthetic video in .scratch, then proves one point-translation tracking lifecycle through request, inspect, stabilization apply, verify, and detach. It does not qualify arbitrary footage, tracking models, installed hosts, or rendered delivery."
+    },
+    {
+      "familyId": "family.fixed-scene3d-and-gltf@1",
+      "title": "Bounded triangle glTF CLI import",
+      "kind": "cli-import",
+      "input": { "path": "fixtures/imports/gltf-triangle/input.gltf", "mediaType": "model/gltf+json", "sha256": "671c9347a48eaba479a521e564e36ff0545c77162e35ca942b8663767691f8b5" },
+      "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "debug", "gltf-import", "--tier", "write_local", "--trusted-local-tier", "--source", "fixtures/imports/gltf-triangle/input.gltf", "--out", ".scratch/rendering-samples/gltf-triangle-import"],
+      "installed": ["shellx-motion", "debug", "gltf-import", "--tier", "write_local", "--trusted-local-tier", "--source", "<input-file>", "--out", ".scratch/rendering-samples/gltf-triangle-import"],
+      "authorityTier": "write_local",
+      "commandIds": ["motion.scene3d.gltf.import"],
+      "receiptOperations": ["adapter.lower"],
+      "proofOutputs": [{ "path": "package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This is the real bounded glTF CLI import route for one checked triangle and requires host-approved local input/output roots plus explicit write_local authority. It does not claim generic glTF/GLB support, animation, renderer qualification, or installed-host proof."
+    },
+    {
+      "familyId": "family.cutout-rig-bake@1",
+      "title": "Bounded static-PNG cutout-rig bake workflow",
+      "kind": "package-script",
+      "packageScript": "cutout-rig-bake-workflow:smoke",
+      "scriptPath": "scripts/cutout-rig-bake-workflow-smoke.ts",
+      "sourceMarkers": ["motion.timeline.cutout.rig.bake", "shellx-motion/cutout-rig@1", "withTrustedWorkspaceAnchor", "outputLayerIds"],
+      "inputPaths": ["fixtures/packages/gpu-material-admitted/assets/poster.png"],
+      "commandIds": ["motion.timeline.cutout.rig.bake"],
+      "receiptOperations": ["timeline.cutout.rig.bake"],
+      "proofOutputs": [{ "path": "baked-package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This source-only workflow copies one checked public PNG into .scratch/rendering-samples, bakes one bounded data-only cutout rig into an ordinary Motion package, and verifies package plus host receipts. It is not segmentation, live rigging, or installed-host proof."
+    },
+    {
+      "familyId": "family.audio-delivery@1",
+      "title": "Bounded audio mux and delivered-program check",
+      "kind": "package-script",
+      "packageScript": "render-audio:smoke",
+      "scriptPath": "scripts/render-audio-smoke.ts",
+      "sourceMarkers": ["generate sine audio fixture", "--expect-audio", "render.final", "withTrustedWorkspaceAnchor"],
+      "commandIds": ["motion.render.final"],
+      "receiptOperations": ["render.final"],
+      "proofOutputs": [{ "path": "audio-lower-third.mp4", "kind": "file", "mediaType": "video/mp4" }],
+      "limitation": "This source workflow creates its own bounded sine WAV under .scratch and verifies one H.264 MP4. It is a reproducible delivery contract, not a generic audio import, mix-authoring, or installed-host claim."
+    },
+    {
+      "familyId": "family.caption-import-and-delivery@1",
+      "title": "SRT copy-on-write import and browser-frame final render",
+      "kind": "package-script",
+      "packageScript": "render-caption:smoke",
+      "scriptPath": "scripts/render-caption-smoke.ts",
+      "sourceMarkers": ["caption-import", "captions.srt", "render.final", "withTrustedWorkspaceAnchor"],
+      "inputPaths": ["fixtures/packages/keyframed-lower-third"],
+      "commandIds": ["motion.timeline.caption.import", "motion.render.final"],
+      "receiptOperations": ["timeline.caption.import", "render.final"],
+      "proofOutputs": [{ "path": "caption-lower-third.mp4", "kind": "file", "mediaType": "video/mp4" }],
+      "limitation": "This source workflow creates a short SRT under .scratch, copies the checked lower-third package, and asserts import plus final-render evidence. It is not transcript generation, word timing, arbitrary caption styling, or installed-host proof."
+    },
+    {
+      "familyId": "family.html-css-and-canvas@1",
+      "title": "Bounded HTML snippet import",
+      "kind": "cli-import",
+      "input": { "path": "fixtures/imports/html-snippet/input.html", "mediaType": "text/html", "sha256": "9776be39535f924eb11d6a0ed103b77e0a08ca4ee4ea4eeb016b1ec0a1bb3e90" },
+      "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "html-snippet-import", "fixtures/imports/html-snippet/input.html", "--out", ".scratch/rendering-samples/html-snippet-import"],
+      "installed": ["shellx-motion", "html-snippet-import", "<input-file>", "--out", ".scratch/rendering-samples/html-snippet-import"],
+      "commandIds": ["motion.html.snippet.import"],
+      "receiptOperations": ["html.snippet.import"],
+      "proofOutputs": [{ "path": "package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This imports one checked contained HTML/CSS document into a new package and expects the import receipt. It does not execute scripts, authorize external origins, prove a generic web layer, or qualify native/GPU rendering."
+    },
+    {
+      "familyId": "family.html-css-and-canvas@1",
+      "title": "Linux-only host-authorized Canvas package workflow",
+      "kind": "package-script",
+      "packageScript": "canvas-package-preview:smoke",
+      "scriptPath": "scripts/canvas-package-preview-smoke.ts",
+      "sourceMarkers": ["motion.canvas.package", "export.final", "authoringInputRoots", "withTrustedWorkspaceAnchor"],
+      "inputPaths": ["fixtures/canvas/frame-selection.json"],
+      "commandIds": ["motion.canvas.package"],
+      "receiptOperations": ["export.final"],
+      "proofOutputs": [{ "path": "motion-package", "kind": "directory", "mediaType": "application/vnd.shellx.motion.package" }],
+      "limitation": "This is a Linux-only host-authorized source workflow with a checked Canvas frame-selection fixture; macOS and Windows refuse before output. It is not generic runnable Canvas behavior and agents cannot create the required host roots from a request."
+    }
+  ],
+  "agentToolBoundaries": [
+    {
+      "id": "checkpoint-storyboard",
+      "title": "Checkpoint storyboard",
+      "debugCommandIds": ["motion.timeline.checkpoint-storyboard.create", "motion.timeline.checkpoint-storyboard.inspect", "motion.timeline.checkpoint-storyboard.preview"],
+      "sourcePaths": ["schemas/debug.json"],
+      "sourceBoundary": "Host-sealed checkpoint record lifecycle only; it is not a Motion package sample or a catalog delivery route.",
+      "refusalBoundary": "No CLI, local SDK, or Action route; create/inspect/preview do not by themselves create a package, final render, or delivery proof."
+    },
+    {
+      "id": "layout-gap-animation",
+      "title": "Layout-gap animation",
+      "debugCommandIds": ["motion.timeline.layout-gap-animation.inspect", "motion.timeline.layout-gap-animation.track.upsert", "motion.timeline.layout-gap-animation.keyframe.upsert"],
+      "sourcePaths": ["skill/shellx-motion/references/layout-gap-animation.md"],
+      "sourceBoundary": "Persisted Core/Debug copy-on-write record after one trusted static layout.apply application.",
+      "refusalBoundary": "Browser, Native, GPU, FFmpeg, Cut, CLI, SDK, Action, provider, and Unreal refuse before resource or output work."
+    },
+    {
+      "id": "procedural-bindings",
+      "title": "Procedural bindings",
+      "debugCommandIds": ["motion.procedural.inspect", "motion.procedural.relationship.set", "motion.procedural.relationship.bake", "motion.procedural.relationship.detach"],
+      "sourcePaths": ["fixtures/packages/procedural-relationships/motion.json"],
+      "sourceBoundary": "Data-only scalar relationship document; the checked package is structural source evidence, not proof of every mutation or lane.",
+      "refusalBoundary": "No JavaScript, callbacks, plugins, dynamic property lookup, file access, or network access; unbound recipes remain structural."
+    },
+    {
+      "id": "scene3d-animation",
+      "title": "Scene3D animation",
+      "debugCommandIds": ["motion.timeline.scene3d-animation.inspect", "motion.timeline.scene3d-animation.track.upsert", "motion.timeline.scene3d-animation.keyframe.upsert"],
+      "sourcePaths": ["fixtures/packages/gpu-scene3d-animation-preview/motion.json"],
+      "sourceBoundary": "Persisted Debug/MCP authoring has one separate source-only direct renderer-browser GPU PNG lowerer.",
+      "refusalBoundary": "Generic Debug/Action preview, CLI, local SDK, Browser HTML, Native, FFmpeg/final, provider, Cut, and Unreal refuse; no delivery claim follows."
+    },
+    {
+      "id": "particle-field-v1",
+      "title": "Analytic particle field v1",
+      "debugCommandIds": ["motion.timeline.layer.create", "motion.timeline.layer.rich.set", "motion.timeline.particles.structural.inspect"],
+      "sourcePaths": ["skill/shellx-motion/references/particle-fields.md"],
+      "sourceBoundary": "Ordinary particle data uses the shared typed layer/rich-control path and deterministic CPU analytic deflection.",
+      "refusalBoundary": "No collision or velocity physics, persistent state, formula, callback, arbitrary GPU execution, or game-physics claim."
+    },
+    {
+      "id": "particle-field-v2-compute",
+      "title": "Fixed analytic particle field v2",
+      "debugCommandIds": ["motion.timeline.particles.structural.inspect", "motion.timeline.particles.field.source.insert", "motion.timeline.particles.emitter.origin.insert", "motion.timeline.particles.field.collision.axis.update", "motion.timeline.particles.emitter.trail.add", "motion.timeline.particles.emitter.shading.add"],
+      "sourcePaths": ["fixtures/packages/gpu-v020-tidal-reassembly/motion.json", "fixtures/packages/gpu-v020-tidal-reassembly/manifest.json"],
+      "sourceBoundary": "Closed 100,000..131,072-particle strict-GPU descriptor with typed sources, origins, analytic trail, and fixed shading; the tidal fixture is structural source evidence.",
+      "refusalBoundary": "No fallback to CPU, package WGSL, arbitrary compute, mesh or particle-particle collision, mutable simulation, retained physics, or game-physics claim."
+    }
+  ],
+  "releaseGate": {
+    "schema": "shellx-motion/rendering-sample-release-gate@1",
+    "state": "ready",
+    "blockers": []
+  },
+  "fingerprint": "8a9d49dd8e5ee964ffa02562e979525461ef5c29f6eac89f75cec6a1055c82ed"
+}

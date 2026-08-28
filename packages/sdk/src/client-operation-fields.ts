@@ -5,9 +5,12 @@ export const REQUIRED_OPERATION_FIELDS: Record<MotionSdkOperation, string[]> = {
   compile: ["outDir"],
   preview: ["packageRoot", "outDir"],
   render: ["packageRoot", "outputPath", "preset"],
+  renderCachePlan: ["packageRoot", "outputPath", "preset"],
   status: ["receiptsRoot"],
   cancel: ["receiptsRoot", "jobId"],
   timelineEdit: ["packageRoot", "outDir"],
+  revisionTransactionPlan: ["packageRoot", "base", "steps"],
+  revisionTransaction: ["packageRoot", "outDir", "base", "steps"],
   trackingRequest: ["packageRoot", "outDir", "analysisId", "assetId", "mode", "model"],
   trackingInspect: ["packageRoot", "analysisId"],
   trackingApply: ["packageRoot", "outDir", "analysisId", "layerId"],
@@ -28,19 +31,28 @@ export const REQUIRED_OPERATION_FIELDS: Record<MotionSdkOperation, string[]> = {
   proceduralSetEnabled: ["packageRoot", "outDir", "relationshipId"],
   proceduralBake: ["packageRoot", "outDir"],
   proceduralDetach: ["packageRoot", "outDir", "relationshipId"],
+  proceduralAudioEnvelopeProduce: ["packageRoot", "outDir", "sourceLayerId", "envelopeId"],
+  cutoutRigBake: ["packageRoot", "outDir", "sourceLayerId"],
+  audioMasterSet: ["packageRoot", "outDir", "master"],
+  audioCrossfadeSet: ["packageRoot", "outDir", "fromLayerId", "toLayerId", "durationMs"],
 };
 
 export const ALLOWED_OPERATION_FIELDS: Record<MotionSdkOperation, string[]> = {
-  validate: ["packageRoot"],
+  validate: ["packageRoot", "receiptsRoot"],
   compile: ["script", "outDir", "createdAt"],
-  preview: ["packageRoot", "outDir", "atMs", "workflowPath"],
+  preview: ["packageRoot", "outDir", "lane", "atMs", "workflowPath"],
   render: [
     "packageRoot", "outputPath", "preset", "artifactRoot", "receiptsRoot",
-    "workflowPath", "qualityManifestPath", "idempotencyKey", "cutHandoff",
+    "frameLane", "workflowPath", "qualityManifestPath", "keepFrames", "segmented", "reuseAttested", "idempotencyKey", "cutHandoff",
+  ],
+  renderCachePlan: [
+    "packageRoot", "outputPath", "preset", "frameLane", "atMs", "minUniqueFrameHashes", "workflowPath", "qualityManifestPath",
   ],
   status: ["receiptsRoot", "jobId"],
   cancel: ["receiptsRoot", "jobId", "reason"],
   timelineEdit: ["packageRoot", "outDir", "receiptsRoot", "createdBy", "edit"],
+  revisionTransactionPlan: ["packageRoot", "base", "steps"],
+  revisionTransaction: ["packageRoot", "outDir", "base", "steps", "createdBy"],
   trackingRequest: [
     "packageRoot", "outDir", "analysisId", "assetId", "mode", "model",
     "reference", "settings", "receiptsRoot", "createdAt",
@@ -67,4 +79,8 @@ export const ALLOWED_OPERATION_FIELDS: Record<MotionSdkOperation, string[]> = {
   proceduralSetEnabled: ["packageRoot", "outDir", "relationshipId", "enabled", "receiptsRoot", "createdBy"],
   proceduralBake: ["packageRoot", "outDir", "relationshipIds", "startMs", "endMs", "sampleEveryFrames", "receiptsRoot", "createdBy"],
   proceduralDetach: ["packageRoot", "outDir", "relationshipId", "receiptsRoot", "createdBy"],
+  proceduralAudioEnvelopeProduce: ["packageRoot", "outDir", "sourceLayerId", "envelopeId", "sampleEveryMs", "channel", "receiptsRoot", "createdBy"],
+  cutoutRigBake: ["packageRoot", "outDir", "sourceLayerId", "rig", "receiptsRoot", "createdBy"],
+  audioMasterSet: ["packageRoot", "outDir", "master", "receiptsRoot", "createdBy"],
+  audioCrossfadeSet: ["packageRoot", "outDir", "fromLayerId", "toLayerId", "durationMs", "curve", "receiptsRoot", "createdBy"],
 };

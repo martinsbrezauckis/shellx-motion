@@ -1,0 +1,18 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_v020_tidal_reassembly",
+  "name": "Tidal Reassembly — V0.2 Particle Motion Sample",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["gpu", "ffmpeg"],
+    "hosts": ["motion"]
+  },
+  "workflow": "v020-particle-field-v2-sample",
+  "metadata": {
+    "recipe": "templates/generators/tidal-reassembly/recipe.json",
+    "particleCount": 100000,
+    "sourceAssetPolicy": "typed-data-only-no-external-assets"
+  }
+}

@@ -43,6 +43,8 @@ afterEach(async () => {
 });
 
 const WORKBENCH_JS = fileURLToPath(new URL("../workbench/workbench.js", import.meta.url));
+const WORKBENCH_HTML = fileURLToPath(new URL("../workbench/index.html", import.meta.url));
+const WORKBENCH_CSS = fileURLToPath(new URL("../workbench/workbench.css", import.meta.url));
 const ABOUT_JS = fileURLToPath(new URL("../workbench/about.js", import.meta.url));
 const TEST_CAPABILITY_TOKEN = "workbench-readiness-token-000000000000000000000";
 
@@ -58,6 +60,21 @@ interface ToolReadinessView {
   state: "verified" | "unverified";
   tools: Array<{ name: string; value: string }>;
   note: string;
+}
+
+interface GpuReadinessView {
+  state: "available" | "requires-hardware-proof" | "unsupported" | "unverified";
+  label: string;
+  detail: string;
+  refusals: Array<{ code: string; message: string }>;
+}
+
+interface ActiveGpuProofView {
+  state: "available" | "unverified";
+  label: string;
+  detail: string;
+  fingerprint?: string;
+  sha256?: string;
 }
 
 /**
@@ -150,9 +167,8 @@ const FFMPEG_ABSENT = machineWith(["ffprobe", "chromium"]);
 
 /**
  * FFmpeg and FFprobe are installed; no browser is. The lane-dependence case, and the one the
- * workbench most needs to get right: its render dialog drives `motion.render.final`, which
- * rasterizes through the browser lane ONLY, so here Chromium really is an encode blocker with no
- * flag to route around it.
+ * workbench most needs to get right: its default Browser render drives `motion.render.final`
+ * through the browser lane, so here Chromium really is an encode blocker for that selected lane.
  */
 const CHROMIUM_ABSENT = machineWith(["ffmpeg", "ffprobe"]);
 
@@ -254,6 +270,222 @@ describe("workbench render dialog — readiness row states", () => {
       expect(row.detail).toContain("did not answer");
       expect(row.blockedBy).toEqual([]);
     }
+  });
+});
+
+describe("workbench GPU lane — source-only readiness states", () => {
+  it("requires active hardware proof even when the source-only record finds trusted Chromium", async () => {
+    const view = await liftBrowserFunction<(result: unknown) => GpuReadinessView>(WORKBENCH_JS, "readGpuReadinessView");
+
+    const row = view({
+      ok: true,
+      gpu: {
+        status: "requires-hardware-proof",
+        trustedChromium: { status: "present", source: "playwright", version: "Chromium 129" },
+        adapterDeviceProof: { status: "not-tested", requiredCommand: "host-owned motion.platform.gpu.probe" },
+        refusals: [{
+          code: "gpu_hardware_proof_required",
+          message: "Trusted Chromium is present, but this source-only check did not launch WebGPU. Supply a fresh host-owned active GPU proof to establish adapter and device readiness."
+        }]
+      }
+    });
+
+    // A Chromium version source is not a WebGPU adapter/device probe, so a clean fixture remains
+    // explicitly unproven. This is deliberately a browser-only fixture: it never launches Chromium.
+    expect(row.state).toBe("requires-hardware-proof");
+    expect(row.label).toBe("GPU hardware proof is required.");
+    expect(row.detail).toContain("source-only check did not launch WebGPU");
+    expect(row.refusals.map((refusal) => refusal.code)).toContain("gpu_hardware_proof_required");
+  }, 45_000);
+
+  it("preserves typed source refusals without turning them into an availability claim", async () => {
+    const view = await liftBrowserFunction<(result: unknown) => GpuReadinessView>(WORKBENCH_JS, "readGpuReadinessView");
+
+    const row = view({
+      ok: true,
+      gpu: {
+        status: "requires-hardware-proof",
+        refusals: [{
+          code: "gpu_prior_receipt_not_live_proof",
+          message: "A prior GPU preview or render receipt is not live adapter/device proof for the currently selected browser."
+        }]
+      }
+    });
+
+    expect(row.state).toBe("requires-hardware-proof");
+    expect(row.label).toBe("GPU hardware proof is required.");
+    expect(row.detail).toContain("prior GPU preview or render receipt");
+    expect(row.refusals).toEqual([{
+      code: "gpu_prior_receipt_not_live_proof",
+      message: "A prior GPU preview or render receipt is not live adapter/device proof for the currently selected browser."
+    }]);
+  });
+
+  it("shows active GPU readiness only from an explicit active-proof source record", async () => {
+    const view = await liftBrowserFunction<(result: unknown) => GpuReadinessView>(WORKBENCH_JS, "readGpuReadinessView");
+
+    const row = view({
+      ok: true,
+      gpu: {
+        status: "available",
+        adapterDeviceProof: { status: "active-host-proof", adapterFingerprint: "adapter-proof-7a" },
+        refusals: []
+      }
+    });
+
+    expect(row.state).toBe("available");
+    expect(row.label).toBe("GPU hardware proof is active.");
+    expect(row.detail).toContain("fresh adapter/device proof");
+    expect(row.detail).toContain("adapter-proof-7a");
+  });
+
+  it("refuses a forged available status without a bounded active adapter/device proof", async () => {
+    const view = await liftBrowserFunction<(result: unknown) => GpuReadinessView>(WORKBENCH_JS, "readGpuReadinessView");
+
+    for (const adapterDeviceProof of [
+      undefined,
+      { status: "not-tested", adapterFingerprint: "adapter-proof-7a" },
+      { status: "active-host-proof", adapterFingerprint: "" },
+      { status: "active-host-proof", adapterFingerprint: "a".repeat(513) }
+    ]) {
+      const row = view({ ok: true, gpu: { status: "available", adapterDeviceProof, refusals: [] } });
+      expect(row.state).toBe("unverified");
+      expect(row.label).toBe("Could not verify GPU readiness.");
+      expect(row.detail).toContain("no hardware availability is claimed");
+    }
+  });
+
+  it("keeps a failed GPU readiness request visibly unverified", async () => {
+    const view = await liftBrowserFunction<(result: unknown) => GpuReadinessView>(WORKBENCH_JS, "readGpuReadinessView");
+
+    for (const failure of [null, undefined, {}, { ok: false }, { ok: true, gpu: { status: "unknown" } }]) {
+      const row = view(failure);
+      expect(row.state).toBe("unverified");
+      expect(row.label).toBe("Could not verify GPU readiness.");
+      expect(row.detail).toContain("no hardware availability is claimed");
+    }
+  });
+
+  it("binds strict preview and final requests to the published GPU lane fields", async () => {
+    const source = await readFile(WORKBENCH_JS, "utf8");
+
+    expect(source).toContain('api("motion.preview.frame", { packageRoot: state.packageRoot, lane, atMs: requestedAtMs }, "render_motion")');
+    expect(source).toMatch(/preset,\s+frameLane,\s+jobId,/);
+    expect(source).toContain('![' + '"mp4-h264", "webm-vp9", "webm-vp9-alpha", "mov-prores"' + '].includes(preset)');
+    expect(source).toContain('...(manifest && frameLane !== "gpu" ? { qualityManifestPath: manifest } : {})');
+  });
+
+  it("offers both opaque and transparent streamed GPU final presets without enabling still delivery", async () => {
+    const [html, source] = await Promise.all([
+      readFile(WORKBENCH_HTML, "utf8"),
+      readFile(WORKBENCH_JS, "utf8")
+    ]);
+
+    for (const preset of ["mp4-h264", "webm-vp9", "webm-vp9-alpha", "mov-prores"]) {
+      expect(html).toContain(`option value="${preset}"`);
+      expect(source).toContain(`"${preset}"`);
+    }
+    expect(source).toContain('"webm-vp9-alpha": ".webm"');
+    expect(source).toContain('"mov-prores": ".mov"');
+    expect(html).toContain("preserve the straight-RGBA transport for transparent delivery");
+  });
+
+  it("exposes the explicit governed active proof without turning the source-only check into a hardware claim", async () => {
+    const [html, source] = await Promise.all([
+      readFile(WORKBENCH_HTML, "utf8"),
+      readFile(WORKBENCH_JS, "utf8")
+    ]);
+
+    expect(html).toContain('id="gpuProofButton"');
+    expect(source).toContain('api("motion.platform.gpu.probe", { confirm: true }, "render_motion")');
+    expect(source).toContain('ui.gpuProofButton.disabled = !state.connected || !tierAllows(state.grantedTier, "render_motion")');
+    expect(source).toContain("function readActiveGpuProofView(answer)");
+    expect(source).toContain('proof.schema === "shellx-motion/gpu-active-host-proof@1"');
+    expect(source).toContain('receipt.operation === "gpu.hardware.probe"');
+    expect(source).toContain("frame.width === 4");
+    expect(source).toContain('/^[a-f0-9]{64}$/.test(sha256)');
+    expect(source).toContain("Motion returned an incomplete active GPU proof");
+    expect(source).toContain("const view = readActiveGpuProofView(answer);");
+  });
+
+  it("accepts only a complete active GPU proof in the executable Workbench binding", async () => {
+    const view = await liftBrowserFunction<(answer: unknown) => ActiveGpuProofView>(WORKBENCH_JS, "readActiveGpuProofView");
+    const row = view({
+      ok: true,
+      result: {
+        proof: {
+          schema: "shellx-motion/gpu-active-host-proof@1",
+          runtime: { adapterFingerprint: "b".repeat(64) },
+          receipt: { operation: "gpu.hardware.probe", status: "passed" }
+        },
+        frame: { width: 4, height: 4, sha256: "c".repeat(64) }
+      }
+    });
+
+    expect(row.state).toBe("available");
+    expect(row.label).toBe("GPU hardware proof passed.");
+    expect(row.detail).toContain("governed 4 × 4 hardware frame");
+    expect(row.fingerprint).toBe("b".repeat(64));
+    expect(row.sha256).toBe("c".repeat(64));
+
+    // The function is extracted and evaluated in isolation above. This asserts that the UI click
+    // handler uses that same executable validator instead of keeping a second inline parser.
+    const source = await readFile(WORKBENCH_JS, "utf8");
+    expect(source).toContain("const view = readActiveGpuProofView(answer);");
+  }, 45_000);
+
+  it("fails closed when any bounded active-proof evidence is absent or malformed", async () => {
+    const view = await liftBrowserFunction<(answer: unknown) => ActiveGpuProofView>(WORKBENCH_JS, "readActiveGpuProofView");
+    const complete = {
+      ok: true,
+      result: {
+        proof: {
+          schema: "shellx-motion/gpu-active-host-proof@1",
+          runtime: { adapterFingerprint: "a".repeat(512) },
+          receipt: { operation: "gpu.hardware.probe", status: "passed" }
+        },
+        frame: { width: 4, height: 4, sha256: "b".repeat(64) }
+      }
+    };
+    const malformed = [
+      null,
+      { ...complete, ok: false },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, schema: "unexpected" } } },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, receipt: { operation: "render.final", status: "passed" } } } },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, receipt: { operation: "gpu.hardware.probe", status: "failed" } } } },
+      { ...complete, result: { ...complete.result, frame: { width: 3, height: 4, sha256: "b".repeat(64) } } },
+      { ...complete, result: { ...complete.result, frame: { width: 4, height: 4, sha256: "not-a-sha" } } },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, runtime: { adapterFingerprint: "" } } } },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, runtime: { adapterFingerprint: "   " } } } },
+      { ...complete, result: { ...complete.result, proof: { ...complete.result.proof, runtime: { adapterFingerprint: "a".repeat(513) } } } }
+    ];
+
+    for (const answer of malformed) {
+      const row = view(answer);
+      expect(row.state).toBe("unverified");
+      expect(row.label).toBe("GPU hardware proof did not pass.");
+      expect(row.detail).toContain("hardware availability was not accepted");
+    }
+  });
+
+  it("keeps strict GPU preview identity and one readiness announcer across compact and dialog states", async () => {
+    const [html, source, css] = await Promise.all([
+      readFile(WORKBENCH_HTML, "utf8"),
+      readFile(WORKBENCH_JS, "utf8"),
+      readFile(WORKBENCH_CSS, "utf8")
+    ]);
+
+    expect(html).toContain('id="previewRegion" aria-label="Browser preview monitor"');
+    expect(html).toContain('id="previewImage" alt="Browser-rendered Motion preview"');
+    expect(html).toContain('id="previewControlsScrollHint"');
+    expect(html).toContain('id="renderGpuReadiness" hidden role="note" aria-live="off"');
+    expect(source).toContain('"Strict GPU-rendered Motion preview"');
+    expect(source).toContain("function updateGpuReadinessAnnouncement()");
+    expect(source).toContain('ui.gpuReadiness.setAttribute("aria-live", announceInRenderDialog ? "off" : "polite")');
+    expect(source).toContain('ui.renderGpuReadiness.setAttribute("aria-live", announceInRenderDialog ? "polite" : "off")');
+    expect(css).toContain("max-height: calc(100dvh - 30px)");
+    expect(css).toContain("scroll-snap-type: x proximity");
+    expect(css).toContain(".compact-scroll-cue { display: inline-flex");
   });
 });
 

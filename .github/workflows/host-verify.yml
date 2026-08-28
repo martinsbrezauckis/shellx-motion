@@ -1,0 +1,66 @@
+# Cross-host source verification. This deliberately does not stand in for installed-app, browser-lane,
+# FFmpeg, media-render, signing, notarization, or human acceptance evidence on Windows or macOS.
+name: host verification
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: host-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host-baseline:
+    name: ${{ matrix.name }} baseline
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The selected test invokes the shell-free Windows Job Object helper on this host. It is
+          # evidence for that focused helper only, not for browser or renderer behavior.
+          - name: Windows
+            os: windows-latest
+            focused-tests: src/windows-job-object.test.ts
+          # These pure core contracts use only Node filesystem/path primitives and are safe to run
+          # without assuming a browser, FFmpeg, or an installed ShellX product on macOS.
+          - name: macOS
+            os: macos-latest
+            focused-tests: src/path-contract.test.ts src/package-id-path-safety.test.ts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Generated contracts
+        run: pnpm run contracts:check
+
+      - name: Focused host-safe core tests
+        env:
+          FOCUSED_TESTS: ${{ matrix.focused-tests }}
+        shell: bash
+        run: |
+          read -r -a focused_tests <<< "$FOCUSED_TESTS"
+          pnpm --filter @shellx-motion/core exec vitest run --passWithNoTests --testTimeout=45000 "${focused_tests[@]}"

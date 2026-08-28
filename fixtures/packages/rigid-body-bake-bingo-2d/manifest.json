@@ -1,0 +1,19 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_rigid_body_bake_bingo_2d",
+  "name": "Rigid Body Bake — Bingo 2D",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": [
+      "browser",
+      "native",
+      "ffmpeg"
+    ],
+    "hosts": [
+      "motion"
+    ]
+  },
+  "workflow": "author-time-rigid-body-bake-2d"
+}

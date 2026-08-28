@@ -17,7 +17,7 @@ describe("atomic dotLottie package authoring", () => {
     const outputRoot = join(root, "packages", "dotlottie-import");
     try {
       await mkdir(dirname(sourcePath), { recursive: true });
-      await mkdir(dirname(outputRoot), { recursive: true });
+      await mkdir(dirname(outputRoot), { recursive: true, mode: 0o700 });
       const animationBytes = await readFile(lottieFixturePath);
       const archive = storedZip([
         { path: "manifest.json", bytes: Buffer.from(JSON.stringify({ version: "2", initial: { animation: "hero" }, animations: [{ id: "hero" }] })) },
@@ -297,7 +297,7 @@ describe("atomic dotLottie package authoring", () => {
           path: "manifest.json",
           bytes: Buffer.from(JSON.stringify({
             version: "2",
-            animations: [{ id: "hero", initialTheme: "dark", themes: ["dark"] }],
+            animations: [{ id: "hero", initialTheme: "dark", themes: ["dark"], background: 0x2244ccff }],
             themes: [{ id: "dark" }]
           }))
         },
@@ -318,15 +318,30 @@ describe("atomic dotLottie package authoring", () => {
       const pkg = await loadMotionPackage(outputRoot);
 
       expect(original.assets[0].layers[0].shapes[0].it[1].c).toEqual({ sid: "accent" });
-      expect(themed.layers[0].shapes[0].it[1].c).toEqual({ sid: "accent", a: 0, k: [1, 0, 0, 1] });
+      expect(themed.assets[0].layers[0].shapes[0].it[1].c).toEqual({ sid: "accent", a: 0, k: [1, 0, 0, 1] });
       expect(result.appliedTheme).toMatchObject({ themeId: "dark", appliedRuleCount: 1, appliedTargetCount: 1, slotIds: ["accent"] });
-      expect(result.precomposition).toMatchObject({ changed: true, flattenedPrecompCount: 1, flattenedLayerCount: 2 });
+      expect(result.precomposition).toMatchObject({ changed: false, flattenedPrecompCount: 0, flattenedLayerCount: 0 });
       expect(manifest.data.adapter.container.resourcePolicy.themes).toBe("static-subset-applied");
       expect(manifest.data.adapter.container.appliedTheme).toEqual(result.appliedTheme);
+      expect(manifest.compatibility).toEqual({ lanes: ["gpu"], hosts: ["shellx-motion"] });
       expect(lowering.output.dotLottieTheme).toEqual(result.appliedTheme);
-      expect(pkg.motion.layers).toEqual(expect.arrayContaining([
+      expect(lowering.output.dotLottieBackground).toEqual({ source: 0x2244ccff, motion: "#2244ccff" });
+      expect(pkg.motion.background).toBe("#2244ccff");
+      const group = pkg.motion.layers.find((layer) => layer.type === "group");
+      expect(group).toMatchObject({ type: "group", name: "Group", childLayerIds: expect.arrayContaining([expect.any(String)]) });
+      if (!group || group.type !== "group") throw new Error("Expected the themed precomposition wrapper.");
+      const groupChildLayerIds = group.childLayerIds ?? [];
+      // The static theme applies to the leaf inside the exact GPU-only precomposition group.
+      // Do not accidentally accept a themed shape that escaped its wrapper onto the root timeline.
+      const groupChildren = pkg.motion.layers.filter((layer) => groupChildLayerIds.includes(layer.id));
+      expect(groupChildren).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "shape", style: expect.objectContaining({ stroke: "#ff0000ff" }) })
       ]));
+      expect(lowering.output.lottieGpuPrecomposition).toMatchObject({
+        sourceSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        loweringFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        outputMotionSha256: result.motionSha256
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

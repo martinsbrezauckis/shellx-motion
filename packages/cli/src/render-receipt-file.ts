@@ -15,11 +15,13 @@
  * Primary caller: `renderCommand` in `packages/cli/src/main.ts`, once per delivery lane
  * (`image`, `image-sequence`, `ffmpeg`), plus the render failure paths in the same file.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  upsertBrowserWorkflowCatalog,
+  acquireDerivedOutputPublication,
+  prepareBrowserWorkflowCatalogUpsert,
   type BrowserWorkflowDriftSummary,
+  type PreparedBrowserWorkflowCatalogUpsert,
   type OperationReceipt,
   type ReceiptArtifact
 } from "@shellx-motion/core";
@@ -35,7 +37,7 @@ export interface BrowserWorkflowRenderEvidence {
 
 export interface RenderReceiptFinalizeInput {
   packageId: string;
-  /** Mutated in place: the catalog step appends output fields, warnings and artifacts. */
+  /** Mutated in place only for a drift warning; catalog state is an external post-delivery observer. */
   receipt: OperationReceipt;
   outputPath: string;
   receiptPath: string;
@@ -44,6 +46,8 @@ export interface RenderReceiptFinalizeInput {
   /** Only set by `--catalog`; without it the catalog step is skipped but the receipt still lands. */
   workflowCatalogPath?: string;
   failOnDrift: boolean;
+  /** Mirrors the render output's explicit `--force` authority; never inferred from a receipt path. */
+  force?: boolean;
 }
 
 export interface RenderReceiptFinalizeResult {
@@ -53,6 +57,61 @@ export interface RenderReceiptFinalizeResult {
   receiptPath?: string;
   artifacts?: ReceiptArtifact[];
   error?: { code: string; message: string };
+  /** Held privately until the primary render delivery is accepted; never receipt evidence itself. */
+  preparedCatalog?: PreparedBrowserWorkflowCatalogUpsert;
+}
+
+/**
+ * Prepare optional catalog observation while the delivery remains private. The receipt never
+ * claims catalog availability: the retained candidate is committed only after primary acceptance.
+ */
+export async function prepareRenderReceipt(input: RenderReceiptFinalizeInput): Promise<RenderReceiptFinalizeResult> {
+  const preparedCatalog = input.workflowCatalogPath ? await prepareRenderWorkflowCatalog(input) : undefined;
+  return decidePreparedRenderCatalog(input.receipt, preparedCatalog, input.failOnDrift);
+}
+
+/** Pure decision boundary: planning never commits a catalog before its render delivery. */
+export function decidePreparedRenderCatalog(
+  receipt: OperationReceipt,
+  preparedCatalog: PreparedBrowserWorkflowCatalogUpsert | undefined,
+  failOnDrift: boolean
+): RenderReceiptFinalizeResult {
+  const catalog = preparedCatalog?.result;
+  const error = catalog && catalog.drift.status === "changed" && failOnDrift
+    ? { code: "browser_workflow_drift_detected", message: browserWorkflowDriftWarning(catalog.drift) }
+    : undefined;
+  if (catalog?.drift.status === "changed") {
+    receipt.warnings = dedupeStrings([...receipt.warnings, browserWorkflowDriftWarning(catalog.drift)]);
+  }
+  return {
+    ...(catalog ? { workflowCatalogPath: catalog.catalogPath, workflowDrift: catalog.drift } : {}),
+    artifacts: receipt.artifacts ?? [],
+    ...(error ? { error } : {}),
+    ...(preparedCatalog ? { preparedCatalog } : {})
+  };
+}
+
+/** Commit the catalog only after the render receipt and its primary delivery have been accepted. */
+export async function commitPreparedRenderCatalog(
+  prepared: RenderReceiptFinalizeResult,
+  receipt?: OperationReceipt
+): Promise<RenderReceiptFinalizeResult> {
+  // The paired delivery publication rebinds receipt artifacts from its private staging path to
+  // the delivered path. Stdout is projected after that commit, so it must use the live receipt,
+  // never the pre-publication catalog snapshot.
+  const artifacts = receipt?.artifacts ?? prepared.artifacts;
+  if (!prepared.preparedCatalog) return { ...withoutPreparedCatalog(prepared), artifacts };
+  const catalog = await prepared.preparedCatalog.commit();
+  return {
+    workflowCatalogPath: catalog.catalogPath,
+    workflowDrift: catalog.drift,
+    artifacts
+  };
+}
+
+/** Release a candidate when delivery failed or a fail-on-drift outcome intentionally withholds it. */
+export async function abortPreparedRenderCatalog(prepared: RenderReceiptFinalizeResult | undefined): Promise<void> {
+  await prepared?.preparedCatalog?.abort();
 }
 
 /**
@@ -78,18 +137,38 @@ export function browserWorkflowDriftWarning(drift: BrowserWorkflowDriftSummary):
  *
  * @returns the path written.
  */
-export async function writeRenderReceiptFile(receipt: OperationReceipt, receiptPath: string): Promise<string> {
+export interface RenderReceiptWriteOptions {
+  /** The caller explicitly authorized replacing the corresponding rendered output. */
+  force?: boolean;
+  /** Internal deterministic-test seam for proving a receipt swap cannot be published. */
+  afterStageVerified?: () => Promise<void> | void;
+}
+
+export async function writeRenderReceiptFile(
+  receipt: OperationReceipt,
+  receiptPath: string,
+  options: RenderReceiptWriteOptions = {}
+): Promise<string> {
   receipt.artifacts = dedupeReceiptArtifacts([
     ...(receipt.artifacts ?? []),
     { role: "render_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
   ]);
-  await mkdir(dirname(receiptPath), { recursive: true });
-  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
-  return receiptPath;
+  const publication = await acquireDerivedOutputPublication({ outputPath: receiptPath, kind: "file", force: options.force });
+  try {
+    await writeFile(publication.stagingPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    const evidence = await publication.verifyFile();
+    await options.afterStageVerified?.();
+    await publication.publishFile(evidence);
+    return receiptPath;
+  } catch (error) {
+    await publication.abort();
+    throw error;
+  }
 }
 
 /**
- * Finish a render: optionally upsert the browser-workflow catalog, then always persist the receipt.
+ * Legacy helper for callers that already own their delivery boundary: write the receipt, then
+ * commit the optional browser-workflow catalog observer.
  *
  * Drift handling is unchanged — a changed baseline adds a warning, and `failOnDrift` turns that
  * into an error. The error is returned rather than thrown so the caller can still emit the full
@@ -97,29 +176,29 @@ export async function writeRenderReceiptFile(receipt: OperationReceipt, receiptP
  * case where the evidence matters most.
  */
 export async function finalizeRenderReceipt(input: RenderReceiptFinalizeInput): Promise<RenderReceiptFinalizeResult> {
-  const catalog = input.workflowCatalogPath ? await upsertRenderWorkflowCatalog(input) : undefined;
-  const receiptPath = await writeRenderReceiptFile(input.receipt, input.receiptPath);
-  const error = catalog && catalog.drift.status === "changed" && input.failOnDrift
-    ? { code: "browser_workflow_drift_detected", message: browserWorkflowDriftWarning(catalog.drift) }
-    : undefined;
+  const prepared = await prepareRenderReceipt(input);
+  if (prepared.error) await abortPreparedRenderCatalog(prepared);
+  const receiptPath = await writeRenderReceiptFile(input.receipt, input.receiptPath, { force: input.force });
+  const catalog = prepared.error ? withoutPreparedCatalog(prepared) : await commitPreparedRenderCatalog(prepared, input.receipt);
   return {
-    ...(catalog ? { workflowCatalogPath: catalog.catalogPath, workflowDrift: catalog.drift } : {}),
+    ...(catalog.workflowCatalogPath ? { workflowCatalogPath: catalog.workflowCatalogPath } : {}),
+    ...(catalog.workflowDrift ? { workflowDrift: catalog.workflowDrift } : {}),
     receiptPath,
     artifacts: input.receipt.artifacts ?? [],
-    ...(error ? { error } : {})
+    ...(prepared.error ? { error: prepared.error } : {})
   };
 }
 
 /**
- * Record this render in the browser-workflow catalog and fold the result into the receipt.
+ * Prepare this render's browser-workflow catalog observation without changing public history.
  *
  * Returns `undefined` when the render lacks the identity the catalog is keyed on — a workflow
  * hash and an output hash. That is not an error: a non-workflow render simply has nothing to
  * compare against a baseline.
  */
-async function upsertRenderWorkflowCatalog(
+async function prepareRenderWorkflowCatalog(
   input: RenderReceiptFinalizeInput
-): Promise<{ catalogPath: string; drift: BrowserWorkflowDriftSummary } | undefined> {
+): Promise<PreparedBrowserWorkflowCatalogUpsert | undefined> {
   const output = readRecord(input.receipt.output) ?? {};
   const inputHashes = readRecord(input.receipt.inputHashes) ?? {};
   const workflowHash = typeof inputHashes.workflow === "string"
@@ -129,7 +208,7 @@ async function upsertRenderWorkflowCatalog(
   if (!workflowHash || !outputSha256 || !input.workflowCatalogPath) return undefined;
   const workflow = readRecord(input.workflowEvidence?.workflow);
   const workflowTrace = readRecord(input.workflowEvidence?.workflowTrace);
-  const catalog = await upsertBrowserWorkflowCatalog({
+  return await prepareBrowserWorkflowCatalogUpsert({
     catalogPath: input.workflowCatalogPath,
     capture: {
       packageId: input.packageId,
@@ -149,15 +228,11 @@ async function upsertRenderWorkflowCatalog(
       }
     }
   });
-  input.receipt.output = { ...output, workflowCatalogPath: catalog.catalogPath, workflowDrift: catalog.drift };
-  if (catalog.drift.status === "changed") {
-    input.receipt.warnings = dedupeStrings([...input.receipt.warnings, browserWorkflowDriftWarning(catalog.drift)]);
-  }
-  input.receipt.artifacts = dedupeReceiptArtifacts([
-    ...(input.receipt.artifacts ?? []),
-    { role: "browser_workflow_catalog", path: catalog.catalogPath, status: "available", mediaType: "application/json" }
-  ]);
-  return { catalogPath: catalog.catalogPath, drift: catalog.drift };
+}
+
+function withoutPreparedCatalog(prepared: RenderReceiptFinalizeResult): RenderReceiptFinalizeResult {
+  const { preparedCatalog: _preparedCatalog, ...result } = prepared;
+  return result;
 }
 
 /** Artifacts are identified by role AND path — the same file can legitimately fill two roles. */

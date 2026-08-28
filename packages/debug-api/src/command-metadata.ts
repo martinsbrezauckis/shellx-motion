@@ -22,19 +22,38 @@ import {
   type MotionDebugCommandContract,
   type MotionDebugCommandMetadata
 } from "./command-registry.js";
+import { purposeForCall } from "@shellx-motion/actions";
 import { COMPOSITING_COMMAND_METADATA } from "./command-metadata-compositing.js";
+import { CUTOUT_RIG_COMMAND_METADATA } from "./command-metadata-cutout-rig.js";
 import { CORE_COMMAND_METADATA } from "./command-metadata-core.js";
+import { AUDIO_COMMAND_METADATA } from "./command-metadata-audio.js";
 import { JOB_COMMAND_METADATA } from "./command-metadata-jobs.js";
 import { RENDER_COMMAND_METADATA } from "./command-metadata-render.js";
+import { REVISION_COMMAND_METADATA } from "./command-metadata-revision.js";
 import { KEYING_COMMAND_METADATA } from "./command-metadata-keying.js";
 import { SCENE3D_COMMAND_METADATA } from "./command-metadata-scene3d.js";
 import { LOTTIE_COMMAND_METADATA } from "./command-metadata-lottie.js";
 import { SURFACE_COMMAND_METADATA } from "./command-metadata-surfaces.js";
 import { TIMELINE_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-keyframes.js";
 import { TIMELINE_LAYER_COMMAND_METADATA } from "./command-metadata-timeline-layers.js";
+import { TIMELINE_GROUP_COMMAND_METADATA } from "./command-metadata-timeline-groups.js";
+import { TIMELINE_LAYOUT_COMMAND_METADATA } from "./command-metadata-timeline-layout.js";
+import { TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA } from "./command-metadata-timeline-adjustments.js";
+import { TIMELINE_BEHAVIOR_COMMAND_METADATA } from "./command-metadata-timeline-behaviors.js";
+import { TIMELINE_RELATION_COMMAND_METADATA } from "./command-metadata-timeline-relations.js";
+import { TIMELINE_RELATION_ACTION_COMMAND_METADATA } from "./command-metadata-timeline-relation-actions.js";
+import { TIMELINE_SCENE3D_ANIMATION_COMMAND_METADATA } from "./command-metadata-timeline-scene3d-animation.js";
+import { TIMELINE_LAYOUT_GAP_ANIMATION_COMMAND_METADATA } from "./command-metadata-timeline-layout-gap-animation.js";
+import { TIMELINE_GRADIENT_COLOR_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-gradient-color-keyframes.js";
+import { TIMELINE_POINT_COMMAND_METADATA } from "./command-metadata-timeline-points.js";
+import { TIMELINE_PARTICLE_STRUCTURAL_COMMAND_METADATA } from "./command-metadata-timeline-particle-structural.js";
+import { TIMELINE_SHAPE_GEOMETRY_COMMAND_METADATA } from "./command-metadata-timeline-shape-geometry.js";
+import { TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-shape-geometry-keyframes.js";
+import { TIMELINE_TEXT_RUNS_COMMAND_METADATA } from "./command-metadata-timeline-text-runs.js";
 import { TIMELINE_STRUCTURE_COMMAND_METADATA } from "./command-metadata-timeline-structure.js";
 import { TIMELINE_TRACK_COMMAND_METADATA } from "./command-metadata-timeline-tracks.js";
 import { TRACKING_COMMAND_METADATA } from "./command-metadata-tracking.js";
+import { CHECKPOINT_STORYBOARD_RECORD_COMMAND_METADATA } from "./command-metadata-checkpoint-storyboard.js";
 
 /**
  * Assembled metadata for every command that has an argument contract.
@@ -44,23 +63,69 @@ import { TRACKING_COMMAND_METADATA } from "./command-metadata-tracking.js";
  * argument shapes.
  */
 export const DEBUG_COMMAND_METADATA: MotionDebugCommandMetadata = {
+  ...CHECKPOINT_STORYBOARD_RECORD_COMMAND_METADATA,
   ...SCENE3D_COMMAND_METADATA,
   ...LOTTIE_COMMAND_METADATA,
   ...COMPOSITING_COMMAND_METADATA,
+  ...CUTOUT_RIG_COMMAND_METADATA,
   ...TRACKING_COMMAND_METADATA,
   ...KEYING_COMMAND_METADATA,
   ...CORE_COMMAND_METADATA,
+  ...AUDIO_COMMAND_METADATA,
   ...JOB_COMMAND_METADATA,
   ...RENDER_COMMAND_METADATA,
   ...SURFACE_COMMAND_METADATA,
+  ...REVISION_COMMAND_METADATA,
   ...TIMELINE_LAYER_COMMAND_METADATA,
+  ...TIMELINE_GROUP_COMMAND_METADATA,
+  ...TIMELINE_LAYOUT_COMMAND_METADATA,
+  ...TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA,
+  ...TIMELINE_BEHAVIOR_COMMAND_METADATA,
+  ...TIMELINE_RELATION_COMMAND_METADATA,
+  ...TIMELINE_RELATION_ACTION_COMMAND_METADATA,
+  ...TIMELINE_SCENE3D_ANIMATION_COMMAND_METADATA,
+  ...TIMELINE_LAYOUT_GAP_ANIMATION_COMMAND_METADATA,
+  ...TIMELINE_GRADIENT_COLOR_KEYFRAME_COMMAND_METADATA,
+  ...TIMELINE_POINT_COMMAND_METADATA,
+  ...TIMELINE_PARTICLE_STRUCTURAL_COMMAND_METADATA,
+  ...TIMELINE_SHAPE_GEOMETRY_COMMAND_METADATA,
+  ...TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA,
+  ...TIMELINE_TEXT_RUNS_COMMAND_METADATA,
   ...TIMELINE_KEYFRAME_COMMAND_METADATA,
   ...TIMELINE_STRUCTURE_COMMAND_METADATA,
   ...TIMELINE_TRACK_COMMAND_METADATA
 };
 
-/** The published contract for every registered command: domain, permission, mutation class, arguments, receipts. */
-export const DEBUG_COMMAND_CONTRACTS: MotionDebugCommandContract[] = buildDebugCommandContracts(DEBUG_COMMAND_METADATA);
+const BASE_DEBUG_COMMAND_CONTRACTS = buildDebugCommandContracts(DEBUG_COMMAND_METADATA);
+
+/** Every registered command has passed the R3 purpose review and is published to Debug/MCP. */
+export const AGENT_REFERENCE_PURPOSE_COMMANDS: readonly MotionDebugCommand[] = BASE_DEBUG_COMMAND_CONTRACTS
+  .map((contract) => contract.command);
+
+const COPY_ON_WRITE_EDIT_PURPOSE_SUFFIX = " Reads the source and writes the separate revision only within host-approved authoring roots; outDir must be outside the source and empty or absent, and the source package remains unchanged.";
+
+function hasCopyOnWriteEditBoundary(contract: MotionDebugCommandContract): boolean {
+  const properties = contract.argsSchema?.properties;
+  return contract.permission === "edit_motion"
+    && contract.mutates
+    && properties?.packageRoot !== undefined
+    && properties?.outDir !== undefined;
+}
+
+/** Derive one complete Debug/MCP purpose from the Actions authority plus typed edit boundaries. */
+export function purposeForDebugContract(contract: MotionDebugCommandContract): string {
+  const purpose = purposeForCall(contract.command);
+  if (purpose === `Run ${contract.command}.`) {
+    throw new Error(`Missing reviewed agent purpose for ${contract.command}.`);
+  }
+  return hasCopyOnWriteEditBoundary(contract)
+    ? `${purpose}${COPY_ON_WRITE_EDIT_PURPOSE_SUFFIX}`
+    : purpose;
+}
+
+/** The published contract for every registered command, including its reviewed agent purpose. */
+export const DEBUG_COMMAND_CONTRACTS: MotionDebugCommandContract[] = BASE_DEBUG_COMMAND_CONTRACTS
+  .map((contract) => ({ ...contract, purpose: purposeForDebugContract(contract) }));
 
 const CONTRACT_BY_COMMAND = new Map<string, MotionDebugCommandContract>(
   DEBUG_COMMAND_CONTRACTS.map((contract) => [contract.command, contract])

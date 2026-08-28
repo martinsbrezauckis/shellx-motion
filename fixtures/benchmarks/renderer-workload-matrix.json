@@ -1,0 +1,153 @@
+{
+  "schema": "renderer-workload-matrix@2",
+  "workloads": [
+    {
+      "id": "cold-still",
+      "kind": "cold-still",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "frameCount": 1,
+      "maxElapsedMs": 5000
+    },
+    {
+      "id": "warm-still",
+      "kind": "warm-still",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "frameCount": 2,
+      "maxElapsedMs": 5000,
+      "minCacheHits": 1
+    },
+    {
+      "id": "debug-preview-strip-5-frame",
+      "kind": "preview-strip",
+      "transport": "debug-api",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "frameCount": 5,
+      "maxElapsedMs": 10000
+    },
+    {
+      "id": "generated-10s-1080p30",
+      "kind": "generated",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "maxElapsedMs": 60000,
+      "minFramesPerSecond": 5
+    },
+    {
+      "id": "generated-60s-1080p30",
+      "kind": "generated",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 60000,
+      "fps": 30,
+      "frameCount": 1800,
+      "maxElapsedMs": 360000,
+      "minFramesPerSecond": 5,
+      "extended": true
+    },
+    {
+      "id": "alpha-1080p30",
+      "kind": "alpha",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "media-heavy-1080p30",
+      "kind": "media-heavy",
+      "transport": "session",
+      "lane": "browser",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "browser-composition-1080p30",
+      "kind": "browser",
+      "transport": "session",
+      "lane": "browser",
+      "fixture": "fixtures/packages/web-card",
+      "durationMs": 2000,
+      "fps": 30,
+      "frameCount": 60,
+      "maxElapsedMs": 30000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "streamed-browser-10s-1080p30",
+      "kind": "generated",
+      "transport": "streamed",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "maxElapsedMs": 90000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "streamed-browser-middle-range-10s-1080p30",
+      "kind": "generated",
+      "transport": "streamed",
+      "lane": "browser",
+      "fixture": "fixtures/packages/keyframed-lower-third",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "range": { "startFrameIndex": 149, "endFrameIndexExclusive": 151 },
+      "maxElapsedMs": 10000,
+      "minFramesPerSecond": 1
+    },
+    {
+      "id": "streamed-native-10s-1080p30",
+      "kind": "native",
+      "transport": "streamed",
+      "lane": "native",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "maxElapsedMs": 90000,
+      "minFramesPerSecond": 3
+    },
+    {
+      "id": "streamed-native-final-range-10s-1080p30",
+      "kind": "native",
+      "transport": "streamed",
+      "lane": "native",
+      "durationMs": 10000,
+      "fps": 30,
+      "frameCount": 300,
+      "range": { "startFrameIndex": 298, "endFrameIndexExclusive": 300 },
+      "maxElapsedMs": 10000,
+      "minFramesPerSecond": 1
+    },
+    {
+      "id": "streamed-native-60s-1080p30-rss",
+      "kind": "native",
+      "transport": "streamed",
+      "lane": "native",
+      "durationMs": 60000,
+      "fps": 30,
+      "frameCount": 1800,
+      "maxElapsedMs": 360000,
+      "minFramesPerSecond": 3,
+      "extended": true
+    }
+  ]
+}

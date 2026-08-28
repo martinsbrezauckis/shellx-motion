@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/compositing-keying",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {

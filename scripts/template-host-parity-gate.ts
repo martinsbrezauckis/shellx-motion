@@ -4,15 +4,21 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadMotionPackage } from "../packages/core/src/package";
-import { assertProductTemplateContract } from "./template-product-pack-catalog";
+import { assertProductTemplateContract, PUBLIC_PRODUCT_TEMPLATE_DIRS } from "./template-product-pack-catalog";
 
-const RICH_HOST_FAMILIES = [
-  { dir: "cinematic-fog-title", cutId: "builtin.motion.cinematic-fog-title", control: "fogDensity" },
-  { dir: "editorial-liquid-surface", cutId: "builtin.motion.editorial-liquid-surface", control: "waveHeight" },
-  { dir: "keyed-subject-promo", cutId: "builtin.motion.keyed-subject-promo", control: "spillSuppression" },
-  { dir: "tracked-callout-overlay", cutId: "builtin.motion.tracked-callout-overlay", control: "calloutTitle" }
+// Every public manifest that advertises shellx-cut has one explicit parity mode. Four rich
+// families are Cut Generate contracts; rain is deliberately rendered-media only. The latter is
+// intentionally checked as a static Motion-to-Cut handoff contract, never misrepresented as a
+// Cut Generate catalog or runtime proof.
+const CUT_HOST_FAMILIES = [
+  { dir: "cinematic-fog-title", mode: "generate", cutId: "builtin.motion.cinematic-fog-title", control: "fogDensity" },
+  { dir: "cinematic-rain-launch", mode: "rendered_media" },
+  { dir: "editorial-liquid-surface", mode: "generate", cutId: "builtin.motion.editorial-liquid-surface", control: "waveHeight" },
+  { dir: "keyed-subject-promo", mode: "generate", cutId: "builtin.motion.keyed-subject-promo", control: "spillSuppression" },
+  { dir: "tracked-callout-overlay", mode: "generate", cutId: "builtin.motion.tracked-callout-overlay", control: "calloutTitle" }
 ] as const;
-const RICH_HOST_DIRS: ReadonlySet<string> = new Set(RICH_HOST_FAMILIES.map((family) => family.dir));
+const CUT_HOST_DIRS: ReadonlySet<string> = new Set(CUT_HOST_FAMILIES.map((family) => family.dir));
+const CUT_GENERATE_FAMILIES = CUT_HOST_FAMILIES.filter((family): family is Extract<typeof CUT_HOST_FAMILIES[number], { mode: "generate" }> => family.mode === "generate");
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -31,12 +37,12 @@ const packageDirs = (await readdir(packRoot, { withFileTypes: true }))
 assertProductTemplateContract(packageDirs);
 
 const motionFamilies: MotionFamilyEvidence[] = [];
-for (const dir of packageDirs) {
+for (const dir of PUBLIC_PRODUCT_TEMPLATE_DIRS) {
   const packageRoot = join(packRoot, dir);
   const pkg = await loadMotionPackage(packageRoot);
   assert(pkg.template, `${dir} must include TemplateIR`);
   assert(pkg.manifest.compatibility?.hosts?.includes("shellx-motion"), `${dir} must advertise shellx-motion`);
-  if (RICH_HOST_DIRS.has(dir)) {
+  if (CUT_HOST_DIRS.has(dir)) {
     for (const host of ["shellx-canvas", "shellx-cut"]) {
       assert(pkg.manifest.compatibility?.hosts?.includes(host), `${dir} must advertise ${host}`);
     }
@@ -53,6 +59,12 @@ for (const dir of packageDirs) {
     qualityManifest: qualityManifest ?? null
   });
 }
+const advertisedCutFamilies = motionFamilies
+  .filter((family) => family.hosts.includes("shellx-cut"))
+  .map((family) => family.dir)
+  .sort();
+assert.deepEqual(advertisedCutFamilies, [...CUT_HOST_DIRS].sort(),
+  "every promoted template manifest advertising shellx-cut must have one declared parity mode");
 
 const cutCatalogPaths = [
   join(cutRoot, "schema", "generate_templates.json"),
@@ -60,7 +72,7 @@ const cutCatalogPaths = [
 ];
 const cutCatalogs = await Promise.all(cutCatalogPaths.map(readJson));
 const cutTemplates = cutCatalogs.flatMap((catalog) => arrayField(catalog, "templates"));
-for (const family of RICH_HOST_FAMILIES) {
+for (const family of CUT_GENERATE_FAMILIES) {
   const entry = cutTemplates.find((template) => recordField(template, "id") === family.cutId);
   assert(entry, `Cut Generate is missing ${family.cutId}`);
   const lowering = objectField(entry, "lowering");
@@ -76,10 +88,21 @@ const canvasWorkflowPath = join(canvasRoot, "docs", "motion-product-template-wor
 const canvasActionPath = join(canvasRoot, "app", "src", "lib", "agent", "action-catalog.ts");
 const canvasSkillPath = join(canvasRoot, "SKILL.md");
 const canvasAgentText = `${await readFile(canvasWorkflowPath, "utf8")}\n${await readFile(canvasActionPath, "utf8")}\n${await readFile(canvasSkillPath, "utf8")}`;
-for (const family of RICH_HOST_FAMILIES) {
+for (const family of CUT_GENERATE_FAMILIES) {
   assert(cutAgentText.includes(family.cutId), `Cut agent guidance is missing ${family.cutId}`);
   assert(canvasAgentText.includes(family.dir), `Canvas agent guidance is missing ${family.dir}`);
 }
+// Rain has no Cut Generate entry by design. Its proof is its rendered MP4 plus Motion's static
+// host contract, so this check never starts Cut or claims a runtime catalog path that does not
+// exist. The public docs are part of that contract because they tell agents which handoff to use.
+const rainGenerateId = "builtin.motion.cinematic-rain-launch";
+assert(!cutTemplates.some((template) => recordField(template, "id") === rainGenerateId),
+  `${rainGenerateId} must not be added without changing rain's declared Cut handoff mode`);
+const motionHandoffDocs = `${await readFile(join(repoRoot, "docs", "public", "templates.md"), "utf8")}\n` +
+  `${await readFile(join(repoRoot, "docs", "public", "cut-and-design-studio.md"), "utf8")}\n` +
+  `${await readFile(join(repoRoot, "docs", "public", "FEATURES.md"), "utf8")}`;
+assert(motionHandoffDocs.includes("cinematic-rain-launch") && motionHandoffDocs.includes("rendered media"),
+  "Motion public host docs must keep rain's rendered-media-only Cut handoff explicit");
 for (const required of ["generate.preview", "generate.insert", "Edit in Motion", "motion.link.refresh"]) {
   assert(cutAgentText.includes(required), `Cut workflow guidance is missing ${required}`);
 }
@@ -91,7 +114,9 @@ const evidence = {
   ok: true,
   schema: "shellx-motion/template-host-parity@1",
   catalogTemplateCount: motionFamilies.length,
-  richHostFamilyCount: RICH_HOST_FAMILIES.length,
+  publicCatalogTemplateCount: PUBLIC_PRODUCT_TEMPLATE_DIRS.length,
+  cutHostFamilyCount: CUT_HOST_FAMILIES.length,
+  cutGenerateFamilyCount: CUT_GENERATE_FAMILIES.length,
   motion: { packRoot, families: motionFamilies },
   canvas: {
     root: canvasRoot,
@@ -106,6 +131,13 @@ const evidence = {
     catalogSha256: await Promise.all(cutCatalogPaths.map(sha256File)),
     agentWorkflow: "generate.list/describe -> preview -> insert -> Edit in Motion -> refresh"
   },
+  cutHandoffs: CUT_HOST_FAMILIES.map((family) => ({
+    dir: family.dir,
+    mode: family.mode,
+    ...(family.mode === "generate" ? { cutId: family.cutId } : {
+      contract: "Motion renders receipt-bound MP4, then Cut imports linked rendered media; no Generate catalog/runtime claim."
+    })
+  })),
   resourcePolicy: {
     browserProcessesLaunched: 0,
     renderedMediaCreated: 0,

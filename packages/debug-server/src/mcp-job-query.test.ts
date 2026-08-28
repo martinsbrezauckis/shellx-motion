@@ -7,34 +7,46 @@
  * a command can exist in the registry and still be uncallable, and the two are different claims.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MotionJobLeaseDirectory, MotionJobRegistry, MotionJobView } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { startMotionDebugServer } from "./index";
 
 const servers: Array<{ close: () => Promise<void> }> = [];
 const tempRoots: string[] = [];
+const RENDER_PACKAGE_ROOT = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
   await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function jobServer(options: { callerId: string; crossCallerJobScope?: boolean; grantedTier?: "read_motion" | "write_local" }) {
-  const root = await mkdtemp(join(tmpdir(), "shellx-motion-mcp-job-"));
+async function jobServer(options: { callerId: string; crossCallerJobScope?: boolean; grantedTier?: "read_motion" | "write_local"; jobTrackingDisabled?: boolean }) {
+  const root = await testRoot("shellx-motion-mcp-job-");
+  const workspaceScratch = join(process.cwd(), ".scratch");
   tempRoots.push(root);
   const leases = new MotionJobLeaseDirectory({ leaseRoot: join(root, "leases") });
   const records = new MotionJobRegistry({ recordRoot: join(root, "records") });
-  const handle = await startMotionDebugServer({
+  const workspaceAuthority = await createTrustedWorkspaceAnchor(workspaceScratch);
+  const handle = await withTrustedWorkspaceAnchor(workspaceAuthority, async () => await startMotionDebugServer({
     host: "127.0.0.1",
     port: 0,
     grantedTier: options.grantedTier ?? "read_motion",
     context: {
-      jobView: new MotionJobView({ leases, records }),
+      scratchRoot: join(root, "scratch"),
+      authoringInputRoots: [workspaceScratch],
+      authoringOutputRoots: [workspaceScratch],
+      renderPackageRoots: [workspaceScratch, RENDER_PACKAGE_ROOT],
+      renderInputRoots: [workspaceScratch],
+      renderOutputRoots: [workspaceScratch],
+      jobView: options.jobTrackingDisabled ? null : new MotionJobView({ leases, records }),
       callerId: options.callerId,
       ...(options.crossCallerJobScope === undefined ? {} : { crossCallerJobScope: options.crossCallerJobScope })
-    }
-  });
+    },
+    // Server startup only needs this isolated test workspace; template discovery is unrelated.
+    useDefaultTemplateRoots: false
+  }));
   servers.push(handle);
   const call = async (method: string, params: unknown = {}) => {
     const response = await fetch(new URL("/rpc", handle.url), {
@@ -48,11 +60,19 @@ async function jobServer(options: { callerId: string; crossCallerJobScope?: bool
     const body = await call("tools/call", { name, arguments: { args } });
     return body.result.structuredContent as { ok: boolean; result?: any; error?: { code: string; message: string; suggestedAction?: string } };
   };
-  return { leases, records, call, tool };
+  const debug = async (command: string, args: unknown = {}) => {
+    const response = await fetch(new URL("/debug", handle.url), {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${handle.capabilityToken}` },
+      body: JSON.stringify({ command, requestedTier: "read_motion", args })
+    });
+    return { status: response.status, body: await response.json() as { ok: boolean; result?: any; error?: { code: string; message: string } } };
+  };
+  return { leases, records, call, tool, debug, workspaceScratch };
 }
 
 describe("the job surface an MCP host binds to", () => {
-  it("publishes both job commands as callable tools", async () => {
+  it("publishes the coordinator job commands as callable tools", async () => {
     const { call } = await jobServer({ callerId: "cut:workspace-7" });
 
     const { result } = await call("tools/list");
@@ -61,6 +81,10 @@ describe("the job surface an MCP host binds to", () => {
     // Registered but unreachable is the exact failure Cut reported; the tool listing is the proof.
     expect(names).toContain("motion_job_get");
     expect(names).toContain("motion_job_list");
+    expect(names).toContain("motion_job_events");
+    expect(names).toContain("motion_job_submit");
+    expect(names).toContain("motion_job_cancel");
+    expect(names).toContain("motion_job_retry");
   }, 45_000);
 
   it("describes what each tool is FOR, not only its permission bits", async () => {
@@ -75,6 +99,38 @@ describe("the job surface an MCP host binds to", () => {
     expect(description).toContain("permission=read_motion");
   }, 45_000);
 
+  it("does not advertise coordinator tools when the host disabled job tracking", async () => {
+    const { call, tool, workspaceScratch } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local", jobTrackingDisabled: true });
+
+    const { result } = await call("tools/list");
+    const names = result.tools.map((entry: { name: string }) => entry.name);
+    for (const name of ["motion_job_submit", "motion_job_get", "motion_job_list", "motion_job_events", "motion_job_cancel", "motion_job_retry"]) {
+      expect(names).not.toContain(name);
+    }
+
+    // A cached MCP client may still call an old tool name. It receives the same typed lack of
+    // authority as the direct Debug API and cannot create a default coordinator through that call.
+    const refused = await tool("motion_job_submit", {
+      packageRoot: RENDER_PACKAGE_ROOT,
+      outputPath: join(workspaceScratch, "disabled-render.mp4"),
+      preset: "mp4-h264"
+    });
+    expect(refused).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+  }, 45_000);
+
+  it("publishes only stream-safe arguments for coordinator submission", async () => {
+    const { call } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local" });
+
+    const { result } = await call("tools/list");
+    const submit = result.tools.find((entry: { name: string }) => entry.name === "motion_job_submit");
+    const properties = submit.inputSchema.properties.args.properties as Record<string, unknown>;
+    expect(properties).toHaveProperty("packageRoot");
+    expect(properties).not.toHaveProperty("keepFrames");
+    expect(properties).not.toHaveProperty("workflowPath");
+    expect(properties).not.toHaveProperty("qualityManifestPath");
+    expect(properties).not.toHaveProperty("dryRun");
+  }, 45_000);
+
   it("reports a live job as running, with a poll interval a client can obey", async () => {
     const { leases, tool } = await jobServer({ callerId: "cut:workspace-7" });
     await leases.announce({ jobId: "cut:render-1", lane: "ffmpeg", operation: "render.final", callerId: "cut:workspace-7", visibility: "host", admitted: true });
@@ -84,6 +140,46 @@ describe("the job surface an MCP host binds to", () => {
     // outcome stays null until the job ends, and pollAfterMs is how a client learns it should ask
     // again — its absence is the signal to stop.
     expect(live).toMatchObject({ ok: true, result: { job: { state: "running", lifecycle: "running", outcome: null, pollAfterMs: 2000 } } });
+  }, 45_000);
+
+  it("preserves a future connector failure and retry metadata through raw HTTP and MCP", async () => {
+    const { records, tool, debug } = await jobServer({ callerId: "cut:workspace-7" });
+    const endedAtMs = Date.now();
+    await records.record({
+      schema: "shellx-motion/job-record@1",
+      jobId: "cut:future-typed-error",
+      callerId: "cut:workspace-7",
+      lane: "connector",
+      operation: "connector.future-scene@1",
+      lifecycle: "ended",
+      outcome: "failed",
+      createdAtMs: endedAtMs - 1,
+      endedAtMs,
+      durationMs: 1,
+      queueWaitMs: 1,
+      error: {
+        code: "connector_future_backpressure",
+        message: "future renderer is saturated",
+        retryable: true,
+        remedy: "wait",
+        retryAfterMs: 2_500,
+        suggestedAction: "Wait, then retry the same immutable binding."
+      },
+      warnings: []
+    });
+
+    const expected = { job: { error: {
+      code: "connector_future_backpressure",
+      message: "future renderer is saturated",
+      retryable: true,
+      remedy: "wait",
+      retryAfterMs: 2_500,
+      suggestedAction: "Wait, then retry the same immutable binding."
+    } } };
+    const http = await debug("motion.job.get", { jobId: "cut:future-typed-error" });
+    expect(http).toMatchObject({ status: 200, body: { ok: true, result: expected } });
+    const ended = await tool("motion_job_get", { jobId: "cut:future-typed-error" });
+    expect(ended).toMatchObject({ ok: true, result: expected });
   }, 45_000);
 
   it("separates a job that never existed from one whose evidence expired", async () => {
@@ -181,7 +277,7 @@ describe("the cold start an agent needs to begin at all", () => {
     // because an unrelated fixture happened to be in the machine's temp directory.
     // write_local: creating a package writes files, and the tier gate correctly refuses it below that.
     const { tool } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local" });
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cold-start-"));
+    const root = await testRoot("shellx-motion-cold-start-");
     tempRoots.push(root);
     const packageRoot = join(root, "piece");
 
@@ -202,7 +298,7 @@ describe("the cold start an agent needs to begin at all", () => {
   it("refuses to create over an existing package instead of half-overwriting it", async () => {
     // write_local: creating a package writes files, and the tier gate correctly refuses it below that.
     const { tool } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local" });
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cold-start-"));
+    const root = await testRoot("shellx-motion-cold-start-");
     tempRoots.push(root);
     const packageRoot = join(root, "piece");
     await tool("motion_package_create", { packageRoot });
@@ -216,10 +312,12 @@ describe("the cold start an agent needs to begin at all", () => {
   it("reports an invalid package by naming the field, without rendering", async () => {
     // write_local: creating a package writes files, and the tier gate correctly refuses it below that.
     const { tool } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local" });
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cold-start-"));
+    const root = await testRoot("shellx-motion-cold-start-");
     tempRoots.push(root);
+    const invalidPackageRoot = join(root, "nothing-here");
+    await mkdir(invalidPackageRoot, { mode: 0o700 });
 
-    const answer = await tool("motion_package_validate", { packageRoot: join(root, "nothing-here") });
+    const answer = await tool("motion_package_validate", { packageRoot: invalidPackageRoot });
 
     expect(answer.ok).toBe(false);
     expect(answer.error?.code).toBe("invalid_args");
@@ -239,3 +337,9 @@ describe("the cold start an agent needs to begin at all", () => {
       .toMatchObject({ ok: true, result: { id: "motion.scene3d.gltf.import" } });
   }, 45_000);
 });
+
+async function testRoot(prefix: string): Promise<string> {
+  const scratch = join(process.cwd(), ".scratch");
+  await mkdir(scratch, { recursive: true, mode: 0o700 });
+  return await mkdtemp(join(scratch, prefix));
+}

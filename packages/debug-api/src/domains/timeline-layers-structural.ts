@@ -5,14 +5,12 @@ import {
   duplicateTimelineLayer,
   reorderTimelineLayer,
   splitLayerAtMs,
-  timelineLayerLockedTrackId,
-  trimLayerTiming,
-  type MotionDocument,
+  trimTimelineLayer,
   type MotionPackage
 } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { nonNegativeIntegerArg, nonNegativeNumberArg, positiveNumberArg, stringArg } from "./args.js";
-import { timelineLayerCreateArg } from "./timeline-layer-create-args.js";
+import { readTimelineLayerCreateArg } from "./timeline-layer-create-args.js";
 import {
   commitAtomicTimelineMutation,
   isTimelineCommonEditResult,
@@ -22,7 +20,6 @@ import {
 } from "./timeline-package-edit.js";
 
 export interface TimelineLayersStructuralServices extends TimelinePackageEditServices {}
-
 export async function dispatchTimelineLayersStructuralCommand(
   command: MotionDebugCommand,
   args: unknown,
@@ -54,11 +51,12 @@ async function create(args: unknown, services: TimelineLayersStructuralServices)
   if (fontSize === false) return invalidArgs("fontSize must be a positive number.");
   if (width === false) return invalidArgs("width must be a positive number.");
   if (height === false) return invalidArgs("height must be a positive number.");
-  const layer = timelineLayerCreateArg(args, {
+  const parsedLayer = readTimelineLayerCreateArg(args, {
     ...(startMs !== null ? { startMs } : {}),
     ...(durationMs !== null ? { durationMs } : {})
   });
-  if (!layer) return invalidArgs("motion.timeline.layer.create requires a layer object or layerId/type/timing fields.");
+  if (!parsedLayer.ok) return invalidArgs(parsedLayer.problem);
+  const layer = parsedLayer.layer;
   return commitAtomicTimelineMutation({
     ...common,
     command: "motion.timeline.layer.create",
@@ -342,17 +340,7 @@ function trimMutation(
   layerId: string,
   timing: { startMs?: number; durationMs?: number; trimStartMs?: number; trimDurationMs?: number }
 ) {
-  const layerIndex = pkg.motion.layers.findIndex((layer) => layer.id === layerId);
-  if (layerIndex === -1) throw new Error(`Motion layer not found: ${layerId}.`);
-  const layer = pkg.motion.layers[layerIndex];
-  const lockedTrackId = timelineLayerLockedTrackId(pkg.motion, layer);
-  if (lockedTrackId) throw new Error(`Cannot edit layer on locked track: ${lockedTrackId}.`);
-  const trimmed = trimLayerTiming(layer, timing);
-  const motion: MotionDocument = {
-    ...pkg.motion,
-    layers: pkg.motion.layers.map((candidate, index) => index === layerIndex ? trimmed.layer : candidate)
-  };
-  return { ...trimmed, motion };
+  return trimTimelineLayer(pkg.motion, { layerId, ...timing });
 }
 
 function commonArgs(

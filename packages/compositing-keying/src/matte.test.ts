@@ -41,6 +41,20 @@ describe("bounded matte cleanup", () => {
     expect(cleaned.evidence).toMatchObject({ denoiseRadiusPx: 1, blackClip: 0.2, whiteClip: 0.8 });
   });
 
+  it("pins the promoted bounded cleanup profile to deterministic alpha pixels", () => {
+    const source = new Uint8Array([0, 255, 0, 0, 0, 0, 0, 0, 255]);
+    const cleaned = cleanupMatte(source, 3, 3, {
+      denoiseRadiusPx: 1,
+      growShrinkPx: -1,
+      chokePx: 1,
+      featherPx: 2,
+      blackClip: 0.04,
+      whiteClip: 0.96,
+    });
+    expect(Array.from(cleaned.alpha)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(cleaned.evidence).toMatchObject({ denoiseRadiusPx: 1, growShrinkPx: -1, chokePx: 1, featherPx: 2, blackClip: 0.04, whiteClip: 0.96 });
+  });
+
   it("rejects malformed or over-budget matte buffers", () => {
     expect(() => cleanupMatte(new Uint8Array(3), 2, 2, defaults)).toThrow(/byte length/);
     expect(() => cleanupMatte(new Uint8Array(1), 9_000_000, 1, defaults)).toThrow(/dimensions/);

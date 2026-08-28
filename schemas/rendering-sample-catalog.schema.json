@@ -1,0 +1,464 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/rendering-sample-catalog@1",
+  "title": "ShellX Motion published rendering sample catalog",
+  "description": "A closed public index of the delivery-output subset of rendering capabilities and their truthful, checked-in samples. The repository validator additionally proves delivery-subset completeness, package validity, source fingerprints, generated documentation parity, public-export reachability, and that broader published rendering families remain release-blocking until registered. Explicit family-evidence samples supplement, but never replace, the one canonical sample for a published delivery capability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "revision", "scope", "authoritativeCapabilitySet", "publicExport", "capabilities", "samples", "publicCapabilityFamilies", "familySampleBindings", "familyWorkflowBindings", "agentToolBoundaries", "releaseGate", "fingerprint"],
+  "properties": {
+    "schema": { "const": "shellx-motion/rendering-sample-catalog@1" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "scope": { "const": "delivery-output-foundation" },
+    "authoritativeCapabilitySet": { "$ref": "#/$defs/authoritativeCapabilitySet" },
+    "publicExport": { "$ref": "#/$defs/publicExport" },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sample" }
+    },
+    "publicCapabilityFamilies": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/publicCapabilityFamily" }
+    },
+    "familySampleBindings": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/familySampleBinding" }
+    },
+    "familyWorkflowBindings": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/familyWorkflowBinding" }
+    },
+    "agentToolBoundaries": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/agentToolBoundary" }
+    },
+    "releaseGate": { "$ref": "#/$defs/releaseGate" },
+    "fingerprint": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "capabilityId": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,79}@[1-9][0-9]*$" },
+    "sampleId": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,99}@[1-9][0-9]*$" },
+    "primaryLayerTypeFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layerType", "familyId"],
+      "properties": {
+        "layerType": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "familyId": { "$ref": "#/$defs/capabilityId" }
+      }
+    },
+    "relativePath": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)[a-zA-Z0-9._/-]+$", "minLength": 1, "maxLength": 240 },
+    "commandArgv": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "authoritativeCapabilitySet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "definition", "sources", "primaryLayerTypeFamilies"],
+      "properties": {
+        "schema": { "const": "shellx-motion/published-rendering-capability-set@1" },
+        "definition": {
+          "const": "The delivery-output foundation covers every documented preview lane, each shipped export preset on the browser final route, the documented native still and native H.264 routes, the admitted GPU H.264 route, and the public mixed-preset batch route. Its primary MotionLayerType mapping is a discovery aid, not a complete public authoring-mutation or tool inventory."
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relativePath" }
+        },
+        "primaryLayerTypeFamilies": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/primaryLayerTypeFamily" }
+        }
+      }
+    },
+    "publicExport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaPath", "catalogPath", "documentationPath"],
+      "properties": {
+        "schemaPath": { "const": "schemas/rendering-sample-catalog.schema.json" },
+        "catalogPath": { "const": "docs/public/rendering-sample-catalog.json" },
+        "documentationPath": { "const": "docs/public/RENDERING_SAMPLES.md" }
+      }
+    },
+    "publicCapabilityFamily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "documentation", "machineAuthority", "registration", "sampleIds", "limitation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "documentation": { "$ref": "#/$defs/familyDocumentationRef" },
+        "machineAuthority": { "$ref": "#/$defs/machineAuthorityRef" },
+        "registration": { "enum": ["registered", "not-registered"] },
+        "sampleIds": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sampleId" }
+        },
+        "limitation": { "type": "string", "minLength": 30, "maxLength": 500 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "registration": { "const": "not-registered" } }, "required": ["registration"] },
+          "then": { "properties": { "sampleIds": { "maxItems": 0 } } }
+        }
+      ]
+    },
+    "familyDocumentationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "anchor"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "anchor": { "type": "string", "pattern": "^[a-z0-9-]{1,100}$" }
+      }
+    },
+    "machineAuthorityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "id"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "kind": { "enum": ["action", "debug-command"] },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{1,120}$" }
+      }
+    },
+    "familySampleBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["familyId", "sampleId", "capabilityRecipe"],
+      "properties": {
+        "familyId": { "$ref": "#/$defs/capabilityId" },
+        "sampleId": { "$ref": "#/$defs/sampleId" },
+        "capabilityRecipe": { "$ref": "#/$defs/capabilityRecipe" },
+        "interchangeEvidence": { "$ref": "#/$defs/interchangeEvidence" }
+      }
+    },
+    "familyWorkflowBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["familyId", "title", "kind", "commandIds", "receiptOperations", "proofOutputs", "limitation"],
+      "properties": {
+        "familyId": { "$ref": "#/$defs/capabilityId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "kind": { "enum": ["package-script", "cli-import"] },
+        "commandIds": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{1,120}$" } },
+        "receiptOperations": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{1,120}$" } },
+        "proofOutputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/workflowProofOutput" }
+        },
+        "limitation": { "type": "string", "minLength": 30, "maxLength": 600 },
+        "packageScript": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" },
+        "scriptPath": { "$ref": "#/$defs/relativePath" },
+        "sourceMarkers": { "type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": { "type": "string", "minLength": 2, "maxLength": 120 } },
+        "inputPaths": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
+        "input": { "$ref": "#/$defs/workflowInput" },
+        "sourceCheckout": { "$ref": "#/$defs/commandArgv" },
+        "installed": { "$ref": "#/$defs/commandArgv" },
+        "authorityTier": { "enum": ["write_local", "edit_motion"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "package-script" } }, "required": ["kind"] },
+          "then": { "required": ["packageScript", "scriptPath", "sourceMarkers"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "cli-import" } }, "required": ["kind"] },
+          "then": { "required": ["input", "sourceCheckout", "installed"] }
+        }
+      ]
+    },
+    "agentToolBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "debugCommandIds", "sourcePaths", "sourceBoundary", "refusalBoundary"],
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "debugCommandIds": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{1,120}$" } },
+        "sourcePaths": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/relativePath" } },
+        "sourceBoundary": { "type": "string", "minLength": 20, "maxLength": 480 },
+        "refusalBoundary": { "type": "string", "minLength": 20, "maxLength": 480 }
+      }
+    },
+    "workflowProofOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "mediaType"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "kind": { "enum": ["file", "directory"] },
+        "mediaType": {
+          "enum": [
+            "application/json",
+            "application/vnd.shellx.motion.package",
+            "video/mp4"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "directory" } }, "required": ["kind"] },
+          "then": { "properties": { "mediaType": { "const": "application/vnd.shellx.motion.package" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "file" } }, "required": ["kind"] },
+          "then": { "properties": { "mediaType": { "enum": ["application/json", "video/mp4"] } } }
+        }
+      ]
+    },
+    "workflowInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "mediaType", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "mediaType": { "type": "string", "pattern": "^[a-z]+/[a-z0-9.+-]+$", "minLength": 3, "maxLength": 128 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "capabilityRecipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "expectedJsonValues"],
+      "properties": {
+        "kind": { "const": "json-pointer-evidence" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "expectedJsonValues": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pointer", "value"],
+            "properties": {
+              "pointer": { "type": "string", "pattern": "^/[A-Za-z0-9_~./-]+$", "maxLength": 500 },
+              "value": {}
+            }
+          }
+        }
+      }
+    },
+    "interchangeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "sourceCheckout", "installed", "expectedArtifact", "expectedReceipts"],
+      "properties": {
+        "kind": { "const": "import-output-evidence" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "mediaType", "sha256"],
+          "properties": {
+            "path": { "$ref": "#/$defs/relativePath" },
+            "mediaType": { "enum": ["application/json", "application/vnd.lottie"] },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "sourceCheckout": { "$ref": "#/$defs/commandArgv" },
+        "installed": { "$ref": "#/$defs/commandArgv" },
+        "expectedArtifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "mediaType"],
+          "properties": {
+            "kind": { "const": "directory" },
+            "path": { "$ref": "#/$defs/relativePath" },
+            "mediaType": { "const": "application/vnd.shellx.motion.package" }
+          }
+        },
+        "expectedReceipts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["schema", "operation", "location"],
+            "properties": {
+              "schema": { "const": "shellx-motion/receipt@1" },
+              "operation": { "enum": ["adapter.lower", "adapter.diagnostics"] },
+              "location": { "const": "inside-output-directory" }
+            }
+          }
+        }
+      }
+    },
+    "releaseGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "state", "blockers"],
+      "properties": {
+        "schema": { "const": "shellx-motion/rendering-sample-release-gate@1" },
+        "state": { "enum": ["ready", "blocked"] },
+        "blockers": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/capabilityId" }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "surface", "requiredCompatibilityLanes", "documentation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "surface": { "enum": ["preview", "render", "render-batch"] },
+        "requiredCompatibilityLanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "enum": ["browser", "native", "gpu", "ffmpeg"] }
+        },
+        "documentation": { "$ref": "#/$defs/documentationRef" }
+      }
+    },
+    "documentationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "anchor"],
+      "properties": {
+        "path": { "const": "docs/public/rendering.md" },
+        "anchor": { "const": "choosing-a-lane" }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capabilityId", "title", "source", "invocation", "expectedArtifact", "expectedReceipt", "limitations"],
+      "properties": {
+        "id": { "$ref": "#/$defs/sampleId" },
+        "sampleRole": { "enum": ["delivery-capability", "family-evidence"] },
+        "capabilityId": { "$ref": "#/$defs/capabilityId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "source": { "$ref": "#/$defs/source" },
+        "invocation": { "$ref": "#/$defs/invocation" },
+        "expectedArtifact": { "$ref": "#/$defs/artifact" },
+        "expectedReceipt": { "$ref": "#/$defs/receipt" },
+        "limitations": { "type": "string", "minLength": 20, "maxLength": 600 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "fingerprint"],
+      "properties": {
+        "kind": { "const": "motion-package" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "fingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "invocation": {
+      "oneOf": [
+        { "$ref": "#/$defs/cliInvocation" },
+        { "$ref": "#/$defs/rendererBrowserDirectApiInvocation" }
+      ]
+    },
+    "cliInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceCheckout", "installed"],
+      "properties": {
+        "sourceCheckout": { "$ref": "#/$defs/commandArgv" },
+        "installed": { "$ref": "#/$defs/commandArgv" }
+      }
+    },
+    "rendererBrowserDirectApiInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "packageLoader", "renderer", "sourcePaths", "atMs", "outDir"],
+      "properties": {
+        "kind": { "const": "renderer-browser-direct-api" },
+        "packageLoader": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["module", "export"],
+          "properties": {
+            "module": { "const": "@shellx-motion/core" },
+            "export": { "const": "loadMotionPackage" }
+          }
+        },
+        "renderer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["module", "export"],
+          "properties": {
+            "module": { "const": "@shellx-motion/renderer-browser" },
+            "export": { "const": "renderMotionGpuPreview" }
+          }
+        },
+        "sourcePaths": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/relativePath" }
+        },
+        "atMs": { "type": "integer", "minimum": 0, "maximum": 3600000 },
+        "outDir": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "mediaType"],
+      "properties": {
+        "kind": { "enum": ["file", "directory", "per-row-files"] },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "mediaType": { "type": "string", "pattern": "^[a-z]+/[a-z0-9.+-]+$", "minLength": 3, "maxLength": 128 }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "operation", "location"],
+      "properties": {
+        "schema": { "const": "shellx-motion/receipt@1" },
+        "operation": { "enum": ["preview.frame", "preview.gpu.frame", "render.final", "render.batch"] },
+        "location": { "enum": ["beside-output", "inside-output-directory", "inside-batch-output", "inline-return"] }
+      }
+    }
+  }
+}

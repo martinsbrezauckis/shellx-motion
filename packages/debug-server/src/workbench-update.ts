@@ -44,6 +44,9 @@ import {
   type NetworkAddressResolver,
   type ResolvedNetworkAddress
 } from "@shellx-motion/core";
+import { compareEngineVersions, parseEngineVersion } from "./workbench-update-semver.js";
+
+export { compareEngineVersions } from "./workbench-update-semver.js";
 
 /** Bounded ceiling for a GitHub release JSON response body. */
 const MAX_RELEASE_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -180,24 +183,6 @@ class UpdateFeedError extends Error {
 }
 
 /**
- * Compare two engine version strings numerically by dotted release core,
- * ignoring any pre-release/build suffix. Returns 1 when a > b, -1 when a < b,
- * and 0 when the release cores are equal.
- */
-export function compareEngineVersions(a: string, b: string): number {
-  const pa = parseVersionCore(a);
-  const pb = parseVersionCore(b);
-  const length = Math.max(pa.length, pb.length);
-  for (let index = 0; index < length; index += 1) {
-    const na = pa[index] ?? 0;
-    const nb = pb[index] ?? 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-}
-
-/**
  * Run one update check against the configured GitHub releases feed.
  * Returns a truthful state for every outcome: unconfigured, up to date, update
  * available, or upstream failure. The upstream fetch runs on the pinned public-network
@@ -221,6 +206,15 @@ export async function runWorkbenchUpdateCheck(config: WorkbenchUpdateConfig): Pr
       configured: true,
       currentVersion: config.currentVersion,
       error: { code: "invalid_update_repo", message: "The configured update repository must be an owner/repo slug." },
+      unsafeNetworkOverride
+    };
+  }
+  if (!parseEngineVersion(config.currentVersion)) {
+    return {
+      ok: false,
+      configured: true,
+      currentVersion: config.currentVersion,
+      error: { code: "update_current_version_invalid", message: "The running ShellX Motion engine version is not valid SemVer." },
       unsafeNetworkOverride
     };
   }
@@ -249,12 +243,24 @@ export async function runWorkbenchUpdateCheck(config: WorkbenchUpdateConfig): Pr
       return { ok: false, configured: true, currentVersion: config.currentVersion, error: { code: "update_feed_invalid", message: release.message }, unsafeNetworkOverride };
     }
     const latestVersion = release.latestVersion;
+    const comparison = compareEngineVersions(config.currentVersion, latestVersion);
+    // parseRelease and the configuration check above make this unreachable in normal operation,
+    // but keeping the guard preserves the fail-closed contract if either parser changes later.
+    if (comparison === null) {
+      return {
+        ok: false,
+        configured: true,
+        currentVersion: config.currentVersion,
+        error: { code: "update_version_invalid", message: "The update version could not be compared as SemVer." },
+        unsafeNetworkOverride
+      };
+    }
     return {
       ok: true,
       configured: true,
       currentVersion: config.currentVersion,
       latestVersion,
-      upToDate: compareEngineVersions(config.currentVersion, latestVersion) >= 0,
+      upToDate: comparison >= 0,
       notesUrl: release.notesUrl,
       releasedAt: release.releasedAt,
       releaseName: release.releaseName,
@@ -496,16 +502,6 @@ function isJsonContentType(contentType: string): boolean {
   return contentType === "application/json" || contentType.endsWith("+json");
 }
 
-/** Parse the version core (leading numeric dotted segments) of a version string. */
-function parseVersionCore(version: string): number[] {
-  const trimmed = version.trim().replace(/^v/i, "");
-  const core = trimmed.split(/[-+]/, 1)[0] ?? "";
-  return core.split(".").map((segment) => {
-    const parsed = Number.parseInt(segment, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  });
-}
-
 /** Parse the fields the workbench needs out of a GitHub `releases/latest` payload. */
 function parseRelease(text: string):
   | {
@@ -534,10 +530,14 @@ function parseRelease(text: string):
   if (!tag) {
     return { ok: false, message: "The update feed response did not include a release tag." };
   }
+  const version = parseEngineVersion(tag);
+  if (!version) {
+    return { ok: false, message: "The update feed release tag is not valid SemVer." };
+  }
   const notes = typeof record.body === "string" ? record.body.slice(0, MAX_RELEASE_NOTES_CHARS) : null;
   return {
     ok: true,
-    latestVersion: tag.replace(/^v/i, ""),
+    latestVersion: version.normalized,
     notesUrl: typeof record.html_url === "string" ? record.html_url : null,
     releasedAt: typeof record.published_at === "string" ? record.published_at : null,
     releaseName: typeof record.name === "string" ? record.name : null,

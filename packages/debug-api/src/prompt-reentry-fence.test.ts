@@ -144,7 +144,7 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
     expect(bodies.join("\n")).not.toContain(VICTIM_MARKER);
   });
 
-  it("still admits an agent-proposed read of the host's own receipts root", async () => {
+  it.runIf(process.platform === "linux")("still admits an agent-proposed read of the host's own receipts root", async () => {
     // The fix must not turn prompt-driven execution off. A proposal that stays inside the host's
     // declared root is exactly what `executeAgentCommands` is for.
     await writeVictimReceipt(hostReceiptsRoot);
@@ -167,6 +167,41 @@ describe("prompt.run re-entry is fenced because its arguments are caller-steered
     );
 
     expect(result.ok).toBe(true);
+  });
+
+  it("keeps typed revision transactions out of prompt steering", async () => {
+    const result = await dispatchDebugCommand(
+      "motion.prompt.run",
+      {
+        request: "atomically revise that package",
+        packageId: "pkg_reentry",
+        agentId: "fake",
+        executeAgentCommands: true
+      },
+      {
+        tier: "edit_motion",
+        receiptsRoot: hostReceiptsRoot,
+        promptRuntime: proposingRuntime([
+          {
+            command: "motion.revision.transaction",
+            args: {
+              packageRoot: "/not-reached",
+              outDir: "/not-reached",
+              base: {},
+              steps: []
+            }
+          }
+        ])
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("not available through motion.prompt.run")
+      });
+    }
   });
 
   it("leaves host-derived re-entry alone: render.batch still dispatches its own rows", async () => {

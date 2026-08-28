@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { requiredLayerFeatures } from "./capabilities";
+import { scene3dMeshGeometrySha256 } from "./scene-3d-geometry";
 import { SCENE_3D_MESH_SCHEMA, SCENE_3D_SCHEMA } from "./scene-3d";
 import type { MotionLayer, MotionScene3DObject } from "./types";
 
@@ -26,7 +27,7 @@ describe("scene3d capability requirements", () => {
       rotationDeg: [0, 0, 0],
       scale: 1,
       color: "#ffffff",
-      source: { format: "gltf", meshIndex: 0, primitiveIndex: 0 },
+      source: { format: "gltf", meshIndex: 0, primitiveIndex: 0, geometrySha256: scene3dMeshGeometrySha256({ positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 0, 1, 0, 0, 1, 0, 0, 1], indices: [0, 1, 2] }) },
     }]))).toContain("scene3d.gltf-mesh");
   });
 });

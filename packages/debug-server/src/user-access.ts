@@ -4,14 +4,20 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/p
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
+import { workbenchChildEnvironment } from "./workbench-child-environment.js";
+import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable.js";
 
 const execFileAsync = promisify(execFile);
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/;
+const PRODUCER_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export interface MotionUserAccessPaths {
   root: string;
   tokenFile: string;
   portFile: string;
+  /** Private durable HMAC key for authenticating public render-reuse producer proofs. */
+  renderReuseProducerKeyFile: string;
   /**
    * Where receipts land when nobody said otherwise. Its existence is what makes the Debug API's
    * caller-supplied `receiptsRoot` fence enforceable rather than fail-closed-on-everything: a fence
@@ -19,6 +25,8 @@ export interface MotionUserAccessPaths {
    * caller's root was not merely preferred over the host's -- it was the only one there was.
    */
   receiptsRoot: string;
+  /** Host-only private registry root for locally installed C1 effect modules. */
+  effectModulesRoot: string;
 }
 
 export function motionUserAccessPaths(root = join(homedir(), ".shellx-motion")): MotionUserAccessPaths {
@@ -26,7 +34,9 @@ export function motionUserAccessPaths(root = join(homedir(), ".shellx-motion")):
     root,
     tokenFile: join(root, "access.token"),
     portFile: join(root, "server.port"),
-    receiptsRoot: join(root, "receipts")
+    renderReuseProducerKeyFile: join(root, "render-reuse-producer.key"),
+    receiptsRoot: join(root, "receipts"),
+    effectModulesRoot: join(root, "effect-modules")
   };
 }
 
@@ -42,6 +52,35 @@ export async function ensureMotionReceiptsRoot(
   await securePrivateDirectory(paths.root);
   await securePrivateDirectory(paths.receiptsRoot);
   return paths.receiptsRoot;
+}
+
+/** Create and return the private C1 effect-module registry root chosen by the installed host. */
+export async function ensureMotionEffectModulesRoot(
+  paths: MotionUserAccessPaths = motionUserAccessPaths()
+): Promise<string> {
+  await securePrivateDirectory(paths.root);
+  await securePrivateDirectory(paths.effectModulesRoot);
+  return paths.effectModulesRoot;
+}
+
+/** Read or create the installed host's private durable render-reuse producer key. */
+export async function readOrCreateRenderReuseProducerKey(
+  paths: MotionUserAccessPaths = motionUserAccessPaths()
+): Promise<Buffer> {
+  await securePrivateDirectory(paths.root);
+  const existing = await readProducerKeyIfPresent(paths.renderReuseProducerKeyFile);
+  if (existing) return existing;
+  const key = randomBytes(32);
+  try {
+    await writeFile(paths.renderReuseProducerKeyFile, `${key.toString("base64url")}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if (!isFileExistsError(error)) throw error;
+    const raced = await readProducerKeyIfPresent(paths.renderReuseProducerKeyFile);
+    if (!raced) throw new Error("Motion render-reuse producer-key creation raced but no valid key became available.");
+    return raced;
+  }
+  await securePrivateFile(paths.renderReuseProducerKeyFile);
+  return key;
 }
 
 export async function readOrCreatePersistentCapabilityFile(
@@ -105,6 +144,35 @@ export async function writeEphemeralCapabilityFile(capabilityToken: string): Pro
   }
 }
 
+/**
+ * Write the one-use Workbench bootstrap value into a private local HTML handoff.
+ *
+ * The OS opener receives only this non-secret `file:` URL. Once it has loaded, the document moves
+ * the browser to the regular Workbench URL with the bootstrap fragment, whose existing page code
+ * consumes and clears it before the authenticated network exchange. The server removes this root
+ * after that one successful exchange (and the CLI removes it on opener failure or shutdown).
+ */
+export async function writeWorkbenchBootstrapHandoff(
+  serverUrl: URL,
+  bootstrapToken: string
+): Promise<{ handoffRoot: string; handoffFile: string; handoffUrl: string }> {
+  assertCapabilityToken(bootstrapToken);
+  const workbenchUrl = new URL("/workbench", serverUrl);
+  workbenchUrl.hash = new URLSearchParams({ bootstrap: bootstrapToken }).toString();
+  const handoffRoot = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-"));
+  const handoffFile = join(handoffRoot, "launch.html");
+  try {
+    await securePrivateDirectory(handoffRoot);
+    const document = `<!doctype html><meta charset="utf-8"><script>location.replace(${JSON.stringify(workbenchUrl.toString())});</script>`;
+    await writeFile(handoffFile, document, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await securePrivateFile(handoffFile);
+    return { handoffRoot, handoffFile, handoffUrl: pathToFileURL(handoffFile).toString() };
+  } catch (error) {
+    await rm(handoffRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function readCapabilityIfPresent(path: string): Promise<string | null> {
   try {
     const metadata = await lstat(path);
@@ -115,6 +183,24 @@ async function readCapabilityIfPresent(path: string): Promise<string | null> {
     assertCapabilityToken(token);
     await securePrivateFile(path);
     return token;
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+}
+
+async function readProducerKeyIfPresent(path: string): Promise<Buffer | null> {
+  try {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new Error("Motion render-reuse producer key must be a private regular file, not a link or directory.");
+    }
+    const encoded = (await readFile(path, "utf8")).trim();
+    if (!PRODUCER_KEY_PATTERN.test(encoded)) throw new Error("Motion render-reuse producer key is invalid.");
+    const key = Buffer.from(encoded, "base64url");
+    if (key.byteLength !== 32 || key.toString("base64url") !== encoded) throw new Error("Motion render-reuse producer key is invalid.");
+    await securePrivateFile(path);
+    return key;
   } catch (error) {
     if (isMissingFileError(error)) return null;
     throw error;
@@ -155,9 +241,11 @@ async function securePrivateFile(path: string): Promise<void> {
 }
 
 async function currentWindowsUserSid(): Promise<string> {
-  const { stdout } = await execFileAsync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
+  const executable = await resolveWorkbenchSystemExecutable("windows-whoami");
+  const { stdout } = await execFileAsync(executable, ["/user", "/fo", "csv", "/nh"], {
     encoding: "utf8",
-    windowsHide: true
+    windowsHide: true,
+    env: workbenchChildEnvironment()
   });
   const sid = stdout.match(/S-\d+(?:-\d+)+/)?.[0];
   if (!sid) throw new Error("Unable to resolve the current Windows user SID for access-key ACL hardening.");
@@ -182,13 +270,14 @@ async function restrictWindowsCapabilityPath(path: string, userSid: string, dire
     `$item = New-Object IO.${itemType}($env:SHELLX_MOTION_ACL_PATH)`,
     "$item.SetAccessControl($security)"
   ].join("; ");
-  await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+  const executable = await resolveWorkbenchSystemExecutable("windows-powershell");
+  await execFileAsync(executable, ["-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 32 * 1024,
     env: {
-      ...process.env,
+      ...workbenchChildEnvironment(),
       SHELLX_MOTION_ACL_PATH: path,
       SHELLX_MOTION_ACL_SID: userSid
     }

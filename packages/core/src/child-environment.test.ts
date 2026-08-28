@@ -25,12 +25,20 @@ describe("child environment", () => {
       LANG: "en_GB.UTF-8",
       SHELLX_MOTION_DEBUG_TOKEN: "live-bearer-do-not-leak",
       GITHUB_TOKEN: "ghp_do-not-leak",
+      NPM_CONFIG__AUTHTOKEN: "npm-case-variant-do-not-leak",
+      npm_CONFIG__authTOKEN: "npm-mixed-case-do-not-leak",
       AWS_SECRET_ACCESS_KEY: "do-not-leak",
       OPENAI_API_KEY: "sk-do-not-leak",
       ANTHROPIC_KEY: "do-not-leak",
       DB_PASSWORD: "do-not-leak",
       SESSION_ID: "do-not-leak",
-      MY_PRIVATE_KEY: "do-not-leak"
+      MY_PRIVATE_KEY: "do-not-leak",
+      SSH_AUTH_SOCK: "/run/user/1000/ssh-agent",
+      KRB5CCNAME: "do-not-leak",
+      GPG_AGENT_INFO: "do-not-leak",
+      KUBECONFIG: "do-not-leak",
+      XAUTHORITY: "do-not-leak",
+      DOCKER_CONFIG: "do-not-leak"
     };
 
     const environment = childEnvironment({ source });
@@ -42,8 +50,10 @@ describe("child environment", () => {
 
     // Nothing credential-shaped does.
     for (const name of [
-      "SHELLX_MOTION_DEBUG_TOKEN", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY",
-      "OPENAI_API_KEY", "ANTHROPIC_KEY", "DB_PASSWORD", "SESSION_ID", "MY_PRIVATE_KEY"
+      "SHELLX_MOTION_DEBUG_TOKEN", "GITHUB_TOKEN", "NPM_CONFIG__AUTHTOKEN",
+      "npm_CONFIG__authTOKEN", "AWS_SECRET_ACCESS_KEY",
+      "OPENAI_API_KEY", "ANTHROPIC_KEY", "DB_PASSWORD", "SESSION_ID", "MY_PRIVATE_KEY",
+      "SSH_AUTH_SOCK", "KRB5CCNAME", "GPG_AGENT_INFO", "KUBECONFIG", "XAUTHORITY", "DOCKER_CONFIG"
     ]) {
       expect(environment, `${name} must not reach a child`).not.toHaveProperty(name);
     }
@@ -71,7 +81,8 @@ describe("child environment", () => {
     for (const name of [
       "TOKEN", "API_TOKEN", "SOME_SECRET", "X_PASSWORD", "SERVICE_API_KEY",
       "AWS_ACCESS_KEY_ID", "MY_PRIVATE_KEY", "GCP_CREDENTIALS", "AUTH_HEADER",
-      "SESSION_TOKEN", "COOKIE_JAR", "BEARER_TOKEN", "VENDOR_KEY"
+      "SESSION_TOKEN", "COOKIE_JAR", "BEARER_TOKEN", "VENDOR_KEY", "SSH_AUTH_SOCK",
+      "KRB5CCNAME", "GPG_AGENT_INFO", "KUBECONFIG", "XAUTHORITY", "DOCKER_CONFIG"
     ]) {
       expect(isSecretEnvName(name), `${name} should be withheld`).toBe(true);
     }

@@ -1,23 +1,88 @@
 /** Strict parsing for the rich layer payload accepted by timeline.layer.create. */
+import { isDeepStrictEqual } from "node:util";
 import {
-  readSupportedKeyframeTarget,
-  type MotionAudioDucking,
-  type MotionCrop,
-  type MotionEffects,
-  type MotionEnvironment,
-  type MotionKeyframe,
-  type MotionLayer,
-  type MotionMask,
-  type MotionTransition
+  assertMotionPathRevealLayer, parseMotionPathViewBox, readGpuSceneStrokeDash, readMotionTextRuns, resolveMotionShapeGeometry, validateMotionPathData,
+  type MotionLayer
 } from "@shellx-motion/core";
 import { objectArg, positiveNumberArg, recordArg, stringArg } from "./args.js";
+import { timelineEffectsArg, timelineGradientArg } from "./timeline-layer-create-effects-arg.js";
+import { timelinePointCloudArg } from "./timeline-point-cloud-arg.js";
+import { optionalFiniteNumber, timelineParticleEmitterArg } from "./timeline-particle-emitter-arg.js";
+import {
+  allowedOriginsValue, blendModeValue, cropValue, duckingValue, environmentValue,
+  keyframesValue, maskValue, transformValue, transitionsValue
+} from "./timeline-layer-create-rich-values.js";
 
+const REPRESENTABLE_LAYER_FIELDS = new Set([
+  "id", "name", "type", "trackId", "startMs", "durationMs", "text", "textRuns", "shape", "geometry", "fill", "color",
+  "width", "height", "opacity", "visible", "locked", "source", "src", "assetId", "assetRef",
+  "trimStartMs", "trimDurationMs", "loop", "playbackRate", "includeAudio", "volume", "pan", "muted",
+  "fadeInMs", "fadeOutMs", "fadeCurve", "normalizeLoudness", "ducking", "fit", "crop", "allowedOrigins",
+  "transform", "style", "label", "keyframes", "transitions", "mask", "effects", "gradient", "environment",
+  "pointCloud", "emitter", "blendMode", "pathReveal", "x-path", "x-path-viewBox", "x-path-fillRule"
+]);
+
+const DEFERRED_LAYER_FIELD_PROBLEMS: Record<string, string> = {
+  childLayerIds: "layer.childLayerIds is owned by the active group authoring lane and is not admitted until its typed parser lands.",
+  scene3d: "layer.scene3d is owned by the active scene3d authoring lane and is not admitted until its typed parser lands.",
+  depth: "layer.depth is owned by the active depth authoring lane and is not admitted until its typed parser lands.",
+  textFit: "layer.textFit is not yet admitted by motion.timeline.layer.create; it is refused before mutation rather than dropped.",
+  keying: "layer.keying is not admitted by motion.timeline.layer.create; create the layer first, then use the existing keying authoring operations.",
+  matte: "layer.matte is not yet admitted by motion.timeline.layer.create; it is refused before mutation rather than dropped.",
+  effectModule: "layer.effectModule is not yet admitted by motion.timeline.layer.create; it is refused before mutation rather than dropped.",
+  shader: "layer.shader is not yet admitted by motion.timeline.layer.create; it is refused before mutation rather than dropped."
+};
+
+export type TimelineLayerCreateParseResult =
+  | { ok: true; layer: MotionLayer }
+  | { ok: false; problem: string };
+
+/**
+ * Parses a create payload without allowing the historical projection to silently
+ * replace it with a different layer. The nullable wrapper below remains for
+ * existing callers until the structural dispatcher can surface `problem`.
+ */
+export function readTimelineLayerCreateArg(
+  args: unknown,
+  timing: { startMs?: number; durationMs?: number }
+): TimelineLayerCreateParseResult {
+  const source = layerCreateSource(args, timing);
+  const fieldProblem = layerCreateFieldProblem(source);
+  if (fieldProblem) return { ok: false, problem: fieldProblem };
+  const textRunsProblem = layerCreateTextRunsProblem(source);
+  if (textRunsProblem) return { ok: false, problem: textRunsProblem };
+  const geometryProblem = layerCreateGeometryProblem(source);
+  if (geometryProblem) return { ok: false, problem: geometryProblem };
+  const dashProblem = layerCreateDashProblem(source);
+  if (dashProblem) return { ok: false, problem: dashProblem };
+
+  const layer = parseTimelineLayerCreateArg(args, timing);
+  if (!layer) return { ok: false, problem: "layer contains an invalid value for the typed layer-create contract." };
+
+  const lostField = firstLossyLayerField(source, layer);
+  if (lostField) {
+    return {
+      ok: false,
+      problem: `layer.${lostField} cannot be represented losslessly by motion.timeline.layer.create and is refused before mutation.`
+    };
+  }
+  return { ok: true, layer };
+}
+
+/** Compatibility wrapper for callers that have not yet adopted the detailed parse result. */
 export function timelineLayerCreateArg(
   args: unknown,
   timing: { startMs?: number; durationMs?: number }
 ): MotionLayer | null {
-  const layerRecord = recordArg(args, "layer");
-  const source: Record<string, unknown> = layerRecord ? structuredClone(layerRecord) : {};
+  const parsed = readTimelineLayerCreateArg(args, timing);
+  return parsed.ok ? parsed.layer : null;
+}
+
+function parseTimelineLayerCreateArg(
+  args: unknown,
+  timing: { startMs?: number; durationMs?: number }
+): MotionLayer | null {
+  const source = layerCreateSource(args, timing);
   const layerId = stringArg(args, "layerId") ?? stringArg(args, "layer");
   const type = stringArg(args, "type");
   const trackId = stringArg(args, "trackId") ?? stringArg(args, "track");
@@ -66,6 +131,10 @@ export function timelineLayerCreateArg(
   copyString(source, layer, "name");
   copyString(source, layer, "trackId");
   copyString(source, layer, "text");
+  if (Object.hasOwn(source, "textRuns")) {
+    try { layer.textRuns = readMotionTextRuns(source.textRuns, "layer.textRuns"); }
+    catch { return null; }
+  }
   copyString(source, layer, "shape");
   copyString(source, layer, "fill");
   copyString(source, layer, "color");
@@ -90,6 +159,12 @@ export function timelineLayerCreateArg(
   copyBoolean(source, layer, "includeAudio");
   copyBoolean(source, layer, "muted");
   copyBoolean(source, layer, "normalizeLoudness");
+
+  if (Object.hasOwn(source, "geometry")) {
+    layer.geometry = structuredClone(source.geometry) as NonNullable<MotionLayer["geometry"]>;
+    const geometry = resolveMotionShapeGeometry(layer);
+    if (!geometry.ok || geometry.geometry.source !== "v1") return null;
+  }
 
   const style = objectArg(source.style);
   if (style) layer.style = style;
@@ -116,263 +191,41 @@ export function timelineLayerCreateArg(
   const mask = maskValue(source.mask);
   if (mask === false) return null;
   if (mask) layer.mask = mask;
-  const effects = effectsValue(source.effects);
+  const gradient = timelineGradientArg(source.gradient);
+  if (gradient === false) return null;
+  if (gradient) layer.gradient = gradient;
+  const effects = timelineEffectsArg(source.effects);
   if (effects === false) return null;
   if (effects) layer.effects = effects;
   const environment = environmentValue(source.environment);
   if (environment === false) return null;
   if (environment) layer.environment = environment;
+  const pointCloud = timelinePointCloudArg(source);
+  if (pointCloud === false) return null;
+  if (pointCloud) layer.pointCloud = pointCloud;
+  const emitter = timelineParticleEmitterArg(source.emitter);
+  if (emitter === false) return null;
+  if (emitter) layer.emitter = emitter;
   const blendMode = blendModeValue(source.blendMode);
   if (blendMode === false) return null;
   if (blendMode) layer.blendMode = blendMode;
-  return layer;
-}
-
-const BLEND_MODES: Array<NonNullable<MotionLayer["blendMode"]>> = [
-  "normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
-  "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity", "plus-lighter"
-];
-const DUCKING_NUMBER_KEYS: Array<"duckToVolume" | "attackMs" | "releaseMs" | "threshold" | "ratio"> = ["duckToVolume", "attackMs", "releaseMs", "threshold", "ratio"];
-const TRANSFORM_NUMBER_KEYS: Array<"x" | "y" | "width" | "height" | "opacity" | "scale" | "rotation" | "originX" | "originY"> = [
-  "x", "y", "width", "height", "opacity", "scale", "rotation", "originX", "originY"
-];
-const MASK_INSET_NUMBER_KEYS: Array<"top" | "right" | "bottom" | "left"> = ["top", "right", "bottom", "left"];
-const EFFECT_NUMBER_KEYS: Array<"blur" | "brightness" | "contrast" | "saturate" | "grayscale"> = [
-  "blur", "brightness", "contrast", "saturate", "grayscale"
-];
-
-function duckingValue(value: unknown): MotionAudioDucking | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const triggerLayerIds = stringArray(record.triggerLayerIds);
-  if (!triggerLayerIds) return false;
-  const ducking: MotionAudioDucking = { triggerLayerIds };
-  // Optional ducking mode ("timed" default, or "sidechain"). Range/enum is
-  // re-checked by core package validation before render.
-  if (record.mode !== undefined) {
-    if (record.mode !== "timed" && record.mode !== "sidechain") return false;
-    ducking.mode = record.mode;
-  }
-  for (const key of DUCKING_NUMBER_KEYS) {
-    const number = optionalFiniteNumber(record, key);
-    if (number === false) return false;
-    if (number !== null) ducking[key] = number;
-  }
-  return ducking;
-}
-
-function cropValue(value: unknown): MotionCrop | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const x = optionalFiniteNumber(record, "x");
-  const y = optionalFiniteNumber(record, "y");
-  const width = optionalFiniteNumber(record, "width");
-  const height = optionalFiniteNumber(record, "height");
-  if (x === false || y === false || width === false || height === false) return false;
-  if (x === null || y === null || width === null || height === null) return false;
-  return { x, y, width, height };
-}
-
-function allowedOriginsValue(value: unknown): unknown[] | false | null {
-  if (value === undefined) return null;
-  return Array.isArray(value) ? structuredClone(value) : false;
-}
-
-function transformValue(value: unknown): MotionLayer["transform"] | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const transform: NonNullable<MotionLayer["transform"]> = {};
-  for (const key of TRANSFORM_NUMBER_KEYS) {
-    const number = optionalFiniteNumber(record, key);
-    if (number === false) return false;
-    if (number !== null) transform[key] = number;
-  }
-  return Object.keys(transform).length > 0 ? transform : null;
-}
-
-function keyframesValue(value: unknown): MotionLayer["keyframes"] | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const keyframes: NonNullable<MotionLayer["keyframes"]> = {};
-  for (const [targetValue, framesValue] of Object.entries(record)) {
-    const target = readSupportedKeyframeTarget(targetValue);
-    if (!target || !Array.isArray(framesValue)) return false;
-    const frames: MotionKeyframe[] = [];
-    for (const frameValue of framesValue) {
-      const frameRecord = objectArg(frameValue);
-      if (!frameRecord) return false;
-      const atMs = optionalFiniteNumber(frameRecord, "atMs");
-      if (atMs === false || atMs === null) return false;
-      const frame = keyframeValue(frameRecord.value);
-      if (frame === false) return false;
-      const easing = optionalString(frameRecord, "easing");
-      if (easing === false) return false;
-      frames.push({ atMs, value: frame, ...(easing !== null ? { easing } : {}) });
+  const fadeCurve = fadeCurveValue(source.fadeCurve);
+  if (fadeCurve === false) return null;
+  if (fadeCurve) layer.fadeCurve = fadeCurve;
+  const pathExtensions = pathExtensionValues(source);
+  if (pathExtensions === false) return null;
+  if (pathExtensions) Object.assign(layer, pathExtensions);
+  const pathReveal = pathRevealValue(source.pathReveal);
+  if (pathReveal === false) return null;
+  if (pathReveal) {
+    layer.pathReveal = pathReveal;
+    try {
+      assertMotionPathRevealLayer(layer, `motion.timeline.layer.create layer ${layer.id}`);
+    } catch {
+      return null;
     }
-    keyframes[target] = frames;
   }
-  return Object.keys(keyframes).length > 0 ? keyframes : null;
-}
-
-function transitionsValue(value: unknown): MotionLayer["transitions"] | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const transitions: NonNullable<MotionLayer["transitions"]> = {};
-  const enter = transitionValue(record.in);
-  if (enter === false) return false;
-  if (enter) transitions.in = enter;
-  const exit = transitionValue(record.out);
-  if (exit === false) return false;
-  if (exit) transitions.out = exit;
-  return Object.keys(transitions).length > 0 ? transitions : null;
-}
-
-function transitionValue(value: unknown): MotionTransition | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const type = nonEmptyString(record, "type");
-  const durationMs = optionalFiniteNumber(record, "durationMs");
-  if (!type || durationMs === false || durationMs === null) return false;
-  const transition: MotionTransition = { type, durationMs };
-  const easing = optionalString(record, "easing");
-  if (easing === false) return false;
-  if (easing !== null) transition.easing = easing;
-  const direction = optionalString(record, "direction");
-  if (direction === false) return false;
-  if (direction !== null) transition.direction = direction;
-  const distance = optionalFiniteNumber(record, "distance");
-  if (distance === false) return false;
-  if (distance !== null) transition.distance = distance;
-  return transition;
-}
-
-function maskValue(value: unknown): MotionMask | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const type = nonEmptyString(record, "type");
-  if (!type) return false;
-  const mask: MotionMask = { type };
-  const inset = maskInsetValue(record.inset);
-  if (inset === false) return false;
-  if (inset) mask.inset = inset;
-  const radius = optionalFiniteNumber(record, "radius");
-  if (radius === false) return false;
-  if (radius !== null) mask.radius = radius;
-  return mask;
-}
-
-function maskInsetValue(value: unknown): NonNullable<MotionMask["inset"]> | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const inset: NonNullable<MotionMask["inset"]> = {};
-  for (const key of MASK_INSET_NUMBER_KEYS) {
-    const number = optionalFiniteNumber(record, key);
-    if (number === false) return false;
-    if (number !== null) inset[key] = number;
-  }
-  return Object.keys(inset).length > 0 ? inset : null;
-}
-
-function effectsValue(value: unknown): MotionEffects | false | null {
-  if (value === undefined) return null;
-  const record = objectArg(value);
-  if (!record) return false;
-  const effects: MotionEffects = {};
-  for (const key of EFFECT_NUMBER_KEYS) {
-    const number = optionalFiniteNumber(record, key);
-    if (number === false) return false;
-    if (number !== null) effects[key] = number;
-  }
-  return Object.keys(effects).length > 0 ? effects : null;
-}
-
-function environmentValue(value: unknown): MotionEnvironment | false | null {
-  if (value === undefined) return null;
-  const environment = objectArg(value);
-  if (!environment) return false;
-  for (const field of ["code", "script", "source", "fragment", "url"]) {
-    if (Object.hasOwn(environment, field)) return false;
-  }
-  const schema = nonEmptyString(environment, "schema");
-  const kind = nonEmptyString(environment, "kind");
-  const quality = nonEmptyString(environment, "quality");
-  const mode = nonEmptyString(environment, "mode");
-  const seed = finiteNumber(environment, "seed");
-  if (schema !== "shellx-motion/environment@1" || !kind || !quality || !mode || seed === null) return false;
-  if (quality !== "preview" && quality !== "balanced" && quality !== "cinematic") return false;
-  if (mode !== "scene" && mode !== "overlay") return false;
-  const common = { schema: "shellx-motion/environment@1" as const, quality, mode, seed };
-  if (kind === "rain") {
-    const numbers = requiredNumberFields(environment, ["intensity", "wind", "dropSpeed", "dropLength", "depthLayers"]);
-    const colors = requiredStringFields(environment, ["color", "backgroundColor", "lightColor", "accentColor"]);
-    const groundRecord = objectArg(environment.ground);
-    const atmosphereRecord = objectArg(environment.atmosphere);
-    const ground = groundRecord && requiredNumberFields(groundRecord, ["horizon", "wetness", "roughness", "rippleAmount", "splashAmount", "reflectionStrength"]);
-    const atmosphere = atmosphereRecord && requiredNumberFields(atmosphereRecord, ["mist", "lensDroplets"]);
-    if (!numbers || !colors || !ground || !atmosphere) return false;
-    return { ...common, kind: "rain", ...numbers, ...colors, ground, atmosphere } as MotionEnvironment;
-  }
-  if (kind === "water") {
-    const colors = requiredStringFields(environment, ["backgroundColor", "shallowColor", "deepColor", "reflectionColor", "foamColor"]);
-    const surfaceRecord = objectArg(environment.surface);
-    const opticsRecord = objectArg(environment.optics);
-    const surface = surfaceRecord && requiredNumberFields(surfaceRecord, ["horizon", "waveScale", "waveHeight", "waveSpeed", "direction", "choppiness", "waveOctaves"]);
-    const optics = opticsRecord && requiredNumberFields(opticsRecord, ["reflectionStrength", "refractionStrength", "fresnel", "caustics", "clarity", "foam"]);
-    if (!colors || !surface || !optics) return false;
-    return { ...common, kind: "water", ...colors, surface, optics } as MotionEnvironment;
-  }
-  if (kind === "snow") {
-    const colors = requiredStringFields(environment, ["backgroundColor", "snowColor", "shadowColor", "lightColor"]);
-    const fallRecord = objectArg(environment.fall);
-    const groundRecord = objectArg(environment.ground);
-    const atmosphereRecord = objectArg(environment.atmosphere);
-    const fall = fallRecord && requiredNumberFields(fallRecord, ["intensity", "speed", "wind", "turbulence", "flakeSize", "depthLayers", "focusFalloff"]);
-    const ground = groundRecord && requiredNumberFields(groundRecord, ["horizon", "accumulation", "drift", "contactAmount"]);
-    const atmosphere = atmosphereRecord && requiredNumberFields(atmosphereRecord, ["haze", "depthFade"]);
-    if (!colors || !fall || !ground || !atmosphere) return false;
-    return { ...common, kind: "snow", ...colors, fall, ground, atmosphere } as MotionEnvironment;
-  }
-  return false;
-}
-
-function requiredNumberFields<const Key extends string>(record: Record<string, unknown>, fields: readonly Key[]): Record<Key, number> | null {
-  const output = {} as Record<Key, number>;
-  for (const field of fields) {
-    const value = finiteNumber(record, field);
-    if (value === null) return null;
-    output[field] = value;
-  }
-  return output;
-}
-
-function requiredStringFields<const Key extends string>(record: Record<string, unknown>, fields: readonly Key[]): Record<Key, string> | null {
-  const output = {} as Record<Key, string>;
-  for (const field of fields) {
-    const value = nonEmptyString(record, field);
-    if (!value) return null;
-    output[field] = value;
-  }
-  return output;
-}
-
-function blendModeValue(value: unknown): MotionLayer["blendMode"] | false | null {
-  if (value === undefined) return null;
-  if (typeof value !== "string") return false;
-  return BLEND_MODES.find((candidate) => candidate === value) ?? false;
-}
-
-function keyframeValue(value: unknown): MotionKeyframe["value"] | false {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim().length > 0) return value.trim();
-  return false;
+  return layer;
 }
 
 function nonEmptyString(record: Record<string, unknown>, key: string): string | null {
@@ -383,17 +236,6 @@ function nonEmptyString(record: Record<string, unknown>, key: string): string | 
 function finiteNumber(record: Record<string, unknown>, key: string): number | null {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function optionalFiniteNumber(record: Record<string, unknown>, key: string): number | false | null {
-  if (!Object.hasOwn(record, key)) return null;
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : false;
-}
-
-function optionalString(record: Record<string, unknown>, key: string): string | false | null {
-  if (!Object.hasOwn(record, key)) return null;
-  return typeof record[key] === "string" ? record[key] : false;
 }
 
 function stringArray(value: unknown): string[] | null {
@@ -413,4 +255,147 @@ function copyNumber<K extends keyof MotionLayer>(source: Record<string, unknown>
 function copyBoolean<K extends keyof MotionLayer>(source: Record<string, unknown>, layer: MotionLayer, key: K): void {
   const value = source[key as string];
   if (typeof value === "boolean") (layer as unknown as Record<string, unknown>)[key as string] = value;
+}
+
+/** Applies the established shorthand form before the lossless-field guard compares values. */
+function layerCreateSource(
+  args: unknown,
+  timing: { startMs?: number; durationMs?: number }
+): Record<string, unknown> {
+  const layerRecord = recordArg(args, "layer");
+  const source: Record<string, unknown> = layerRecord ? structuredClone(layerRecord) : {};
+  const layerId = stringArg(args, "layerId") ?? stringArg(args, "layer");
+  const type = stringArg(args, "type");
+  const trackId = stringArg(args, "trackId") ?? stringArg(args, "track");
+  const text = stringArg(args, "text");
+  const shape = stringArg(args, "shape");
+  const fill = stringArg(args, "fill");
+  const mediaSource = stringArg(args, "source");
+  const src = stringArg(args, "src");
+  const assetId = stringArg(args, "assetId");
+  const assetRef = stringArg(args, "assetRef");
+  const color = stringArg(args, "color");
+  const fontSize = positiveNumberArg(args, "fontSize");
+  const width = positiveNumberArg(args, "width");
+  const height = positiveNumberArg(args, "height");
+
+  if (layerId) source.id = layerId;
+  if (type) source.type = type;
+  if (trackId) source.trackId = trackId;
+  if (timing.startMs !== undefined) source.startMs = timing.startMs;
+  if (timing.durationMs !== undefined) source.durationMs = timing.durationMs;
+  if (text !== null) source.text = text;
+  if (shape !== null) source.shape = shape;
+  if (fill !== null) source.fill = fill;
+  if (mediaSource !== null) source.source = mediaSource;
+  if (src !== null) source.src = src;
+  if (assetId !== null) source.assetId = assetId;
+  if (assetRef !== null) source.assetRef = assetRef;
+  if (width !== null && width !== false) source.width = width;
+  if (height !== null && height !== false) source.height = height;
+  if (color !== null || (fontSize !== null && fontSize !== false)) {
+    source.style = {
+      ...(objectArg(source.style) ?? {}),
+      ...(color !== null ? { color } : {}),
+      ...(fontSize !== null && fontSize !== false ? { fontSize } : {})
+    };
+  }
+  return source;
+}
+
+/** A typed mutation is closed: public package extensions are not an authoring tunnel. */
+function layerCreateFieldProblem(source: Record<string, unknown>): string | null {
+  for (const field of Object.keys(source)) {
+    const deferred = DEFERRED_LAYER_FIELD_PROBLEMS[field];
+    if (deferred) return deferred;
+    if (REPRESENTABLE_LAYER_FIELDS.has(field)) continue;
+    if (field.startsWith("x-")) {
+      return `layer.${field} is an unrecognized extension field. motion.timeline.layer.create admits only validated x-path fields.`;
+    }
+    return `layer.${field} is not a recognized MotionLayer field for motion.timeline.layer.create.`;
+  }
+  return null;
+}
+
+function layerCreateGeometryProblem(source: Record<string, unknown>): string | null {
+  if (!Object.hasOwn(source, "geometry")) return null;
+  if (source.type !== "shape") return "layer.geometry is supported only on shape layers.";
+  const resolved = resolveMotionShapeGeometry(structuredClone(source) as unknown as MotionLayer);
+  return resolved.ok && resolved.geometry.source === "v1" ? null : resolved.ok
+    ? "layer.geometry must use the v1 authored geometry record."
+    : `layer.geometry is invalid: ${resolved.message}`;
+}
+
+function layerCreateTextRunsProblem(source: Record<string, unknown>): string | null {
+  if (!Object.hasOwn(source, "textRuns")) return null;
+  if (Object.hasOwn(source, "text")) return "layer.text and layer.textRuns are mutually exclusive; textRuns owns complete text content.";
+  const style = objectArg(source.style);
+  if (!style) return null;
+  const field = ["fontFamily", "fontWeight", "fontStyle"].find((key) => Object.hasOwn(style, key));
+  return field ? `layer.style.${field} must be absent when layer.textRuns uses immutable manifest font assets as its sole face authority.` : null;
+}
+
+function layerCreateDashProblem(source: Record<string, unknown>): string | null {
+  const style = objectArg(source.style);
+  if (!style || (!Object.hasOwn(style, "strokeDasharray") && !Object.hasOwn(style, "strokeDashoffset"))) return null;
+  if (!Object.hasOwn(source, "geometry")) return "layer.style stroke dash is supported only with v1 layer.geometry.";
+  const dash = readGpuSceneStrokeDash(style, "motion.timeline.layer.create layer.style");
+  if (!dash.ok) return dash.message;
+  if (dash.dash && (typeof style.stroke !== "string" || style.stroke.trim().length === 0)) {
+    return "motion.timeline.layer.create layer.style strokeDasharray requires an explicit supported visible stroke.";
+  }
+  return null;
+}
+
+/** Identifies the first field that the legacy typed projection would otherwise have stripped or rewritten. */
+function firstLossyLayerField(source: Record<string, unknown>, layer: MotionLayer): string | null {
+  const output = layer as unknown as Record<string, unknown>;
+  for (const field of Object.keys(source)) {
+    if (!Object.hasOwn(output, field) || !isDeepStrictEqual(source[field], output[field])) return field;
+  }
+  for (const field of Object.keys(output)) {
+    if (!Object.hasOwn(source, field)) return field;
+  }
+  return null;
+}
+
+function fadeCurveValue(value: unknown): MotionLayer["fadeCurve"] | false | null {
+  if (value === undefined) return null;
+  return value === "linear" || value === "equal-power" ? value : false;
+}
+
+/** Preserves the established path extensions byte-for-byte after bounded Core validation. */
+function pathExtensionValues(source: Record<string, unknown>): Record<string, unknown> | false | null {
+  const hasPath = Object.hasOwn(source, "x-path");
+  const hasViewBox = Object.hasOwn(source, "x-path-viewBox");
+  const hasFillRule = Object.hasOwn(source, "x-path-fillRule");
+  if (!hasPath && !hasViewBox && !hasFillRule) return null;
+  if (source.type !== "shape" || (source.shape !== "path" && source.shape !== "freeform")) return false;
+  if (!hasPath) return false;
+  try {
+    validateMotionPathData(source["x-path"], "motion.timeline.layer.create x-path");
+    if (hasViewBox) parseMotionPathViewBox(source["x-path-viewBox"], "motion.timeline.layer.create x-path-viewBox");
+  } catch {
+    return false;
+  }
+  if (hasFillRule && source["x-path-fillRule"] !== "nonzero" && source["x-path-fillRule"] !== "evenodd") return false;
+  return {
+    "x-path": source["x-path"],
+    ...(hasViewBox ? { "x-path-viewBox": source["x-path-viewBox"] } : {}),
+    ...(hasFillRule ? { "x-path-fillRule": source["x-path-fillRule"] } : {})
+  };
+}
+
+function pathRevealValue(value: unknown): MotionLayer["pathReveal"] | false | null {
+  if (value === undefined) return null;
+  const record = objectArg(value);
+  if (!record || !onlyKeys(record, ["start", "end"])) return false;
+  const start = optionalFiniteNumber(record, "start");
+  const end = optionalFiniteNumber(record, "end");
+  if (start === false || start === null || end === false || end === null || start < 0 || start > 1 || end < 0 || end > 1) return false;
+  return { start, end };
+}
+
+function onlyKeys(record: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(record).every((key) => allowed.includes(key));
 }

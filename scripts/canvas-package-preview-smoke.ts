@@ -5,21 +5,25 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dispatchDebugCommand } from "../packages/debug-api/src/index";
 import { runCli } from "../packages/cli/src/main";
+import { inspectPngFile } from "../packages/core/src/index";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "../packages/core/src/output-path-trusted-workspace";
+import { renderingSamplesProofRoot } from "./rendering-samples-proof-root";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const fixturePath = join(repoRoot, "fixtures", "canvas", "frame-selection.json");
-const outDir = join(repoRoot, ".scratch", "canvas-package-preview-smoke");
+const outDir = renderingSamplesProofRoot(join(repoRoot, ".scratch", "canvas-package-preview-smoke"));
 const sourceRoot = join(outDir, "canvas-source");
 const selectionPath = join(sourceRoot, "frame-selection.json");
 const assetPath = join(sourceRoot, "assets", "product-retouched.png");
 const packageDir = join(outDir, "motion-package");
 const receiptsRoot = join(outDir, "host-receipts");
 const previewOutDir = join(outDir, "preview");
-const qualityScratchRoot = join(outDir, "quality");
 
 await rm(outDir, { recursive: true, force: true });
 await mkdir(dirname(assetPath), { recursive: true });
+const workspaceAuthority = await createTrustedWorkspaceAnchor(outDir);
+const inWorkspace = async <T>(operation: () => Promise<T>): Promise<T> => await withTrustedWorkspaceAnchor(workspaceAuthority, operation);
 
 const samplePng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -33,7 +37,7 @@ Reflect.set(imageOutput, "sha256", samplePngSha256);
 await writeFile(assetPath, samplePng);
 await writeFile(selectionPath, `${JSON.stringify(selection, null, 2)}\n`, "utf8");
 
-const packageResult = await dispatchDebugCommand(
+const packageResult = await inWorkspace(async () => await dispatchDebugCommand(
   "motion.canvas.package",
   {
     canvasSelectionPath: selectionPath,
@@ -43,11 +47,13 @@ const packageResult = await dispatchDebugCommand(
     createdAt: "2026-07-03T00:00:00.000Z"
   },
   {
-    tier: "render_motion",
+    tier: "write_local",
     scratchRoot: outDir,
-    receiptsRoot
+    receiptsRoot,
+    authoringInputRoots: [sourceRoot],
+    authoringOutputRoots: [outDir]
   }
-);
+));
 
 assert(packageResult.ok, `Canvas package preview smoke failed: ${JSON.stringify(packageResult, null, 2)}`);
 assert(packageResult.receiptId === "receipt_canvas_export_frame_story_hero", `unexpected receipt id: ${String(packageResult.receiptId)}`);
@@ -76,28 +82,21 @@ assert(readObjectField(resourceCatalog, "schema", "resourceCatalog.schema") === 
 const resources = readArray(readObjectField(resourceCatalog, "resources", "resourceCatalog.resources"));
 assert(resources.some((resource) => readObjectField(resource, "ref", "resource.ref") === "assets/product-retouched.png"), "resource catalog missing copied image asset");
 
-const previewResult = await runCli(["preview", packageDir, "--lane", "browser", "--out", previewOutDir, "--at-ms", "1200"]);
+const previewResult = await inWorkspace(async () => await runCli(["preview", packageDir, "--lane", "browser", "--out", previewOutDir, "--at-ms", "1200"]));
 assert(previewResult.ok, `Canvas package preview render failed: ${JSON.stringify(previewResult, null, 2)}`);
 const previewPath = readString(readObjectField(previewResult, "outputPath", "previewResult.outputPath"), "previewResult.outputPath");
 await stat(previewPath);
 const previewPng = await readFile(previewPath);
 assert(previewPng.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Canvas package preview output is not a PNG");
 
-const quality = await runCli([
-  "quality-check",
-  previewPath,
-  "--expect-width",
-  "1080",
-  "--expect-height",
-  "1920",
-  "--min-bright-pixels",
-  "1000",
-  "--min-edge-pixels",
-  "100",
-  "--min-non-transparent-pixels",
-  "1000"
-], { scratchRoot: qualityScratchRoot });
-assert(quality.ok, `Canvas package preview quality-check failed: ${JSON.stringify(quality, null, 2)}`);
+const quality = await inspectPngFile(previewPath);
+assert(quality.ok, `Canvas package preview PNG inspection failed: ${JSON.stringify(quality, null, 2)}`);
+assert.equal(quality.width, 1080, "Canvas package preview width mismatch");
+assert.equal(quality.height, 1920, "Canvas package preview height mismatch");
+assert(!quality.blank, "Canvas package preview must not be blank");
+assert(quality.luma.brightPixels >= 1000, "Canvas package preview has too few bright pixels");
+assert(quality.edges.pixels >= 100, "Canvas package preview has too few edge pixels");
+assert(quality.nonTransparentPixels >= 1000, "Canvas package preview has too few non-transparent pixels");
 
 console.log(JSON.stringify({
   ok: true,
@@ -114,7 +113,11 @@ console.log(JSON.stringify({
   previewPath,
   quality: {
     ok: quality.ok,
-    command: quality.command
+    width: quality.width,
+    height: quality.height,
+    brightPixels: quality.luma.brightPixels,
+    edgePixels: quality.edges.pixels,
+    nonTransparentPixels: quality.nonTransparentPixels
   }
 }, null, 2));
 

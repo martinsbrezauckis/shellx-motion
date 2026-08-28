@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseGltfContainer } from "./gltf-container";
 import { lowerGltfToMotion } from "./gltf-lowering";
+import { scene3dMeshGeometrySha256 } from "./scene-3d-geometry";
 import { loadSchema, validateDocument } from "./validate";
 
 describe("bounded glTF and GLB lowering", () => {
@@ -20,11 +21,12 @@ describe("bounded glTF and GLB lowering", () => {
       rotationDeg: [0, 0, 0],
       scale: 2,
       color: "#3380e6",
-      source: { format: "gltf", meshIndex: 0, primitiveIndex: 0, materialIndex: 0 },
+      source: { format: "gltf", meshIndex: 0, primitiveIndex: 0, materialIndex: 0, geometrySha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
     if (object?.primitive !== "mesh") throw new Error("Expected imported mesh object.");
     expect(object.geometry).toMatchObject({ indices: [0, 1, 2] });
     expect(object.geometry.normals).toHaveLength(9);
+    expect(object.source.geometrySha256).toBe(scene3dMeshGeometrySha256(object.geometry));
     expect(result.diagnostics.receipt.operation).toBe("adapter.diagnostics");
     expect(result.receipt).toMatchObject({ status: "warning", output: { objectCount: 1, vertexCount: 3, triangleCount: 1 } });
     expect(await validateDocument(await loadSchema("motion"), result.motion)).toEqual({ ok: true });
@@ -41,7 +43,7 @@ describe("bounded glTF and GLB lowering", () => {
     expect(object).toMatchObject({
       primitive: "mesh",
       color: "#3380e6",
-      source: { format: "glb", meshIndex: 0, primitiveIndex: 0 },
+      source: { format: "glb", meshIndex: 0, primitiveIndex: 0, geometrySha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
   });
 

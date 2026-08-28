@@ -43,6 +43,7 @@
  *
  * CALLERS: root `pnpm run version:sync` / `pnpm run version:check`; `pnpm test`.
  */
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +72,21 @@ const DOC_CLAIMS: Array<{ file: string; pattern: RegExp; label: string }> = [
     file: "docs/public/host-integration.md",
     pattern: /`serverInfo\.version` reports `(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/,
     label: "serverInfo.version claim"
+  },
+  {
+    file: "docs/public/index.json",
+    pattern: /"productVersion": "(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"/,
+    label: "public documentation index productVersion"
+  },
+  {
+    file: "docs/public/site/manual/motion/index.html",
+    pattern: /data-app-version="(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)">v\k<version><\/span>/,
+    label: "manual header version"
+  },
+  {
+    file: "docs/public/site/manual/motion/index.html",
+    pattern: /Motion v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s+ships as source/,
+    label: "manual source-release version"
   }
 ];
 
@@ -148,9 +164,9 @@ async function sourceOfTruth(): Promise<string> {
 }
 
 /**
- * Every shipping source file under `packages/<pkg>/src`, as repo-relative posix paths. Test
- * scaffolding is skipped through the shared convention (`scripts/source-modules.mjs`) so this
- * scan and the build agree on what "shipping" means.
+ * Every shipping source file under `packages/<pkg>/src`, as repo-relative posix paths.
+ * Nonshipping source is skipped through the shared convention (`scripts/source-modules.mjs`) so
+ * this scan and the build agree on what "shipping" means.
  */
 async function shippingSources(): Promise<string[]> {
   const found: string[] = [];
@@ -213,7 +229,7 @@ async function sync(): Promise<string[]> {
     const text = await readFile(path, "utf8");
     const updated = text.replace(
       new RegExp(claim.pattern.source, "g"),
-      (match, captured: string) => match.replace(captured, version)
+      (match, captured: string) => match.replaceAll(captured, version)
     );
     if (updated !== text) {
       await writeFile(path, updated, "utf8");
@@ -262,7 +278,16 @@ async function check(): Promise<string[]> {
   }
 
   // 7. A real loopback debug server: unauthenticated /health and the MCP handshake.
-  const server = await startMotionDebugServer({ port: 0, defaultTier: "read_motion" });
+  // This probe reads only version endpoints. Give it an absent, never-created artifact root and
+  // suppress template discovery so managed hosts do not need output authority merely to start the
+  // loopback server. Default artifact/template retention remains covered by Debug Server tests.
+  const versionProbeScratchRoot = join(ROOT, ".scratch", `version-parity-${process.pid}-${randomUUID()}`);
+  const server = await startMotionDebugServer({
+    port: 0,
+    defaultTier: "read_motion",
+    useDefaultTemplateRoots: false,
+    context: { scratchRoot: versionProbeScratchRoot },
+  });
   try {
     const health = await fetch(new URL("/health", server.url));
     const healthBody = await health.json() as { engineVersion?: unknown };

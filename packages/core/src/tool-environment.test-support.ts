@@ -47,9 +47,9 @@
  * `exports` subpath `@shellx-motion/core/test-support`, which `publishConfig.exports` deliberately
  * omits, so the published package still exposes `.` alone.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 import { MOTION_BROWSER_OVERRIDE_ENV_VAR } from "./browser-executable";
 import type { MotionToolName } from "./receipts";
 
@@ -129,4 +129,33 @@ export function pinMotionToolExecutables(label: string): MotionToolPins {
       rmSync(directory, { recursive: true, force: true });
     }
   };
+}
+
+/**
+ * Whether this test process can exercise a real atomic copy-on-write route rooted below `path`.
+ *
+ * Output admission verifies every existing POSIX ancestor before it creates a staging directory.
+ * Tests that merely assume a managed sandbox has an unrelated owner accidentally convert a
+ * host-specific fact into an assertion. This predicate mirrors that authority baseline so tests
+ * can retain positive COW proof where it is available and separately construct an unsafe topology
+ * when they need to prove refusal.
+ */
+export function hasAtomicCOWAuthority(path = process.cwd()): boolean {
+  if (process.platform === "win32" || typeof process.getuid !== "function") return true;
+  const uid = process.getuid();
+  let current = resolve(path);
+  for (;;) {
+    let facts: ReturnType<typeof lstatSync>;
+    try {
+      facts = lstatSync(current);
+    } catch {
+      return false;
+    }
+    if (!facts.isDirectory() || facts.isSymbolicLink()) return false;
+    if (facts.uid !== uid && facts.uid !== 0) return false;
+    const mode = Number(facts.mode);
+    if ((mode & 0o022) !== 0 && (mode & 0o1000) === 0) return false;
+    if (current === parse(current).root) return true;
+    current = dirname(current);
+  }
 }

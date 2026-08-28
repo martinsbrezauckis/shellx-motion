@@ -3,7 +3,7 @@
   "id": "template_shellx_editorial_liquid_surface",
   "name": "ShellX Editorial Liquid Surface",
   "motion": "motion.json",
-  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleLanes": ["browser", "ffmpeg", "gpu"],
   "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
   "metadata": {
     "inputSchema": {
@@ -48,7 +48,7 @@
       "attributionRequired": false,
       "redistributionAllowed": true,
       "commercialUse": true,
-      "notes": "Package-local sample art is replaceable. Typography uses the host sans-serif stack and adds no third-party font obligation."
+      "notes": "Package-local sample art is replaceable. Typography uses package-local Inter faces under SIL OFL 1.1."
     },
     "assetsAttribution": [
       {
@@ -56,6 +56,27 @@
         "license": "shellx-generated-sample",
         "author": "ShellX Motion",
         "path": "assets/samples/coastal-editorial.svg"
+      },
+      {
+        "name": "Inter SemiBold (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-600-normal.woff2"
+      },
+      {
+        "name": "Inter ExtraBold (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-800-normal.woff2"
+      },
+      {
+        "name": "Inter Black (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-900-normal.woff2"
       }
     ],
     "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
@@ -64,10 +85,10 @@
       "sourceHash": "73173cc166161ec504f9e98515899ca36c44a62cafc4ca4d149b505f03e7307c"
     },
     "performance": {
-      "recommendedLane": "browser",
+      "recommendedLane": "gpu",
       "renderCost": "high",
       "previewFps": 24,
-      "notes": ["Uses scene-sampled water optics, animated surface parameters and a restrained finishing pass."]
+      "notes": ["Uses scene-sampled water optics, animated surface parameters, and its authored 3-sample 120-degree temporal blur through the strict GPU lane. GPU admission requires live WebGPU hardware and refuses without browser, native, or software fallback."]
     },
     "story": {
       "kind": "editorial-liquid-film",

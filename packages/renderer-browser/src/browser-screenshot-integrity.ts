@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
+import { acquireDerivedOutputPublication } from "@shellx-motion/core";
 
 type BrowserScreenshotFormat = "png" | "jpeg";
 
@@ -21,6 +22,21 @@ export async function captureDeterministicScreenshot(
   page: DeterministicScreenshotPage,
   options: DeterministicScreenshotOptions
 ): Promise<void> {
+  const publication = await acquireDerivedOutputPublication({ outputPath: options.path, kind: "file" });
+  try {
+    await writeFile(publication.stagingPath, await captureDeterministicScreenshotBuffer(page, options));
+    await publication.publishFile(await publication.verifyFile());
+  } catch (error) {
+    await publication.abort();
+    throw error;
+  }
+}
+
+/** @internal The renderer chooses disk materialization or a one-frame streaming handoff. */
+export async function captureDeterministicScreenshotBuffer(
+  page: DeterministicScreenshotPage,
+  options: DeterministicScreenshotOptions
+): Promise<Buffer> {
   const retryDelaysMs = [50, 100];
   const { path, ...captureOptions } = options;
   for (let attempt = 0; ; attempt += 1) {
@@ -33,15 +49,29 @@ export async function captureDeterministicScreenshot(
         integrityFailure = true;
         throw new Error(`Chromium returned an invalid ${options.type ?? "png"} capture: ${integrityError}`);
       }
-      // Never expose Playwright's final pathname while a large image can still be incomplete.
-      // Validate in-process first and make this awaited Node write the path's only writer.
-      await writeFile(path, captured);
-      return;
+      // Validate before handing bytes to materialized output or the streamed encoder.
+      return captured;
     } catch (error) {
       if ((!integrityFailure && !isTransientCaptureScreenshotError(error)) || attempt >= retryDelaysMs.length) throw error;
       await page.waitForTimeout(retryDelaysMs[attempt]);
     }
   }
+}
+
+/**
+ * Capture exactly once. The checkpoint-storyboard terminal-boundary contract is intentionally
+ * stricter than ordinary Browser rendering: it has one admitted frame and no screenshot retry.
+ */
+export async function captureSingleDeterministicScreenshotBuffer(
+  page: DeterministicScreenshotPage,
+  options: DeterministicScreenshotOptions
+): Promise<Buffer> {
+  const { path: _path, ...captureOptions } = options;
+  const captured = await page.screenshot(captureOptions);
+  if (!Buffer.isBuffer(captured)) throw new Error("Chromium screenshot did not return an image byte buffer.");
+  const integrityError = browserScreenshotIntegrityError(captured, options.type ?? "png");
+  if (integrityError) throw new Error(`Chromium returned an invalid ${options.type ?? "png"} capture: ${integrityError}`);
+  return captured;
 }
 
 function browserScreenshotIntegrityError(capture: Buffer, format: BrowserScreenshotFormat): string | null {

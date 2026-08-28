@@ -1,15 +1,40 @@
-import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTIONS } from "@shellx-motion/actions";
-import { buildSourceImportDocument, hashBuffer, loadSchema, validateDocument, type OperationReceipt } from "@shellx-motion/core";
+import { buildSourceImportDocument, hashBuffer, loadSchema, platformVerificationCommandContract, validateDocument, type OperationReceipt } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { createFakePromptRuntime } from "@shellx-motion/prompt/test-support";
-import { BrowserWorkflowReplayError } from "@shellx-motion/renderer-browser";
-import { clearDefaultEncodePolicyCache, resolveFfmpegExecutable, type FfmpegCommand, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
-import { DEBUG_COMMAND_CONTRACTS, DEBUG_COMMANDS, dispatchDebugCommand } from "./index";
+import * as browserRenderer from "@shellx-motion/renderer-browser";
+import {
+  BrowserWorkflowReplayError,
+  type BrowserFrameResult,
+  type MotionBrowserRenderSession
+} from "@shellx-motion/renderer-browser";
+import {
+  clearDefaultEncodePolicyCache,
+  resolveFfmpegExecutable,
+  type FfmpegCommand,
+  type FfmpegRunner
+} from "@shellx-motion/renderer-ffmpeg";
+import { DEBUG_COMMAND_CONTRACTS, DEBUG_COMMANDS, dispatchDebugCommand as dispatchProductionDebugCommand, type MotionDebugContext } from "./index";
+import { withCommandTestAuthoringRoots } from "./authoring-test-context.test-support";
 import { expectEncodeThenColorReadback, ffprobeReadbackStdout, isDeliveredColorReadback } from "./ffprobe-readback.test-support";
+import { qualityFfmpegInputArgs } from "./quality-ffmpeg-command.test-support";
 import { BATCH_STATIC_FIXTURE_STATUS, productFamilyPresent } from "./batch-receipt-status.test-support";
+import {
+  debugConnectorDeliveredColorRunner,
+  debugConnectorStreamingFailureRenderer,
+  debugConnectorStreamingRenderer,
+  expectDebugConnectorDeliveredColorReadback,
+  expectDebugConnectorStreamedReceipt,
+  fakeMp4Bytes
+} from "./debug-connector-streaming.test-support";
+import {
+  scriptedVideo,
+  storyboardGraphCollisionScriptedVideo,
+} from "./debug-storyboard-fixtures.test-support";
 
 function debugContract(command: string): Record<string, unknown> {
   const contract = DEBUG_COMMAND_CONTRACTS.find((entry) => entry.command === command);
@@ -17,9 +42,112 @@ function debugContract(command: string): Record<string, unknown> {
   return contract as unknown as Record<string, unknown>;
 }
 
+function completedPlatformReceipt(input: { requiredHosts: string[]; complete: boolean }): Record<string, unknown> {
+  const commands = platformVerificationCommandContract().map((command) => ({
+    id: command.id,
+    command: command.command,
+    required: command.required,
+    status: "passed",
+    durationMs: 1,
+    exitCode: 0,
+    signal: null
+  }));
+  return {
+    schema: "shellx-motion/platform-verification@1",
+    status: "passed",
+    dryRun: false,
+    host: { id: "linux", hostname: "linux.example.test", platform: "linux", arch: "x64", release: "6.8.0", node: "v24.0.0" },
+    toolchain: { status: "verified", exact: true, bundledCodecs: false },
+    hostMatrix: {
+      required: input.requiredHosts,
+      current: "linux",
+      currentRequired: true,
+      satisfied: ["linux"],
+      missing: input.requiredHosts.filter((host) => host !== "linux"),
+      complete: input.complete,
+      status: input.complete ? "complete" : "partial"
+    },
+    repoRoot: "/workspace/ShellX Motion",
+    startedAt: "2026-07-03T10:00:00.000Z",
+    finishedAt: "2026-07-03T10:05:00.000Z",
+    commandSummary: { total: commands.length, passed: commands.length, failed: 0, skipped: 0, skippedByKind: {} },
+    commands
+  };
+}
+
+function browserColorAlphaContract() {
+  return expect.objectContaining({
+    sourceEncoding: "sdr-srgb-encoded",
+    rasterInput: "unprofiled-srgb-assumed",
+    embeddedProfiles: "unsupported-undefined",
+    alphaBoundary: "browser-managed-before-png-capture",
+    filterDomain: "chromium-managed",
+    blendDomain: "chromium-managed",
+    crossRendererConformance: false,
+    unsupported: ["hdr", "wide-gamut", "icc-profile-conversion", "ocio", "user-selectable-working-space"]
+  });
+}
+
+async function expectCanvasMp4ClosedTreeRefusal(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-mp4-platform-refusal-"));
+  const outDir = join(root, "out");
+  try {
+    const result = await dispatchDebugCommand(
+      "motion.connector.canvas_to_mp4",
+      {
+        canvasSelectionPath: "../../fixtures/canvas/shape-text-frame-selection.json",
+        outDir,
+        dryRunRender: true
+      },
+      { tier: "write_local" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "connector_failed",
+        message: /closed-tree publication requires a Linux descriptor-relative primitive/i
+      }
+    });
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(root)).some((name) => name.includes(".shellx-motion-stage-"))).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function expectCutGenerateClosedTreeRefusal(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-cut-generate-platform-refusal-"));
+  const outDir = join(root, "out");
+  try {
+    const result = await dispatchDebugCommand(
+      "motion.connector.cut_generate_to_cut",
+      { script: scriptedVideo(), outDir, dryRunRender: true },
+      { tier: "write_local" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "connector_failed",
+        message: /closed-tree publication requires a Linux descriptor-relative primitive/i
+      }
+    });
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(root)).some((name) => name.includes(".shellx-motion-stage-"))).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function dispatchDebugCommand(command: Parameters<typeof dispatchProductionDebugCommand>[0], args: unknown, context: MotionDebugContext) {
+  return await dispatchProductionDebugCommand(command, args, withCommandTestAuthoringRoots(context, command, args) as MotionDebugContext);
+}
+
+const itLinux = process.platform === "linux" ? it : it.skip;
+
 // Isolate the shared encode-policy probe cache per test so each render observes a fresh probe.
 beforeEach(clearDefaultEncodePolicyCache);
-
 describe("motion debug API", () => {
   it("exports the required command set", () => {
     expect(DEBUG_COMMANDS).toContain("motion.state");
@@ -129,6 +257,7 @@ describe("motion debug API", () => {
     expect(DEBUG_COMMANDS).toContain("motion.template.apply");
     expect(DEBUG_COMMANDS).toContain("motion.template.media.replace");
     expect(DEBUG_COMMANDS).toContain("motion.canvas.bridge_export");
+    expect(DEBUG_COMMANDS).toContain("motion.connector.catalog");
     expect(DEBUG_COMMANDS).toContain("motion.connector.panel");
     expect(DEBUG_COMMANDS).toContain("motion.connector.source_to_cut");
     expect(DEBUG_COMMANDS).toContain("motion.quality.panel");
@@ -223,9 +352,7 @@ describe("motion debug API", () => {
           workflowPath: { type: "string" }
         }
       },
-      expectedReceipts: [
-        { operation: "preview.frame", mode: "emits", required: true, artifactRoles: ["preview_frame"] }
-      ]
+      expectedReceipts: [{ operation: "preview.frame", mode: "emits", required: true, artifactRoles: ["preview_frame"] }, { operation: "preview.gpu.frame", mode: "emits", required: false, artifactRoles: ["preview_frame"] }]
     });
     expect(debugContract("motion.render.final")).toMatchObject({
       argsSchema: {
@@ -238,11 +365,13 @@ describe("motion debug API", () => {
           frameLane: { type: "string" },
           qualityManifestPath: { type: "string" },
           manifestPath: { type: "string" },
-          receiptsRoot: { type: "string" }
+          receiptsRoot: { type: "string" },
+          reuseAttested: { type: "boolean", default: false }
         }
       },
       expectedReceipts: [
         { operation: "render.final", mode: "emits", required: true, artifactRoles: ["rendered_media", "render_receipt"] },
+        { operation: "render.reuse", mode: "emits", required: false, artifactRoles: ["rendered_media"] },
         { operation: "quality.check", mode: "emits", required: false, artifactRoles: ["quality_receipt"] }
       ]
     });
@@ -612,6 +741,7 @@ describe("motion debug API", () => {
 
   it("ships host-form and receipt metadata for connector debug contracts", () => {
     expect(debugContract("motion.connector.canvas_to_mp4")).toMatchObject({
+      permission: "write_local",
       argsSchema: {
         type: "object",
         required: ["canvasSelectionPath", "outDir"],
@@ -633,14 +763,11 @@ describe("motion debug API", () => {
         properties: {
           canvasSelectionPath: { type: "string" },
           outDir: { type: "string" },
-          cutImportMode: { type: "string" },
-          dryRunRender: { type: "boolean" },
-          createdAt: { type: "string" }
+          cutImportMode: { type: "string", enum: ["rendered_media"] }
         }
       },
       expectedReceipts: [
-        { operation: "connector.canvas_to_cut", mode: "emits", required: true, artifactRoles: ["canvas_selection", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-        { operation: "connector.canvas_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+        { operation: "connector.canvas_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
       ]
     });
     expect(debugContract("motion.connector.script_to_cut")).toMatchObject({
@@ -652,14 +779,19 @@ describe("motion debug API", () => {
           script: { type: "object" },
           storyboard: { type: "object" },
           outDir: { type: "string" },
-          cutImportMode: { type: "string" },
-          dryRunRender: { type: "boolean" },
-          createdAt: { type: "string" }
-        }
+          cutImportMode: { type: "string", enum: ["rendered_media"] },
+          startMs: { type: "number" },
+          durationMs: { type: "number" },
+          track: { type: "string" }
+        },
+        oneOf: expect.arrayContaining([
+          expect.objectContaining({ required: ["scriptPath"] }),
+          expect.objectContaining({ required: ["script"] }),
+          expect.objectContaining({ required: ["storyboard"] })
+        ])
       },
       expectedReceipts: [
-        { operation: "connector.script_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-        { operation: "connector.script_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+        { operation: "connector.script_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
       ]
     });
     expect(debugContract("motion.connector.source_to_cut")).toMatchObject({
@@ -671,14 +803,14 @@ describe("motion debug API", () => {
           outDir: { type: "string" },
           maxFrames: { type: "number" },
           frameDurationMs: { type: "number" },
-          cutImportMode: { type: "string" },
-          dryRunRender: { type: "boolean" },
-          createdAt: { type: "string" }
+          width: { type: "number" },
+          height: { type: "number" },
+          fps: { type: "number" },
+          cutImportMode: { type: "string", enum: ["rendered_media"] }
         }
       },
       expectedReceipts: [
-        { operation: "connector.source_to_cut", mode: "emits", required: true, artifactRoles: ["source_markdown", "scripted_video", "source_storyboard_receipt", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "source_to_cut_receipt"] },
-        { operation: "connector.source_to_cut", mode: "emits", required: false, artifactRoles: ["source_import_receipt", "rendered_media"] }
+        { operation: "connector.source_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "source_storyboard_receipt", "motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt", "source_to_cut_receipt"] }
       ]
     });
     expect(debugContract("motion.connector.cut_generate_to_cut")).toMatchObject({
@@ -693,11 +825,16 @@ describe("motion debug API", () => {
           cutImportMode: { type: "string" },
           dryRunRender: { type: "boolean" },
           createdAt: { type: "string" }
-        }
+        },
+        oneOf: expect.arrayContaining([
+          expect.objectContaining({ required: ["scriptPath"] }),
+          expect.objectContaining({ required: ["script"] }),
+          expect.objectContaining({ required: ["storyboard"] })
+        ])
       },
       expectedReceipts: [
-        { operation: "connector.cut_generate_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-        { operation: "connector.cut_generate_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+        { operation: "connector.cut_generate_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
+        { operation: "connector.cut_generate_to_cut", mode: "emits", required: false, artifactRoles: ["scripted_video", "rendered_media"] }
       ]
     });
     expect(debugContract("motion.connector.template_to_cut")).toMatchObject({
@@ -708,13 +845,11 @@ describe("motion debug API", () => {
           packageRoot: { type: "string" },
           outDir: { type: "string" },
           values: { type: "object" },
-          cutImportMode: { type: "string" },
-          dryRunRender: { type: "boolean" }
+          cutImportMode: { type: "string", enum: ["rendered_media"] }
         }
       },
       expectedReceipts: [
-        { operation: "connector.template_to_cut", mode: "emits", required: true, artifactRoles: ["template_source", "motion_package", "template_apply_receipt", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-        { operation: "connector.template_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+        { operation: "connector.template_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "template_apply_receipt", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
       ]
     });
   });
@@ -1106,8 +1241,9 @@ describe("motion debug API", () => {
 
   it("normalizes relative package patch output paths in responses", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
-    const relativeOutDir = ".scratch/debug-package-patch-relative-test";
-    const outDir = resolve(relativeOutDir);
+    const outputParent = await mkdtemp(join(tmpdir(), "shellx-motion-debug-package-patch-relative-"));
+    const outDir = join(outputParent, "output");
+    const relativeOutDir = relative(process.cwd(), outDir);
     try {
       const result = await dispatchDebugCommand(
         "motion.package.patch",
@@ -1132,11 +1268,11 @@ describe("motion debug API", () => {
       }
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(outputParent, { recursive: true, force: true });
     }
   });
 
-  it("collects a redacted support bundle with diagnostics and receipt evidence", async () => {
+  itLinux("collects a redacted support bundle with diagnostics and receipt evidence", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-support-bundle-"));
     const outDir = join(tempRoot, "bundle");
@@ -1144,7 +1280,7 @@ describe("motion debug API", () => {
     const previousSecret = process.env.SHELLX_MOTION_TEST_SECRET;
     process.env.SHELLX_MOTION_TEST_SECRET = "do-not-leak-this-value";
     try {
-      await mkdir(receiptsRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
       await writeFile(
         join(receiptsRoot, "render.receipt.json"),
         `${JSON.stringify(debugReceipt({
@@ -1157,26 +1293,15 @@ describe("motion debug API", () => {
         }), null, 2)}\n`,
         "utf8"
       );
-      await writeFile(
-        join(receiptsRoot, "linux.platform.json"),
-        `${JSON.stringify({
-          schema: "shellx-motion/platform-verification@1",
-          status: "passed",
-          dryRun: false,
-          host: { id: "linux", platform: "linux", arch: "x64" },
-          hostMatrix: { status: "partial", required: ["linux", "windows", "macos"], missing: ["windows", "macos"] },
-          commands: [{ id: "typecheck", required: true, status: "passed" }]
-        }, null, 2)}\n`,
-        "utf8"
-      );
+      await writeFile(join(receiptsRoot, "linux.platform.json"), `${JSON.stringify(completedPlatformReceipt({ requiredHosts: ["linux", "windows", "macos"], complete: false }), null, 2)}\n`, "utf8");
 
       const result = await dispatchDebugCommand(
         "motion.support.bundle",
         { packageRoot, outDir, receiptsRoot },
-        { tier: "write_local", scratchRoot: tempRoot }
+        { tier: "write_local", scratchRoot: tempRoot, receiptsRoot }
       );
 
-      expect(result.ok).toBe(true);
+      expect(result.ok, `support bundle failed: ${JSON.stringify(result, null, 2)}`).toBe(true);
       if (result.ok) {
         const bundlePath = join(outDir, "support-bundle.json");
         const receiptPath = join(outDir, "support-bundle.receipt.json");
@@ -1185,6 +1310,10 @@ describe("motion debug API", () => {
         const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
 
         expect(bundleText).not.toContain("do-not-leak-this-value");
+        expect(bundleText).not.toContain(tempRoot);
+        expect(bundleText).not.toContain("/tmp/final.mp4");
+        expect(JSON.stringify(receipt)).not.toContain(tempRoot);
+        expect(JSON.stringify(receipt)).not.toContain("/tmp/final.mp4");
         expect(bundle).toMatchObject({
           schema: "shellx-motion/support-bundle@1",
           package: {
@@ -1194,7 +1323,6 @@ describe("motion debug API", () => {
             timeline: { trackCount: 1, sceneCount: 1, markerCount: 2 }
           },
           receipts: {
-            receiptsRoot,
             receiptCount: 1,
             receipts: [expect.objectContaining({ id: "render-final-debug", operation: "render.final", status: "passed" })]
           },
@@ -1203,10 +1331,9 @@ describe("motion debug API", () => {
             receipts: [
               expect.objectContaining({
                 schema: "shellx-motion/platform-verification@1",
-                hostId: "linux",
                 status: "passed",
                 dryRun: false,
-                commandCount: 1,
+                commandCount: expect.any(Number),
                 failedCommandCount: 0
               })
             ]
@@ -1218,7 +1345,9 @@ describe("motion debug API", () => {
             ])
           },
           redactions: {
-            envValues: "omitted"
+            envValues: "omitted",
+            hostPaths: "omitted",
+            diagnosticPaths: "redacted"
           }
         });
         expect(result.receiptId).toMatch(/^support-bundle-pkg_debug_timeline-/);
@@ -1244,15 +1373,15 @@ describe("motion debug API", () => {
           packageId: "pkg_debug_timeline",
           lane: "debug-api",
           output: {
-            bundlePath,
-            receiptPath,
+            bundle: { file: "support-bundle.json" },
+            receipt: { file: "support-bundle.receipt.json" },
             receiptCount: 1,
             platformReceiptCount: 1,
             debugCommandCount: expect.any(Number)
           },
           artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "support_bundle", path: bundlePath, status: "available", primary: true }),
-            expect.objectContaining({ role: "support_receipt", path: receiptPath, status: "available" })
+            expect.objectContaining({ role: "support_bundle", path: "support-bundle.json", status: "available", primary: true }),
+            expect.objectContaining({ role: "support_receipt", path: "support-bundle.receipt.json", status: "available" })
           ])
         });
       }
@@ -1275,7 +1404,7 @@ describe("motion debug API", () => {
     const qualityManifestPath = join(tempRoot, "quality", "debug.quality-manifest.json");
     const outDir = join(tempRoot, "review");
     try {
-      await mkdir(receiptsRoot, { recursive: true });
+      await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
       await writeFile(mediaPath, "fake media", "utf8");
       await writeFile(
         join(receiptsRoot, "render.receipt.json"),
@@ -1356,10 +1485,17 @@ describe("motion debug API", () => {
           status: "passed",
           packageId: "pkg_debug_timeline",
           lane: "review",
-          output: { htmlPath, receiptPath, receiptCount: 1, copiedArtifactCount: 1, qualityGateCount: 1, failedQualityGateCount: 0 },
+          output: {
+            htmlPath: "review-html-bundle.html",
+            receiptPath: "review-html-bundle.receipt.json",
+            receiptCount: 1,
+            copiedArtifactCount: 1,
+            qualityGateCount: 1,
+            failedQualityGateCount: 0
+          },
           artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "review_html_bundle", path: htmlPath, status: "available", primary: true }),
-            expect.objectContaining({ role: "review_html_bundle_receipt", path: receiptPath, status: "available" }),
+            expect.objectContaining({ role: "review_html_bundle", path: "review-html-bundle.html", status: "available", primary: true }),
+            expect.objectContaining({ role: "review_html_bundle_receipt", path: "review-html-bundle.receipt.json", status: "available" }),
             expect.objectContaining({ role: "review_artifact", status: "available", mediaType: "video/mp4" })
           ])
         });
@@ -1372,12 +1508,13 @@ describe("motion debug API", () => {
 
   it("exports a standalone HTML snippet through the debug API", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-html-snippet-"));
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-html-snippet-"));
+    const outDir = join(outRoot, "export");
     try {
       const result = await dispatchDebugCommand(
         "motion.html.snippet.export",
         { packageRoot, outDir, createdAt: "2026-07-04T08:15:00.000Z" },
-        { tier: "write_local" }
+        { tier: "write_local", authoringInputRoots: [packageRoot], authoringOutputRoots: [outRoot] }
       );
 
       expect(result.ok).toBe(true);
@@ -1419,7 +1556,7 @@ describe("motion debug API", () => {
       }
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(outRoot, { recursive: true, force: true });
     }
   });
 
@@ -1433,7 +1570,12 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.html.snippet.import",
         { htmlPath, packageDir, createdAt: "2026-07-04T08:33:00.000Z" },
-        { tier: "write_local" }
+        {
+          tier: "write_local",
+          authoringInputRoots: [tempRoot],
+          authoringOutputRoots: [tempRoot],
+          actor: { kind: "agent", label: "Debug compile test", transport: "mcp", sessionId: "script-compile-test", grantedTier: "write_local" }
+        }
       );
 
       expect(result.ok).toBe(true);
@@ -1488,13 +1630,19 @@ describe("motion debug API", () => {
       });
       expect(result.result).toMatchObject({
         ok: true,
+        hostCapacity: {
+          schema: "shellx-motion/host-render-capacity@1",
+          points: { portablePointsPerLayer: 8_192, maxPointsPerLayer: expect.any(Number) }
+        },
+        resourceFit: true, pointCapacity: { schema: "shellx-motion/point-capacity@1", status: "fit" },
         recommendedLane: "browser",
         cards: expect.arrayContaining([
           expect.objectContaining({
             id: "renderer.browser",
             lane: "browser",
             outputs: expect.arrayContaining(["png-frame"]),
-            alpha: true
+            alpha: true,
+            colorAlpha: browserColorAlphaContract()
           })
         ]),
         matches: expect.arrayContaining([
@@ -1563,9 +1711,9 @@ describe("motion debug API", () => {
       expect(result.visibleState).toEqual({
         panel: "capabilities",
         operation: "capabilities.panel",
-        cardCount: 7,
+        cardCount: 8,
         categoryCount: 4,
-        laneCount: 7,
+        laneCount: 8,
         packageId: "pkg_web_card",
         recommendedLane: "browser",
         output: "png-frame",
@@ -1584,14 +1732,14 @@ describe("motion debug API", () => {
           needsSubtitles: false
         },
         summary: {
-          cardCount: 7,
-          laneCount: 7,
+          cardCount: 8,
+          laneCount: 8,
           categoryCount: 4,
           supportedCount: 1,
           recommendedLane: "browser"
         },
         categories: expect.arrayContaining([
-          { id: "preview", label: "Preview", cardCount: 2, supportedCount: 1, lanes: ["native", "browser"] },
+          { id: "preview", label: "Preview", cardCount: 3, supportedCount: 1, lanes: ["native", "browser", "gpu"] },
           { id: "final", label: "Final", cardCount: 1, supportedCount: 0, lanes: ["ffmpeg"] },
           { id: "connector", label: "Connector", cardCount: 1, supportedCount: 0, lanes: ["connector"] },
           { id: "adapter", label: "Adapter", cardCount: 3, supportedCount: 0, lanes: ["svg-adapter", "lottie-adapter", "rive-adapter"] }
@@ -1607,16 +1755,17 @@ describe("motion debug API", () => {
             badges: expect.arrayContaining(["alpha", "subtitles", "stable", "medium"]),
             support: { alpha: true, audio: "none", subtitles: true },
             runtime: {
-              // The browser is NOT bundled -- playwright-core ships no browser, and the old probe
-              // read the library version, so it passed on a machine with none.
+              // The browser is NOT bundled. Its readiness must be resolved by Motion, not by a
+              // host running a raw Chromium command that may name a different executable.
               availability: "external-binary",
               requirement: "Chrome or Chromium browser binary (not shipped; see doctor)",
               cost: "local-cpu",
-              probe: { executable: "chromium", args: ["--version"], shell: false },
+              readiness: { command: "motion.platform.requirements", tools: ["chromium"] },
               setupHint: "Install a Chrome/Chromium browser, or set SHELLX_MOTION_BROWSER to one. Run `doctor` for what this machine is missing."
             },
             outputs: expect.arrayContaining(["png-frame", "jpeg-frame", "png-sequence"]),
             renderTargets: expect.arrayContaining(["preview", "frame-sequence", "deterministic-capture"]),
+            colorAlpha: browserColorAlphaContract(),
             suggestedActions: expect.arrayContaining([
               { id: "match", command: "motion.capabilities.match", args: { packageRoot, output: "png-frame", target: "preview", needsAlpha: true } },
               { id: "exportPlan", command: "motion.export.plan", args: { packageRoot, preset: "png-frame", target: "preview", needsAlpha: true } }
@@ -1629,6 +1778,7 @@ describe("motion debug API", () => {
             unsupportedCount: 1,
             reasons: expect.arrayContaining(["Lane native does not support web layers."])
           }),
+          expect.objectContaining({ id: "renderer.gpu", lane: "gpu", supported: false, unsupportedCount: 1, reasons: expect.arrayContaining(["Lane gpu supports web, html, canvas, and restricted-shader hybrid layers only for governed final video rendering."]) }),
           expect.objectContaining({
             id: "adapter.svg",
             lane: "svg-adapter",
@@ -1696,7 +1846,7 @@ describe("motion debug API", () => {
               availability: "external-binary",
               requirement: "FFmpeg and FFprobe binaries",
               cost: "local-cpu",
-              probe: { executable: "ffmpeg", args: ["-version"], shell: false },
+              readiness: { command: "motion.platform.requirements", tools: ["ffmpeg", "ffprobe"] },
               setupHint: "Install FFmpeg with FFprobe available on PATH before final media renders."
             }
           })
@@ -1721,9 +1871,9 @@ describe("motion debug API", () => {
       expect(result.visibleState).toEqual({
         panel: "capabilities",
         operation: "capabilities.panel",
-        cardCount: 7,
+        cardCount: 8,
         categoryCount: 4,
-        laneCount: 7,
+        laneCount: 8,
         recommendedLane: "native",
         output: "png-frame",
         target: "preview"
@@ -1731,14 +1881,14 @@ describe("motion debug API", () => {
       expect(result.result).toMatchObject({
         ok: true,
         summary: {
-          cardCount: 7,
-          laneCount: 7,
+          cardCount: 8,
+          laneCount: 8,
           categoryCount: 4,
-          supportedCount: 2,
+          supportedCount: 3,
           recommendedLane: "native"
         },
         categories: expect.arrayContaining([
-          { id: "preview", label: "Preview", cardCount: 2, supportedCount: 2, lanes: ["native", "browser"] },
+          { id: "preview", label: "Preview", cardCount: 3, supportedCount: 3, lanes: ["native", "browser", "gpu"] },
           { id: "final", label: "Final", cardCount: 1, supportedCount: 0, lanes: ["ffmpeg"] },
           { id: "connector", label: "Connector", cardCount: 1, supportedCount: 0, lanes: ["connector"] },
           { id: "adapter", label: "Adapter", cardCount: 3, supportedCount: 0, lanes: ["svg-adapter", "lottie-adapter", "rive-adapter"] }
@@ -1797,7 +1947,7 @@ describe("motion debug API", () => {
           maxChars: 100,
           createdBy: "debug-test"
         },
-        { tier: "write_local" }
+        { tier: "write_local", authoringOutputRoots: [tempRoot] }
       );
 
       expect(result.ok).toBe(true);
@@ -1880,7 +2030,6 @@ describe("motion debug API", () => {
       }
       return new Response("unexpected fetch", { status: 404, statusText: "Not Found" });
     };
-
     try {
       const result = await dispatchDebugCommand(
         "motion.source.import",
@@ -1893,7 +2042,8 @@ describe("motion debug API", () => {
         {
           tier: "write_local",
           sourceFetcher,
-          sourceResolver: async () => [{ address: "93.184.216.34", family: 4 }]
+          sourceResolver: async () => [{ address: "93.184.216.34", family: 4 }],
+          authoringOutputRoots: [tempRoot]
         }
       );
 
@@ -1969,7 +2119,7 @@ describe("motion debug API", () => {
           fps: 30,
           createdBy: "debug-test"
         },
-        { tier: "write_local" }
+        { tier: "write_local", authoringInputRoots: [tempRoot], authoringOutputRoots: [tempRoot] }
       );
 
       expect(result.ok).toBe(true);
@@ -2031,10 +2181,12 @@ describe("motion debug API", () => {
     try {
       await writeFile(scriptPath, `${JSON.stringify(storyboardPanelScriptedVideo(), null, 2)}\n`, "utf8");
 
-      const result = await dispatchDebugCommand(
-        "motion.storyboard.panel",
-        { scriptPath },
-        { tier: "read_motion" }
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () =>
+        await dispatchDebugCommand(
+          "motion.storyboard.panel",
+          { scriptPath },
+          { tier: "read_motion", authoringInputRoots: [tempRoot] }
+        )
       );
 
       expect(result.ok).toBe(true);
@@ -2128,10 +2280,12 @@ describe("motion debug API", () => {
     try {
       await writeFile(scriptPath, `${JSON.stringify(storyboardPanelScriptedVideo(), null, 2)}\n`, "utf8");
 
-      const result = await dispatchDebugCommand(
-        "motion.storyboard.graph",
-        { scriptPath },
-        { tier: "read_motion" }
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () =>
+        await dispatchDebugCommand(
+          "motion.storyboard.graph",
+          { scriptPath },
+          { tier: "read_motion", authoringInputRoots: [tempRoot] }
+        )
       );
 
       expect(result.ok).toBe(true);
@@ -2303,7 +2457,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.source.import",
         { url: "http://127.0.0.1:3000/private", outDir, markdown: "private" },
-        { tier: "write_local" }
+        { tier: "write_local", authoringOutputRoots: [tempRoot] }
       );
 
       expect(result).toMatchObject({
@@ -2327,7 +2481,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.otio.export",
         { packageRoot, outPath, createdAt: "2026-07-04T10:00:00.000Z" },
-        { tier: "write_local" }
+        { tier: "write_local", authoringInputRoots: [packageRoot], authoringOutputRoots: [tempRoot] }
       );
 
       expect(result.ok).toBe(true);
@@ -2371,7 +2525,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.otio.import",
         { otioPath, packageDir, createdAt: "2026-07-04T10:01:00.000Z" },
-        { tier: "write_local" }
+        { tier: "write_local", authoringInputRoots: [tempRoot], authoringOutputRoots: [tempRoot] }
       );
 
       expect(result.ok).toBe(true);
@@ -2922,7 +3076,7 @@ describe("motion debug API", () => {
         cutConnectorCount: 5,
         independentExportCount: 1,
         renderedMediaCount: 6,
-        qualityGateCount: 3,
+        qualityGateCount: 1,
         warningCount: 0
       });
       expect(result.result).toMatchObject({
@@ -2933,7 +3087,7 @@ describe("motion debug API", () => {
           cutConnectors: 5,
           independentExports: 1,
           renderedMedia: 6,
-          qualityGated: 3,
+          qualityGated: 1,
           requiresSourceImport: 1,
           templateDriven: 1
         },
@@ -2956,7 +3110,7 @@ describe("motion debug API", () => {
             outputKind: "cut-import-plan",
             cutHandoff: expect.objectContaining({
               supported: true,
-              importModes: ["rendered_media", "live_overlay", "editable_lowering"]
+              importModes: ["rendered_media"]
             })
           }),
           expect.objectContaining({
@@ -2983,7 +3137,7 @@ describe("motion debug API", () => {
         suggestedActions: expect.arrayContaining([
           { id: "canvasMp4", command: "motion.connector.canvas_to_mp4", requiredArgs: ["canvasSelectionPath", "outDir"] },
           { id: "canvasCut", command: "motion.connector.canvas_to_cut", requiredArgs: ["canvasSelectionPath", "outDir"] },
-          { id: "scriptCut", command: "motion.connector.script_to_cut", requiredArgs: ["scriptPath", "outDir"] },
+          { id: "scriptCut", command: "motion.connector.script_to_cut", requiredArgs: ["outDir"] },
           { id: "sourceCut", command: "motion.connector.source_to_cut", requiredArgs: ["sourcePath", "outDir"] },
           { id: "cutGenerateCut", command: "motion.connector.cut_generate_to_cut", requiredArgs: ["scriptPath", "outDir"] },
           { id: "templateCut", command: "motion.connector.template_to_cut", requiredArgs: ["packageRoot", "outDir", "values"] }
@@ -3095,7 +3249,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("refuses support bundle output directories that already contain files", async () => {
+  it("refuses support bundle output directories that already exist", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-support-bundle-root-"));
     const outDir = join(tempRoot, "non-empty");
@@ -3113,7 +3267,7 @@ describe("motion debug API", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("invalid_args");
-        expect(result.error.message).toBe("motion.support.bundle outDir must be empty or absent before bundle collection.");
+        expect(result.error.message).toBe("motion.support.bundle outDir must be absent before bundle collection.");
       }
       expect(await readFile(sentinelPath, "utf8")).toBe("do not overwrite");
     } finally {
@@ -3241,6 +3395,30 @@ describe("motion debug API", () => {
     if (result.ok) {
       expect(result.result).toMatchObject({ ok: true, topic: "make title blue and preview it" });
     }
+  });
+
+  it("makes root alternatives callable in action guides and plans", async () => {
+    const guide = await dispatchDebugCommand("motion.actions.guide", { request: "list motion templates" }, { tier: "read_motion" });
+    const plan = await dispatchDebugCommand("motion.actions.plan", { request: "template plan" }, { tier: "read_motion" });
+
+    expect(guide.ok).toBe(true);
+    expect(plan.ok).toBe(true);
+    if (!guide.ok || !plan.ok) return;
+    const guideCatalog = ((guide.result as { steps: Array<{ call: string }> }).steps).find((step) => step.call === "motion.template.catalog");
+    const planCatalog = ((plan.result as { steps: Array<{ call: string }> }).steps).find((step) => step.call === "motion.template.catalog");
+    const templatePlan = ((plan.result as { steps: Array<{ call: string }> }).steps).find((step) => step.call === "motion.template.plan");
+    const rootRequirement = {
+      requiredArgGroups: [{
+        mode: "anyOf",
+        alternatives: [["templateRoot"], ["packageRoot"], ["packageRoots"]]
+      }]
+    };
+
+    expect(guideCatalog).toMatchObject(rootRequirement);
+    expect(guideCatalog).not.toHaveProperty("requiredArgs");
+    expect(planCatalog).toMatchObject(rootRequirement);
+    expect(planCatalog).not.toHaveProperty("requiredArgs");
+    expect(templatePlan).toMatchObject({ requiredArgs: ["request"], ...rootRequirement });
   });
 
   it("summarizes actions and prompt commands into a panel-ready action surface", async () => {
@@ -3715,47 +3893,151 @@ describe("motion debug API", () => {
     }
   });
 
-  it("makes explicit raw-prompt retention visible and rejects incomplete retention requests", async () => {
+  itLinux("makes explicit raw-prompt retention visible through the governed stable receipt root", async () => {
     const deleteAfter = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const request = "Project Cobalt exact debug replay";
-    const retained = await dispatchDebugCommand(
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-raw-retention-"));
+    try {
+      const retained = await dispatchDebugCommand(
+        "motion.prompt.run",
+        {
+          request,
+          packageId: "pkg_retained_prompt",
+          agentId: "fake",
+          retainRawRequest: true,
+          rawRequestDeleteAfter: deleteAfter,
+          rawRequestPurpose: "debugging"
+        },
+        { tier: "render_motion", receiptsRoot, promptRuntime: createFakePromptRuntime() }
+      );
+
+      expect(retained.ok).toBe(true);
+      if (retained.ok) {
+        expect(retained.visibleState).toMatchObject({
+          panel: "agent",
+          operation: "prompt.run",
+          promptRetentionMode: "raw_request",
+          rawRequestRetained: true,
+          rawRequestDeleteAfter: deleteAfter,
+          rawRequestPurpose: "debugging"
+        });
+        expect(retained.result).toMatchObject({
+          receipt: {
+            output: {
+              rawRequest: request,
+              promptRetention: {
+                mode: "raw_request",
+                rawRequestRetained: true,
+                purpose: "debugging",
+                deleteAfter
+              }
+            }
+          }
+        });
+        const receiptPaths = retained.visibleState as { receiptPath?: string; agentReceiptPath?: string };
+        expect(await readFile(receiptPaths.receiptPath!, "utf8")).toContain(request);
+        expect(await readFile(receiptPaths.agentReceiptPath!, "utf8")).not.toContain(request);
+      }
+    } finally {
+      await rm(receiptsRoot, { recursive: true, force: true });
+    }
+  });
+
+  itLinux("redacts a raw prompt before the production reservation persists its parent after expiry", async () => {
+    const createdAt = "2040-01-01T00:00:00.000Z";
+    const deleteAfter = "2040-01-01T00:00:01.000Z";
+    const request = "debug parent receipt deadline race";
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-raw-retention-deadline-"));
+    let now = createdAt;
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.prompt.run",
+        { request, packageId: "pkg_deadline", agentId: "fake", retainRawRequest: true, rawRequestDeleteAfter: deleteAfter, rawRequestPurpose: "debugging" },
+        {
+          tier: "render_motion", receiptsRoot, promptRuntime: createFakePromptRuntime(), promptNow: () => now,
+          rawPromptReceiptWriteTestHook: (receipt) => { if (receipt.operation === "agent.prompt") now = "2040-01-01T00:00:02.000Z"; }
+        }
+      );
+
+      expect(result).toMatchObject({ ok: true, visibleState: { rawRequestRetained: false }, result: { receipt: { output: { promptRetention: { rawRequestRetained: false } } } } });
+      if (!result.ok) return;
+      expect(JSON.stringify((result.result as { receipt?: unknown }).receipt)).not.toContain(request);
+      const { receiptPath } = result.visibleState as { receiptPath: string };
+      expect(await readFile(receiptPath, "utf8")).not.toContain(request);
+    } finally {
+      await rm(receiptsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses raw-prompt retention without a host-configured receipt root before prompt execution", async () => {
+    const request = "raw prompt that must not be returned without governed persistence";
+    let runtimeCalls = 0;
+    const runtime = createFakePromptRuntime();
+    const result = await dispatchDebugCommand(
       "motion.prompt.run",
       {
         request,
-        packageId: "pkg_retained_prompt",
-        agentId: "fake",
         retainRawRequest: true,
-        rawRequestDeleteAfter: deleteAfter,
+        rawRequestDeleteAfter: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         rawRequestPurpose: "debugging"
       },
-      { tier: "render_motion", promptRuntime: createFakePromptRuntime() }
+      {
+        tier: "render_motion",
+        promptRuntime: {
+          runPrompt: async (input) => {
+            runtimeCalls += 1;
+            return await runtime.runPrompt(input);
+          }
+        }
+      }
     );
 
-    expect(retained.ok).toBe(true);
-    if (retained.ok) {
-      expect(retained.visibleState).toMatchObject({
-        panel: "agent",
-        operation: "prompt.run",
-        promptRetentionMode: "raw_request",
-        rawRequestRetained: true,
-        rawRequestDeleteAfter: deleteAfter,
-        rawRequestPurpose: "debugging"
-      });
-      expect(retained.result).toMatchObject({
-        receipt: {
-          output: {
-            rawRequest: request,
-            promptRetention: {
-              mode: "raw_request",
-              rawRequestRetained: true,
-              purpose: "debugging",
-              deleteAfter
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "capability_unavailable", message: expect.stringContaining("host-configured receipt root") }
+    });
+    expect(runtimeCalls).toBe(0);
+    expect(JSON.stringify(result)).not.toContain(request);
+  });
+
+  itLinux("refuses raw-prompt retention when the host root does not exist before prompt execution", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "shellx-motion-debug-raw-retention-missing-root-"));
+    const receiptsRoot = join(parent, "missing-receipts-root");
+    let runtimeCalls = 0;
+    const runtime = createFakePromptRuntime();
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.prompt.run",
+        {
+          request: "raw prompt that must not create a receipt root",
+          retainRawRequest: true,
+          rawRequestDeleteAfter: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          rawRequestPurpose: "debugging"
+        },
+        {
+          tier: "render_motion",
+          receiptsRoot,
+          promptRuntime: {
+            runPrompt: async (input) => {
+              runtimeCalls += 1;
+              return await runtime.runPrompt(input);
             }
           }
         }
-      });
-    }
+      );
 
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "capability_unavailable", message: expect.stringContaining("existing stable non-symlink") }
+      });
+      expect(runtimeCalls).toBe(0);
+      await expect(stat(receiptsRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects incomplete raw-prompt retention requests", async () => {
     await expect(dispatchDebugCommand(
       "motion.prompt.run",
       { request: "private", retainRawRequest: true, rawRequestPurpose: "debugging" },
@@ -3786,6 +4068,8 @@ describe("motion debug API", () => {
         {
           tier: "edit_motion",
           scratchRoot: outDir,
+          authoringInputRoots: [packageRoot],
+          authoringOutputRoots: [outDir],
           promptRuntime: {
             runPrompt: async (input) => ({
               ok: true,
@@ -3997,7 +4281,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes prompt and agent receipts into transcript panel state", async () => {
+  itLinux("summarizes prompt and agent receipts into transcript panel state", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-agent-transcript-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const providerToken = ["sk", "proj", "secret00000000000000000000"].join("-");
@@ -4091,7 +4375,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes prompt queue jobs with available actions and handoff evidence", async () => {
+  itLinux("summarizes prompt queue jobs with available actions and handoff evidence", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-prompt-queue-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const queued = debugReceipt({
@@ -4242,7 +4526,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("cancels and retries prompt jobs through receipt-backed debug commands", async () => {
+  itLinux("cancels and retries prompt jobs through receipt-backed debug commands", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-prompt-lifecycle-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const queued = debugReceipt({
@@ -4331,7 +4615,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("reports package timeline receipt and render state through the debug API", async () => {
+  itLinux("reports package timeline receipt and render state through the debug API", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-state-"));
     const receiptsRoot = join(outDir, "receipts");
@@ -4449,8 +4733,8 @@ describe("motion debug API", () => {
       }
       if (!linked.ok) {
         expect(linked.error).toEqual({
-          code: "invalid_args",
-          message: "motion.receipts.read receiptPath must be inside receiptsRoot."
+          code: "receipt_not_found",
+          message: `Receipt not found at path: ${linkedReceiptPath}.`
         });
       }
     } finally {
@@ -4459,7 +4743,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("reads direct receipts through a bounded no-follow descriptor", async () => {
+  itLinux("reads direct receipts through a bounded no-follow descriptor", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-safe-receipt-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const receiptPath = join(receiptsRoot, "regular.receipt.json");
@@ -4561,7 +4845,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("returns a panel-ready timeline with controls, layers, scenes, tracks, and actions", async () => {
+  itLinux("returns a panel-ready timeline with controls, layers, scenes, tracks, and actions", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const motionPath = join(packageRoot, "motion.json");
     const motion = JSON.parse(await readFile(motionPath, "utf8"));
@@ -4721,7 +5005,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("returns a panel-ready preview player without rendering frames", async () => {
+  itLinux("returns a panel-ready preview player without rendering frames", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     let rendered = false;
     try {
@@ -5202,6 +5486,8 @@ describe("motion debug API", () => {
           audioTrackCount: 2,
           mutedTrackCount: 0,
           soloTrackCount: 0,
+          documentMasterCount: 0,
+          documentMasterLoudnessTargetCount: 0,
           warningCount: 1,
           preset: "gif"
         });
@@ -5229,7 +5515,9 @@ describe("motion debug API", () => {
             soloTracks: 0,
             trackVolumeControls: 2,
             trackPanControls: 1,
-            trackFadeControls: 1
+            trackFadeControls: 1,
+            documentMaster: 0,
+            documentMasterLoudnessTarget: 0
           },
           tracks: [
             { id: "music-track", type: "audio", muted: false, solo: false, volume: 0.7, pan: -0.2, fadeInMs: 120, fadeOutMs: 180 },
@@ -5270,6 +5558,15 @@ describe("motion debug API", () => {
         });
       }
       await expect(readFile(statePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      const motionPath = join(packageRoot, "motion.json");
+      const motion = JSON.parse(await readFile(motionPath, "utf8"));
+      motion.audio = { master: { volume: 0.9, loudness: { integratedLufs: -16, toleranceLufs: 1, maxTruePeakDbtp: -1 } } };
+      await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+      await expect(dispatchDebugCommand("motion.audio.panel", { packageRoot }, { tier: "read_motion" })).resolves.toMatchObject({
+        ok: true,
+        visibleState: { panel: "audio", documentMasterCount: 1, documentMasterLoudnessTargetCount: 1 },
+        result: { counts: { documentMaster: 1, documentMasterLoudnessTarget: 1 } }
+      });
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
     }
@@ -5292,7 +5589,7 @@ describe("motion debug API", () => {
     });
   });
 
-  it("persists timeline playhead range and viewport controls through the debug API", async () => {
+  itLinux("persists timeline playhead range and viewport controls through the debug API", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-timeline-controls-receipts-"));
     const statePath = join(packageRoot, ".shellx-motion", "timeline-state.json");
@@ -11344,6 +11641,7 @@ describe("motion debug API", () => {
       ["1", "00:00:00,000 --> 00:00:01,000", "First caption", "", "2", "00:00:01,250 --> 00:00:02,500", "Second caption"].join("\n"),
       "utf8"
     );
+    const captionsSha256 = hashBuffer(await readFile(captionsPath));
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-caption-import-"));
     const receiptsRoot = join(outDir, "host-receipts");
     try {
@@ -11360,7 +11658,7 @@ describe("motion debug API", () => {
           layerPrefix: "cap",
           createdBy: "codex-test"
         },
-        { tier: "edit_motion" }
+        { tier: "edit_motion", authoringInputRoots: [packageRoot, sourceRoot], authoringOutputRoots: [outDir] }
       );
 
       expect(result.ok).toBe(true);
@@ -11431,7 +11729,7 @@ describe("motion debug API", () => {
         });
         expect(receipt.inputHashes["manifest.json"]).toMatch(/^[a-f0-9]{64}$/);
         expect(receipt.inputHashes["motion.json"]).toMatch(/^[a-f0-9]{64}$/);
-        expect(receipt.inputHashes[captionsPath]).toMatch(/^[a-f0-9]{64}$/);
+        expect(receipt.inputHashes[captionsPath]).toBe(captionsSha256);
         expect(hostReceipt).toEqual(receipt);
       }
     } finally {
@@ -11590,7 +11888,7 @@ describe("motion debug API", () => {
             ...(testCase.command === "motion.timeline.caption.import" ? { captionsPath } : {}),
             ...testCase.args
           },
-          { tier: "edit_motion" }
+          { tier: "edit_motion", authoringInputRoots: [packageRoot, sourceRoot], authoringOutputRoots: [outDir] }
         );
 
         expect(result.ok).toBe(false);
@@ -13206,7 +13504,8 @@ describe("motion debug API", () => {
     const sourceMotion = JSON.parse(await readFile(motionPath, "utf8"));
     sourceMotion.tracks.push({ id: "captions", type: "caption", name: "Captions", order: 2, layerIds: [] });
     await writeFile(motionPath, `${JSON.stringify(sourceMotion, null, 2)}\n`, "utf8");
-    const outPath = join(tmpdir(), `shellx-motion-debug-layer-track-file-${Date.now()}.txt`);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-layer-track-file-"));
+    const outPath = join(outRoot, "out.txt");
     await writeFile(outPath, "keep", "utf8");
     try {
       const result = await dispatchDebugCommand(
@@ -13224,14 +13523,14 @@ describe("motion debug API", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error).toEqual({
-          code: "invalid_args",
-          message: "motion.timeline.layer.track.assign outDir must be empty or absent before package copy."
+          code: "timeline_layer_track_assign_failed",
+          message: "motion.timeline.layer.track.assign outDir must be inside an approved authoring output root and may not traverse symbolic links."
         });
       }
       await expect(readFile(outPath, "utf8")).resolves.toBe("keep");
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
-      await rm(outPath, { force: true });
+      await rm(outRoot, { recursive: true, force: true });
     }
   });
 
@@ -13584,11 +13883,11 @@ describe("motion debug API", () => {
   });
 
   it("summarizes export presets into panel-ready groups through the debug API", async () => {
-    const result = await dispatchDebugCommand("motion.export.panel", {}, { tier: "read_motion" });
+    const result = await dispatchDebugCommand("motion.export.panel", {}, { tier: "read_motion", receiptsRoot: tmpdir() });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.visibleState).toEqual({
+      expect(result.visibleState).toMatchObject({
         panel: "export",
         operation: "export.panel",
         presetCount: 10,
@@ -13652,7 +13951,7 @@ describe("motion debug API", () => {
 
   it("plans export presets with package-aware preflight guidance through the debug API", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
-    const outputPath = join(packageRoot, "..", "render", "transparent.webm");
+    const outputPath = join(packageRoot, "..", "render", "transparent.webm"), receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-export-plan-receipts-"));
     try {
       const result = await dispatchDebugCommand(
         "motion.export.plan",
@@ -13665,7 +13964,7 @@ describe("motion debug API", () => {
           requiredHosts: ["linux", "windows", "macos"],
           qualityManifestPath: join(packageRoot, "quality-manifest.json")
         },
-        { tier: "read_motion" }
+        { tier: "read_motion", receiptsRoot }
       );
 
       expect(result.ok).toBe(true);
@@ -13705,6 +14004,7 @@ describe("motion debug API", () => {
               "fixed-viewport-and-device-scale",
               "stylesheets-and-fonts-ready-before-animation-start",
               "network-blocked-unless-declared",
+              "timeline-driven-animation-start",
               "trim-dead-lead-in-before-ffmpeg-encode"
             ])
           }),
@@ -13725,7 +14025,7 @@ describe("motion debug API", () => {
       }
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
-      await rm(join(packageRoot, "..", "render"), { recursive: true, force: true });
+      await Promise.all([rm(join(packageRoot, "..", "render"), { recursive: true, force: true }), rm(receiptsRoot, { recursive: true, force: true })]);
     }
   });
 
@@ -13741,7 +14041,7 @@ describe("motion debug API", () => {
         needsAudio: true,
         outputPath
       },
-      { tier: "read_motion" }
+      { tier: "read_motion", receiptsRoot: tmpdir() }
     );
 
     expect(result.ok).toBe(true);
@@ -13781,7 +14081,7 @@ describe("motion debug API", () => {
     const result = await dispatchDebugCommand(
       "motion.export.plan",
       { preset: "png-frame", target: "thumbnail", needsAudio: true },
-      { tier: "read_motion" }
+      { tier: "read_motion", receiptsRoot: tmpdir() }
     );
 
     expect(result.ok).toBe(true);
@@ -13802,7 +14102,7 @@ describe("motion debug API", () => {
     const result = await dispatchDebugCommand(
       "motion.export.plan",
       { preset: "gif", target: "animated transparent review with sound", needsAudio: true, needsAlpha: true },
-      { tier: "read_motion" }
+      { tier: "read_motion", receiptsRoot: tmpdir() }
     );
 
     expect(result.ok).toBe(true);
@@ -13833,43 +14133,21 @@ describe("motion debug API", () => {
     }
   });
 
-  it("adds platform verification evidence to export panels when receipt roots are provided", async () => {
+  itLinux("adds platform verification evidence to export panels when receipt roots are provided", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-export-platform-"));
     const receiptsRoot = join(tempRoot, "receipts");
     try {
       await mkdir(receiptsRoot, { recursive: true });
       await writeFile(
         join(receiptsRoot, "linux.platform.json"),
-        `${JSON.stringify({
-          schema: "shellx-motion/platform-verification@1",
-          status: "passed",
-          dryRun: false,
-          host: { id: "linux", hostname: "linux.example.test", platform: "linux", arch: "x64", release: "6.8.0", node: "v24.0.0" },
-          hostMatrix: {
-            required: ["linux", "windows"],
-            current: "linux",
-            currentRequired: true,
-            satisfied: ["linux"],
-            missing: ["windows"],
-            complete: false,
-            status: "partial"
-          },
-          repoRoot: "/workspace/ShellX Motion",
-          startedAt: "2026-07-03T10:00:00.000Z",
-          finishedAt: "2026-07-03T10:05:00.000Z",
-          commands: [
-            { id: "typecheck", command: ["pnpm", "typecheck"], required: true, category: "core", status: "passed", durationMs: 1000 },
-            { id: "render-webm:smoke", command: ["pnpm", "run", "render-webm:smoke"], required: true, category: "render", status: "passed", durationMs: 1800 },
-            { id: "render-alpha:smoke", command: ["pnpm", "run", "render-alpha:smoke"], required: true, category: "render", status: "passed", durationMs: 2000 }
-          ]
-        }, null, 2)}\n`,
+        `${JSON.stringify(completedPlatformReceipt({ requiredHosts: ["linux", "windows"], complete: false }), null, 2)}\n`,
         "utf8"
       );
 
       const result = await dispatchDebugCommand(
         "motion.export.panel",
         { receiptsRoot, requiredHosts: ["linux", "windows"] },
-        { tier: "read_motion" }
+        { tier: "read_motion", receiptsRoot }
       );
 
       expect(result.ok).toBe(true);
@@ -13951,7 +14229,6 @@ describe("motion debug API", () => {
       }
       return { exitCode: 1, stdout: "", stderr: "unexpected ffmpeg call" };
     };
-
     try {
       await writeFile(inputPath, "fake media");
       const result = await dispatchDebugCommand(
@@ -14031,6 +14308,71 @@ describe("motion debug API", () => {
     }
   });
 
+  it("binds authenticated motion.quality.check subprocesses and its receipt to one private input snapshot after RED substitution", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-quality-snapshot-red-"));
+    const inputPath = join(tempRoot, "final.mp4");
+    const admittedBytes = Buffer.from("admitted quality media", "utf8");
+    const calls: FfmpegCommand[] = [];
+    let substituted = false;
+    const runner: FfmpegRunner = async (command) => {
+      calls.push(command);
+      if (!substituted) {
+        substituted = true;
+        await writeFile(inputPath, "RED replacement media", "utf8");
+      }
+      if (command.executable.includes("ffprobe")) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            streams: [
+              { codec_type: "video", codec_name: "h264", width: 640, height: 360, avg_frame_rate: "30/1" },
+              { codec_type: "audio", codec_name: "aac", channels: 2, sample_rate: "48000", duration: "2.000000" }
+            ],
+            format: { duration: "2.000000", format_name: "mov,mp4,m4a,3gp,3g2,mj2" }
+          }),
+          stderr: ""
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: "",
+        stderr: [
+          "[Parsed_volumedetect_0 @ 0x1] n_samples: 96000",
+          "[Parsed_volumedetect_0 @ 0x1] mean_volume: -18.5 dB",
+          "[Parsed_volumedetect_0 @ 0x1] max_volume: -8.1 dB",
+          "{\"input_i\":\"-23.0\",\"input_tp\":\"-0.5\",\"input_lra\":\"8.0\",\"input_thresh\":\"-33.0\",\"target_offset\":\"0.0\"}"
+        ].join("\n")
+      };
+    };
+    try {
+      await writeFile(inputPath, admittedBytes);
+      const result = await dispatchDebugCommand(
+        "motion.quality.check",
+        { inputPath, expectWidth: 640, expectHeight: 360, expectAudio: true, maxAudioPeakDb: -6 },
+        {
+          tier: "render_motion",
+          ffmpegRunner: runner,
+          scratchRoot: tempRoot,
+          actor: { kind: "agent", label: "quality-red-control", transport: "mcp", grantedTier: "render_motion" }
+        }
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        result: {
+          receipt: { inputHashes: { [inputPath]: hashBuffer(admittedBytes) } }
+        }
+      });
+      const subprocessInputs = calls.map((call) => call.args[call.args.indexOf("-i") + 1]);
+      expect(subprocessInputs).toHaveLength(2);
+      expect(new Set(subprocessInputs).size).toBe(1);
+      expect(subprocessInputs[0]).toMatch(/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.mp4$/);
+      expect(calls.flatMap((call) => call.args)).not.toContain(inputPath);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("refuses media quality checks outside the trusted debug scratch root", async () => {
     const trustedRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-quality-trusted-"));
     const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-quality-untrusted-"));
@@ -14040,7 +14382,6 @@ describe("motion debug API", () => {
       called = true;
       throw new Error("ffprobe must not run for untrusted input paths");
     };
-
     try {
       await writeFile(inputPath, "fake media");
       const result = await dispatchDebugCommand(
@@ -14053,7 +14394,7 @@ describe("motion debug API", () => {
         ok: false,
         error: {
           code: "ffmpeg_failed",
-          message: "Unsafe FFmpeg input path: path must be inside a trusted input root."
+          message: "FFmpeg quality input must remain a canonical regular file inside a configured input root."
         },
         warnings: []
       });
@@ -14490,11 +14831,173 @@ describe("motion debug API", () => {
     }
   });
 
+  it("reuses one default browser session for an ordered preview strip", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-preview-strip-session-"));
+    const renderedAtMs: number[] = [];
+    let closeCount = 0;
+    const factory = vi.spyOn(browserRenderer, "createHostBoundBrowserRenderSessionFactory").mockImplementation(() => async (pkg) => ({
+      browserVersion: "test",
+      scriptExecution: { schema: "shellx-motion/script-execution@1", detectedClass: "data-only", requestedMode: "none", activeMode: "data-only", resolverVersion: 1, sources: [] },
+      metrics: {
+        browserLaunches: 1,
+        framesRendered: 0,
+        contextsCreated: 0,
+        pagesCreated: 0,
+        activeFrames: 0,
+        peakConcurrentFrames: 0,
+        frameCacheHits: 0,
+        frameRetries: 0
+      },
+      renderFrame: async (options: Parameters<MotionBrowserRenderSession["renderFrame"]>[0]) => {
+        renderedAtMs.push(options.atMs);
+        const outputPath = options.outputPath ?? join(options.outDir, `debug-strip-${options.atMs}.png`);
+        await writeFile(outputPath, `png ${options.atMs}`, "utf8");
+        return {
+          ok: true,
+          output: {
+            path: outputPath,
+            sha256: `${String(options.atMs).padStart(4, "0")}${"a".repeat(60)}`.slice(0, 64),
+            width: pkg.motion.width,
+            height: pkg.motion.height,
+            atMs: options.atMs,
+            browser: { name: "chromium", version: "test" },
+            viewport: { width: pkg.motion.width, height: pkg.motion.height, deviceScaleFactor: 1 }
+          },
+          receipt: {
+            schema: "shellx-motion/receipt@1",
+            id: `browser-preview-strip-${options.atMs}`,
+            operation: "preview.frame",
+            status: "passed",
+            packageId: pkg.manifest.id,
+            inputHashes: { motion: "c".repeat(64) },
+            createdAt: options.now?.() ?? "2026-07-01T00:00:00.000Z",
+            lane: "browser",
+            output: { path: outputPath, atMs: options.atMs },
+            warnings: []
+          }
+        } as BrowserFrameResult;
+      },
+      renderFrames: async () => [],
+      close: async () => { closeCount += 1; }
+    } as MotionBrowserRenderSession));
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.preview.strip",
+        {
+          packageRoot: "../../fixtures/packages/keyframed-lower-third",
+          outDir,
+          frameCount: 3,
+          startMs: 0,
+          endMs: 1000,
+          createdAt: "2026-07-03T11:30:00.000Z"
+        },
+        { tier: "render_motion" }
+      );
+
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(renderedAtMs).toEqual([0, 500, 1000]);
+      expect(closeCount).toBe(1);
+      expect(result).toMatchObject({
+        ok: true,
+        result: {
+          frameCount: 3,
+          frames: [
+            { index: 0, atMs: 0, path: join(outDir, "pkg_keyframed_lower_third-strip-01-0ms.png") },
+            { index: 1, atMs: 500, path: join(outDir, "pkg_keyframed_lower_third-strip-02-500ms.png") },
+            { index: 2, atMs: 1000, path: join(outDir, "pkg_keyframed_lower_third-strip-03-1000ms.png") }
+          ],
+          receipt: { operation: "preview.strip", createdAt: "2026-07-03T11:30:00.000Z" }
+        }
+      });
+    } finally {
+      factory.mockRestore();
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes one default preview-strip session and stops at the first frame failure", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-preview-strip-session-failure-"));
+    const renderedAtMs: number[] = [];
+    let closeCount = 0;
+    const factory = vi.spyOn(browserRenderer, "createHostBoundBrowserRenderSessionFactory").mockImplementation(() => async (pkg) => ({
+      browserVersion: "test",
+      scriptExecution: { schema: "shellx-motion/script-execution@1", detectedClass: "data-only", requestedMode: "none", activeMode: "data-only", resolverVersion: 1, sources: [] },
+      metrics: {
+        browserLaunches: 1,
+        framesRendered: 0,
+        contextsCreated: 0,
+        pagesCreated: 0,
+        activeFrames: 0,
+        peakConcurrentFrames: 0,
+        frameCacheHits: 0,
+        frameRetries: 0
+      },
+      renderFrame: async (options: Parameters<MotionBrowserRenderSession["renderFrame"]>[0]) => {
+        renderedAtMs.push(options.atMs);
+        if (renderedAtMs.length === 2) throw new Error("frame renderer stopped");
+        const outputPath = options.outputPath ?? join(options.outDir, `debug-strip-${options.atMs}.png`);
+        await writeFile(outputPath, `png ${options.atMs}`, "utf8");
+        return {
+          ok: true,
+          output: {
+            path: outputPath,
+            sha256: `${String(options.atMs).padStart(4, "0")}${"a".repeat(60)}`.slice(0, 64),
+            width: pkg.motion.width,
+            height: pkg.motion.height,
+            atMs: options.atMs,
+            browser: { name: "chromium", version: "test" },
+            viewport: { width: pkg.motion.width, height: pkg.motion.height, deviceScaleFactor: 1 }
+          },
+          receipt: {
+            schema: "shellx-motion/receipt@1",
+            id: `browser-preview-strip-${options.atMs}`,
+            operation: "preview.frame",
+            status: "passed",
+            packageId: pkg.manifest.id,
+            inputHashes: { motion: "c".repeat(64) },
+            createdAt: options.now?.() ?? "2026-07-01T00:00:00.000Z",
+            lane: "browser",
+            output: { path: outputPath, atMs: options.atMs },
+            warnings: []
+          }
+        } as BrowserFrameResult;
+      },
+      renderFrames: async () => [],
+      close: async () => { closeCount += 1; }
+    } as MotionBrowserRenderSession));
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.preview.strip",
+        {
+          packageRoot: "../../fixtures/packages/keyframed-lower-third",
+          outDir,
+          frameCount: 3,
+          startMs: 0,
+          endMs: 1000
+        },
+        { tier: "render_motion" }
+      );
+
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(renderedAtMs).toEqual([0, 500]);
+      expect(closeCount).toBe(1);
+      expect(result).toEqual({
+        ok: false,
+        error: { code: "preview_strip_failed", message: "frame renderer stopped" },
+        warnings: []
+      });
+    } finally {
+      factory.mockRestore();
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
   it("captures deterministic browser preview strips through the debug API", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-preview-strip-"));
     const receiptsRoot = join(outDir, "receipts");
     const renderedAtMs: number[] = [];
     const rendererCreatedAt: Array<string | undefined> = [];
+    const factory = vi.spyOn(browserRenderer, "createMotionBrowserRenderSession");
     try {
       const result = await dispatchDebugCommand(
         "motion.preview.strip",
@@ -14543,6 +15046,7 @@ describe("motion debug API", () => {
       );
 
       expect(renderedAtMs).toEqual([0, 500, 1000]);
+      expect(factory).not.toHaveBeenCalled();
       expect(rendererCreatedAt).toEqual([
         "2026-07-03T11:30:00.000Z",
         "2026-07-03T11:30:00.000Z",
@@ -14605,6 +15109,7 @@ describe("motion debug API", () => {
         });
       }
     } finally {
+      factory.mockRestore();
       await rm(outDir, { recursive: true, force: true });
     }
   });
@@ -14692,6 +15197,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "render_motion",
+          scratchRoot: outDir,
           browserFrameRenderer: async (pkg, options) => ({
             ok: true,
             output: {
@@ -14859,6 +15365,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "render_motion",
+          scratchRoot: outDir,
           browserFrameRenderer: async () => {
             throw new BrowserWorkflowReplayError(trace, failedStep);
           }
@@ -14943,6 +15450,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "render_motion",
+          scratchRoot: outDir,
           browserFrameRenderer: async (pkg, options) => {
             renderedAtMs.push(options.atMs);
             const outputPath = options.outputPath ?? join(options.outDir, `debug-frame-${options.atMs}.png`);
@@ -15050,9 +15558,12 @@ describe("motion debug API", () => {
   });
 
   it("catalogs browser workflow drift through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-browser-workflow-catalog-"));
-    const catalogPath = join(outDir, "browser-workflows.catalog.json");
-    const receiptPath = join(outDir, "pkg_keyframed_lower_third-browser-capture.receipt.json");
+    const scratchRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-browser-workflow-catalog-"));
+    const firstOutDir = join(scratchRoot, "capture-1");
+    const changedOutDir = join(scratchRoot, "capture-2");
+    const failedOutDir = join(scratchRoot, "capture-3");
+    const catalogPath = join(scratchRoot, "browser-workflows.catalog.json");
+    const receiptPath = join(failedOutDir, "pkg_keyframed_lower_third-browser-capture.receipt.json");
     let outputHash = "1".repeat(64);
     const captureReadiness = {
       schema: "shellx-motion/browser-capture-readiness@1" as const,
@@ -15074,7 +15585,7 @@ describe("motion debug API", () => {
       }
     };
     try {
-      const runCapture = (failOnDrift = false) => dispatchDebugCommand(
+      const runCapture = (outDir: string, failOnDrift = false) => dispatchDebugCommand(
         "motion.browser.workflow.capture",
         {
           packageRoot: "../../fixtures/packages/keyframed-lower-third",
@@ -15090,6 +15601,7 @@ describe("motion debug API", () => {
         },
         {
           tier: "render_motion",
+          scratchRoot,
           browserFrameRenderer: async (pkg, options) => ({
             ok: true,
             output: {
@@ -15131,11 +15643,11 @@ describe("motion debug API", () => {
         }
       );
 
-      const first = await runCapture();
+      const first = await runCapture(firstOutDir);
       outputHash = "4".repeat(64);
-      const changed = await runCapture();
+      const changed = await runCapture(changedOutDir);
       outputHash = "5".repeat(64);
-      const failed = await runCapture(true);
+      const failed = await runCapture(failedOutDir, true);
       const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as Record<string, any>;
       const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, any>;
 
@@ -15178,7 +15690,7 @@ describe("motion debug API", () => {
               baselineOutputSha256: "1".repeat(64),
               currentOutputSha256: "5".repeat(64)
             },
-            outputPath: join(outDir, "debug-frame.png"),
+            outputPath: join(failedOutDir, "debug-frame.png"),
             receiptId: "browser-workflow-catalog-debug",
             receiptPath,
             artifacts: expect.arrayContaining([
@@ -15221,6 +15733,196 @@ describe("motion debug API", () => {
         expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath })
       ]));
     } finally {
+      await rm(scratchRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("renders final media through the native frame lane without a browser fallback", async () => {
+    const packageRoot = await writeDebugPackageWithTimeline();
+    const motionPath = join(packageRoot, "motion.json");
+    const motion = JSON.parse(await readFile(motionPath, "utf8"));
+    motion.background = "#000000";
+    motion.layers[0].transform = { x: 4, y: 4 };
+    motion.layers[0].style = { color: "#ffffff", fontSize: 16 };
+    await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-native-render-final-"));
+    const outputPath = join(outDir, "final.mp4");
+    const framesDir = join(outDir, "frames");
+    const calls: FfmpegCommand[] = [];
+    let browserCalls = 0;
+    const runner: FfmpegRunner = async (command) => {
+      calls.push(command);
+      if (command.args[0] === "-version" || command.args.includes("-encoders")) return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
+      await writeFile(command.args.at(-1) as string, "fake mp4");
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.render.final",
+        { packageRoot, outputPath, framesDir, keepFrames: true, preset: "mp4-h264", frameLane: "native" },
+        {
+          tier: "render_motion",
+          ffmpegRunner: runner,
+          browserFrameRenderer: async () => {
+            browserCalls += 1;
+            throw new Error("native frame lane must not invoke browser rendering");
+          }
+        }
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result).toMatchObject({
+          ok: true,
+          lane: "ffmpeg",
+          frameLane: "native",
+          outputPath,
+          frames: { dir: framesDir, count: 5 },
+          frameReceipt: { lane: "native", status: "passed" },
+          receipt: { operation: "render.final", lane: "ffmpeg" }
+        });
+      }
+      expect(browserCalls).toBe(0);
+      expect(await readdir(framesDir)).toHaveLength(5);
+      expect(calls[0].args).toEqual(["-version"]);
+      expect(calls.at(-1)?.args).not.toContain(outputPath); expect(await readFile(outputPath, "utf8")).toBe("fake mp4");
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries native still-frame warnings into the final-render receipt", async () => {
+    const packageRoot = await writeDebugPackageWithTimeline();
+    const motionPath = join(packageRoot, "motion.json");
+    const motion = JSON.parse(await readFile(motionPath, "utf8"));
+    motion.layers[0].text = "Sveiks";
+    await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-native-still-"));
+    const outputPath = join(outDir, "frame.png");
+    let browserCalls = 0;
+
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.render.final",
+        { packageRoot, outputPath, preset: "png-frame", frameLane: "native" },
+        {
+          tier: "render_motion",
+          browserFrameRenderer: async () => {
+            browserCalls += 1;
+            throw new Error("native frame lane must not invoke browser rendering");
+          }
+        }
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result).toMatchObject({
+          ok: true,
+          lane: "image",
+          frameLane: "native",
+          frameReceipt: {
+            lane: "native",
+            status: "warning",
+            warnings: ["Native renderer case-folded lowercase text to uppercase block glyphs on layer title: veiks."]
+          },
+          receipt: {
+            operation: "render.final",
+            status: "warning",
+            warnings: ["Native renderer case-folded lowercase text to uppercase block glyphs on layer title: veiks."]
+          }
+        });
+      }
+      expect(browserCalls).toBe(0);
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+      await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses non-deliverable native text during final-render planning without a browser fallback", async () => {
+    const packageRoot = await writeDebugPackageWithTimeline();
+    const motionPath = join(packageRoot, "motion.json");
+    const motion = JSON.parse(await readFile(motionPath, "utf8"));
+    motion.layers[0].text = "Sveiks";
+    await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+    let browserCalls = 0;
+
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.render.final",
+        {
+          packageRoot,
+          outputPath: join(packageRoot, "final.mp4"),
+          preset: "mp4-h264",
+          frameLane: "native",
+          dryRun: true
+        },
+        {
+          tier: "render_motion",
+          browserFrameRenderer: async () => {
+            browserCalls += 1;
+            throw new Error("native frame lane must not invoke browser rendering");
+          }
+        }
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "native_text_not_deliverable",
+          suggestedAction: expect.stringContaining("frameLane browser"),
+          detail: {
+            frameLane: "native",
+            unsupported: expect.arrayContaining([
+              expect.objectContaining({ layerId: "title", feature: "text.case.preserved" })
+            ])
+          }
+        }
+      });
+      expect(browserCalls).toBe(0);
+    } finally {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an unsupported native frame lane instead of falling back to browser", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-native-refusal-"));
+    let browserCalls = 0;
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.render.final",
+        {
+          packageRoot: "../../fixtures/packages/web-card",
+          outputPath: join(outDir, "frame.png"),
+          preset: "png-frame",
+          frameLane: "native"
+        },
+        {
+          tier: "render_motion",
+          browserFrameRenderer: async () => {
+            browserCalls += 1;
+            throw new Error("native frame lane must not invoke browser rendering");
+          }
+        }
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "unsupported_layer",
+          suggestedAction: expect.stringContaining("frameLane browser"),
+          detail: {
+            frameLane: "native",
+            unsupported: expect.arrayContaining([
+              expect.objectContaining({ layerId: "web-card", feature: "layer.type:web" })
+            ])
+          }
+        }
+      });
+      expect(browserCalls).toBe(0);
+    } finally {
       await rm(outDir, { recursive: true, force: true });
     }
   });
@@ -15233,10 +15935,10 @@ describe("motion debug API", () => {
     const framePaths: string[] = [];
     const runner: FfmpegRunner = async (command) => {
       calls.push(command);
-      if (command.args[0] === "-version") {
+      if (command.args[0] === "-version" || command.args.includes("-encoders")) {
         return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
       }
-      await writeFile(outputPath, "fake mp4");
+      await writeFile(command.args.at(-1) as string, "fake mp4");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -15247,6 +15949,7 @@ describe("motion debug API", () => {
           packageRoot: "../../fixtures/packages/keyframed-lower-third",
           outputPath,
           framesDir,
+          keepFrames: true,
           preset: "mp4-h264",
           minUniqueFrameHashes: 1
         },
@@ -15329,7 +16032,7 @@ describe("motion debug API", () => {
       }
       expect(framePaths).toHaveLength(90);
       expect(calls[0].args).toEqual(["-version"]);
-      expect(calls.at(-1)?.args).toContain(outputPath);
+      expect(calls.at(-1)?.args).not.toContain(outputPath); expect(await readFile(outputPath, "utf8")).toBe("fake mp4");
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
@@ -15345,10 +16048,10 @@ describe("motion debug API", () => {
     const workflowRequests: unknown[] = [];
     const runner: FfmpegRunner = async (command) => {
       calls.push(command);
-      if (command.args[0] === "-version") {
+      if (command.args[0] === "-version" || command.args.includes("-encoders")) {
         return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
       }
-      await writeFile(outputPath, "fake mp4");
+      await writeFile(command.args.at(-1) as string, "fake mp4");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     await writeFile(workflowPath, JSON.stringify({
@@ -15473,7 +16176,7 @@ describe("motion debug API", () => {
         steps: [{ action: "wait", ms: 5 }, { action: "scroll", y: 12 }]
       });
       expect(calls[0].args).toEqual(["-version"]);
-      expect(calls.at(-1)?.args).toContain(outputPath);
+      expect(calls.at(-1)?.args).not.toContain(outputPath); expect(await readFile(outputPath, "utf8")).toBe("fake mp4");
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
@@ -15635,7 +16338,7 @@ describe("motion debug API", () => {
           lane: "ffmpeg",
           dryRun: true,
           ffmpeg: {
-            args: expect.arrayContaining(["-filter:a", "volume=0.2"])
+            args: expect.arrayContaining(["-filter:a", "atrim=duration=0.5,volume=0.2,apad=whole_dur=0.5"])
           }
         });
       }
@@ -15688,7 +16391,7 @@ describe("motion debug API", () => {
             args: expect.arrayContaining([
               audioPath,
               "-filter:a",
-              "afade=t=in:st=0:d=0.12,afade=t=out:st=0.12:d=0.18"
+              "atrim=duration=0.3,afade=t=in:st=0:d=0.12,afade=t=out:st=0.12:d=0.18,apad=whole_dur=0.5"
             ])
           }
         });
@@ -15742,7 +16445,7 @@ describe("motion debug API", () => {
             args: expect.arrayContaining([
               audioPath,
               "-filter:a",
-              "pan=stereo|c0=1*c0|c1=0.75*c1"
+              "atrim=duration=0.3,pan=stereo|c0=1*c0|c1=0.75*c1,apad=whole_dur=0.5"
             ])
           }
         });
@@ -15795,7 +16498,7 @@ describe("motion debug API", () => {
             args: expect.arrayContaining([
               audioPath,
               "-filter:a",
-              "pan=stereo|c0=0.65*c0|c1=1*c1"
+              "atrim=duration=0.3,pan=stereo|c0=0.65*c0|c1=1*c1,apad=whole_dur=0.5"
             ])
           }
         });
@@ -15906,6 +16609,7 @@ describe("motion debug API", () => {
         });
       }
       expect(framePaths).toHaveLength(90);
+      expect(framePaths.every((framePath) => framePath.startsWith(`${outputPath}/`))).toBe(false);
       expect(calls).toEqual([]);
     } finally {
       await rm(outDir, { recursive: true, force: true });
@@ -15976,6 +16680,7 @@ describe("motion debug API", () => {
         expect(result.warnings).toContain("Rendered frame sequence is static; verify this is intentional before using it as product output.");
       }
       expect(framePaths).toHaveLength(90);
+      await expect(readdir(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
       expect(calls).toHaveLength(0);
     } finally {
       await rm(outDir, { recursive: true, force: true });
@@ -16002,8 +16707,7 @@ describe("motion debug API", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.code).toBe("invalid_args");
-        expect(result.error.message).toBe("motion.render.final image sequence outputPath must be empty or absent before render.");
+        expect(result.error.code).toBe("derived_output_exists");
       }
       expect(await readFile(sentinelPath, "utf8")).toBe("do not delete");
     } finally {
@@ -16106,7 +16810,7 @@ describe("motion debug API", () => {
           receiptPath: join(receiptsRoot, `${result.receiptId}.receipt.json`)
         });
       }
-      expect(framePaths).toEqual([outputPath]);
+      expect(framePaths).toHaveLength(1); expect(framePaths[0]).not.toBe(outputPath);
       expect(calls).toEqual([]);
     } finally {
       await rm(outDir, { recursive: true, force: true });
@@ -16181,15 +16885,18 @@ describe("motion debug API", () => {
           qualityCheck: {
             ok: true,
             result: {
-              manifestPath,
-              samples: [{ id: "still", ok: true }]
+              inputPath: outputPath, manifestPath,
+              samples: [{ id: "still", ok: true, framePath: outputPath }]
             }
           },
           receipt: {
             operation: "render.final",
             status: "passed",
             inputHashes: {
-              qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/)
+              qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityManifestMaterialized: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityBaselines: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityInputs: expect.stringMatching(/^[a-f0-9]{64}$/)
             },
             output: {
               qualityManifestPath: manifestPath,
@@ -16197,8 +16904,10 @@ describe("motion debug API", () => {
             }
           }
         });
+        const qualityCheck = (result.result as Record<string, any>).qualityCheck; expect(JSON.parse(await readFile(join(receiptsRoot, `${qualityCheck.receiptId}.receipt.json`), "utf8"))).toEqual(qualityCheck.result.receipt);
       }
-      expect(framePaths).toEqual([outputPath]);
+      expect(framePaths).toHaveLength(1);
+      expect(framePaths[0]).not.toBe(outputPath);
       const receiptFiles = await readdir(receiptsRoot);
       expect(receiptFiles.some((entry) => entry.startsWith("quality-check-"))).toBe(true);
     } finally {
@@ -16252,7 +16961,7 @@ describe("motion debug API", () => {
     });
   });
 
-  it("lists and reads host-owned receipt evidence through the debug API", async () => {
+  itLinux("lists and reads host-owned receipt evidence through the debug API", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-receipts-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const renderReceipt = debugReceipt({
@@ -16340,7 +17049,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes host-owned receipt evidence into panel state", async () => {
+  itLinux("summarizes host-owned receipt evidence into panel state", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-receipts-panel-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const renderReceipt = debugReceipt({
@@ -16494,34 +17203,14 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes platform verification receipts for host-matrix panels", async () => {
+  itLinux("summarizes platform verification receipts for host-matrix panels", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-platform-panel-"));
     const receiptsRoot = join(tempRoot, "receipts");
     try {
       await mkdir(receiptsRoot, { recursive: true });
       await writeFile(
         join(receiptsRoot, "linux.platform.json"),
-        `${JSON.stringify({
-          schema: "shellx-motion/platform-verification@1",
-          status: "passed",
-          dryRun: false,
-          host: { id: "linux", hostname: "linux.example.test", platform: "linux", arch: "x64", release: "6.8.0", node: "v24.0.0" },
-          hostMatrix: {
-            required: ["linux", "windows", "macos"],
-            current: "linux",
-            currentRequired: true,
-            satisfied: ["linux"],
-            missing: ["windows", "macos"],
-            complete: false,
-            status: "partial"
-          },
-          repoRoot: "/workspace/ShellX Motion",
-          startedAt: "2026-07-03T10:00:00.000Z",
-          finishedAt: "2026-07-03T10:05:00.000Z",
-          commands: [
-            { id: "typecheck", command: ["pnpm", "typecheck"], required: true, category: "core", status: "passed", durationMs: 1000 }
-          ]
-        }, null, 2)}\n`,
+        `${JSON.stringify(completedPlatformReceipt({ requiredHosts: ["linux", "windows", "macos"], complete: false }), null, 2)}\n`,
         "utf8"
       );
       await writeFile(
@@ -16561,7 +17250,7 @@ describe("motion debug API", () => {
       const result = await dispatchDebugCommand(
         "motion.platform.verification.panel",
         { receiptsRoot },
-        { tier: "read_motion" }
+        { tier: "read_motion", receiptsRoot }
       );
 
       expect(result.ok).toBe(true);
@@ -16591,7 +17280,7 @@ describe("motion debug API", () => {
               hostId: "linux",
               status: "passed",
               dryRun: false,
-              commandCount: 1,
+              commandCount: expect.any(Number),
               failedCommandCount: 0
             })
           ],
@@ -16612,7 +17301,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes render status from receipt evidence through the debug API", async () => {
+  itLinux("summarizes render status from receipt evidence through the debug API", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-render-status-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const passed = debugReceipt({
@@ -16742,7 +17431,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes render queue jobs with available actions", async () => {
+  itLinux("summarizes render queue jobs with available actions", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-render-queue-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const queued = debugReceipt({
@@ -16892,7 +17581,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("cancels queued render jobs with host-owned receipt evidence", async () => {
+  itLinux("cancels queued render jobs with host-owned receipt evidence", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-render-cancel-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const queued = debugReceipt({
@@ -16972,7 +17661,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("queues retry receipts for failed render jobs", async () => {
+  itLinux("queues retry receipts for failed render jobs", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-render-retry-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const failed = debugReceipt({
@@ -17052,7 +17741,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("compiles scripted-video JSON into a Motion package through the debug API", async () => {
+  itLinux("compiles scripted-video JSON into a Motion package through the debug API", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-script-compile-"));
     const scriptPath = join(tempRoot, "storyboard.json");
     const packageDir = join(tempRoot, "package");
@@ -17061,7 +17750,7 @@ describe("motion debug API", () => {
     try {
       await writeFile(scriptPath, `${JSON.stringify(scriptedVideo(), null, 2)}\n`, "utf8");
 
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () => await dispatchDebugCommand(
         "motion.script.compile",
         {
           scriptPath,
@@ -17069,8 +17758,8 @@ describe("motion debug API", () => {
           receiptsRoot,
           createdAt: "2026-07-01T00:00:00.000Z"
         },
-        { tier: "write_local" }
-      );
+        { tier: "write_local", authoringInputRoots: [tempRoot], authoringOutputRoots: [tempRoot] }
+      ));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -17079,7 +17768,8 @@ describe("motion debug API", () => {
           panel: "receipts",
           operation: "script.compile",
           packageId: "pkg_script_launch_demo",
-          packageDir
+          packageDir,
+          hostReceiptPath: join(receiptsRoot, "receipt_script_compile_pkg_script_launch_demo.receipt.json")
         });
         expect(result.result).toMatchObject({
           ok: true,
@@ -17091,7 +17781,7 @@ describe("motion debug API", () => {
           receiptPath: join(packageDir, "receipts", "script-compile.receipt.json"),
           hostReceiptPath: join(receiptsRoot, "receipt_script_compile_pkg_script_launch_demo.receipt.json"),
           receipt: {
-            operation: "package.compile",
+            operation: "script.compile",
             status: "passed",
             lane: "script",
             packageId: "pkg_script_launch_demo"
@@ -17101,6 +17791,7 @@ describe("motion debug API", () => {
 
       const manifest = JSON.parse(await readFile(join(packageDir, "manifest.json"), "utf8")) as Record<string, any>;
       const motion = JSON.parse(await readFile(join(packageDir, "motion.json"), "utf8")) as Record<string, any>;
+      const packageReceipt = JSON.parse(await readFile(join(packageDir, "receipts", "script-compile.receipt.json"), "utf8")) as Record<string, any>;
       const hostReceipt = JSON.parse(await readFile(join(receiptsRoot, "receipt_script_compile_pkg_script_launch_demo.receipt.json"), "utf8")) as Record<string, any>;
       expect(manifest.compatibility.hosts).toEqual(["shellx-motion", "shellx-cut"]);
       expect(manifest.compatibility.lanes).toEqual(["native", "browser", "ffmpeg", "cut"]);
@@ -17122,7 +17813,9 @@ describe("motion debug API", () => {
         "frame_cta_caption_plate",
         "frame_cta_caption"
       ]);
-      expect(hostReceipt.inputHashes[scriptPath]).toMatch(/^[a-f0-9]{64}$/);
+      expect(hostReceipt.inputHashes["input/scripted-video.json"]).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(hostReceipt)).not.toContain(scriptPath);
+      expect(hostReceipt).toEqual(packageReceipt);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -17146,7 +17839,7 @@ describe("motion debug API", () => {
         };
       }
       const outputPath = command.args.at(-1) as string;
-      await mkdir(dirname(outputPath), { recursive: true });
+      await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
       await writeFile(outputPath, CONTRAST_PNG);
       return { exitCode: 0, stdout: "", stderr: "" };
     };
@@ -17177,8 +17870,9 @@ describe("motion debug API", () => {
         "-y",
         "-ss",
         "0.5",
+        ...qualityFfmpegInputArgs("mov"),
         "-i",
-        inputPath,
+        expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.mp4$/),
         "-frames:v",
         "1",
         join(outDir, "final-frame.png")
@@ -17246,8 +17940,9 @@ describe("motion debug API", () => {
         "-y",
         "-c:v",
         "libvpx-vp9",
+        ...qualityFfmpegInputArgs("matroska"),
         "-i",
-        inputPath,
+        expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.webm$/),
         "-frames:v",
         "1",
         "-pix_fmt",
@@ -17337,8 +18032,9 @@ describe("motion debug API", () => {
         "-y",
         "-ss",
         "0.5",
+        ...qualityFfmpegInputArgs("mov"),
         "-i",
-        inputPath,
+        expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.mp4$/),
         "-frames:v",
         "1",
         join(outDir, "final-intro-sample-frame.png")
@@ -17447,7 +18143,7 @@ describe("motion debug API", () => {
         ok: false,
         error: {
           code: "invalid_args",
-          message: "Quality manifest sample escaped baseline must be inside a trusted quality input root."
+          message: "batch quality baseline 1 escapes its approved root"
         },
         warnings: []
       });
@@ -17890,7 +18586,7 @@ describe("motion debug API", () => {
           }
         });
         expect(debugResult.receipt.inputHashes[inputPath]).toMatch(/^[a-f0-9]{64}$/);
-        expect(debugResult.receipt.inputHashes[manifestPath]).toMatch(/^[a-f0-9]{64}$/);
+        expect(debugResult.receipt.inputHashes[manifestPath]).toBe(hashBuffer(await readFile(manifestPath)));
         const hostReceipt = JSON.parse(await readFile(hostReceiptPath, "utf8"));
         expect(hostReceipt).toEqual(debugResult.receipt);
       }
@@ -17966,8 +18662,7 @@ describe("motion debug API", () => {
               packageId: "quality-check",
               lane: "quality",
               inputHashes: {
-                [inputPath]: expect.stringMatching(/^[a-f0-9]{64}$/),
-                [manifestPath]: expect.stringMatching(/^[a-f0-9]{64}$/)
+                [inputPath]: expect.stringMatching(/^[a-f0-9]{64}$/)
               },
               output: {
                 inputPath,
@@ -17977,6 +18672,7 @@ describe("motion debug API", () => {
                   expect.objectContaining({
                     ok: false,
                     id: "title safe",
+                    baselinePath,
                     error: {
                       code: "visual_regression_failed",
                       message: expect.stringContaining("Visual regression failed:")
@@ -17993,6 +18689,7 @@ describe("motion debug API", () => {
           }
         });
         const detail = result.error.detail as { hostReceiptPath: string; receipt: unknown };
+        expect((detail.receipt as { inputHashes: Record<string, string> }).inputHashes[manifestPath]).toBe(hashBuffer(await readFile(manifestPath)));
         const hostReceipt = JSON.parse(await readFile(detail.hostReceiptPath, "utf8"));
         expect(hostReceipt).toEqual(detail.receipt);
       }
@@ -18112,8 +18809,8 @@ describe("motion debug API", () => {
           quality: { minUniqueFrameHashes: 2 },
           rows: 2,
           jobs: [
-            { rowId: "ada", packageId: "pkg_batch_card_ada", status: "not_run", quality: { minUniqueFrameHashes: 2 } },
-            { rowId: "grace", packageId: "pkg_batch_card_grace", status: "not_run", quality: { minUniqueFrameHashes: 2 } }
+            { rowId: "ada", packageId: "pkg_batch_card_ada", status: "not_run", quality: { minUniqueFrameHashes: 2 }, frameTransport: { delivery: "streamed", reason: "stream_default" } },
+            { rowId: "grace", packageId: "pkg_batch_card_grace", status: "not_run", quality: { minUniqueFrameHashes: 2 }, frameTransport: { delivery: "streamed", reason: "stream_default" } }
           ],
           receiptPath,
           receipt: {
@@ -18637,7 +19334,7 @@ describe("motion debug API", () => {
           browserFrameRenderer: async (pkg, options) => {
             const framePath = options.outputPath ?? join(options.outDir, "frame.png");
             framePaths.push(framePath);
-            await mkdir(dirname(framePath), { recursive: true });
+            await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
             await writeFile(framePath, CONTRAST_PNG);
             return {
               ok: true,
@@ -18714,6 +19411,26 @@ describe("motion debug API", () => {
       await rm(outDir, { recursive: true, force: true });
     }
   }, 45_000);
+
+  it.skipIf(process.platform === "win32")("creates an absent debug batch output tree privately under umask 0002", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-batch-private-output-"));
+    const outDir = join(root, "batch");
+    const previousUmask = process.umask(0o002);
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.render.batch",
+        { packageRoot: "../../fixtures/packages/batch-card", outDir, dryRun: true },
+        { tier: "render_motion" }
+      );
+      expect(result.ok).toBe(true);
+      for (const path of [outDir, join(outDir, "packages"), join(outDir, "render"), join(outDir, "receipts")]) {
+        expect(Number((await stat(path)).mode) & 0o777, path).toBe(0o700);
+      }
+    } finally {
+      process.umask(previousUmask);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("renders debug batch/data rows as still-frame images without invoking FFmpeg", async () => {
     const cases = [
@@ -18835,10 +19552,7 @@ describe("motion debug API", () => {
             }
           });
         }
-        expect(frameRequests).toEqual([
-          { path: adaOutputPath, format: imageCase.format },
-          { path: graceOutputPath, format: imageCase.format }
-        ]);
+        expect(frameRequests).toHaveLength(2); expect(frameRequests.every(({ path, format }) => format === imageCase.format && path.startsWith(`${join(outDir, "render")}/.shellx-motion-final-`))).toBe(true);
         expect(calls).toHaveLength(0);
         expect((await readFile(adaOutputPath)).subarray(0, imageCase.signature.length)).toEqual(imageCase.signature);
         expect((await readFile(graceOutputPath)).subarray(0, imageCase.signature.length)).toEqual(imageCase.signature);
@@ -18873,7 +19587,7 @@ describe("motion debug API", () => {
           browserFrameRenderer: async (pkg, options) => {
             const framePath = options.outputPath ?? join(options.outDir, "frame.png");
             framePaths.push(framePath);
-            await mkdir(dirname(framePath), { recursive: true });
+            await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
             await writeFile(framePath, CONTRAST_PNG);
             return {
               ok: true,
@@ -18940,7 +19654,7 @@ describe("motion debug API", () => {
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, `fake ${basename(outputPath)}`, "utf8");
+      await writeFile(outputPath, "fake batch output", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
@@ -19043,8 +19757,8 @@ describe("motion debug API", () => {
         });
         expect(adaManifest).toMatchObject({ id: "pkg_batch_card_ada" });
         expect(graceMotion).toMatchObject({ id: "motion_batch_card_grace", name: "Batch Card Grace", background: "#111827" });
-        expect(await readFile(adaOutputPath, "utf8")).toContain("fake pkg_batch_card_ada.mp4");
-        expect(await readFile(graceOutputPath, "utf8")).toContain("fake pkg_batch_card_grace.mp4");
+        expect(await readFile(adaOutputPath, "utf8")).toBe("fake batch output");
+        expect(await readFile(graceOutputPath, "utf8")).toBe("fake batch output");
         expect(batchReceipt).toMatchObject({
           id: result.receiptId,
           operation: "render.batch",
@@ -19081,7 +19795,7 @@ describe("motion debug API", () => {
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, `fake ${basename(outputPath)}`, "utf8");
+      await writeFile(outputPath, "fake batch output", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     await writeFile(workflowPath, JSON.stringify({
@@ -19252,7 +19966,7 @@ describe("motion debug API", () => {
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, `fake ${basename(outputPath)}`, "utf8");
+      await writeFile(outputPath, "fake batch output", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const secondCalls: FfmpegCommand[] = [];
@@ -19352,14 +20066,14 @@ describe("motion debug API", () => {
         });
       }
       expect(secondCalls).toHaveLength(0);
-      expect(await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).toContain("fake pkg_batch_card_ada.mp4");
-      expect(await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8")).toContain("fake pkg_batch_card_grace.mp4");
+      expect(await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).toBe("fake batch output");
+      expect(await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8")).toBe("fake batch output");
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
   });
 
-  it("re-renders debug batch/data rows on resume when browser workflow evidence changes", async () => {
+  it("refuses changed-workflow batch resume rather than overwrite prior final media", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-batch-resume-workflow-"));
     const workflowA = {
       schema: "shellx-motion/browser-workflow@1" as const,
@@ -19384,7 +20098,7 @@ describe("motion debug API", () => {
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, `first ${basename(outputPath)}`, "utf8");
+      await writeFile(outputPath, "first batch output", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const secondRunner: FfmpegRunner = async (command) => {
@@ -19395,7 +20109,7 @@ describe("motion debug API", () => {
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, `second ${basename(outputPath)}`, "utf8");
+      await writeFile(outputPath, "second batch output", "utf8");
       return { exitCode: 0, stdout: "", stderr: "" };
     };
     const frameRenderer = async (pkg: any, options: any) => {
@@ -19469,42 +20183,11 @@ describe("motion debug API", () => {
       );
 
       expect(first.ok).toBe(true);
-      expect(resumed.ok).toBe(true);
-      if (first.ok && resumed.ok) {
-        const firstJobs = (first.result as { jobs: Array<Record<string, string>> }).jobs;
-        const resumedJobs = (resumed.result as { jobs: Array<Record<string, string>> }).jobs;
-        const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
-        expect(resumed.result).toMatchObject({
-          ok: true,
-          packageId: "pkg_batch_card",
-          dryRun: false,
-          resume: true,
-          resumedRows: 0,
-          renderedRows: 2,
-          jobs: [
-            { rowId: "ada", status: BATCH_STATIC_FIXTURE_STATUS, render: { workflow: { stepCount: 1 } } },
-            { rowId: "grace", status: BATCH_STATIC_FIXTURE_STATUS, render: { workflow: { stepCount: 1 } } }
-          ]
-        });
-        expect(resumedJobs.map((job) => job.idempotencyKey)).not.toEqual(firstJobs.map((job) => job.idempotencyKey));
-        expect(receipt).toMatchObject({
-          operation: "render.batch",
-          status: BATCH_STATIC_FIXTURE_STATUS,
-          output: {
-            resume: true,
-            resumedRows: 0,
-            renderedRows: 2,
-            jobs: [
-              { rowId: "ada", status: BATCH_STATIC_FIXTURE_STATUS },
-              { rowId: "grace", status: BATCH_STATIC_FIXTURE_STATUS }
-            ]
-          }
-        });
-      }
-      expect(secondCalls.filter((call) => call.args.includes("-framerate"))).toHaveLength(2);
-      expect(workflowRequests).toHaveLength(96);
-      expect(await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).toContain("second");
-      expect(await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8")).toContain("second");
+      expect(resumed).toMatchObject({ ok: false, error: { code: "derived_output_exists" } });
+      expect(secondCalls.filter((call) => call.args.includes("-framerate"))).toHaveLength(0);
+      expect(workflowRequests).toHaveLength(48);
+      expect(await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).toBe("first batch output");
+      expect(await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8")).toBe("first batch output");
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
@@ -19532,7 +20215,7 @@ describe("motion debug API", () => {
       }
       if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
       const outputPath = command.args.at(-1) as string;
-      await mkdir(dirname(outputPath), { recursive: true });
+      await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
       if (command.args.includes("-frames:v")) {
         await writeFile(outputPath, CONTRAST_PNG);
       } else {
@@ -19568,7 +20251,7 @@ describe("motion debug API", () => {
           ffmpegRunner: runner,
           browserFrameRenderer: async (pkg, options) => {
             const framePath = options.outputPath ?? join(options.outDir, "frame.png");
-            await mkdir(dirname(framePath), { recursive: true });
+            await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
             await writeFile(framePath, CONTRAST_PNG);
             return {
               ok: true,
@@ -19600,8 +20283,8 @@ describe("motion debug API", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        const adaAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-        const graceAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+        const qualityJobs = (result.result as { jobs: Array<Record<string, unknown>> }).jobs;
+        const [adaAppliedPath, graceAppliedPath] = qualityJobs.map((job) => String(job.qualityManifestAppliedPath));
         const batchReceiptPath = join(outDir, "receipts", "batch-render.receipt.json");
         const adaApplied = JSON.parse(await readFile(adaAppliedPath, "utf8"));
         const graceApplied = JSON.parse(await readFile(graceAppliedPath, "utf8"));
@@ -19665,21 +20348,20 @@ describe("motion debug API", () => {
           }
         });
       }
-      const qualityFramePaths = [
-        join(outDir, "receipts", "quality", "pkg_batch_card_ada", "pkg_batch_card_ada-ada-sample-frame.png"),
-        join(outDir, "receipts", "quality", "pkg_batch_card_grace", "pkg_batch_card_grace-grace-sample-frame.png")
-      ];
       const extractedFramePaths = calls
         .filter((call) => call.args.includes("-frames:v"))
         .map((call) => call.args.at(-1));
-      // Two ffprobe reads per rendered row, in order: the delivered-colour readback the encode now
-      // performs (`verifyDeliveredColor`, default-on under the current contract), then the quality-check probe.
-      // Both name the same delivered file, so the pair is asserted by the paths read rather than by a
-      // count — a count would accept any second subprocess reading anything.
-      const [adaMedia, graceMedia] = ["ada", "grace"].map((row) => join(outDir, "render", `pkg_batch_card_${row}.mp4`));
-      expect(calls.filter((call) => call.executable.includes("ffprobe")).map((call) => call.args.at(-1)))
-        .toEqual([adaMedia, adaMedia, graceMedia, graceMedia]);
-      expect(extractedFramePaths).toEqual(expect.arrayContaining(qualityFramePaths));
+      // Verify/readback must see the private stages before their verified public publication.
+      const mediaReadbacks = calls.filter((call) => call.executable.includes("ffprobe") && call.args.at(-1) !== "-version").map((call) => call.args.at(-1));
+      expect(mediaReadbacks).toHaveLength(4);
+      const publicationStages = mediaReadbacks.filter((path) => path?.startsWith(`${join(outDir, "render")}/.shellx-motion-final-`) && path.endsWith(".mp4"));
+      const snapshots = mediaReadbacks.filter((path) => path?.startsWith(join(tmpdir(), "shellx-motion-ffmpeg-media-")) && path.endsWith(".mp4"));
+      expect(publicationStages).toHaveLength(2);
+      expect(snapshots).toHaveLength(2);
+      expect(new Set(publicationStages).size).toBe(2);
+      expect(new Set(snapshots).size).toBe(2);
+      const qualityFrames = extractedFramePaths.filter((path) => path?.includes("/receipts/quality/"));
+      expect(qualityFrames).toEqual([join(outDir, "receipts", "quality", "pkg_batch_card_ada", "pkg_batch_card_ada-ada-sample-frame.png"), join(outDir, "receipts", "quality", "pkg_batch_card_grace", "pkg_batch_card_grace-grace-sample-frame.png")]);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -19724,7 +20406,7 @@ describe("motion debug API", () => {
           browserFrameRenderer: async (pkg, options) => {
             const framePath = options.outputPath ?? join(options.outDir, "frame.png");
             framePaths.push(framePath);
-            await mkdir(dirname(framePath), { recursive: true });
+            await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
             await writeFile(framePath, CONTRAST_PNG);
             return {
               ok: true,
@@ -19758,8 +20440,8 @@ describe("motion debug API", () => {
       if (result.ok) {
         const adaOutputPath = join(outDir, "render", "pkg_batch_card_ada.png");
         const graceOutputPath = join(outDir, "render", "pkg_batch_card_grace.png");
-        const adaAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-        const graceAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+        const qualityJobs = (result.result as { jobs: Array<Record<string, unknown>> }).jobs;
+        const [adaAppliedPath, graceAppliedPath] = qualityJobs.map((job) => String(job.qualityManifestAppliedPath));
         const batchReceipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
         expect(result.result).toMatchObject({
           ok: true,
@@ -19802,10 +20484,7 @@ describe("motion debug API", () => {
           }
         });
       }
-      expect(framePaths).toEqual([
-        join(outDir, "render", "pkg_batch_card_ada.png"),
-        join(outDir, "render", "pkg_batch_card_grace.png")
-      ]);
+      expect(framePaths).toHaveLength(2); expect(framePaths.every((path) => path.startsWith(`${join(outDir, "render")}/.shellx-motion-final-`) && path.endsWith(".png"))).toBe(true);
       expect(calls).toHaveLength(0);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -19851,7 +20530,7 @@ describe("motion debug API", () => {
           browserFrameRenderer: async (pkg, options) => {
             const framePath = options.outputPath ?? join(options.outDir, "frame.png");
             framePaths.push(framePath);
-            await mkdir(dirname(framePath), { recursive: true });
+            await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
             await writeFile(framePath, CONTRAST_PNG);
             return {
               ok: true,
@@ -19887,8 +20566,8 @@ describe("motion debug API", () => {
         const graceOutputPath = join(outDir, "render", "pkg_batch_card_grace");
         const adaSampleFrame = join(adaOutputPath, "000002.png");
         const graceSampleFrame = join(graceOutputPath, "000002.png");
-        const adaAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-        const graceAppliedPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+        const qualityJobs = (result.result as { jobs: Array<Record<string, unknown>> }).jobs;
+        const [adaAppliedPath, graceAppliedPath] = qualityJobs.map((job) => String(job.qualityManifestAppliedPath));
         const batchReceipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
         expect(result.result).toMatchObject({
           ok: true,
@@ -19931,8 +20610,7 @@ describe("motion debug API", () => {
           }
         });
       }
-      expect(framePaths).toContain(join(outDir, "render", "pkg_batch_card_ada", "000002.png"));
-      expect(framePaths).toContain(join(outDir, "render", "pkg_batch_card_grace", "000002.png"));
+      expect(framePaths.filter((path) => path.endsWith("/000002.png") && path.includes("/.shellx-motion-final-")).length).toBe(2);
       expect(calls).toHaveLength(0);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -21340,14 +22018,17 @@ describe("motion debug API", () => {
   });
 
   it("replaces TemplateIR media slots through the debug API with copied asset and receipt evidence", async () => {
-    const packageRoot = await writeDebugTemplateMediaPackage();
-    const sourceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-source-"));
+    const fixtureRoot = await writeDebugTemplateMediaPackage();
+    const testRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-"));
+    const packageRoot = join(testRoot, "package");
+    const sourceRoot = join(testRoot, "source");
     const sourceAssetPath = join(sourceRoot, "headshot.png");
+    await Promise.all([cp(fixtureRoot, packageRoot, { recursive: true }), mkdir(sourceRoot, { mode: 0o700 })]);
     await writeFile(sourceAssetPath, "replacement image", "utf8");
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-"));
+    const outDir = join(testRoot, "output");
     const receiptsRoot = join(outDir, "host-receipts");
     try {
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(testRoot), async () => await dispatchDebugCommand(
         "motion.template.media.replace",
         {
           packageRoot,
@@ -21358,10 +22039,14 @@ describe("motion debug API", () => {
           assetRef: "assets/headshot.png",
           createdBy: "codex-test"
         },
-        { tier: "edit_motion" }
-      );
+        {
+          tier: "edit_motion",
+          authoringInputRoots: [dirname(packageRoot), sourceRoot],
+          authoringOutputRoots: [dirname(outDir)],
+        }
+      ));
 
-      expect(result.ok).toBe(true);
+      expect(result).toMatchObject({ ok: true });
       if (result.ok) {
         const patchedManifestPath = join(outDir, "manifest.json");
         const patchedMotionPath = join(outDir, "motion.json");
@@ -21438,23 +22123,29 @@ describe("motion debug API", () => {
         expect(hostReceipt).toEqual(receipt);
       }
     } finally {
-      await rm(packageRoot, { recursive: true, force: true });
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(fixtureRoot, { recursive: true, force: true });
+      await rm(testRoot, { recursive: true, force: true });
     }
   });
 
   it("refuses TemplateIR media replacement output dirs that already contain files", async () => {
-    const packageRoot = await writeDebugTemplateMediaPackage();
-    const sourceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-non-empty-source-"));
+    const fixtureRoot = await writeDebugTemplateMediaPackage();
+    const testRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-non-empty-"));
+    const packageRoot = join(testRoot, "package");
+    const sourceRoot = join(testRoot, "source");
     const sourceAssetPath = join(sourceRoot, "headshot.png");
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-non-empty-"));
+    const outDir = join(testRoot, "output");
     const sentinelPath = join(outDir, "keep.txt");
     try {
+      await Promise.all([
+        cp(fixtureRoot, packageRoot, { recursive: true }),
+        mkdir(sourceRoot, { mode: 0o700 }),
+        mkdir(outDir, { mode: 0o700 }),
+      ]);
       await writeFile(sourceAssetPath, "replacement image", "utf8");
       await writeFile(sentinelPath, "do not delete", "utf8");
 
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(testRoot), async () => await dispatchDebugCommand(
         "motion.template.media.replace",
         {
           packageRoot,
@@ -21463,8 +22154,12 @@ describe("motion debug API", () => {
           assetPath: sourceAssetPath,
           assetRef: "assets/headshot.png"
         },
-        { tier: "edit_motion" }
-      );
+        {
+          tier: "edit_motion",
+          authoringInputRoots: [dirname(packageRoot), sourceRoot],
+          authoringOutputRoots: [dirname(outDir)],
+        }
+      ));
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -21473,23 +22168,29 @@ describe("motion debug API", () => {
       }
       expect(await readFile(sentinelPath, "utf8")).toBe("do not delete");
     } finally {
-      await rm(packageRoot, { recursive: true, force: true });
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(fixtureRoot, { recursive: true, force: true });
+      await rm(testRoot, { recursive: true, force: true });
     }
   });
 
   it("rejects symlinked TemplateIR replacement assets without installing a package", async () => {
     if (process.platform === "win32") return;
-    const packageRoot = await writeDebugTemplateMediaPackage();
-    const sourceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-symlink-source-"));
+    const fixtureRoot = await writeDebugTemplateMediaPackage();
+    const testRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-symlink-output-"));
+    const packageRoot = join(testRoot, "package");
+    const sourceRoot = join(testRoot, "source");
     const sourceAssetPath = join(sourceRoot, "headshot.png");
     const linkedAssetPath = join(sourceRoot, "linked-headshot.png");
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-symlink-output-"));
+    const outDir = join(testRoot, "output");
     try {
+      await Promise.all([
+        cp(fixtureRoot, packageRoot, { recursive: true }),
+        mkdir(sourceRoot, { mode: 0o700 }),
+        mkdir(outDir, { mode: 0o700 }),
+      ]);
       await writeFile(sourceAssetPath, "replacement image", "utf8");
       await symlink(sourceAssetPath, linkedAssetPath, "file");
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(testRoot), async () => await dispatchDebugCommand(
         "motion.template.media.replace",
         {
           packageRoot,
@@ -21498,25 +22199,35 @@ describe("motion debug API", () => {
           assetPath: linkedAssetPath,
           assetRef: "assets/headshot.png"
         },
-        { tier: "edit_motion" }
-      );
+        {
+          tier: "edit_motion",
+          authoringInputRoots: [dirname(packageRoot), sourceRoot],
+          authoringOutputRoots: [dirname(outDir)],
+        }
+      ));
       expect(result).toMatchObject({ ok: false, error: { code: "template_media_replace_failed" } });
       expect(await readdir(outDir)).toEqual([]);
     } finally {
-      await rm(packageRoot, { recursive: true, force: true });
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(fixtureRoot, { recursive: true, force: true });
+      await rm(testRoot, { recursive: true, force: true });
     }
   });
 
   it("confines TemplateIR replacement assets to the staged assets directory", async () => {
-    const packageRoot = await writeDebugTemplateMediaPackage();
-    const sourceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-target-source-"));
+    const fixtureRoot = await writeDebugTemplateMediaPackage();
+    const testRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-target-output-"));
+    const packageRoot = join(testRoot, "package");
+    const sourceRoot = join(testRoot, "source");
     const sourceAssetPath = join(sourceRoot, "headshot.png");
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-target-output-"));
+    const outDir = join(testRoot, "output");
     try {
+      await Promise.all([
+        cp(fixtureRoot, packageRoot, { recursive: true }),
+        mkdir(sourceRoot, { mode: 0o700 }),
+        mkdir(outDir, { mode: 0o700 }),
+      ]);
       await writeFile(sourceAssetPath, "replacement image", "utf8");
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(testRoot), async () => await dispatchDebugCommand(
         "motion.template.media.replace",
         {
           packageRoot,
@@ -21525,14 +22236,17 @@ describe("motion debug API", () => {
           assetPath: sourceAssetPath,
           assetRef: "manifest.json"
         },
-        { tier: "edit_motion" }
-      );
+        {
+          tier: "edit_motion",
+          authoringInputRoots: [dirname(packageRoot), sourceRoot],
+          authoringOutputRoots: [dirname(outDir)],
+        }
+      ));
       expect(result).toMatchObject({ ok: false, error: { code: "template_media_replace_failed" } });
       expect(await readdir(outDir)).toEqual([]);
     } finally {
-      await rm(packageRoot, { recursive: true, force: true });
-      await rm(sourceRoot, { recursive: true, force: true });
-      await rm(outDir, { recursive: true, force: true });
+      await rm(fixtureRoot, { recursive: true, force: true });
+      await rm(testRoot, { recursive: true, force: true });
     }
   });
 
@@ -21550,7 +22264,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("runs Template-to-Cut through the debug API", async () => {
+  it("refuses non-rendered Template-to-Cut requests through the debug API before delivery", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-to-cut-"));
     try {
       const result = await dispatchDebugCommand(
@@ -21559,7 +22273,6 @@ describe("motion debug API", () => {
           packageRoot: "../../fixtures/cut-native-static-package",
           outDir,
           cutImportMode: "editable_lowering",
-          dryRunRender: true,
           values: {
             title: "Debug Template",
             accentColor: "#ff006e"
@@ -21568,77 +22281,14 @@ describe("motion debug API", () => {
         { tier: "write_local" }
       );
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.receiptId).toMatch(/^connector-template-cut-/);
-        expect(result.visibleState).toMatchObject({
-          panel: "receipts",
-          operation: "connector.template_to_cut",
-          ok: true,
-          cutPlanPath: join(outDir, "cut-import-plan.json"),
-          receiptPath: join(outDir, "connector-run.receipt.json")
-        });
-        expect(result.result).toMatchObject({
-          ok: true,
-          template: {
-            changedParams: ["title", "accentColor"]
-          },
-          render: {
-            required: false,
-            dryRun: true
-          },
-          cutPlanPath: join(outDir, "cut-import-plan.json"),
-          receiptPath: join(outDir, "connector-run.receipt.json")
-        });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatchObject({ code: "invalid_args", message: expect.stringContaining("only cutImportMode rendered_media") });
       }
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }
   });
-
-  it("defaults Template-to-Cut debug connectors to real renders with injected FFmpeg runners", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-to-cut-real-"));
-    const sourcePackage = await writeShortEditableLowerThirdTemplatePackage(outDir);
-    const commands: FfmpegCommand[] = [];
-    const runner: FfmpegRunner = async (command) => {
-      // Hardware-encode probe (default on) + health check are not encode commands: skip before counting.
-      if (command.args.includes("-version")) return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
-      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
-      commands.push(command);
-      // The delivered-colour readback READS the staged artifact; answering it as an encode
-      // would rewrite the file it was asked to inspect. See ./ffprobe-readback.test-support.
-      if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-      await writeFile(command.args.at(-1) as string, fakeMp4Bytes("debug template"));
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
-    try {
-      const result = await dispatchDebugCommand(
-        "motion.connector.template_to_cut",
-        {
-          packageRoot: sourcePackage,
-          outDir,
-          cutImportMode: "rendered_media",
-          values: { title: "Debug Rendered Template" }
-        },
-        { tier: "write_local", ffmpegRunner: runner }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const connectorResult = result.result as { render: { dryRun: boolean; frameLane?: string; outputPath: string } };
-        expect(connectorResult.render).toMatchObject({
-          dryRun: false,
-          frameLane: "browser",
-          outputPath: join(outDir, "render", "pkg_editable_lower_third.mp4")
-        });
-        expectEncodeThenColorReadback(commands, { executable: resolveFfmpegExecutable(), encodeArgs: ["-frames:v", "2"] });
-        expect(await readFile(connectorResult.render.outputPath)).toEqual(fakeMp4Bytes("debug template"));
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  }, 120_000);
 
   it("exports a Canvas bridge frame selection through the debug API", async () => {
     const canvasRoot = await writeCanvasBridgeRoot();
@@ -21730,19 +22380,23 @@ describe("motion debug API", () => {
     }
   });
 
-  it("runs Canvas-to-MP4 through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-mp4-"));
+  itLinux("runs Canvas-to-MP4 through the debug API", async () => {
+    const root = await mkdtemp("/dev/shm/shellx-motion-debug-canvas-mp4-");
+    const outDir = join(root, "out");
+    const canvasSelectionPath = join(root, "input", "frame-selection.json");
     const receiptsRoot = join(outDir, "host-receipts");
     try {
-      const result = await dispatchDebugCommand(
+      await mkdir(dirname(canvasSelectionPath), { recursive: true, mode: 0o700 });
+      await cp(resolve("../../fixtures/canvas/shape-text-frame-selection.json"), canvasSelectionPath);
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => await dispatchDebugCommand(
         "motion.connector.canvas_to_mp4",
         {
-          canvasSelectionPath: "../../fixtures/canvas/shape-text-frame-selection.json",
+          canvasSelectionPath,
           outDir,
           dryRunRender: true
         },
-        { tier: "render_motion", receiptsRoot }
-      );
+        { tier: "write_local", receiptsRoot }
+      ));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -21780,28 +22434,30 @@ describe("motion debug API", () => {
         });
       }
     } finally {
-      await rm(outDir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("surfaces failed Canvas-to-MP4 connector receipts through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-mp4-failed-"));
+  itLinux("surfaces failed Canvas-to-MP4 connector receipts through the debug API", async () => {
+    const root = await mkdtemp("/dev/shm/shellx-motion-debug-canvas-mp4-failed-");
+    const outDir = join(root, "out");
     const canvasSelectionPath = join(outDir, "frame-selection.json");
     const receiptsRoot = join(outDir, "host-receipts");
     try {
+      await mkdir(outDir, { recursive: true, mode: 0o700 });
       await writeFile(canvasSelectionPath, JSON.stringify(animatedCanvasSelectionFixture(), null, 2), "utf8");
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => await dispatchDebugCommand(
         "motion.connector.canvas_to_mp4",
         {
           canvasSelectionPath,
           outDir
         },
         {
-          tier: "render_motion",
+          tier: "write_local",
           receiptsRoot,
-          ffmpegRunner: async () => ({ exitCode: 1, stdout: "", stderr: "encoder exploded" })
+          streamingFinalRenderer: debugConnectorStreamingFailureRenderer("ffmpeg_failed", "encoder exploded")
         }
-      );
+      ));
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -21833,148 +22489,64 @@ describe("motion debug API", () => {
           hostReceiptPath,
           warnings: ["encoder exploded"]
         });
+        const renderReceipt = JSON.parse(await readFile(join(outDir, "receipts", "ffmpeg-render.receipt.json"), "utf8")) as Record<string, any>;
+        expect(renderReceipt.output).toMatchObject({
+          frameTransportPlan: { delivery: "streamed", reason: "stream_default" },
+          error: { code: "ffmpeg_failed", message: "encoder exploded", stagingOutputRemoved: true }
+        });
+        await expect(readdir(join(outDir, "frames"))).rejects.toMatchObject({ code: "ENOENT" });
       }
     } finally {
-      await rm(outDir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("defaults Canvas-to-MP4 debug connectors to real renders with injected FFmpeg runners", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-mp4-real-"));
+  itLinux("defaults Canvas-to-MP4 debug connectors to real streamed renders through the host seam", async () => {
+    const root = await mkdtemp("/dev/shm/shellx-motion-debug-canvas-mp4-real-");
+    const outDir = join(root, "out");
     const canvasSelectionPath = join(outDir, "frame-selection.json");
-    const commands: FfmpegCommand[] = [];
-    const runner: FfmpegRunner = async (command) => {
-      // Hardware-encode probe (default on) + health check are not encode commands: skip before counting.
-      if (command.args.includes("-version")) return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
-      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
-      commands.push(command);
-      // The delivered-colour readback READS the staged artifact; answering it as an encode
-      // would rewrite the file it was asked to inspect. See ./ffprobe-readback.test-support.
-      if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-      await writeFile(command.args.at(-1) as string, fakeMp4Bytes("debug canvas"));
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
+    const streamed = debugConnectorStreamingRenderer("debug canvas");
+    const colorReadback = debugConnectorDeliveredColorRunner();
 
     try {
+      await mkdir(outDir, { recursive: true, mode: 0o700 });
       await writeFile(canvasSelectionPath, JSON.stringify(animatedCanvasSelectionFixture(), null, 2), "utf8");
-      const result = await dispatchDebugCommand(
+      const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => await dispatchDebugCommand(
         "motion.connector.canvas_to_mp4",
         {
           canvasSelectionPath,
           outDir
         },
-        { tier: "render_motion", ffmpegRunner: runner }
-      );
+        { tier: "write_local", streamingFinalRenderer: streamed.render, ffmpegRunner: colorReadback.runner }
+      ));
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        const connectorResult = result.result as { render: { dryRun: boolean; frameLane?: string; outputPath: string } };
+        const connectorResult = result.result as { render: { dryRun: boolean; frameLane?: string; outputPath: string; receiptPath: string } };
         expect(connectorResult.render).toMatchObject({
           dryRun: false,
           frameLane: "browser",
           outputPath: join(outDir, "render", "pkg_canvas_motion_export_frame_intro.mp4")
         });
-        expectEncodeThenColorReadback(commands, { executable: resolveFfmpegExecutable() });
+        expect(streamed.calls).toEqual([
+          expect.objectContaining({ frameLane: "browser", quality: { minUniqueFrameHashes: 2 }, transport: { delivery: "streamed", reason: "stream_default" } })
+        ]);
         expect(await readFile(connectorResult.render.outputPath)).toEqual(fakeMp4Bytes("debug canvas"));
+        await expectDebugConnectorStreamedReceipt(connectorResult.render.receiptPath, outDir, { minUniqueFrameHashes: 2 });
+        expectDebugConnectorDeliveredColorReadback(colorReadback.commands, streamed.calls[0]!.outputPath);
       }
     } finally {
-      await rm(outDir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   }, 60_000);
 
-  it("runs Canvas-to-Cut through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-cut-"));
-    try {
-      const result = await dispatchDebugCommand(
-        "motion.connector.canvas_to_cut",
-        {
-          canvasSelectionPath: "../../fixtures/canvas/shape-text-frame-selection.json",
-          outDir,
-          cutImportMode: "rendered_media",
-          dryRunRender: true
-        },
-        { tier: "write_local" }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.receiptId).toMatch(/^connector-canvas-cut-/);
-        expect(result.visibleState).toMatchObject({
-          panel: "receipts",
-          operation: "connector.canvas_to_cut",
-          ok: true,
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json")
-        });
-        expect(result.result).toMatchObject({
-          ok: true,
-          packageDir: expect.stringContaining(outDir),
-          render: {
-            ok: true,
-            required: true,
-            dryRun: true,
-            lane: "ffmpeg",
-            outputPath: expect.stringContaining("pkg_canvas_motion_export_frame_intro.mp4")
-          },
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json"),
-          artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "canvas_selection", status: "available" }),
-            expect.objectContaining({ role: "motion_package", status: "available" }),
-            expect.objectContaining({ role: "rendered_media", status: "planned", primary: true }),
-            expect.objectContaining({ role: "cut_plan", status: "available" }),
-            expect.objectContaining({ role: "connector_receipt", status: "available" })
-          ])
-        });
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
+  it.runIf(process.platform === "darwin")("refuses Canvas-to-MP4 on macOS before connector output or staging", async () => {
+    await expectCanvasMp4ClosedTreeRefusal();
   });
 
-  it("defaults Canvas-to-Cut debug connectors to real renders with injected FFmpeg runners", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-cut-real-"));
-    const canvasSelectionPath = join(outDir, "frame-selection.json");
-    const commands: FfmpegCommand[] = [];
-    const runner: FfmpegRunner = async (command) => {
-      // Hardware-encode probe (default on) + health check are not encode commands: skip before counting.
-      if (command.args.includes("-version")) return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
-      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
-      commands.push(command);
-      // The delivered-colour readback READS the staged artifact; answering it as an encode
-      // would rewrite the file it was asked to inspect. See ./ffprobe-readback.test-support.
-      if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-      await writeFile(command.args.at(-1) as string, fakeMp4Bytes("debug canvas cut"));
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
-    try {
-      await writeFile(canvasSelectionPath, JSON.stringify(animatedCanvasSelectionFixture(), null, 2), "utf8");
-      const result = await dispatchDebugCommand(
-        "motion.connector.canvas_to_cut",
-        {
-          canvasSelectionPath,
-          outDir,
-          cutImportMode: "rendered_media"
-        },
-        { tier: "write_local", ffmpegRunner: runner }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const connectorResult = result.result as { render: { dryRun: boolean; frameLane?: string; outputPath: string } };
-        expect(connectorResult.render).toMatchObject({
-          dryRun: false,
-          frameLane: "browser",
-          outputPath: join(outDir, "render", "pkg_canvas_motion_export_frame_intro.mp4")
-        });
-        expectEncodeThenColorReadback(commands, { executable: resolveFfmpegExecutable() });
-        expect(await readFile(connectorResult.render.outputPath)).toEqual(fakeMp4Bytes("debug canvas cut"));
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  }, 60_000);
+  it.runIf(process.platform === "win32")("refuses Canvas-to-MP4 on Windows before connector output or staging", async () => {
+    await expectCanvasMp4ClosedTreeRefusal();
+  });
 
   it("refuses Canvas-to-Cut with an unsupported import mode", async () => {
     const result = await dispatchDebugCommand(
@@ -21990,11 +22562,11 @@ describe("motion debug API", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("invalid_args");
-      expect(result.error.message).toBe("Unsupported Cut import mode: timeline_magic.");
+      expect(result.error.message).toBe("motion.connector.canvas_to_cut P2B accepts only cutImportMode rendered_media.");
     }
   });
 
-  it("runs Cut Generate scripted-video JSON to Cut through the debug API", async () => {
+  itLinux("runs Cut Generate scripted-video JSON to Cut through the debug API", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-cut-generate-"));
     try {
       const result = await dispatchDebugCommand(
@@ -22016,7 +22588,7 @@ describe("motion debug API", () => {
           panel: "receipts",
           operation: "connector.cut_generate_to_cut",
           ok: true,
-          scriptPath: expect.stringContaining("scripted-video.json"),
+          scriptInput: "inline",
           packageDir: expect.stringContaining(join(outDir, "package")),
           previewFramePath: expect.stringContaining("native-0.png"),
           renderedMediaPath: expect.stringContaining("pkg_script_launch_demo.mp4"),
@@ -22037,7 +22609,6 @@ describe("motion debug API", () => {
           cutPlanPath: expect.stringContaining("cut-import-plan.json"),
           receiptPath: expect.stringContaining("connector-run.receipt.json"),
           artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "scripted_video", status: "available" }),
             expect.objectContaining({ role: "motion_package", status: "available" }),
             expect.objectContaining({ role: "rendered_media", status: "planned", primary: true }),
             expect.objectContaining({ role: "cut_plan", status: "available" }),
@@ -22048,13 +22619,13 @@ describe("motion debug API", () => {
             "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_hook_body: howtenrkfl."
           ]
         });
-        const connectorResult = result.result as { receiptPath: string; scriptPath: string };
+        const connectorResult = result.result as { receiptPath: string; scriptInput: string };
         const receipt = JSON.parse(await readFile(connectorResult.receiptPath, "utf8")) as Record<string, unknown>;
         expect(receipt).toMatchObject({
           id: result.receiptId,
           operation: "connector.cut_generate_to_cut",
           output: {
-            script: { path: connectorResult.scriptPath },
+            script: { path: "inline-scripted-video.json" },
             cut: { ok: true, mode: "rendered_media" },
             render: { ok: true, dryRun: true }
           }
@@ -22065,256 +22636,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("runs Script-to-Cut scripted-video JSON through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-script-cut-"));
-    try {
-      const result = await dispatchDebugCommand(
-        "motion.connector.script_to_cut",
-        {
-          script: scriptedVideo(),
-          outDir,
-          cutImportMode: "rendered_media",
-          dryRunRender: true,
-          createdAt: "2026-07-01T00:00:00.000Z"
-        },
-        { tier: "write_local" }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.receiptId).toMatch(/^connector-script-cut-/);
-        expect(result.visibleState).toMatchObject({
-          panel: "receipts",
-          operation: "connector.script_to_cut",
-          ok: true,
-          scriptPath: expect.stringContaining("scripted-video.json"),
-          packageDir: expect.stringContaining(join(outDir, "package")),
-          previewFramePath: expect.stringContaining("native-0.png"),
-          renderedMediaPath: expect.stringContaining("pkg_script_launch_demo.mp4"),
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json")
-        });
-        expect(result.result).toMatchObject({
-          ok: true,
-          packageDir: expect.stringContaining(outDir),
-          preview: { ok: true, lane: "native" },
-          render: {
-            ok: true,
-            required: true,
-            dryRun: true,
-            lane: "ffmpeg",
-            outputPath: expect.stringContaining("pkg_script_launch_demo.mp4")
-          },
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json"),
-          artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "scripted_video", status: "available" }),
-            expect.objectContaining({ role: "motion_package", status: "available" }),
-            expect.objectContaining({ role: "rendered_media", status: "planned", primary: true }),
-            expect.objectContaining({ role: "cut_plan", status: "available" }),
-            expect.objectContaining({ role: "connector_receipt", status: "available" })
-          ]),
-          warnings: [
-            "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_hook_title: ok.",
-            "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_hook_body: howtenrkfl."
-          ]
-        });
-        const connectorResult = result.result as { receiptPath: string; scriptPath: string };
-        const receipt = JSON.parse(await readFile(connectorResult.receiptPath, "utf8")) as Record<string, unknown>;
-        expect(receipt).toMatchObject({
-          id: result.receiptId,
-          operation: "connector.script_to_cut",
-          output: {
-            script: { path: connectorResult.scriptPath },
-            cut: { ok: true, mode: "rendered_media" },
-            render: { ok: true, dryRun: true }
-          }
-        });
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  });
-
-  it("runs Source-to-Cut imported Markdown through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-source-cut-"));
-    const sourcePath = join(outDir, "source.md");
-    try {
-      await writeFile(sourcePath, importedSourceMarkdown(), "utf8");
-      const result = await dispatchDebugCommand(
-        "motion.connector.source_to_cut",
-        {
-          sourcePath,
-          outDir,
-          maxFrames: 2,
-          frameDurationMs: 900,
-          width: 640,
-          height: 360,
-          cutImportMode: "rendered_media",
-          dryRunRender: true,
-          createdAt: "2026-07-04T12:00:00.000Z"
-        },
-        { tier: "write_local" }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.receiptId).toMatch(/^connector-source-cut-/);
-        expect(result.visibleState).toMatchObject({
-          panel: "receipts",
-          operation: "connector.source_to_cut",
-          ok: true,
-          sourcePath,
-          scriptPath: expect.stringContaining("scripted-video.json"),
-          packageDir: expect.stringContaining(join(outDir, "cut", "package")),
-          previewFramePath: expect.stringContaining("native-0.png"),
-          renderedMediaPath: expect.stringContaining("pkg_script_source_html_video_reference_workflow.mp4"),
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("source-to-cut.receipt.json")
-        });
-        expect(result.result).toMatchObject({
-          ok: true,
-          source: {
-            path: sourcePath,
-            url: "https://github.com/nexu-io/html-video",
-            kind: "repo"
-          },
-          storyboard: {
-            frameCount: 2,
-            reviewRequired: true,
-            scriptPath: expect.stringContaining("scripted-video.json")
-          },
-          render: {
-            ok: true,
-            required: true,
-            dryRun: true,
-            lane: "ffmpeg",
-            outputPath: expect.stringContaining("pkg_script_source_html_video_reference_workflow.mp4")
-          },
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("source-to-cut.receipt.json"),
-          artifacts: expect.arrayContaining([
-            expect.objectContaining({ role: "source_markdown", status: "available", primary: true }),
-            expect.objectContaining({ role: "scripted_video", status: "available" }),
-            expect.objectContaining({ role: "motion_package", status: "available" }),
-            expect.objectContaining({ role: "rendered_media", status: "planned", primary: true }),
-            expect.objectContaining({ role: "cut_plan", status: "available" }),
-            expect.objectContaining({ role: "source_to_cut_receipt", status: "available" })
-          ]),
-          warnings: [
-            "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_title: videowrkfls.",
-            "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_body: herfncpojtdmsauiv.",
-            "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_caption: ourcegithbm."
-          ]
-        });
-        const connectorResult = result.result as { receiptPath: string };
-        const receipt = JSON.parse(await readFile(connectorResult.receiptPath, "utf8")) as Record<string, unknown>;
-        expect(receipt).toMatchObject({
-          id: result.receiptId,
-          operation: "connector.source_to_cut",
-          output: {
-            source: { path: sourcePath, kind: "repo" },
-            storyboard: { frameCount: 2, reviewRequired: true },
-            cut: { ok: true, mode: "rendered_media" },
-            render: { ok: true, dryRun: true }
-          }
-        });
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  });
-
-  it("defaults Script-to-Cut debug connectors to real renders with injected FFmpeg runners", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-script-cut-real-"));
-    const commands: FfmpegCommand[] = [];
-    const runner: FfmpegRunner = async (command) => {
-      // Hardware-encode probe (default on) + health check are not encode commands: skip before counting.
-      if (command.args.includes("-version")) return { exitCode: 0, stdout: "ffmpeg version test", stderr: "" };
-      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
-      commands.push(command);
-      // The delivered-colour readback READS the staged artifact; answering it as an encode
-      // would rewrite the file it was asked to inspect. See ./ffprobe-readback.test-support.
-      if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-      await writeFile(command.args.at(-1) as string, fakeMp4Bytes("debug script cut"));
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
-    try {
-      const result = await dispatchDebugCommand(
-        "motion.connector.script_to_cut",
-        {
-          script: {
-            ...scriptedVideo(),
-            fps: 2
-          },
-          outDir,
-          cutImportMode: "rendered_media",
-          createdAt: "2026-07-01T00:00:00.000Z"
-        },
-        { tier: "write_local", ffmpegRunner: runner }
-      );
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        const connectorResult = result.result as { render: { dryRun: boolean; frameLane?: string; outputPath: string } };
-        expect(connectorResult.render).toMatchObject({
-          dryRun: false,
-          frameLane: "browser",
-          outputPath: join(outDir, "render", "pkg_script_launch_demo.mp4")
-        });
-        expectEncodeThenColorReadback(commands, { executable: resolveFfmpegExecutable() });
-        expect(await readFile(connectorResult.render.outputPath)).toEqual(fakeMp4Bytes("debug script cut"));
-      }
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  }, 60_000);
-
-  it("surfaces failed Script-to-Cut connector receipts through the debug API", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-script-cut-failed-"));
-    try {
-      const result = await dispatchDebugCommand(
-        "motion.connector.script_to_cut",
-        {
-          script: previewFailingScriptedVideo(),
-          outDir,
-          cutImportMode: "rendered_media",
-          dryRunRender: true,
-          createdAt: "2026-07-03T12:45:00.000Z"
-        },
-        { tier: "write_local" }
-      );
-
-      expect(result).toMatchObject({
-        ok: false,
-        receiptId: expect.stringMatching(/^connector-script-cut-/),
-        error: {
-          code: "connector_failed",
-          message: expect.stringContaining("motion.connector.script_to_cut")
-        },
-        visibleState: {
-          panel: "receipts",
-          operation: "connector.script_to_cut",
-          ok: false,
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json")
-        },
-        result: {
-          ok: false,
-          preview: { ok: false, lane: "native", failureFatal: true },
-          render: { ok: true, required: true, dryRun: true },
-          cutPlanPath: expect.stringContaining("cut-import-plan.json"),
-          receiptPath: expect.stringContaining("connector-run.receipt.json")
-        },
-        warnings: expect.arrayContaining([expect.stringContaining("Unsupported color format")])
-      });
-    } finally {
-      await rm(outDir, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses Cut Generate scripted-video with an unsupported import mode", async () => {
+  itLinux("refuses Cut Generate scripted-video with an unsupported import mode", async () => {
     const result = await dispatchDebugCommand(
       "motion.connector.cut_generate_to_cut",
       {
@@ -22332,6 +22654,14 @@ describe("motion debug API", () => {
     }
   });
 
+  it.runIf(process.platform === "darwin")("refuses Cut Generate-to-Cut on macOS before connector output or staging", async () => {
+    await expectCutGenerateClosedTreeRefusal();
+  });
+
+  it.runIf(process.platform === "win32")("refuses Cut Generate-to-Cut on Windows before connector output or staging", async () => {
+    await expectCutGenerateClosedTreeRefusal();
+  });
+
   it("refuses Script-to-Cut scripted-video with an unsupported import mode", async () => {
     const result = await dispatchDebugCommand(
       "motion.connector.script_to_cut",
@@ -22346,12 +22676,81 @@ describe("motion debug API", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("invalid_args");
-      expect(result.error.message).toBe("Unsupported Cut import mode: timeline_magic.");
+      expect(result.error.message).toBe("motion.connector.script_to_cut P2B accepts only cutImportMode rendered_media.");
     }
   });
 
-  it("packages a Canvas frame through the debug API with receipt and resource catalog evidence", async () => {
+  itLinux("packages an asset-free Canvas frame through the debug API with receipt and resource catalog evidence", async () => {
     const packageDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-package-"));
+    try {
+      const result = await dispatchDebugCommand(
+        "motion.canvas.package",
+        {
+          canvasSelectionPath: "../../fixtures/canvas/shape-text-frame-selection.json",
+          packageDir,
+          createdAt: "2026-07-01T00:00:00.000Z"
+        },
+        { tier: "write_local" }
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.receiptId).toBe("receipt_canvas_export_frame_intro");
+        expect(result.visibleState).toEqual({
+          panel: "receipts",
+          operation: "canvas.package",
+          packageId: "pkg_canvas_motion_export_frame_intro",
+          packageDir,
+          resourceCatalogPath: join(packageDir, "resource-catalog.json")
+        });
+        expect(result.result).toMatchObject({
+          ok: true,
+          packageId: "pkg_canvas_motion_export_frame_intro",
+          motionId: "motion_canvas_frame_intro",
+          selectedFrameId: "frame_intro",
+          packageDir,
+          manifestPath: join(packageDir, "manifest.json"),
+          motionPath: join(packageDir, "motion.json"),
+          receiptPath: join(packageDir, "receipts", "canvas-export.receipt.json"),
+          resourceCatalogPath: join(packageDir, "resource-catalog.json"),
+          assetRefs: [],
+          copiedAssetRefs: [],
+          missingAssetRefs: [],
+          assetEvidence: []
+        });
+        const receipt = JSON.parse(await readFile(join(packageDir, "receipts", "canvas-export.receipt.json"), "utf8")) as Record<string, any>;
+        const resourceCatalog = JSON.parse(await readFile(join(packageDir, "resource-catalog.json"), "utf8")) as Record<string, any>;
+        expect(Object.keys(receipt.inputHashes)).toEqual(["input/canvas-selection.json"]);
+        expect(receipt.output).toMatchObject({
+          sourceApp: "shellx-canvas",
+          selectedFrameId: "frame_intro",
+          resourceCatalogPath: "resource-catalog.json"
+        });
+        expect(resourceCatalog).toMatchObject({
+          schema: "shellx-motion/resource-catalog@1",
+          packageId: "pkg_canvas_motion_export_frame_intro",
+          resources: [
+            expect.objectContaining({
+              id: "pkg_canvas_motion_export_frame_intro",
+              ref: ".",
+              kind: "motion_package",
+              source: expect.objectContaining({
+                app: "shellx-canvas",
+                sourceFrameId: "frame_intro",
+                receiptId: "receipt_canvas_export_frame_intro"
+              })
+            })
+          ]
+        });
+        expect(result.warnings).toEqual([]);
+      }
+    } finally {
+      await rm(packageDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a Canvas package whose declared asset bytes are unavailable", async () => {
+    const packageDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-missing-asset-"));
     try {
       const result = await dispatchDebugCommand(
         "motion.canvas.package",
@@ -22360,59 +22759,18 @@ describe("motion debug API", () => {
           packageDir,
           createdAt: "2026-07-01T00:00:00.000Z"
         },
-        { tier: "render_motion" }
+        { tier: "write_local" }
       );
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.receiptId).toBe("receipt_canvas_export_frame_story_hero");
-        expect(result.visibleState).toEqual({
-          panel: "receipts",
-          operation: "canvas.package",
-          packageId: "pkg_canvas_launch_campaign_frame_story_hero",
-          packageDir,
-          resourceCatalogPath: join(packageDir, "resource-catalog.json")
-        });
-        expect(result.result).toMatchObject({
-          ok: true,
-          packageId: "pkg_canvas_launch_campaign_frame_story_hero",
-          motionId: "motion_canvas_frame_story_hero",
-          selectedFrameId: "frame_story_hero",
-          packageDir,
-          manifestPath: join(packageDir, "manifest.json"),
-          motionPath: join(packageDir, "motion.json"),
-          receiptPath: join(packageDir, "receipts", "canvas-export.receipt.json"),
-          resourceCatalogPath: join(packageDir, "resource-catalog.json"),
-          assetRefs: ["assets/product-retouched.png"],
-          missingAssetRefs: ["assets/product-retouched.png"]
-        });
-        const receipt = JSON.parse(await readFile(join(packageDir, "receipts", "canvas-export.receipt.json"), "utf8")) as Record<string, any>;
-        const resourceCatalog = JSON.parse(await readFile(join(packageDir, "resource-catalog.json"), "utf8")) as Record<string, any>;
-        expect(Object.keys(receipt.inputHashes)).toEqual(["../../fixtures/canvas/frame-selection.json"]);
-        expect(receipt.output).toMatchObject({
-          sourceApp: "shellx-canvas",
-          selectedFrameId: "frame_story_hero",
-          resourceCatalogPath: join(packageDir, "resource-catalog.json")
-        });
-        expect(resourceCatalog).toMatchObject({
-          schema: "shellx-motion/resource-catalog@1",
-          packageId: "pkg_canvas_launch_campaign_frame_story_hero",
-          resources: [
-            expect.objectContaining({
-              id: "pkg_canvas_launch_campaign_frame_story_hero",
-              ref: ".",
-              kind: "motion_package",
-              source: expect.objectContaining({
-                app: "shellx-canvas",
-                sourceFrameId: "frame_story_hero",
-                receiptId: "receipt_canvas_export_frame_story_hero"
-              })
-            }),
-            expect.objectContaining({ id: "asset_product_retouched", ref: "assets/product-retouched.png" })
-          ]
-        });
-        expect(result.warnings).toEqual(["Canvas asset was not copied into package: assets/product-retouched.png"]);
-      }
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "canvas_package_failed",
+          message: "Canvas package cannot publish missing declared assets: assets/product-retouched.png."
+        },
+        warnings: []
+      });
+      await expect(readdir(packageDir)).resolves.toEqual([]);
     } finally {
       await rm(packageDir, { recursive: true, force: true });
     }
@@ -22435,7 +22793,7 @@ describe("motion debug API", () => {
 
 async function writeDebugPackageWithTimeline(root = ""): Promise<string> {
   root = root || await mkdtemp(join(tmpdir(), "shellx-motion-debug-timeline-"));
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -22762,7 +23120,7 @@ async function writeDebugPackageWithMultiTrackTimeline(): Promise<string> {
 
 async function writeDebugPackageWithAudioMix(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-audio-mix-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "music.wav"), "fake music wav", "utf8");
   await writeFile(join(root, "assets", "voice.wav"), "fake voice wav", "utf8");
   await writeFile(
@@ -22832,9 +23190,9 @@ async function writeDebugPackageBrowserRoot(): Promise<string> {
   const brandRoot = join(root, "brand");
   const templateRoot = join(root, "template");
   const brokenRoot = join(root, "broken");
-  await mkdir(join(brandRoot, "assets"), { recursive: true });
-  await mkdir(templateRoot, { recursive: true });
-  await mkdir(brokenRoot, { recursive: true });
+  await mkdir(join(brandRoot, "assets"), { recursive: true, mode: 0o700 });
+  await mkdir(templateRoot, { recursive: true, mode: 0o700 });
+  await mkdir(brokenRoot, { recursive: true, mode: 0o700 });
   await writeFile(join(brandRoot, "assets", "product.png"), "product-bytes", "utf8");
   await writeFile(
     join(brandRoot, "manifest.json"),
@@ -23185,8 +23543,8 @@ async function writeDebugPackageWithAssetAndBrandData(): Promise<string> {
 
 async function writeDebugBatchPackageWithAudioLayer(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-audio-batch-"));
-  await mkdir(join(root, "assets"), { recursive: true });
-  await mkdir(join(root, "data"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
+  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "music.wav"), "fake music wav bytes", "utf8");
   await writeFile(
     join(root, "data", "rows.json"),
@@ -23250,7 +23608,7 @@ async function writeDebugBatchPackageWithAudioLayer(): Promise<string> {
 
 async function writeDebugTemplateMediaPackage(root = ""): Promise<string> {
   root = root || await mkdtemp(join(tmpdir(), "shellx-motion-debug-template-media-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "default-headshot.png"), "default image", "utf8");
   await writeFile(
     join(root, "manifest.json"),
@@ -23368,7 +23726,7 @@ async function writeDebugSuitabilityTemplatePackage(
     };
   }
 ): Promise<string> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -23457,7 +23815,7 @@ async function writeDebugSuitabilityTemplatePackage(
 
 async function writeCanvasBridgeRoot(): Promise<string> {
   const canvasRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-canvas-root-"));
-  await mkdir(join(canvasRoot, "app", "server"), { recursive: true });
+  await mkdir(join(canvasRoot, "app", "server"), { recursive: true, mode: 0o700 });
   await writeFile(join(canvasRoot, "app", "package.json"), JSON.stringify({ name: "shellx-canvas" }), "utf8");
   await writeFile(
     join(canvasRoot, "app", "server", "motion-package.mjs"),
@@ -23483,7 +23841,7 @@ async function writeCanvasBridgeRoot(): Promise<string> {
         };
       }
       export async function writeMotionFrameSelection(selection, options) {
-        await mkdir(dirname(options.outPath), { recursive: true });
+        await mkdir(dirname(options.outPath), { recursive: true, mode: 0o700 });
         await writeFile(options.outPath, JSON.stringify(selection, null, 2) + "\\n", "utf8");
         return { ok: true, path: options.outPath, schema: selection.schema };
       }
@@ -23584,37 +23942,6 @@ function restoreEnv(name: "SHELLX_MOTION_FFMPEG" | "SHELLX_MOTION_FFPROBE" | "SH
   process.env[name] = value;
 }
 
-function scriptedVideo(): Record<string, unknown> {
-  return {
-    schema: "shellx-motion/scripted-video@1",
-    id: "launch-demo",
-    name: "Launch Demo",
-    sourceApp: "shellx-cut",
-    workflow: "generate",
-    width: 1280,
-    height: 720,
-    fps: 24,
-    frames: [
-      {
-        id: "hook",
-        title: "Hook",
-        body: "Show the new workflow",
-        durationMs: 1000,
-        background: "#0f172a",
-        accent: "#38bdf8"
-      },
-      {
-        id: "cta",
-        title: "Cut edits it",
-        caption: "Rendered by Motion",
-        durationMs: 1500,
-        background: "#111827",
-        accent: "#22c55e"
-      }
-    ]
-  };
-}
-
 function storyboardPanelScriptedVideo(): Record<string, unknown> {
   return {
     schema: "shellx-motion/scripted-video@1",
@@ -23655,46 +23982,6 @@ function storyboardPanelScriptedVideo(): Record<string, unknown> {
         sourceRefs: [
           { type: "article", title: "Launch notes", url: "https://example.com/articles/motion#handoff" }
         ]
-      }
-    ]
-  };
-}
-
-function storyboardGraphCollisionScriptedVideo(): Record<string, unknown> {
-  return {
-    schema: "shellx-motion/scripted-video@1",
-    id: "collision-demo",
-    name: "Collision Demo",
-    sourceApp: "shellx-motion",
-    workflow: "source-to-scripted-video",
-    review: { status: "needs-review", required: true },
-    width: 1280,
-    height: 720,
-    fps: 30,
-    frames: [
-      {
-        id: "first",
-        title: "First",
-        body: "First colliding frame.",
-        durationMs: 1000,
-        assetRefs: ["assets/foo_bar.png"],
-        sourceRefs: [
-          { type: "article", title: "First", url: "https://example.com/articles/collision#first" }
-        ],
-        template: { id: "tpl_hero", engine: "native" },
-        engine: { id: "engine_html" }
-      },
-      {
-        id: "second",
-        title: "Second",
-        body: "Second colliding frame.",
-        durationMs: 1000,
-        assetRefs: ["assets/foo-bar.png"],
-        sourceRefs: [
-          { type: "article", title: "Second", url: "https://example.com/articles/collision#second" }
-        ],
-        template: { id: "tpl-hero", engine: "native" },
-        engine: { id: "engine-html" }
       }
     ]
   };
@@ -23802,17 +24089,11 @@ const CONTRAST_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqBh4KOQqnS6Y6AAAAEGNhTnYAAAABAAAAAQAAAAAAAAAAmdvqagAAABFJREFUCNdjZGBg+P///38GAA4EA/75rp4uAAAAAElFTkSuQmCC",
   "base64"
 );
-
 const ALPHA_2X2_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGNgYGBg+P///38Q3QAiADBkBH2F9jENAAAAAElFTkSuQmCC",
   "base64"
 );
-
 const BLACK_2X1_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGNgYGD4D8IABgMB/8+HxnAAAAAASUVORK5CYII=",
   "base64"
 );
-
-function fakeMp4Bytes(label: string): Buffer {
-  return Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom", "ascii"), Buffer.from(label)]);
-}

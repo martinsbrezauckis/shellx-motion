@@ -12,6 +12,7 @@ import {
 import { readMotionExportPreset } from "@shellx-motion/renderer-ffmpeg";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { booleanArg, stringArg } from "./args.js";
+import { hostCapacityView } from "./host-capacity-view.js";
 
 interface CapabilitiesPanelRequest {
   output?: string;
@@ -21,17 +22,15 @@ interface CapabilitiesPanelRequest {
   needsSubtitles: boolean;
   preferLane?: string;
 }
-
 interface CapabilitiesPanelSuggestedAction {
   id: "match" | "exportPlan";
   command: MotionDebugCommand;
   args: Record<string, string | boolean>;
 }
-
 interface CapabilitiesPanelCard {
   id: string;
   lane: string;
-  category: string;
+  category: string; role: RendererCapabilityCard["role"];
   label: string;
   paradigms: string[];
   layerTypes: string[];
@@ -43,8 +42,8 @@ interface CapabilitiesPanelCard {
   stability: string;
   strengths: string[];
   weaknesses: string[];
-  runtime: RendererCapabilityCard["runtime"];
-  adapter?: RendererCapabilityCard["adapter"];
+  runtime: RendererCapabilityCard["runtime"]; adapter?: RendererCapabilityCard["adapter"]; colorAlpha?: RendererCapabilityCard["colorAlpha"];
+  visualFeatureSupport: NonNullable<RendererCapabilityCard["visualFeatureSupport"]>; frameInputs?: string[];
   requiresFrameLane: boolean;
   support: {
     alpha: boolean;
@@ -64,7 +63,6 @@ interface CapabilitiesPanelCard {
   badges: string[];
   suggestedActions: CapabilitiesPanelSuggestedAction[];
 }
-
 interface CapabilitiesPanelCategory {
   id: string;
   label: string;
@@ -151,7 +149,7 @@ export function matchRendererCapabilityCardsForRequest(cards: RendererCapability
     .map((card) => matchRendererCapabilityCardForRequest(card, options))
     .sort((a, b) => b.score - a.score || cards.findIndex((card) => card.lane === a.lane) - cards.findIndex((card) => card.lane === b.lane));
   const recommendedLane = matches.find((match) => match.ok)?.lane ?? null;
-  const recommendedPipeline = resolveRendererCapabilityPipeline(matches, recommendedLane);
+  const recommendedPipeline = resolveRendererCapabilityPipeline(matches, recommendedLane, options.preferLane);
   return {
     cards,
     matches,
@@ -222,8 +220,7 @@ function buildCapabilitiesPanelCard(input: {
   return {
     id: input.card.id,
     lane: input.card.lane,
-    category: input.card.category,
-    label: input.card.label,
+    category: input.card.category, role: input.card.role, label: input.card.label,
     paradigms: [...input.card.paradigms],
     layerTypes: [...input.card.layerTypes],
     outputs: [...input.card.outputs],
@@ -236,8 +233,9 @@ function buildCapabilitiesPanelCard(input: {
     weaknesses: [...input.card.weaknesses],
     runtime: {
       ...input.card.runtime,
-      ...(input.card.runtime.probe ? { probe: { ...input.card.runtime.probe, args: [...input.card.runtime.probe.args] } } : {})
-    },
+      ...(input.card.runtime.readiness ? { readiness: { ...input.card.runtime.readiness, tools: [...input.card.runtime.readiness.tools] } } : {})
+    }, ...(input.card.colorAlpha ? { colorAlpha: input.card.colorAlpha } : {}),
+    visualFeatureSupport: input.card.visualFeatureSupport ?? "direct", ...(input.card.frameInputs ? { frameInputs: [...input.card.frameInputs] } : {}),
     ...(input.card.adapter ? {
       adapter: {
         ...input.card.adapter,
@@ -368,6 +366,7 @@ export async function dispatchCapabilitiesCommand(command: MotionDebugCommand, a
         },
         result: {
           ok: true,
+          ...hostCapacityView(),
           cards,
           matches: [],
           recommendedLane: null,
@@ -406,6 +405,7 @@ export async function dispatchCapabilitiesCommand(command: MotionDebugCommand, a
           ok: true,
           packageId: pkg.manifest.id,
           motionId: pkg.motion.id,
+          ...hostCapacityView(pkg.motion.layers),
           ...matched,
           ...(output ? { output } : {}),
           ...(target ? { target } : {})

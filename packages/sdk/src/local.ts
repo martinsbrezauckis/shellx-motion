@@ -1,44 +1,53 @@
 /** Real in-process SDK adapter over Core, scripted compilation, and capability-gated Debug API operations. */
-import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "@shellx-motion/adapters-script";
 import {
   attestArtifactReceipt,
   assertTrackingAnalysisLifecycle,
   compileTrackingStabilization,
+  currentColorAlphaContract,
   createAttestedArtifactHandle,
-  hashFile,
-  JOB_STATES,
+  verifyGpuPostRenderReuseIdentity,
+  JOB_STATES, MotionJobCoordinator,
   loadMotionPackage,
-  restoreMotionDocumentCompositing,
-  resolvePackageAsset,
-  unrenderablePackageRefusal,
+  OutputDirectoryReservation,
   verifyAttestedArtifactHandle,
   writeAttestedArtifactHandle,
+  type MaterializedFrameSequencePreflightOptions,
   type MotionPackage,
   type OperationReceipt,
   type TrackingAnalysisLifecycle,
   type TrackingStabilizationPlan
 } from "@shellx-motion/core";
-import { dispatchDebugCommand, MOTION_ENGINE_VERSION, type BrowserFrameRenderer, type MotionDebugContext, type MotionDebugResult, type ReceiptActor, type ReceiptActorKind } from "@shellx-motion/debug-api";
-import { readMotionExportPreset, resolveMotionExportPreset, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
-import { createMotionSdk } from "./client";
-import { localDebugContext } from "./local-debug-context";
-import { createLocalAuthoringOperations } from "./local-authoring";
-import { ensureSdkCutHandoff } from "./local-cut-handoff";
+import { assertConfiguredAuthoringOutputRoot, AuthoringRootPolicyError, createEphemeralAttestedRenderReuseProducerAuthority, dispatchDebugCommand, MOTION_ENGINE_VERSION, type AttestedRenderReuseProducerAuthority, type BrowserFrameRenderer, type MotionDebugContext, type MotionDebugResult, type ReceiptActor, type ReceiptActorKind } from "@shellx-motion/debug-api";
 import {
-  assertRenderPackageLineage,
-  loadStableRenderPackage,
-  readCachedRenderArtifact,
-  renderReceiptInputHashes,
-} from "./local-render-lineage";
+  readMotionExportPreset,
+  readFfmpegExportPreset,
+  resolveMotionExportPreset,
+  type FfmpegRunner,
+  type RenderStreamingFinalInput,
+  type RenderStreamingFinalResult
+} from "@shellx-motion/renderer-ffmpeg";
+import { createMotionSdk } from "./client";
+import { localDebugContext, localRenderOptions } from "./local-debug-context";
+import { localPackageIdentity as packageIdentity } from "./local-package-identity";
+import { renderPackageAttestedReuse, type LocalAttestedReuseRenderInput } from "./local-attested-render-reuse";
+import { renderLocalCachePlan } from "./local-render-cache-plan";
+import { createLocalAuthoringOperations } from "./local-authoring";
+import { LOCAL_MOTION_SDK_OPERATIONS } from "./local-capabilities";
+import { ensureSdkCutHandoff } from "./local-cut-handoff";
+import { submitLocalRender, type LocalMotionSdkJobClient } from "./local-job-coordinator";
+import { assertRenderPackageLineage, loadStableRenderPackage, readCachedRenderArtifact, renderReceiptInputHashes } from "./local-render-lineage";
 import { localResult, LocalMotionSdkError } from "./local-result";
+import { prepareLocalPreviewAdmission } from "./local-gpu-preview-scene3d-refusal";
 import { verifyPersistedReceipt } from "./local-receipt";
+import { runLocalRevisionTransactionPlan } from "./local-revision-transaction-plan";
+import { runLocalRevisionTransaction } from "./local-revision-transaction";
+import { validateLocalMotionPackage } from "./local-validation";
 import { normalizeSpatialTimelineEdit } from "./spatial-timeline-normalize";
 import { timelineEditReceiptOperation } from "./timeline-receipt";
-import { createTemplateParameterSchema } from "./template";
 import { createMotionSdkHandlerTransport } from "./transport";
 import type {
   MotionSdkCancelResponse,
@@ -47,15 +56,14 @@ import type {
   MotionSdkJob,
   MotionSdkJobState,
   MotionSdkPreviewResponse,
+  MotionSdkRenderRequest,
   MotionSdkRenderResponse,
   MotionSdkStatusResponse,
-  MotionSdkTimelineEdit,
-  MotionSdkTimelineEditRequest,
-  MotionSdkTimelineEditResponse,
-  MotionSdkTrackingApplyRequest,
-  MotionSdkTrackingApplyResponse,
-  MotionSdkTrackingDetachRequest,
-  MotionSdkTrackingDetachResponse,
+  MotionSdkTimelineEdit, MotionSdkTimelineEditRequest, MotionSdkTimelineEditResponse,
+  MotionSdkRevisionTransactionRequest,
+  MotionSdkRevisionTransactionResponse,
+  MotionSdkTrackingApplyRequest, MotionSdkTrackingApplyResponse,
+  MotionSdkTrackingDetachRequest, MotionSdkTrackingDetachResponse,
   MotionSdkTrackingInspectRequest,
   MotionSdkTrackingInspectResponse,
   MotionSdkTrackingLifecycleSummary,
@@ -66,14 +74,27 @@ import type {
   MotionSdkTrackingSourceInspection,
   MotionSdkTrackingVerifyRequest,
   MotionSdkTrackingVerifyResponse,
-  MotionSdkTransport,
-  MotionSdkValidateResponse
+  MotionSdkTransport
 } from "./types";
 export interface LocalMotionSdkOptions {
   ffmpegRunner?: FfmpegRunner;
   browserFrameRenderer?: BrowserFrameRenderer;
+  streamingFinalRenderer?: (input: RenderStreamingFinalInput) => Promise<RenderStreamingFinalResult>;
+  gpuFinalExecutionAvailable?: boolean;
+  /** Host-held reuse authority; ordinary local clients receive an ephemeral per-client authority. */ attestedRenderReuseProducerAuthority?: AttestedRenderReuseProducerAuthority;
+  /**
+   * Trusted embedding-host policy for the shared final-render materialisation preflight. This is
+   * configuration of the local SDK instance, never a field in an SDK render request.
+   */
+  materializedFrameSequencePreflight?: MaterializedFrameSequencePreflightOptions;
   authoringInputRoots?: string[];
   authoringOutputRoots?: string[];
+  /** Host-owned render filesystem authority. SDK request arguments never extend these lists. */
+  renderPackageRoots?: string[];
+  renderInputRoots?: string[];
+  renderOutputRoots?: string[];
+  /** Set by a boundary host (the loopback debug server) to require every root class. */
+  enforceRenderRoots?: boolean;
   /**
    * Receipt and scratch roots the EMBEDDING HOST declares, threaded into every dispatch this SDK
    * makes. Left unset by an ordinary in-process host, which is the caller and needs no boundary.
@@ -88,6 +109,8 @@ export interface LocalMotionSdkOptions {
    * is always "sdk" (an in-process call, no wire hop) and cannot be overridden here.
    */
   actor?: { kind?: ReceiptActorKind; label?: string };
+  /** Trusted embedding-host owner principal for coordinator jobs; never sourced from an SDK request. */
+  callerId?: string;
 }
 
 export interface LocalMotionSdkCapabilities {
@@ -101,46 +124,45 @@ export interface LocalMotionSdkCapabilities {
    */
   sdkVersion: string;
   operations: string[];
+  /** The same current-only colour/alpha boundary capability cards expose over Debug/MCP and CLI. */
+  colorAlpha: ReturnType<typeof currentColorAlphaContract>;
 }
-
-export interface LocalMotionSdkClient extends MotionSdkClient {
+export interface LocalMotionSdkClient extends MotionSdkClient, LocalMotionSdkJobClient {
   capabilities(): Promise<LocalMotionSdkCapabilities>;
 }
-
-const LOCAL_MOTION_SDK_OPERATIONS = [
-  "validate", "compile", "preview", "render", "status", "cancel", "timelineEdit",
-  "trackingRequest", "trackingInspect", "trackingApply", "trackingDetach", "trackingVerify",
-  "keyingInspect", "keyingApply", "keyingRemove", "rotoUpsert", "rotoTrackingDetach", "rotoRemove",
-  "compositingInspect", "compositingSet", "compositingRemove", "gltfImport",
-  "proceduralInspect", "proceduralSet", "proceduralSetEnabled", "proceduralBake", "proceduralDetach",
-] as const;
-
+export type { LocalMotionSdkRenderJob } from "./local-job-coordinator";
 export function createLocalMotionSdk(options: LocalMotionSdkOptions = {}): LocalMotionSdkClient {
-  const client = createMotionSdk(createLocalMotionSdkTransport(options));
+  const runtimeOptions = { ...options, attestedRenderReuseProducerAuthority: options.attestedRenderReuseProducerAuthority ?? createEphemeralAttestedRenderReuseProducerAuthority(), jobCoordinator: new MotionJobCoordinator() };
+  const client = createMotionSdk(createLocalMotionSdkTransport(runtimeOptions));
   return {
     ...client,
+    submitRender: async (input) => await submitLocalRender(input, runtimeOptions),
     capabilities: async () => ({
       schema: "shellx-motion/local-sdk-capabilities@1",
       contractVersion: 1,
       sdkVersion: MOTION_ENGINE_VERSION,
       operations: [...LOCAL_MOTION_SDK_OPERATIONS],
+      colorAlpha: currentColorAlphaContract(),
     }),
   };
 }
-
 export function createLocalMotionSdkTransport(options: LocalMotionSdkOptions = {}): MotionSdkTransport {
-  const { keying, compositing, gltf, procedural } = createLocalAuthoringOperations({
+  options = { ...options, attestedRenderReuseProducerAuthority: options.attestedRenderReuseProducerAuthority ?? createEphemeralAttestedRenderReuseProducerAuthority() };
+  const { keying, compositing, gltf, procedural, audio, cutoutRig } = createLocalAuthoringOperations({
     executeDebug: (command, args, tier) => dispatchDebugCommand(command, args, localDebugContext(tier, options)),
     packageIdentity,
   });
   return createMotionSdkHandlerTransport({
-    validate: async (input) => localResult(() => validatePackage(input.packageRoot)),
-    compile: async (input) => localResult(() => compilePackage(input)),
+    validate: async (input) => localResult(() => validateLocalMotionPackage(input, options, packageIdentity)),
+    compile: async (input) => localResult(() => compilePackage(input, options)),
     preview: async (input) => localResult(() => previewPackage(input, options)),
     render: async (input, request) => localResult(() => renderPackage(input, request.cacheKey, options)),
+    renderCachePlan: async (input) => localResult(() => renderLocalCachePlan(input, options)),
     status: async (input) => localResult(() => renderStatus(input.receiptsRoot, input.jobId, options)),
     cancel: async (input) => localResult(() => cancelRender(input.receiptsRoot, input.jobId, input.reason, options)),
     timelineEdit: async (input) => localResult(() => timelineEditPackage(input, options)),
+    revisionTransactionPlan: async (input) => localResult(() => runLocalRevisionTransactionPlan(input, { dispatch: async (args) => await dispatchDebugCommand("motion.revision.transaction.plan", args, localDebugContext("read_motion", options)) })),
+    revisionTransaction: async (input) => localResult(() => runLocalRevisionTransaction(input, { dispatch: async (args) => await dispatchDebugCommand("motion.revision.transaction", args, localDebugContext("edit_motion", options)), packageIdentity })),
     trackingRequest: async (input) => localResult(() => trackingRequestPackage(input, options)),
     trackingInspect: async (input) => localResult(() => trackingInspectPackage(input, options)),
     trackingApply: async (input) => localResult(() => trackingApplyPackage(input, options)),
@@ -160,76 +182,47 @@ export function createLocalMotionSdkTransport(options: LocalMotionSdkOptions = {
     proceduralSet: async (input) => localResult(() => procedural.set(input)),
     proceduralSetEnabled: async (input) => localResult(() => procedural.setEnabled(input)),
     proceduralBake: async (input) => localResult(() => procedural.bake(input)),
-    proceduralDetach: async (input) => localResult(() => procedural.detach(input))
+    proceduralDetach: async (input) => localResult(() => procedural.detach(input)),
+    proceduralAudioEnvelopeProduce: async (input) => localResult(() => procedural.produceAudioEnvelope(input)),
+    cutoutRigBake: async (input) => localResult(() => cutoutRig.bake(input)),
+    audioMasterSet: async (input) => localResult(() => audio.masterSet(input)),
+    audioCrossfadeSet: async (input) => localResult(() => audio.crossfadeSet(input))
   });
 }
 
-/**
- * Structural + renderability check for a package, the SDK half of `motion.package.validate`.
- *
- * The renderability verdict is core's `unrenderablePackageRefusal` — the same function the Debug
- * API/MCP command calls, not a copy of its logic. Before this, the SDK answered `valid` for a
- * package the MCP surface refused as `package_unrenderable`, so one product told an agent two
- * different things about one directory depending on which door it knocked on.
- *
- * @param packageRoot directory holding manifest.json and motion.json.
- * @returns package identity (and template parameter schema when the package carries a template).
- * @throws {LocalMotionSdkError} `package_unrenderable` when no lane can draw a visible layer's type;
- *         `detail` carries the same correction and offending-layer list the MCP answer carries.
- */
-async function validatePackage(packageRoot: string): Promise<MotionSdkValidateResponse> {
-  const pkg = await loadMotionPackage(packageRoot);
-  restoreMotionDocumentCompositing(pkg.motion);
-  const refusal = unrenderablePackageRefusal(pkg.motion);
-  if (refusal) {
-    throw new LocalMotionSdkError(refusal.code, refusal.message, false, {
-      suggestedAction: refusal.suggestedAction,
-      unrenderableLayers: refusal.layers
-    });
+async function compilePackage(
+  input: { script: unknown; outDir: string; createdAt?: string },
+  options: LocalMotionSdkOptions
+): Promise<MotionSdkCompileResponse> {
+  const packageRoot = resolve(input.outDir);
+  try {
+    await assertConfiguredAuthoringOutputRoot(packageRoot, options.authoringOutputRoots, "SDK compile package output");
+  } catch (error) {
+    if (error instanceof AuthoringRootPolicyError) throw new LocalMotionSdkError(error.code, error.message, false);
+    throw error;
   }
+  const converted = convertScriptedFramesToMotionPackage(input.script, {
+    inputPath: "inline-scripted-video.json",
+    ...(input.createdAt ? { createdAt: input.createdAt } : {})
+  });
+  const written = await writeScriptedMotionPackage(converted, { packageDir: packageRoot });
+  const pkg = await loadMotionPackage(packageRoot);
   return {
+    packageRoot,
     package: await packageIdentity(pkg),
-    ...(pkg.template ? { template: createTemplateParameterSchema(pkg.template.id, pkg.template.params) } : {}),
-    warnings: []
+    receiptPath: written.receiptPath,
+    warnings: written.receipt.warnings
   };
 }
-
-async function compilePackage(input: { script: unknown; outDir: string; createdAt?: string }): Promise<MotionSdkCompileResponse> {
-  const packageRoot = resolve(input.outDir);
-  await assertAbsent(packageRoot, "compile output");
-  const parent = dirname(packageRoot);
-  await mkdir(parent, { recursive: true });
-  const stage = join(parent, `.${basename(packageRoot)}.sdk-stage-${randomUUID()}`);
-  try {
-    await mkdir(stage, { recursive: false, mode: 0o700 });
-    const converted = convertScriptedFramesToMotionPackage(input.script, {
-      inputPath: "inline-scripted-video.json",
-      ...(input.createdAt ? { createdAt: input.createdAt } : {})
-    });
-    await writeScriptedMotionPackage(converted, { packageDir: stage });
-    await loadMotionPackage(stage);
-    await rename(stage, packageRoot);
-    const pkg = await loadMotionPackage(packageRoot);
-    return {
-      packageRoot,
-      package: await packageIdentity(pkg),
-      receiptPath: join(packageRoot, "receipts", "script-compile.receipt.json"),
-      warnings: converted.receipt.warnings
-    };
-  } finally {
-    await rm(stage, { recursive: true, force: true });
-  }
-}
-
 async function previewPackage(
-  input: { packageRoot: string; outDir: string; atMs?: number; workflowPath?: string },
+  input: { packageRoot: string; outDir: string; lane?: "browser" | "gpu"; atMs?: number; workflowPath?: string },
   options: LocalMotionSdkOptions
 ): Promise<MotionSdkPreviewResponse> {
-  const pkg = await loadMotionPackage(input.packageRoot);
-  const context = localDebugContext("render_motion", options, resolve(input.outDir), [pkg.root, ...(input.workflowPath ? [dirname(resolve(input.workflowPath))] : [])]);
+  const { pkg, context } = await prepareLocalPreviewAdmission(input, options);
   const debug = await dispatchDebugCommand("motion.preview.frame", {
     packageRoot: pkg.root,
     outDir: resolve(input.outDir),
+    ...(input.lane ? { lane: input.lane } : {}),
     ...(input.atMs !== undefined ? { atMs: input.atMs } : {}),
     ...(input.workflowPath ? { workflowPath: resolve(input.workflowPath) } : {})
   }, context);
@@ -239,8 +232,7 @@ async function previewPackage(
   const receiptPath = join(resolve(input.outDir), "receipts", `${safeToken(receipt.id)}.receipt.json`);
   await writeJsonExclusive(receiptPath, receipt);
   return {
-    packageId: pkg.manifest.id,
-    motionId: pkg.motion.id,
+    packageId: pkg.manifest.id, motionId: pkg.motion.id, lane: input.lane ?? "browser",
     frame: {
       path: stringField(output, "path"),
       sha256: shaField(output, "sha256"),
@@ -254,19 +246,21 @@ async function previewPackage(
     warnings: receipt.warnings
   };
 }
-
 async function renderPackage(
-  input: {
-    packageRoot: string; outputPath: string; preset: string; artifactRoot?: string; receiptsRoot?: string;
-    workflowPath?: string; qualityManifestPath?: string; idempotencyKey?: string;
-    cutHandoff?: { target: "shellx-cut"; mode: "rendered_media" };
-  },
+  input: MotionSdkRenderRequest,
   sdkCacheKey: string,
   options: LocalMotionSdkOptions
 ): Promise<MotionSdkRenderResponse> {
+  if (input.frameLane === "gpu" && (input.reuseAttested === true || input.idempotencyKey !== undefined)) throw new LocalMotionSdkError("invalid_request", input.reuseAttested === true ? "SDK GPU final rendering cannot use reuseAttested: its post-render identity is evidence only and never authorizes cache planning or reuse." : "SDK GPU final rendering cannot use idempotencyKey because it would claim pre-render cache reuse; GPU post-render identity is evidence only.", false);
+  if (input.segmented && input.reuseAttested === true) throw new LocalMotionSdkError("invalid_request", "SDK segmented render cannot be combined with reuseAttested.", false);
+  if (input.reuseAttested === true) return await renderPackageAttestedReuse(input as LocalAttestedReuseRenderInput, options);
+  if (input.segmented && input.keepFrames === true) throw new LocalMotionSdkError("invalid_request", "SDK segmented render does not accept keepFrames; its checkpoint store is derived from outputPath.", false);
+  if (input.segmented && (input.workflowPath || input.qualityManifestPath)) throw new LocalMotionSdkError("invalid_request", "SDK segmented render does not support browser workflows or exact-source quality manifests.", false);
+  if (input.keepFrames === true && !readFfmpegExportPreset(input.preset)) throw new LocalMotionSdkError("invalid_request", "SDK render keepFrames: true requires a final-video FFmpeg preset.", false);
   const { pkg, lineage } = await loadStableRenderPackage(input.packageRoot);
   const outputPath = resolve(input.outputPath);
   const artifactRoot = resolve(input.artifactRoot ?? dirname(outputPath));
+  const artifactRootAuthority = await OutputDirectoryReservation.acquire(artifactRoot, { allowExistingContents: true, requireExclusiveChildAuthority: true });
   const operationHash = input.idempotencyKey ?? sdkCacheKey;
   const preset = readMotionExportPreset(input.preset);
   if (!preset) throw new Error(`Unsupported Motion render preset: ${input.preset}.`);
@@ -275,20 +269,30 @@ async function renderPackage(
   await assertWritablePathInsideRoot(artifactRoot, outputPath, "render output");
   const receiptsRoot = resolve(input.receiptsRoot ?? join(artifactRoot, ".shellx-motion", "receipts"));
   await assertWritablePathInsideRoot(artifactRoot, join(receiptsRoot, "placeholder"), "render receipts");
+  const scratchRoot = join(artifactRoot, ".shellx-motion", "scratch", operationHash);
   const descriptorPath = join(artifactRoot, ".shellx-motion", "artifacts", `${operationHash}.artifact.json`);
-  const cached = await readCachedRenderArtifact({
-    root: artifactRoot,
-    path: descriptorPath,
-    pkg,
-    preset: input.preset,
-    operationHash,
-    sdkCacheKey,
-    lineage,
+  await artifactRootAuthority.assertCurrent();
+  let cached = input.segmented || input.frameLane === "gpu" ? null : await readCachedRenderArtifact({
+    root: artifactRoot, path: descriptorPath, expectedOutputPath: outputPath, pkg, preset: input.preset,
+    operationHash, sdkCacheKey, lineage, authority: artifactRootAuthority
   });
+  let cachedFrames: { dir: string; count: number } | undefined;
+  if (cached && input.keepFrames === true) {
+    try {
+      cachedFrames = await retainedRenderFramesAt(join(scratchRoot, pkg.manifest.id), artifactRoot);
+    } catch {
+      // Retained frames are a separately removable diagnostic product. A missing directory makes
+      // this cache entry incomplete for a keepFrames request, so render again rather than claiming
+      // a stale successful frame export or failing the otherwise valid video render.
+      cached = null;
+      await rm(descriptorPath, { force: true });
+    }
+  }
   if (cached) {
     const cutBinding = input.cutHandoff
       ? await ensureSdkCutHandoff({ artifactRoot, descriptorPath, handle: cached, pkg, operationHash })
       : null;
+    await artifactRootAuthority.assertCurrent();
     return {
       jobId: cached.receipts.find((receipt) => receipt.role === "render")?.id ?? cached.id,
       state: "succeeded",
@@ -298,24 +302,28 @@ async function renderPackage(
       outputPath: join(artifactRoot, cached.rootRelativePath),
       receiptId: cached.receipts.find((receipt) => receipt.role === "render")?.id,
       artifact: cached,
+      ...(cachedFrames ? { frames: cachedFrames } : {}),
       ...(cutBinding ? { artifactReference: cutBinding.reference, cutHandoff: cutBinding.handoff } : {}),
       warnings: ["Reused attested local render for the matching SDK idempotency key."]
     };
   }
-  const scratchRoot = join(artifactRoot, ".shellx-motion", "scratch", operationHash);
-  const context = localDebugContext("render_motion", options, scratchRoot, [pkg.root, ...(input.workflowPath ? [dirname(resolve(input.workflowPath))] : []), ...(input.qualityManifestPath ? [dirname(resolve(input.qualityManifestPath))] : [])]);
+  const renderOptions = localRenderOptions(options, input, pkg.root, artifactRoot);
+  const context = localDebugContext("render_motion", renderOptions, scratchRoot, [pkg.root, ...(input.workflowPath ? [dirname(resolve(input.workflowPath))] : []), ...(input.qualityManifestPath ? [dirname(resolve(input.qualityManifestPath))] : [])]);
   const debug = await dispatchDebugCommand("motion.render.final", {
     packageRoot: pkg.root,
     outputPath,
     preset: input.preset,
-    framesDir: join(scratchRoot, "frames"),
+    ...(input.frameLane ? { frameLane: input.frameLane } : {}),
     ...(input.workflowPath ? { workflowPath: resolve(input.workflowPath) } : {}),
-    ...(input.qualityManifestPath ? { qualityManifestPath: resolve(input.qualityManifestPath) } : {})
+    ...(input.qualityManifestPath ? { qualityManifestPath: resolve(input.qualityManifestPath) } : {}),
+    ...(input.keepFrames !== undefined ? { keepFrames: input.keepFrames } : {}),
+    ...(input.segmented ? { segmented: input.segmented } : {})
   }, context);
   const result = successfulDebugResult(debug, "render");
+  const frames = input.keepFrames === true ? await retainedRenderFrames(result, artifactRoot) : undefined;
   const rawReceipt = operationReceipt(result.receipt, "render receipt");
   await assertRenderPackageLineage(pkg.root, lineage);
-  const receipt: OperationReceipt = { ...rawReceipt, inputHashes: renderReceiptInputHashes(operationHash, lineage) };
+  const receipt: OperationReceipt = { ...rawReceipt, inputHashes: renderReceiptInputHashes(operationHash, lineage), output: { ...record(rawReceipt.output, "render receipt output"), rendererInputHashes: rawReceipt.inputHashes } };
   const receiptPath = join(receiptsRoot, `${safeToken(receipt.id)}.receipt.json`);
   await writeJsonExclusive(receiptPath, receipt);
   const attestation = await attestArtifactReceipt(artifactRoot, receiptPath, "render");
@@ -338,6 +346,11 @@ async function renderPackage(
     requiredReceiptRoles: ["render"],
     probe: false,
   });
+  // GPU segmented delivery persists its own receipt transport/checkpoint evidence. The direct
+  // single-video identity intentionally does not apply and must never be exposed as reuse.
+  const gpuPostRenderReuse = input.frameLane === "gpu" && input.segmented === undefined
+    ? (await verifyGpuPostRenderReuseIdentity({ root: artifactRoot, artifact: handle })).identity
+    : undefined;
   await mkdir(dirname(descriptorPath), { recursive: true });
   await writeAttestedArtifactHandle(descriptorPath, handle);
   const cutBinding = input.cutHandoff
@@ -352,11 +365,12 @@ async function renderPackage(
     outputPath,
     receiptId: receipt.id,
     artifact: handle,
+    ...(gpuPostRenderReuse ? { gpuPostRenderReuse } : {}),
+    ...(frames ? { frames } : {}),
     ...(cutBinding ? { artifactReference: cutBinding.reference, cutHandoff: cutBinding.handoff } : {}),
     warnings: receipt.warnings
   };
 }
-
 async function renderStatus(receiptsRoot: string, jobId: string | undefined, options: LocalMotionSdkOptions): Promise<MotionSdkStatusResponse> {
   const debug = await dispatchDebugCommand("motion.render.status", { receiptsRoot: resolve(receiptsRoot) }, localDebugContext("read_motion", options));
   const result = successfulDebugResult(debug, "render status");
@@ -368,15 +382,20 @@ async function renderStatus(receiptsRoot: string, jobId: string | undefined, opt
 }
 
 async function cancelRender(receiptsRoot: string, jobId: string, reason: string | undefined, options: LocalMotionSdkOptions): Promise<MotionSdkCancelResponse> {
-  const debug = await dispatchDebugCommand("motion.render.cancel", {
-    receiptsRoot: resolve(receiptsRoot), receiptId: jobId, ...(reason ? { reason } : {})
+  // `receiptsRoot` remains in the public request for compatibility, but cancellation is no
+  // longer a receipt annotation. The coordinator owns the actual process signal and reports the
+  // live state it observed; callers must wait for terminal `cancelled` rather than claiming it.
+  void receiptsRoot;
+  const debug = await dispatchDebugCommand("motion.job.cancel", {
+    jobId, ...(reason ? { reason } : {})
   }, localDebugContext("render_motion", options));
   const result = successfulDebugResult(debug, "render cancel");
+  if (result.cancelRequested !== true) throw new Error("Live render cancellation was not accepted by the coordinator.");
+  const job = record(result.job, "cancelled job");
   return {
-    targetJobId: stringField(result, "targetReceiptId"),
-    state: "cancelled",
-    receiptId: debug.receiptId ?? stringField(record(result.receipt, "cancel receipt"), "id"),
-    ...(typeof result.controlReceiptPath === "string" ? { receiptPath: result.controlReceiptPath } : {}),
+    targetJobId: stringField(job, "jobId"),
+    state: stringField(job, "state") as MotionSdkJobState,
+    cancelRequested: true,
     warnings: debug.warnings
   };
 }
@@ -958,19 +977,28 @@ function trackingSettingsInput(value: unknown): MotionSdkTrackingRequestRequest[
   };
 }
 
-async function packageIdentity(pkg: MotionPackage) {
-  const manifestPath = join(pkg.root, "manifest.json");
-  const motionPath = resolvePackageAsset(pkg, pkg.manifest.motion);
-  return {
-    packageId: pkg.manifest.id, motionId: pkg.motion.id, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps,
-    width: pkg.motion.width, height: pkg.motion.height,
-    manifestSha256: await hashFile(manifestPath), motionSha256: await hashFile(motionPath)
-  };
+/**
+ * The SDK response identity is the one the Core loader already bound to this parsed package.
+ * Kept exportable for the snapshot regression test; it is not part of the SDK client surface.
+ */
+function successfulDebugResult(debug: MotionDebugResult, label: string): Record<string, unknown> {
+  if (!debug.ok) throw new LocalMotionSdkError(debug.error.code, `${label} failed: ${debug.error.message}`, false, debug.error.detail);
+  return record(debug.result, `${label} result`);
 }
 
-function successfulDebugResult(debug: MotionDebugResult, label: string): Record<string, unknown> {
-  if (!debug.ok) throw new LocalMotionSdkError(debug.error.code, `${label} failed: ${debug.error.message}`, false);
-  return record(debug.result, `${label} result`);
+async function retainedRenderFrames(result: Record<string, unknown>, artifactRoot: string): Promise<{ dir: string; count: number }> {
+  const frames = record(result.frames, "render frames");
+  assertOnlyFields(frames, ["dir", "count"], "render frames");
+  return retainedRenderFramesAt(stringField(frames, "dir"), artifactRoot, integerField(frames, "count", 1, 1_000_000));
+}
+
+async function retainedRenderFramesAt(dir: string, artifactRoot: string, expectedCount?: number): Promise<{ dir: string; count: number }> {
+  const path = resolve(dir);
+  const [canonicalRoot, canonicalFrames, metadata] = await Promise.all([realpath(artifactRoot), realpath(path), lstat(path)]);
+  if (!metadata.isDirectory() || !inside(canonicalRoot, canonicalFrames)) throw new Error("Retained render frames must be a directory inside artifactRoot.");
+  const count = (await readdir(path)).filter((entry) => /^\d{6}\.png$/.test(entry)).length;
+  if (count < 1 || (expectedCount !== undefined && count !== expectedCount)) throw new Error("Retained render frames do not match Debug receipt evidence.");
+  return { dir: path, count };
 }
 
 function readJob(value: unknown): MotionSdkJob | null {
@@ -1002,11 +1030,6 @@ async function assertWritablePathInsideRoot(root: string, path: string, label: s
 function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
-
-async function assertAbsent(path: string, label: string): Promise<void> {
-  try { await lstat(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  throw new Error(`${label} already exists: ${path}`);
 }
 
 async function writeJsonExclusive(path: string, value: unknown): Promise<void> {

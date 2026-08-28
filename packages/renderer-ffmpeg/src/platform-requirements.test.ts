@@ -141,6 +141,11 @@ describe("checkMotionPlatformRequirements", () => {
 
     expect(requirements.satisfied).toBe(true);
     expect(requirements.operations.every((operation) => operation.satisfied)).toBe(true);
+    expect(requirements.capacity).toMatchObject({
+      schema: "shellx-motion/host-render-capacity@1",
+      jobs: { maxConcurrentJobs: expect.any(Number), maxProcessTreeRssBytes: expect.any(Number) },
+      points: { portablePointsPerLayer: 8_192, maxPointsPerLayer: expect.any(Number) },
+    });
   });
 
   it("renders a human report from the same result the JSON reports", async () => {
@@ -154,6 +159,8 @@ describe("checkMotionPlatformRequirements", () => {
     // The operations block is what tells a user "preview works, verification does not".
     expect(report).toContain("NO   quality.check  (needs ffprobe)");
     expect(report).toContain("YES  render.final");
+    expect(report).toContain("Adaptive render capacity:");
+    expect(report).toContain("points/layer");
   });
 });
 

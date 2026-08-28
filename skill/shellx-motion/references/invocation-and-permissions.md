@@ -23,10 +23,34 @@ and `pnpm run build:verify` is the only check that exercises the installed form 
 package, installs the CLI tarball into a throwaway project, and runs `shellx-motion` there through
 both the npm and pnpm bin shims.
 
-**Dotted names are not shell commands.** `motion.render.final`, `motion.job.get`,
-`motion.package.create` and every other `motion.*` id is a Debug API / MCP command. Call one over
-MCP, or through the CLI as `shellx-motion debug <name>`. Never type one at a shell on its own, and
-never "correct" one to `shellx-motion.render.final`.
+**Dotted names are not shell commands.** Every `motion.*` name is a Debug API / MCP command id,
+and MCP accepts the full registry. The CLI accepts only the direct `debug` mapping or one of the
+semantic equivalents in the surface matrix below; a named no-route command requires a Debug/MCP
+host. Never type a dotted id at a shell on its own, and never "correct" one to
+`shellx-motion.render.final`.
+
+## Surface matrix
+
+The Debug/MCP registry is not a promise of universal CLI or SDK parity:
+
+| Surface | Current callable inventory |
+|---|---|
+| Debug API / HTTP / WebSocket / MCP | **300** typed commands; MCP publishes the full registry. |
+| CLI | **234 direct** `debug` routes and **7 semantic equivalents**: `connector catalog`, `package-create`, `validate`, `doctor`, `doctor --probe-gpu`, `job get`, and `job list`. The **59 named no-route** Debug/MCP commands are `motion.agent.snapshot`, `motion.connector.submit`, `motion.job.submit/events/cancel/retry`, `motion.keying.inspect/apply/remove`, `motion.roto.upsert/tracking.detach/remove`, `motion.package.script.author`, `motion.timeline.checkpoint-storyboard.create/inspect/revise/remove/archive/materialize/detach/behavior.resolve/behavior.detach/relation.resolve/relation.detach/relation-action.resolve/relation-action.detach/lifecycle.resolve/lifecycle.detach/geometry-morph.resolve/geometry-morph.detach/retained-trace.resolve/retained-trace.detach/retained-trace.preview/retained-trace.review.bind/preview/creative-review.bind/preview-quality.review`, `motion.timeline.relations.inspect/upsert/enabled.set/remove/detach/bake`, `motion.timeline.relation-actions.inspect/upsert/remove/apply`, `motion.timeline.scene3d-animation.inspect/track.upsert/track.remove/keyframe.upsert/keyframe.delete/keyframe.move`, and `motion.timeline.layout-gap-animation.inspect/track.upsert/track.remove/keyframe.upsert/keyframe.delete/keyframe.move`. |
+| Local SDK | **35 dedicated local-SDK operations**, not a generic command proxy. |
+| Action discovery | **174 discoverable actions**. |
+
+Use the listed CLI equivalent where one exists. A no-route command needs a Debug/MCP host; do not
+invent a terminal spelling for it.
+
+### Human-only local effect registry
+
+Governed effect-module installation, confirmation, inspection, and revocation are intentionally
+absent from Debug, MCP, CLI, SDK, package, and receipt authority. A person manages the private
+registry from Workbench **Effects** in a `write_local` operator session. Do not invent an agent
+route or pass a manifest path through a package/command argument; the host-owned native picker is
+the only selection path. Packages may reference an already installed exact module id/version, but
+that reference cannot install, replace, enable, or revoke it.
 
 ## Permission tiers
 

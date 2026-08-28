@@ -2,13 +2,14 @@ import { readGltfIndexAccessor, readGltfVec3Accessor } from "./gltf-accessor";
 import type { AdapterDiagnosticResult } from "./adapter-diagnostics";
 import { buildGltfDiagnostics } from "./gltf-diagnostics";
 import { hashBuffer } from "./receipts";
+import { scene3dMeshGeometrySha256 } from "./scene-3d-geometry";
 import {
   generatedGltfNormals as generatedNormals,
   gltfQuaternionToEuler as quaternionToEuler,
   gltfSceneBounds as sceneBounds,
   normalizeGltfNormals,
 } from "./gltf-math";
-import { preflightGltfScene, type GltfPrimitivePlan } from "./gltf-preflight";
+import { preflightGltfScene, type GltfPrimitivePlan, type GltfScenePreflight } from "./gltf-preflight";
 import {
   boundedGltfCreatedBy as boundedCreatedBy,
   gltfArray as array,
@@ -25,7 +26,7 @@ import {
   SCENE_3D_MESH_SCHEMA,
 } from "./scene-3d";
 import type { ParsedGltfContainer } from "./gltf-types";
-import type { MotionDocument, MotionScene3DMeshObject, OperationReceipt } from "./types";
+import type { MotionDocument, MotionScene3D, MotionScene3DMeshObject, OperationReceipt } from "./types";
 
 export interface GltfLoweringInput {
   adapterId: "adapter.gltf";
@@ -50,29 +51,24 @@ export interface GltfLoweringResult {
   receipt: OperationReceipt;
 }
 
+/**
+ * The one canonical static scene projection shared by legacy lowering and the immutable PBR
+ * route. It intentionally projects the legacy scene3d material fields; PBR factors/textures are
+ * carried by the separate material sidecar and never flattened here.
+ */
+export interface GltfCanonicalScene3dProjection {
+  readonly scene3d: MotionScene3D;
+  readonly vertexCount: number;
+  readonly indexCount: number;
+  readonly warnings: string[];
+}
+
 /** Lower a strict, static glTF 2.0 triangle subset into bounded data-only scene3d mesh objects. */
 export function lowerGltfToMotion(input: GltfLoweringInput): GltfLoweringResult {
   const json = input.container.json;
   rejectUnsupportedDocumentFeatures(json);
-  const nodes = array(json.nodes, "glTF nodes");
-  const meshes = array(json.meshes, "glTF meshes");
-  const scenes = array(json.scenes, "glTF scenes");
-  const sceneIndex = json.scene === undefined ? 0 : integer(json.scene, "glTF scene index", 0, scenes.length - 1);
-  const scene = record(scenes[sceneIndex], "glTF scene");
-  const rootNodes = indexArray(scene.nodes, nodes.length, "glTF scene nodes");
-  if (rootNodes.length === 0) throw new Error("glTF selected scene must contain at least one root node.");
-  const warnings: string[] = [];
-  const preflight = preflightGltfScene(input.container, nodes, meshes, rootNodes);
-  if (preflight.plans.length === 0) throw new Error("glTF selected scene contains no supported mesh primitives.");
-  const objects: MotionScene3DMeshObject[] = [];
-  for (const plan of preflight.plans) materializePrimitive(plan, input, objects, warnings);
-  const vertexCount = objects.reduce((total, object) => total + object.geometry.positions.length / 3, 0);
-  const indexCount = objects.reduce((total, object) => total + object.geometry.indices.length, 0);
-  if (vertexCount !== preflight.vertexCount || indexCount !== preflight.indexCount
-    || vertexCount > MAX_SCENE_3D_MESH_VERTICES_TOTAL || indexCount > MAX_SCENE_3D_MESH_INDICES_TOTAL) {
-    throw new Error("glTF materialized geometry does not match its bounded scene preflight.");
-  }
-  const frame = sceneBounds(objects);
+  const projection = projectGltfCanonicalScene3d(input.container);
+  const { scene3d, vertexCount, indexCount, warnings } = projection;
   const width = boundedInteger(input.width, 1280, 16, 8192, "width");
   const height = boundedInteger(input.height, 720, 16, 8192, "height");
   const durationMs = boundedInteger(input.durationMs, 3000, 1, 3_600_000, "durationMs");
@@ -94,13 +90,7 @@ export function lowerGltfToMotion(input: GltfLoweringInput): GltfLoweringResult 
       startMs: 0,
       durationMs,
       transform: { x: 0, y: 0, width, height },
-      scene3d: {
-        schema: SCENE_3D_MESH_SCHEMA,
-        camera: { position: frame.camera, target: frame.center, fovDeg: 42, near: frame.near, far: frame.far, orbitDegPerSecond: 12 },
-        lighting: { ambient: 0.32, direction: [-0.4, -0.8, -0.5], intensity: 1.35, color: "#ffffff" },
-        backgroundColor: "#020617",
-        objects,
-      },
+      scene3d,
     }],
     assets: [],
     provenance: { sourceApp: input.container.format, createdBy: boundedCreatedBy(input.createdBy), sourceSchema: "gltf-2.0-static-mesh" },
@@ -112,7 +102,7 @@ export function lowerGltfToMotion(input: GltfLoweringInput): GltfLoweringResult 
     normalizedPackagePath: input.normalizedPackagePath,
     sourceSha256,
     format: input.container.format,
-    objectCount: objects.length,
+    objectCount: scene3d.objects.length,
     warnings,
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
   });
@@ -134,7 +124,7 @@ export function lowerGltfToMotion(input: GltfLoweringInput): GltfLoweringResult 
       motionId: motion.id,
       motionSha256,
       layerCount: 1,
-      objectCount: objects.length,
+      objectCount: scene3d.objects.length,
       vertexCount,
       triangleCount: indexCount / 3,
       lossiness: diagnostics.lossiness,
@@ -151,43 +141,87 @@ export function lowerGltfToMotion(input: GltfLoweringInput): GltfLoweringResult 
   };
 }
 
+/** Builds the exact scene3d payload legacy lowering writes, without admitting a live import. */
+export function projectGltfCanonicalScene3d(container: ParsedGltfContainer): GltfCanonicalScene3dProjection {
+  const preflight = preflightGltfCanonicalScene(container);
+  const warnings: string[] = [];
+  const objects: MotionScene3DMeshObject[] = [];
+  for (const plan of preflight.plans) materializePrimitive(plan, container, objects, warnings);
+  const vertexCount = objects.reduce((total, object) => total + object.geometry.positions.length / 3, 0);
+  const indexCount = objects.reduce((total, object) => total + object.geometry.indices.length, 0);
+  if (vertexCount !== preflight.vertexCount || indexCount !== preflight.indexCount
+    || vertexCount > MAX_SCENE_3D_MESH_VERTICES_TOTAL || indexCount > MAX_SCENE_3D_MESH_INDICES_TOTAL) {
+    throw new Error("glTF materialized geometry does not match its bounded scene preflight.");
+  }
+  const frame = sceneBounds(objects);
+  return {
+    scene3d: {
+      schema: SCENE_3D_MESH_SCHEMA,
+      camera: { position: frame.camera, target: frame.center, fovDeg: 42, near: frame.near, far: frame.far, orbitDegPerSecond: 12 },
+      lighting: { ambient: 0.32, direction: [-0.4, -0.8, -0.5], intensity: 1.35, color: "#ffffff" },
+      backgroundColor: "#020617",
+      objects,
+    },
+    vertexCount,
+    indexCount,
+    warnings,
+  };
+}
+
+/** Resolves and validates the selected scene without allocating geometry or material arrays. */
+export function preflightGltfCanonicalScene(container: ParsedGltfContainer): GltfScenePreflight {
+  const json = container.json;
+  const nodes = array(json.nodes, "glTF nodes");
+  const meshes = array(json.meshes, "glTF meshes");
+  const scenes = array(json.scenes, "glTF scenes");
+  const sceneIndex = json.scene === undefined ? 0 : integer(json.scene, "glTF scene index", 0, scenes.length - 1);
+  const scene = record(scenes[sceneIndex], "glTF scene");
+  const rootNodes = indexArray(scene.nodes, nodes.length, "glTF scene nodes");
+  if (rootNodes.length === 0) throw new Error("glTF selected scene must contain at least one root node.");
+  const preflight = preflightGltfScene(container, nodes, meshes, rootNodes);
+  if (preflight.plans.length === 0) throw new Error("glTF selected scene contains no supported mesh primitives.");
+  return preflight;
+}
+
 function materializePrimitive(
   plan: GltfPrimitivePlan,
-  input: GltfLoweringInput,
+  container: ParsedGltfContainer,
   objects: MotionScene3DMeshObject[],
   warnings: string[],
 ): void {
-  const positions = readGltfVec3Accessor(input.container, plan.attributes.POSITION, "POSITION");
-  const indices = readGltfIndexAccessor(input.container, plan.indicesAccessor, positions.count);
+  const positions = readGltfVec3Accessor(container, plan.attributes.POSITION, "POSITION");
+  const indices = readGltfIndexAccessor(container, plan.indicesAccessor, positions.count);
   if (positions.count !== plan.positionCount || indices.length !== plan.indexCount) {
     throw new Error("glTF accessor geometry changed after bounded preflight.");
   }
   const normals = plan.attributes.NORMAL === undefined
     ? generatedNormals(positions.values, indices)
     : normalizeAccessorNormals(
-      readGltfVec3Accessor(input.container, plan.attributes.NORMAL, "NORMAL"),
+      readGltfVec3Accessor(container, plan.attributes.NORMAL, "NORMAL"),
       positions.count,
     );
   if (plan.attributes.NORMAL === undefined) {
     warnings.push(`Generated flat vertex normals for mesh ${plan.meshIndex} primitive ${plan.primitiveIndex}.`);
   }
+  const geometry = { positions: positions.values, normals, indices };
   objects.push({
     id: uniqueObjectId(
       plan.baseId,
       objects,
     ),
     primitive: "mesh",
-    geometry: { positions: positions.values, normals, indices },
+    geometry,
     position: plan.transform.position,
     rotationDeg: quaternionToEuler(plan.transform.rotation),
     scale: plan.transform.scale,
     color: plan.material.color,
     emissive: plan.material.emissive,
     source: {
-      format: input.container.format,
+      format: container.format,
       meshIndex: plan.meshIndex,
       primitiveIndex: plan.primitiveIndex,
       ...(plan.materialIndex !== undefined ? { materialIndex: plan.materialIndex } : {}),
+      geometrySha256: scene3dMeshGeometrySha256(geometry),
     },
   });
 }

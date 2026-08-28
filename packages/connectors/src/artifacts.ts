@@ -23,8 +23,8 @@ export type ConnectorReceiptStatus = ReceiptWarningStatus;
  * Status for a connector receipt, under the shared engine rule.
  *
  * The rule itself lives in `@shellx-motion/core` (`receiptStatusForWarnings`) and is the same one
- * the preview lanes and the final render lane now use: failed wins, any warning that is not FFmpeg's
- * own component chatter escalates, otherwise `passed`. This connector surface authored that rule
+ * the preview lanes and the final render lane now use: failed wins, any warning outside the known
+ * exact routine FFmpeg chatter escalates, otherwise `passed`. This connector surface authored that rule
  * first; it now imports it so a render receipt and the connector receipt aggregating it can no
  * longer disagree about the same warning.
  */

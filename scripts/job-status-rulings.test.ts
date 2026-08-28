@@ -71,4 +71,23 @@ describe("standing ruling statuses", () => {
       expect(line?.includes("*(provisional)*")).toBe(ruling.status === "provisional-pending-maintainer");
     }
   });
+
+  it("settles only the shipped coordinator submission ruling", () => {
+    const asynchronous = contract.rulings.find((ruling) => ruling.question === "What is Motion's shipped asynchronous render route?");
+    expect(asynchronous).toMatchObject({
+      ruling: expect.stringContaining("motion.job.submit"),
+      because: expect.stringContaining("ordinary streamed or closed segmented final-video delivery"),
+      status: "settled"
+    });
+    const line = jobStatusDoc
+      .split("\n")
+      .find((candidate) => candidate.startsWith("- **What is Motion's shipped asynchronous render route?**"));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("*(provisional)*");
+
+    expect(contract.rulings
+      .filter((ruling) => ruling.question !== "What is Motion's shipped asynchronous render route?")
+      .map((ruling) => ruling.status))
+      .toEqual(["provisional-pending-maintainer", "provisional-pending-maintainer", "provisional-pending-maintainer"]);
+  });
 });

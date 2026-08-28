@@ -8,7 +8,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
  * authenticated loopback Debug API. Everything visible comes from a real command
  * response; nothing is invented and nothing reports success without a receipt.
  *
- * Three bindings in here are *contract* bindings — they read a published Debug API
+ * Several bindings in here are *contract* bindings — they read a published Debug API
  * response shape and are lifted out of this file verbatim by
  * `packages/debug-server/src/workbench-contract.test.ts`, which runs them against a
  * REAL server response. They are marked `@contract` and kept self-contained (no
@@ -17,6 +17,8 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
  *   - readReceiptsPanelRows   ← motion.receipts.panel
  *   - motionDensityRequirement ← motion.timeline.panel (drives the render gate)
  *   - readJobStatusView       ← motion.job.get
+ *   - readGpuReadinessView    ← motion.platform.requirements (source-only GPU proof state)
+ *   - readActiveGpuProofView  ← motion.platform.gpu.probe (active hardware proof state)
  *
  * Transport: POST /debug (commands), GET /debug/contracts (grant + the host's own
  * receipts root), GET /workbench/artifact (preview frames). Primary caller: served
@@ -30,6 +32,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   const state = {
     token: sessionStorage.getItem("shellx-motion-capability") || "",
     connected: false,
+    grantedTier: "",
     packageRoot: "",
     package: null,
     timeline: null,
@@ -41,6 +44,9 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     fps: 30,
     zoom: 1,
     playing: false,
+    // GPU is an explicit strict lane choice. It is never selected as a fallback
+    // when the browser preview refuses or fails.
+    previewLane: "browser",
     previewBusy: false,
     previewObjectUrl: null,
     playTimer: null,
@@ -70,11 +76,14 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     documentName: $("#documentName"),
     documentMeta: $("#documentMeta"),
     previewButton: $("#previewButton"),
+    previewLaneButtons: $$("[data-preview-lane]"),
+    previewRegion: $("#previewRegion"),
     previewStage: $("#previewStage"),
     previewImage: $("#previewImage"),
     previewSize: $("#previewSize"),
     stageEmpty: $("#stageEmpty"),
     stageProgress: $("#stageProgress"),
+    stageProgressText: $("#stageProgress span"),
     playButton: $("#playButton"),
     scrubber: $("#scrubber"),
     timecode: $("#timecode"),
@@ -90,6 +99,10 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     selectionName: $("#selectionName"),
     propertyList: $("#propertyList"),
     diagnostics: $("#diagnostics"),
+    gpuReadiness: $("#gpuReadiness"),
+    gpuReadinessLabel: $("#gpuReadinessLabel"),
+    gpuReadinessDetail: $("#gpuReadinessDetail"),
+    gpuProofButton: $("#gpuProofButton"),
     receiptsRoot: $("#receiptsRoot"),
     receiptsBrowse: $("#receiptsBrowse"),
     queueList: $("#queueList"),
@@ -108,9 +121,16 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     renderReadinessDetail: $("#renderReadinessDetail"),
     renderOutputPath: $("#renderOutputPath"),
     renderOutputBrowse: $("#renderOutputBrowse"),
+    renderFrameLane: $("#renderFrameLane"),
     renderPreset: $("#renderPreset"),
+    gpuFinalContract: $("#gpuFinalContract"),
+    renderGpuReadiness: $("#renderGpuReadiness"),
+    renderGpuReadinessLabel: $("#renderGpuReadinessLabel"),
+    renderGpuReadinessDetail: $("#renderGpuReadinessDetail"),
+    qualityManifestField: $("#qualityManifestField"),
     qualityManifestPath: $("#qualityManifestPath"),
     qualityManifestBrowse: $("#qualityManifestBrowse"),
+    qualityManifestNote: $("#qualityManifestNote"),
     motionGate: $("#motionGate"),
     motionGateNote: $("#motionGateNote"),
     renderError: $("#renderError"),
@@ -362,6 +382,12 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     ui.scrubber.disabled = !ready || state.durationMs <= 0;
     ui.zoomIn.disabled = !state.timeline;
     ui.zoomOut.disabled = !state.timeline;
+    ui.gpuProofButton.disabled = !state.connected || !tierAllows(state.grantedTier, "render_motion");
+  }
+
+  function tierAllows(granted, required) {
+    const order = ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"];
+    return order.indexOf(granted) >= order.indexOf(required) && order.indexOf(required) >= 0;
   }
 
   async function connect(token) {
@@ -615,13 +641,21 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   async function renderPreviewFrame() {
     if (!state.packageRoot || state.previewBusy) return;
     const requestedAtMs = Math.round(state.playheadMs);
+    const lane = state.previewLane === "gpu" ? "gpu" : "browser";
+    const laneLabel = lane === "gpu" ? "strict GPU" : "browser";
     state.previewBusy = true;
+    ui.previewRegion.setAttribute("aria-label", `${lane === "gpu" ? "Strict GPU" : "Browser"} preview monitor`);
+    ui.stageProgress.setAttribute("aria-label", `Rendering ${laneLabel} preview`);
+    ui.stageProgressText.textContent = `Rendering ${laneLabel} preview`;
     ui.stageProgress.hidden = false;
     ui.stageEmpty.hidden = true;
     updateActionAvailability();
-    setStatus(`Rendering frame at ${formatDuration(requestedAtMs)}…`, "Preparing a local preview");
+    setStatus(
+      lane === "gpu" ? `Rendering strict GPU frame at ${formatDuration(requestedAtMs)}…` : `Rendering frame at ${formatDuration(requestedAtMs)}…`,
+      lane === "gpu" ? "No browser or CPU fallback is requested" : "Preparing a local preview"
+    );
     try {
-      const response = await api("motion.preview.frame", { packageRoot: state.packageRoot, atMs: requestedAtMs }, "render_motion");
+      const response = await api("motion.preview.frame", { packageRoot: state.packageRoot, lane, atMs: requestedAtMs }, "render_motion");
       const result = object(response.result);
       const output = object(result.output);
       const path = text(output.path, text(result.outputPath, ""));
@@ -635,6 +669,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       if (state.previewObjectUrl) URL.revokeObjectURL(state.previewObjectUrl);
       state.previewObjectUrl = URL.createObjectURL(blob);
       ui.previewImage.src = state.previewObjectUrl;
+      ui.previewImage.alt = lane === "gpu" ? "Strict GPU-rendered Motion preview" : "Browser-rendered Motion preview";
       ui.previewImage.hidden = false;
       ui.previewSize.textContent = `${number(output.width, number(state.timeline?.size?.width))} × ${number(output.height, number(state.timeline?.size?.height))}`;
       state.warnings = [...new Set([
@@ -642,10 +677,13 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
         ...list(response.warnings).filter((entry) => typeof entry === "string")
       ])];
       renderDiagnostics();
-      setStatus(`Preview ready at ${formatDuration(requestedAtMs)}.`, text(response.receiptId, "preview receipt"));
+      setStatus(
+        `${lane === "gpu" ? "Strict GPU preview" : "Preview"} ready at ${formatDuration(requestedAtMs)}.`,
+        text(response.receiptId, "preview receipt")
+      );
     } catch (error) {
       ui.stageEmpty.hidden = false;
-      ui.stageEmpty.querySelector("strong").textContent = "Preview unavailable";
+      ui.stageEmpty.querySelector("strong").textContent = lane === "gpu" ? "Strict GPU preview refused" : "Preview unavailable";
       ui.stageEmpty.querySelector("span:last-child").textContent = error instanceof Error ? error.message : String(error);
       showError(error);
     } finally {
@@ -653,6 +691,29 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       ui.stageProgress.hidden = true;
       updateActionAvailability();
     }
+  }
+
+  function selectPreviewLane(value) {
+    const lane = value === "gpu" ? "gpu" : "browser";
+    state.previewLane = lane;
+    ui.previewRegion.setAttribute("aria-label", `${lane === "gpu" ? "Strict GPU" : "Browser"} preview monitor`);
+    for (const button of ui.previewLaneButtons) {
+      const selected = button.dataset.previewLane === lane;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    }
+    // A frame from the prior lane must not remain labelled as a result of the newly selected one.
+    ui.previewImage.hidden = true;
+    ui.stageEmpty.hidden = false;
+    ui.stageEmpty.querySelector("strong").textContent = lane === "gpu" ? "Strict GPU preview selected" : "Browser preview selected";
+    ui.stageEmpty.querySelector("span:last-child").textContent = lane === "gpu"
+      ? "Refresh the frame to ask Motion for the GPU lane. Any refusal remains in this lane; no fallback is requested."
+      : "Refresh the frame to ask Motion for the browser lane.";
+    setStatus(
+      lane === "gpu" ? "Strict GPU preview selected." : "Browser preview selected.",
+      lane === "gpu" ? "Checking source-only readiness; no hardware availability is inferred" : "Refresh the frame to render"
+    );
+    if (lane === "gpu") void showGpuReadiness();
   }
 
   function setPlayhead(value, render = false) {
@@ -831,7 +892,10 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     // while a render is in flight.
     ui.renderCancelButton.disabled = false;
     ui.renderCancelButton.textContent = busy ? "Stop watching" : "Cancel";
-    if (!busy) refreshMotionGate();
+    if (!busy) {
+      refreshMotionGate();
+      synchronizeGpuFinalControls();
+    }
   }
 
   function setRenderProgress(label, detail) {
@@ -888,7 +952,13 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   async function submitRender() {
     const outputPath = readWorkbenchPath(ui.renderOutputPath);
     const preset = ui.renderPreset.value;
+    const frameLane = ui.renderFrameLane.value === "gpu" ? "gpu" : "browser";
     const manifest = readWorkbenchPath(ui.qualityManifestPath);
+    if (frameLane === "gpu" && !["mp4-h264", "webm-vp9", "webm-vp9-alpha", "mov-prores"].includes(preset)) {
+      ui.renderError.textContent = "Strict GPU final rendering accepts streamed FFmpeg video presets only.";
+      ui.renderError.hidden = false;
+      return;
+    }
     const jobId = newRenderJobId();
     ui.renderError.hidden = true;
     ui.renderJob.hidden = false;
@@ -903,6 +973,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       packageRoot: state.packageRoot,
       outputPath,
       preset,
+      frameLane,
       jobId,
       // Named only when this page actually has a root (host-published or person-picked). An empty
       // string here would be a root nobody chose; omitting it lets the host decide where the receipt
@@ -911,7 +982,9 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       // Only gate frame-to-frame change when the package actually declares motion:
       // a static title card renders one unchanging frame legitimately.
       ...(ui.motionGate.checked && !ui.motionGate.disabled ? { minUniqueFrameHashes: 2 } : {}),
-      ...(manifest ? { qualityManifestPath: manifest } : {})
+      // GPU final deliberately owns no exact-source materialized frames. The engine refuses a
+      // manifest too; omitting it here makes the Workbench's request truthful before it reaches it.
+      ...(manifest && frameLane !== "gpu" ? { qualityManifestPath: manifest } : {})
     }, "render_motion");
     void watchRenderJob(jobId);
     try {
@@ -966,9 +1039,202 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
     ui.renderProgress.hidden = true;
     ui.renderJob.hidden = true;
     setRenderFormBusy(false);
+    synchronizeGpuFinalControls();
     ui.renderDialog.showModal();
+    updateGpuReadinessAnnouncement();
     ui.renderOutputBrowse.focus();
     void showRenderReadiness();
+  }
+
+  function synchronizeGpuFinalControls() {
+    const gpu = ui.renderFrameLane.value === "gpu";
+    const gpuVideoPresets = new Set(["mp4-h264", "webm-vp9", "webm-vp9-alpha", "mov-prores"]);
+    for (const option of ui.renderPreset.options) option.disabled = gpu && !gpuVideoPresets.has(option.value);
+    if (gpu && !gpuVideoPresets.has(ui.renderPreset.value)) ui.renderPreset.value = "mp4-h264";
+    ui.gpuFinalContract.hidden = !gpu;
+    ui.renderGpuReadiness.hidden = !gpu;
+    ui.qualityManifestField.dataset.unavailable = String(gpu);
+    ui.qualityManifestBrowse.disabled = gpu;
+    ui.qualityManifestNote.hidden = !gpu;
+    updateRenderExtension();
+    updateGpuReadinessAnnouncement();
+  }
+
+  /**
+   * @contract motion.platform.requirements → GPU source-only readiness.
+   *
+   * The platform response is deliberately not a GPU launch. It may identify a trusted Chromium
+   * executable, but that is not evidence that an adapter or device was selected. This binding
+   * keeps the distinction visible and preserves the engine's typed refusal text verbatim.
+   */
+  function readGpuReadinessView(result) {
+    const record = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+    const message = (value) => typeof value === "string" && value.trim() ? value.trim() : "";
+    const answer = record(result);
+    const gpu = record(answer.gpu);
+    const refusals = Array.isArray(gpu.refusals)
+      ? gpu.refusals.map(record).map((refusal) => ({ code: message(refusal.code), message: message(refusal.message) })).filter((refusal) => refusal.code || refusal.message)
+      : [];
+    if (answer.ok !== true || typeof gpu.status !== "string") {
+      return {
+        state: "unverified",
+        label: "Could not verify GPU readiness.",
+        detail: "This source-only check did not answer; no hardware availability is claimed.",
+        refusals: []
+      };
+    }
+    if (gpu.status === "available") {
+      const proof = record(gpu.adapterDeviceProof);
+      const fingerprint = message(proof.adapterFingerprint);
+      // `available` is meaningful only with the same explicit proof shape the engine publishes.
+      // A malformed/stale intermediary response must not turn an absent adapter proof into a UI
+      // hardware claim merely because its status string says "available".
+      if (proof.status !== "active-host-proof" || !fingerprint || fingerprint.length > 512) {
+        return {
+          state: "unverified",
+          label: "Could not verify GPU readiness.",
+          detail: "The source-only response reported GPU availability without a valid active adapter/device proof; no hardware availability is claimed.",
+          refusals
+        };
+      }
+      return {
+        state: "available",
+        label: "GPU hardware proof is active.",
+        detail: [
+          "A host supplied a fresh adapter/device proof to this source-only readiness record.",
+          fingerprint ? `Adapter ${fingerprint}.` : ""
+        ].filter(Boolean).join(" "),
+        refusals
+      };
+    }
+    if (gpu.status === "requires-hardware-proof") {
+      return {
+        state: "requires-hardware-proof",
+        label: "GPU hardware proof is required.",
+        detail: refusals.map((refusal) => refusal.message).filter(Boolean).join(" ") || "This source-only check did not establish a GPU adapter or device.",
+        refusals
+      };
+    }
+    if (gpu.status === "unsupported") {
+      return {
+        state: "unsupported",
+        label: "GPU lane is unsupported on this platform.",
+        detail: refusals.map((refusal) => refusal.message).filter(Boolean).join(" ") || "Motion did not offer GPU hardware readiness on this platform.",
+        refusals
+      };
+    }
+    return {
+      state: "unverified",
+      label: "Could not verify GPU readiness.",
+      detail: "This source-only check returned an unknown GPU state; no hardware availability is claimed.",
+      refusals
+    };
+  }
+
+  function renderGpuReadiness(view) {
+    ui.gpuReadiness.dataset.state = view.state;
+    ui.gpuReadinessLabel.textContent = view.label;
+    ui.gpuReadinessDetail.textContent = view.detail;
+    ui.renderGpuReadiness.dataset.state = view.state;
+    ui.renderGpuReadinessLabel.textContent = view.label;
+    ui.renderGpuReadinessDetail.textContent = view.detail;
+  }
+
+  function updateGpuReadinessAnnouncement() {
+    const announceInRenderDialog = ui.renderDialog.open && ui.renderFrameLane.value === "gpu";
+    ui.gpuReadiness.setAttribute("aria-live", announceInRenderDialog ? "off" : "polite");
+    ui.renderGpuReadiness.setAttribute("aria-live", announceInRenderDialog ? "polite" : "off");
+  }
+
+  async function showGpuReadiness() {
+    renderGpuReadiness({
+      state: "checking",
+      label: "Checking GPU source-only readiness…",
+      detail: "This check does not launch WebGPU or infer an adapter from Chromium.",
+      refusals: []
+    });
+    let result = null;
+    try {
+      result = (await api("motion.platform.requirements", { operation: "render.final" })).result;
+    } catch {
+      result = null;
+    }
+    renderGpuReadiness(readGpuReadinessView(result));
+  }
+
+  /**
+   * @contract motion.platform.gpu.probe → active GPU hardware proof.
+   *
+   * Accept the only response shape that permits the Workbench to say that the active hardware
+   * proof passed. This deliberately validates the returned host-issued proof rather than trusting
+   * a successful transport envelope: the API operation can only establish hardware availability
+   * with its exact receipt, bounded adapter identity, and governed 4 × 4 readback.
+   *
+   * Kept self-contained and DOM-free so the Workbench contract suite can lift and execute this
+   * exact browser function independently. Any malformed response produces an explicit unverified
+   * state; no hardware availability is inferred from a partial proof.
+   */
+  function readActiveGpuProofView(answer) {
+    const record = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+    const response = record(answer);
+    const result = record(response.result);
+    const proof = record(result.proof);
+    const runtime = record(proof.runtime);
+    const receipt = record(proof.receipt);
+    const frame = record(result.frame);
+    const fingerprint = typeof runtime.adapterFingerprint === "string" ? runtime.adapterFingerprint : "";
+    const sha256 = typeof frame.sha256 === "string" ? frame.sha256 : "";
+    const complete = response.ok === true
+      && proof.schema === "shellx-motion/gpu-active-host-proof@1"
+      && receipt.operation === "gpu.hardware.probe"
+      && receipt.status === "passed"
+      && frame.width === 4
+      && frame.height === 4
+      && /^[a-f0-9]{64}$/.test(sha256)
+      && fingerprint.trim().length > 0
+      && fingerprint.length <= 512;
+    if (!complete) {
+      return {
+        state: "unverified",
+        label: "GPU hardware proof did not pass.",
+        detail: "Motion returned an incomplete active GPU proof; hardware availability was not accepted."
+      };
+    }
+    return {
+      state: "available",
+      label: "GPU hardware proof passed.",
+      detail: `Motion rendered and read back the governed 4 × 4 hardware frame · adapter ${fingerprint.slice(0, 16)}…`,
+      fingerprint,
+      sha256
+    };
+  }
+
+  async function runActiveGpuProof() {
+    ui.gpuProofButton.disabled = true;
+    renderGpuReadiness({
+      state: "checking",
+      label: "Running active GPU proof…",
+      detail: "Motion is opening one pre-contained Chromium WebGPU session and reading back a bounded 4 × 4 test frame.",
+      refusals: []
+    });
+    try {
+      const answer = await api("motion.platform.gpu.probe", { confirm: true }, "render_motion");
+      const view = readActiveGpuProofView(answer);
+      if (view.state !== "available") throw new Error(view.detail);
+      renderGpuReadiness({
+        state: view.state,
+        label: view.label,
+        detail: view.detail,
+        refusals: []
+      });
+      setStatus("GPU hardware proof passed.", "Strict GPU preview and final remain fail-closed if content is unsupported");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      renderGpuReadiness({ state: "unverified", label: "GPU hardware proof did not pass.", detail, refusals: [] });
+      setStatus("GPU hardware proof did not pass.", detail);
+    } finally {
+      ui.gpuProofButton.disabled = !state.connected || !tierAllows(state.grantedTier, "render_motion");
+    }
   }
 
   /**
@@ -1079,6 +1345,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       result = null;
     }
     const view = readRenderReadinessView(result);
+    renderGpuReadiness(readGpuReadinessView(result));
     // The row STAYS. Its state is the message; removing it would say "healthy".
     ui.renderReadiness.hidden = false;
     ui.renderReadiness.dataset.state = view.state;
@@ -1087,7 +1354,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   }
 
   function updateRenderExtension() {
-    const extensions = { "mp4-h264": ".mp4", "webm-vp9": ".webm", "gif": ".gif", "png-frame": ".png" };
+    const extensions = { "mp4-h264": ".mp4", "webm-vp9": ".webm", "webm-vp9-alpha": ".webm", "mov-prores": ".mov", "gif": ".gif", "png-frame": ".png" };
     const extension = extensions[ui.renderPreset.value] || ".mp4";
     showWorkbenchPath(ui.renderOutputPath, readWorkbenchPath(ui.renderOutputPath).replace(/\.[a-z0-9]+$/i, extension), "Choose a destination");
   }
@@ -1161,6 +1428,7 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   ui.qualityManifestBrowse.addEventListener("click", () => void choosePath("quality-manifest", ui.qualityManifestPath));
   ui.refreshButton.addEventListener("click", () => state.package && selectPackage(state.package));
   ui.previewButton.addEventListener("click", renderPreviewFrame);
+  ui.gpuProofButton.addEventListener("click", () => void runActiveGpuProof());
   ui.playButton.addEventListener("click", togglePlayback);
   ui.scrubber.addEventListener("input", () => {
     stopPlayback();
@@ -1170,13 +1438,19 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
   ui.zoomOut.addEventListener("click", () => { state.zoom = Math.max(1, state.zoom / 1.25); renderTimeline(); });
   ui.renderButton.addEventListener("click", openRenderDialog);
   ui.renderPreset.addEventListener("change", () => { updateRenderExtension(); refreshMotionGate(); });
+  ui.renderFrameLane.addEventListener("change", () => {
+    synchronizeGpuFinalControls();
+    void showRenderReadiness();
+  });
   ui.renderCancelButton.addEventListener("click", stopWatchingRender);
   ui.renderForm.addEventListener("submit", (event) => { event.preventDefault(); void submitRender(); });
+  ui.renderDialog.addEventListener("close", updateGpuReadinessAnnouncement);
 
   $$("[data-stage]").forEach((button) => button.addEventListener("click", () => {
     $$("[data-stage]").forEach((candidate) => candidate.classList.toggle("selected", candidate === button));
     ui.previewStage.dataset.background = button.dataset.stage;
   }));
+  ui.previewLaneButtons.forEach((button) => button.addEventListener("click", () => selectPreviewLane(button.dataset.previewLane)));
   $$("[role='tab']").forEach((tab) => tab.addEventListener("click", () => {
     $$("[role='tab']").forEach((candidate) => candidate.setAttribute("aria-selected", String(candidate === tab)));
     $$(".tab-panel").forEach((panel) => { panel.hidden = panel.id !== tab.dataset.panel; panel.classList.toggle("active", !panel.hidden); });

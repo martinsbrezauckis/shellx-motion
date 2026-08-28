@@ -58,7 +58,7 @@ export const TIMELINE_LAYER_COMMAND_METADATA = {
         type: "object",
         description:
           "Full layer object (id, type, startMs, durationMs, plus optional name/opacity/transform/keyframes/transitions/"
-          + "mask/effects/environment/blendMode/crop/ducking/style). Supply this, or the shorthand fields below."
+          + "mask/effects/environment/emitter/pointCloud/blendMode/crop/ducking/style). A points layer carries bounded declarative data, never code; particles and points may declare static effects.trail lookback strokes (durationMs 1..2000, samples 2..8), not physics, history, formulas, or GPU work. A particles emitter may carry one to three bounded analytic radial/vortex field sources. Supply this, or the shorthand fields below."
       },
       layerId: { type: "string", aliases: ["layer"], description: "Id for the new layer. Required unless layer.id is set." },
       trackId: { type: "string", aliases: ["track"], description: "Track to attach the new layer to." },
@@ -132,7 +132,7 @@ export const TIMELINE_LAYER_COMMAND_METADATA = {
     expectedReceipts: editReceipt("timeline.layer.effect.set")
   },
   "motion.timeline.layer.rich.set": {
-    argsSchema: propertySetter("richPath", "richValue", "Dotted path into the layer's rich controls, for example environment.intensity or label.align."),
+    argsSchema: propertySetter("richPath", "richValue", "Dotted path into the layer's rich controls, for example pathReveal.start, pathReveal.end, effects.trail.durationMs, effects.trail.samples, environment.intensity, or emitter.field.sources.0.strength. Trails are static particles/points fields, not keyframe targets."),
     expectedReceipts: editReceipt("timeline.layer.rich.set")
   },
   "motion.timeline.layer.blend.set": {

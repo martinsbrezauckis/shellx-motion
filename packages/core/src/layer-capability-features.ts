@@ -1,4 +1,5 @@
 import type { MotionLayer } from "./types";
+import { PARTICLE_FIELD_V2_SCHEMA } from "./particle-field-types";
 
 export function requiredLayerFeatures(layer: MotionLayer): string[] {
   const features = new Set<string>();
@@ -43,11 +44,19 @@ function addLayerTypeFeatures(
           : "environment.rain.fixed-simulation");
   }
   if (readNumber(layer.depth) !== null) features.add("camera.depth");
-  if (layer.type === "particles") features.add("particles.seeded");
+  if (layer.type === "particles") {
+    features.add("particles.seeded");
+    if (layer.emitter?.field) features.add("particles.analytic-field");
+    if (layer.emitter?.field?.schema === PARTICLE_FIELD_V2_SCHEMA) features.add("particles.fixed-field-v2");
+  }
+  if (layer.type === "points") features.add("points.viewport-batched");
   if (layer.type === "text" || layer.type === "caption") {
+    if (layer.textRuns !== undefined) features.add("text.runs.v1");
     const direction = readString(style.direction)?.trim().toLowerCase();
     if (direction === "rtl" || direction === "auto") features.add("text.direction");
-    const text = readString(layer.text) ?? "";
+    const text = layer.textRuns === undefined
+      ? readString(layer.text) ?? ""
+      : layer.textRuns.runs.map((run) => run.text).join("");
     if (containsComplexTextShaping(text)) {
       features.add("text.shaping.complex");
     }
@@ -88,11 +97,24 @@ function addShapeFeatures(
     features.add("shape.stroke");
   }
   if (layer.type !== "shape") return;
-  const shapeKind = canonicalShapeKind(readString(layer.shape) ?? "rect", layer);
-  if (shapeKind === "path" && pathUsesCurveCommands(layer)) {
-    features.add("shape.path.curve");
+  const geometryKind = layer.geometry?.kind;
+  if (geometryKind) {
+    features.add("shape.geometry.v1");
+    features.add(`shape.${geometryKind}`);
   } else {
-    features.add(`shape.${shapeKind}`);
+    const shapeKind = canonicalShapeKind(readString(layer.shape) ?? "rect", layer);
+    if (shapeKind === "path" && pathUsesCurveCommands(layer)) {
+      features.add("shape.path.curve");
+    } else {
+      features.add(`shape.${shapeKind}`);
+    }
+  }
+  // Persisted source animation is intentionally not silently lowered by the legacy effective-layer
+  // path. Until a renderer owns exact-atUs sampling and proof, every existing renderer card refuses it.
+  if (layer.geometryKeyframes !== undefined) features.add("shape.geometry.keyframes");
+  if (layer.pathReveal) features.add("shape.path.reveal");
+  if (hasStyleValue(style.strokeDasharray) || hasStyleValue(style.strokeDashoffset)) {
+    features.add(geometryKind ? "shape.stroke.dash" : "shape.stroke.dash.legacy");
   }
   if (hasPositiveLengthValue(style.radius) || hasPositiveLengthValue(style.borderRadius)) {
     features.add("shape.radius");
@@ -145,6 +167,7 @@ function addEffectFeatures(layer: MotionLayer, features: Set<string>): void {
   }
   if (Object.keys(readRecord(effects.glow)).length > 0) features.add("effect.glow");
   if (Object.keys(readRecord(effects.motionBlur)).length > 0) features.add("effect.motionBlur");
+  if (Object.keys(readRecord(effects.trail)).length > 0) features.add("effect.trail");
   if (Object.keys(readRecord(effects.vignette)).length > 0) features.add("effect.vignette");
   if (Object.keys(readRecord(effects.filmGrain)).length > 0) features.add("effect.filmGrain");
   const blendMode = readString(layer.blendMode);
@@ -218,13 +241,12 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
+function readString(value: unknown): string | null { return typeof value === "string" && value.length > 0 ? value : null; }
 
 function hasStyleValue(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length > 0;
   return Object.keys(readRecord(value)).length > 0;
 }
 

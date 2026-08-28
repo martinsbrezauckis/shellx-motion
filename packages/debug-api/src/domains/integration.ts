@@ -8,33 +8,55 @@ import {
   runCanvasBridgeFrameSelectionExport,
   runCanvasMp4Export,
   readCutImportModeRequest,
-  runCanvasToCutConnector,
-  runScriptToCutConnector,
-  runSourceToCutConnector,
+  runCutGenerateToCutConnector,
   runTemplateToCutConnector
 } from "@shellx-motion/connectors";
-import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
-import { readFfmpegExportPreset, type FfmpegRunner, type MotionExportPreset } from "@shellx-motion/renderer-ffmpeg";
+import { applyReceiptActor, hashBuffer, isPublicationCommitUncertain, motionCapabilityCatalog, type OperationReceipt, type PublicationCommitUncertainError } from "@shellx-motion/core";
+import { readFfmpegExportPreset, type MotionExportPreset } from "@shellx-motion/renderer-ffmpeg";
 import { dirname, join } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
-import { booleanArg, positiveIntegerArg, positiveNumberArg, recordArg, scalarRecordArg, stringArg, stringArrayArg } from "./args.js";
-import { dispatchBrowserWorkflowCommand, type BrowserWorkflowServices } from "./integration-browser-workflow.js";
+import { booleanArg, positiveNumberArg, recordArg, scalarRecordArg, stringArg, stringArrayArg } from "./args.js";
+import { dispatchBrowserWorkflowCommand } from "./integration-browser-workflow.js";
+import {
+  AuthoringRootPolicyError,
+  assertConfiguredAuthoringInputFile,
+  assertConfiguredAuthoringInputRoot,
+  assertConfiguredAuthoringOutputFile,
+  assertConfiguredAuthoringOutputRoot,
+  configuredAuthoringInputRoot
+} from "./authoring-root-policy.js";
+import { connectorStreamingServices, type IntegrationDomainServices as IntegrationServices } from "./integration-services.js";
+import { connectorException, connectorResult } from "./integration-connector-observer.js";
+import { dispatchP2bConnectorCommand } from "./integration-p2b-connector.js";
 
-export interface IntegrationDomainServices extends BrowserWorkflowServices {
-  ffmpegRunner?: FfmpegRunner;
-  receiptsRoot?: string;
-  readReceipt?: (path: string) => Promise<OperationReceipt | null>;
-  readJson?: (path: string) => Promise<unknown>;
-  writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
-  writeJson?: (path: string, value: unknown) => Promise<void>;
-}
 export async function dispatchIntegrationCommand(
   command: MotionDebugCommand,
   args: unknown,
-  services: IntegrationDomainServices = {}
+  services: IntegrationServices = {}
 ): Promise<MotionDebugResult | null> {
+  if (command === "motion.connector.catalog") {
+    const catalog = motionCapabilityCatalog();
+    return {
+      ok: true,
+      visibleState: {
+        panel: "connector",
+        operation: "connector.catalog",
+        catalogSchema: catalog.schema,
+        catalogFingerprint: catalog.fingerprint,
+        descriptorCount: catalog.descriptors.length
+      },
+      result: { ok: true, catalog },
+      warnings: []
+    };
+  }
+  if (command === "motion.connector.submit") {
+    if (!services.submitCoordinatedConnector) return capabilityUnavailable("Persistent generic connector submission is unavailable on this host.");
+    return await services.submitCoordinatedConnector(args);
+  }
   const browserWorkflowResult = await dispatchBrowserWorkflowCommand(command, args, services);
   if (browserWorkflowResult) return browserWorkflowResult;
+  const p2bConnectorResult = await dispatchP2bConnectorCommand(command, args, services);
+  if (p2bConnectorResult) return p2bConnectorResult;
   if (command === "motion.connector.panel") {
     const panel = buildConnectorPanel();
     const receiptId = `connector-panel-${hashBuffer(Buffer.from(JSON.stringify(panel), "utf8")).slice(0, 16)}`;
@@ -61,29 +83,40 @@ export async function dispatchIntegrationCommand(
     const selectionInline = recordArg(args, "selection") ?? recordArg(args, "canvasSelection");
     const packageDir = stringArg(args, "packageDir") ?? stringArg(args, "outDir");
     const selectedFrameId = stringArg(args, "selectedFrameId") ?? undefined;
-    const sourceRoot = stringArg(args, "sourceRoot") ?? (canvasSelectionPath ? dirname(canvasSelectionPath) : undefined);
-    const createdAt = stringArg(args, "createdAt") ?? undefined;
-    const createdBy = stringArg(args, "createdBy") ?? undefined;
+    const explicitSourceRoot = stringArg(args, "sourceRoot") ?? undefined;
+    const createdAt = stringArg(args, "createdAt") ?? undefined; const createdBy = stringArg(args, "createdBy") ?? undefined;
     const receiptsRoot = stringArg(args, "receiptsRoot") ?? services.receiptsRoot;
     if (!canvasSelectionPath && !selectionInline) return invalidArgs("motion.canvas.package requires canvasSelectionPath or selection.");
     if (!packageDir) return invalidArgs("motion.canvas.package requires packageDir.");
+    if (!services.authoringOutputRoots?.length) return capabilityUnavailable("Canvas package requires a configured host-approved authoring output root.");
     if (canvasSelectionPath && !services.readJson) return capabilityUnavailable("Canvas selection file reading is unavailable.");
-    if (!services.writeJson) return capabilityUnavailable("Canvas package receipt persistence is unavailable.");
-    if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Host receipt persistence is unavailable.");
+    if (canvasSelectionPath && !services.authoringInputRoots?.length) return capabilityUnavailable("Canvas selection requires configured host-approved authoring input roots.");
     try {
-      const selection = selectionInline ?? await services.readJson!(canvasSelectionPath!);
+      await assertConfiguredAuthoringOutputRoot(packageDir, services.authoringOutputRoots, "Canvas package output");
+      let canvasSelectionRoot: string | undefined;
+      if (canvasSelectionPath) {
+        await assertConfiguredAuthoringInputFile(canvasSelectionPath, services.authoringInputRoots, "Canvas selection source");
+        canvasSelectionRoot = configuredAuthoringInputRoot(canvasSelectionPath, services.authoringInputRoots, "Canvas selection source");
+      }
+      const selection = selectionInline ?? await services.readJson!(canvasSelectionPath!, canvasSelectionRoot);
       const inputPath = selectionInline ? "inline-canvas-selection.json" : canvasSelectionPath!;
       const canvasExport = convertCanvasFrameToMotionPackage(selection, {
-        ...(selectedFrameId ? { selectedFrameId } : {}),
-        ...(createdAt ? { createdAt } : {}),
+        ...(selectedFrameId ? { selectedFrameId } : {}), ...(createdAt ? { createdAt } : {}),
         ...(createdBy ? { createdBy } : {}),
         inputPath
       });
-      const written = await writeCanvasMotionPackage(canvasExport, { packageDir, ...(sourceRoot ? { sourceRoot } : {}) });
-      const receipt = enrichCanvasPackageReceipt(canvasExport.receipt, written);
-      await services.writeJson(written.receiptPath, receipt);
-      const hostReceiptPath = receiptsRoot ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
-      const warnings = written.missingAssetRefs.map((assetRef) => `Canvas asset was not copied into package: ${assetRef}`);
+      const sourceRoot = explicitSourceRoot ?? (canvasSelectionPath ? dirname(canvasSelectionPath) : undefined);
+      if (canvasExport.manifest.assets.length > 0) {
+        if (selectionInline && !explicitSourceRoot) return invalidArgs("Inline Canvas selections with declared assets require an explicit sourceRoot.");
+        if (!services.authoringInputRoots?.length) return capabilityUnavailable("Canvas assets require configured host-approved authoring input roots.");
+        if (!sourceRoot) return invalidArgs("Canvas package assets require an explicit sourceRoot.");
+        await assertConfiguredAuthoringInputRoot(sourceRoot, services.authoringInputRoots, "Canvas asset source");
+      }
+      const preparedReceipt = applyReceiptActor(canvasExport.receipt, services.receiptActor);
+      const written = await writeCanvasMotionPackage(canvasExport, { packageDir, ...(sourceRoot ? { sourceRoot } : {}), receipt: preparedReceipt });
+      const receipt = written.receipt;
+      const hostReceipt = receiptsRoot ? await mirrorCanvasPackageReceipt(services, receiptsRoot, receipt) : undefined;
+      const warnings = [...(hostReceipt?.warning ? [hostReceipt.warning] : [])];
       return {
         ok: true,
         receiptId: receipt.id,
@@ -93,7 +126,7 @@ export async function dispatchIntegrationCommand(
           packageId: canvasExport.manifest.id,
           packageDir: written.packageDir,
           resourceCatalogPath: written.resourceCatalogPath,
-          ...(hostReceiptPath ? { hostReceiptPath } : {})
+          ...(hostReceipt?.path ? { hostReceiptPath: hostReceipt.path } : {})
         },
         result: {
           ok: true,
@@ -108,11 +141,15 @@ export async function dispatchIntegrationCommand(
           assetRefs: written.assetRefs,
           copiedAssetRefs: written.copiedAssetRefs,
           missingAssetRefs: written.missingAssetRefs,
-          ...(hostReceiptPath ? { hostReceiptPath } : {})
+          assetEvidence: written.assetEvidence,
+          ...(hostReceipt?.path ? { hostReceiptPath: hostReceipt.path } : {}),
+          ...(hostReceipt?.warning ? { hostReceipt: { status: "mirror_failed", message: hostReceipt.warning } } : {})
         },
         warnings
       };
     } catch (error) {
+      if (error instanceof AuthoringRootPolicyError) return invalidArgs(error.message);
+      if (isPublicationCommitUncertain(error)) return canvasPackageCommitUncertain(error);
       return canvasPackageFailure(error);
     }
   }
@@ -125,14 +162,19 @@ export async function dispatchIntegrationCommand(
     if (!outDir) return invalidArgs("motion.connector.canvas_to_mp4 requires outDir.");
     const preset = readFfmpegExportPreset(presetValue);
     if (!preset) return invalidArgs(`Unsupported export preset: ${presetValue}.`);
+    if (!services.authoringInputRoots?.length || !services.authoringOutputRoots?.length) {
+      return capabilityUnavailable("Canvas-to-MP4 requires configured host-approved authoring input and output roots.");
+    }
     if (!services.readReceipt) return capabilityUnavailable("Connector receipt verification is unavailable.");
     try {
+      await assertConfiguredAuthoringInputFile(canvasSelectionPath, services.authoringInputRoots, "Canvas-to-MP4 canvas selection");
+      await assertConfiguredAuthoringOutputRoot(outDir, services.authoringOutputRoots, "Canvas-to-MP4 output");
       const result = await runCanvasMp4Export({
         canvasSelectionPath,
         outDir,
         preset,
         dryRunRender: dryRunRender ?? false,
-        ...(services.ffmpegRunner ? { ffmpegRunner: services.ffmpegRunner } : {})
+        ...connectorStreamingServices(services)
       });
       return await connectorResult(command, result, services, {
         panel: "receipts",
@@ -160,8 +202,12 @@ export async function dispatchIntegrationCommand(
     if (!outPath) return invalidArgs("motion.canvas.bridge_export requires outPath.");
     if (durationMs === false) return invalidArgs("motion.canvas.bridge_export durationMs must be a positive number.");
     if (fps === false) return invalidArgs("motion.canvas.bridge_export fps must be a positive number.");
+    if (!services.authoringOutputRoots?.length) {
+      return capabilityUnavailable("Canvas bridge export requires a configured host-approved authoring output root.");
+    }
     if (!services.readReceipt) return capabilityUnavailable("Canvas bridge receipt verification is unavailable.");
     try {
+      await assertConfiguredAuthoringOutputFile(outPath, services.authoringOutputRoots, "Canvas bridge export output");
       const result = await runCanvasBridgeFrameSelectionExport({
         canvasRoot,
         outPath,
@@ -193,6 +239,7 @@ export async function dispatchIntegrationCommand(
         warnings: []
       };
     } catch (error) {
+      if (error instanceof AuthoringRootPolicyError) return invalidArgs(error.message);
       return {
         ok: false,
         error: { code: "canvas_bridge_export_failed", message: error instanceof Error ? error.message : String(error) },
@@ -201,114 +248,26 @@ export async function dispatchIntegrationCommand(
     }
   }
 
-  if (command === "motion.connector.canvas_to_cut") {
-    const canvasSelectionPath = stringArg(args, "canvasSelectionPath");
-    const outDir = stringArg(args, "outDir");
-    const modeArg = stringArg(args, "cutImportMode");
-    const dryRunRender = booleanArg(args, "dryRunRender");
-    const createdAt = stringArg(args, "createdAt") ?? undefined;
-    if (!canvasSelectionPath) return invalidArgs("motion.connector.canvas_to_cut requires canvasSelectionPath.");
-    if (!outDir) return invalidArgs("motion.connector.canvas_to_cut requires outDir.");
-    const cutImportMode = modeArg ? readCutImportModeRequest(modeArg) : undefined;
-    if (modeArg && !cutImportMode) return invalidArgs(`Unsupported Cut import mode: ${modeArg}.`);
-    if (!services.readReceipt) return capabilityUnavailable("Connector receipt verification is unavailable.");
-    try {
-      const result = await runCanvasToCutConnector({
-        canvasSelectionPath,
-        outDir,
-        ...(cutImportMode ? { cutImportMode } : {}),
-        dryRunRender: dryRunRender ?? false,
-        ...(createdAt ? { now: () => createdAt } : {}),
-        ...(services.ffmpegRunner ? { ffmpegRunner: services.ffmpegRunner } : {})
-      });
-      return await connectorResult(command, result, services, {
-        panel: "receipts",
-        operation: "connector.canvas_to_cut",
-        ok: result.ok,
-        cutPlanPath: result.cutPlanPath,
-        receiptPath: result.receiptPath
-      });
-    } catch (error) {
-      return connectorException(error);
-    }
-  }
-
-  if (command === "motion.connector.source_to_cut") {
-    const sourcePath = stringArg(args, "sourcePath");
-    const outDir = stringArg(args, "outDir");
-    const modeArg = stringArg(args, "cutImportMode");
-    const dryRunRender = booleanArg(args, "dryRunRender");
-    const maxFrames = positiveIntegerArg(args, "maxFrames");
-    const frameDurationMs = positiveIntegerArg(args, "frameDurationMs");
-    const width = positiveIntegerArg(args, "width");
-    const height = positiveIntegerArg(args, "height");
-    const fps = positiveIntegerArg(args, "fps");
-    const createdAt = stringArg(args, "createdAt") ?? undefined;
-    if (!sourcePath) return invalidArgs("motion.connector.source_to_cut requires sourcePath.");
-    if (!outDir) return invalidArgs("motion.connector.source_to_cut requires outDir.");
-    for (const [label, value] of [["maxFrames", maxFrames], ["frameDurationMs", frameDurationMs], ["width", width], ["height", height], ["fps", fps]] as const) {
-      if (value === false) return invalidArgs(`${label} must be a positive integer.`);
-    }
-    const maxFramesValue = typeof maxFrames === "number" ? maxFrames : null;
-    const frameDurationMsValue = typeof frameDurationMs === "number" ? frameDurationMs : null;
-    const widthValue = typeof width === "number" ? width : null;
-    const heightValue = typeof height === "number" ? height : null;
-    const fpsValue = typeof fps === "number" ? fps : null;
-    const cutImportMode = modeArg ? readCutImportModeRequest(modeArg) : undefined;
-    if (modeArg && !cutImportMode) return invalidArgs(`Unsupported Cut import mode: ${modeArg}.`);
-    if (!services.readReceipt) return capabilityUnavailable("Connector receipt verification is unavailable.");
-    try {
-      const result = await runSourceToCutConnector({
-        sourcePath,
-        outDir,
-        ...(maxFramesValue !== null ? { maxFrames: maxFramesValue } : {}),
-        ...(frameDurationMsValue !== null ? { frameDurationMs: frameDurationMsValue } : {}),
-        ...(widthValue !== null ? { width: widthValue } : {}),
-        ...(heightValue !== null ? { height: heightValue } : {}),
-        ...(fpsValue !== null ? { fps: fpsValue } : {}),
-        ...(cutImportMode ? { cutImportMode } : {}),
-        dryRunRender: dryRunRender ?? false,
-        ...(createdAt ? { now: () => createdAt } : {}),
-        ...(services.ffmpegRunner ? { ffmpegRunner: services.ffmpegRunner } : {})
-      });
-      return await connectorResult(command, result, services, {
-        panel: "receipts",
-        operation: "connector.source_to_cut",
-        ok: result.ok,
-        sourcePath,
-        scriptPath: result.storyboard.scriptPath,
-        packageDir: result.packageDir,
-        ...(result.preview.outputPath ? { previewFramePath: result.preview.outputPath } : {}),
-        ...(result.render.outputPath ? { renderedMediaPath: result.render.outputPath } : {}),
-        cutPlanPath: result.cutPlanPath,
-        receiptPath: result.receiptPath
-      });
-    } catch (error) {
-      return connectorException(error);
-    }
-  }
-
   if (command === "motion.connector.template_to_cut") {
     const packageRoot = stringArg(args, "packageRoot");
     const outDir = stringArg(args, "outDir");
     const values = scalarRecordArg(args, "values");
     const modeArg = stringArg(args, "cutImportMode");
-    const dryRunRender = booleanArg(args, "dryRunRender");
     if (!packageRoot) return invalidArgs("motion.connector.template_to_cut requires packageRoot.");
     if (!outDir) return invalidArgs("motion.connector.template_to_cut requires outDir.");
     if (!values) return invalidArgs("motion.connector.template_to_cut requires values.");
-    const cutImportMode = modeArg ? readCutImportModeRequest(modeArg) : undefined;
-    if (modeArg && !cutImportMode) return invalidArgs(`Unsupported Cut import mode: ${modeArg}.`);
+    if (modeArg !== undefined && modeArg !== "rendered_media") return invalidArgs("motion.connector.template_to_cut accepts only cutImportMode rendered_media in P2A.");
+    if (!services.authoringInputRoots?.length || !services.authoringOutputRoots?.length) {
+      return capabilityUnavailable("Template-to-Cut requires configured host-approved authoring input and output roots.");
+    }
     if (!services.readReceipt) return capabilityUnavailable("Connector receipt verification is unavailable.");
     try {
+      await assertConfiguredAuthoringInputRoot(packageRoot, services.authoringInputRoots, "Template-to-Cut packageRoot");
+      await assertConfiguredAuthoringOutputRoot(outDir, services.authoringOutputRoots, "Template-to-Cut output");
       const result = await runTemplateToCutConnector({
         packageRoot,
         outDir,
-        values,
-        previewLane: "auto",
-        ...(cutImportMode ? { cutImportMode } : {}),
-        dryRunRender: dryRunRender ?? false,
-        ...(services.ffmpegRunner ? { ffmpegRunner: services.ffmpegRunner } : {})
+        values
       });
       return await connectorResult(command, result, services, {
         panel: "receipts",
@@ -316,49 +275,55 @@ export async function dispatchIntegrationCommand(
         ok: result.ok,
         cutPlanPath: result.cutPlanPath,
         receiptPath: result.receiptPath
-      });
+      }, {}, { atomic: true });
     } catch (error) {
       return connectorException(error);
     }
   }
 
-  if (command === "motion.connector.script_to_cut" || command === "motion.connector.cut_generate_to_cut") {
-    const receiptOperation = command === "motion.connector.cut_generate_to_cut" ? "connector.cut_generate_to_cut" : "connector.script_to_cut";
+  if (command === "motion.connector.cut_generate_to_cut") {
     const scriptPathArg = stringArg(args, "scriptPath");
-    const scriptInline = recordArg(args, "script") ?? recordArg(args, "storyboard");
+    const inlineScript = recordArg(args, "script");
+    const storyboard = recordArg(args, "storyboard");
     const outDir = stringArg(args, "outDir");
     const modeArg = stringArg(args, "cutImportMode");
     const dryRunRender = booleanArg(args, "dryRunRender");
     const createdAt = stringArg(args, "createdAt") ?? undefined;
-    if (!scriptPathArg && !scriptInline) return invalidArgs(`${command} requires scriptPath or script.`);
-    if (!outDir) return invalidArgs(`${command} requires outDir.`);
+    if (inputSourceCount(scriptPathArg, inlineScript, storyboard) !== 1) return invalidArgs("motion.connector.cut_generate_to_cut requires exactly one input source: scriptPath, script, or storyboard.");
+    if (!outDir) return invalidArgs("motion.connector.cut_generate_to_cut requires outDir.");
     const cutImportMode = modeArg ? readCutImportModeRequest(modeArg) : undefined;
     if (modeArg && !cutImportMode) return invalidArgs(`Unsupported Cut import mode: ${modeArg}.`);
-    if (!services.readReceipt) return capabilityUnavailable("Connector receipt verification is unavailable.");
-    if (scriptInline && !services.writeJson) return capabilityUnavailable("Inline script persistence is unavailable.");
+    if (!services.authoringOutputRoots?.length) {
+      return capabilityUnavailable("Cut Generate-to-Cut requires a configured host-approved authoring output root.");
+    }
+    if (scriptPathArg && !services.authoringInputRoots?.length) {
+      return capabilityUnavailable("Cut Generate-to-Cut scriptPath requires a configured host-approved authoring input root.");
+    }
     try {
-      const scriptPath = scriptPathArg ?? join(outDir, "scripted-video.json");
-      if (scriptInline) await services.writeJson!(scriptPath, scriptInline);
-      const result = await runScriptToCutConnector({
-        scriptPath,
+      await assertConfiguredAuthoringOutputRoot(outDir, services.authoringOutputRoots, "Cut Generate-to-Cut output");
+      if (scriptPathArg) {
+        await assertConfiguredAuthoringInputFile(scriptPathArg, services.authoringInputRoots, "Cut Generate-to-Cut scriptPath");
+      }
+      const scriptInline = inlineScript ?? storyboard;
+      const result = await runCutGenerateToCutConnector({
+        ...(scriptPathArg ? { scriptPath: scriptPathArg } : { script: scriptInline! }),
         outDir,
         ...(cutImportMode ? { cutImportMode } : {}),
         dryRunRender: dryRunRender ?? false,
-        receiptOperation,
         ...(createdAt ? { now: () => createdAt } : {}),
-        ...(services.ffmpegRunner ? { ffmpegRunner: services.ffmpegRunner } : {})
+        ...connectorStreamingServices(services)
       });
       return await connectorResult(command, result, services, {
         panel: "receipts",
-        operation: receiptOperation,
+        operation: "connector.cut_generate_to_cut",
         ok: result.ok,
-        scriptPath,
+        ...(scriptPathArg ? { scriptPath: scriptPathArg } : { scriptInput: "inline" }),
         packageDir: result.packageDir,
         ...(result.preview.outputPath ? { previewFramePath: result.preview.outputPath } : {}),
         ...(result.render.outputPath ? { renderedMediaPath: result.render.outputPath } : {}),
         cutPlanPath: result.cutPlanPath,
         receiptPath: result.receiptPath
-      }, { scriptPath });
+      }, scriptPathArg ? { scriptPath: scriptPathArg } : { scriptInput: "inline" });
     } catch (error) {
       return connectorException(error);
     }
@@ -380,51 +345,11 @@ export async function dispatchIntegrationCommand(
   return null;
 }
 
-async function connectorResult(
-  command: MotionDebugCommand,
-  result: { ok: boolean; receiptPath: string; warnings: string[] },
-  services: IntegrationDomainServices,
-  visibleState: Record<string, unknown>,
-  extraResult: Record<string, unknown> = {}
-): Promise<MotionDebugResult> {
-  const receipt = await services.readReceipt!(result.receiptPath);
-  const hostReceiptPath = services.receiptsRoot && receipt
-    ? await persistReceipt(services, services.receiptsRoot, receipt)
-    : undefined;
-  const publicResult = { ...result, ...extraResult, ...(hostReceiptPath ? { hostReceiptPath } : {}) };
-  const publicVisibleState = { ...visibleState, ...(hostReceiptPath ? { hostReceiptPath } : {}) };
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: {
-        code: "connector_failed",
-        message: `${command} returned a failed connector receipt.`,
-        detail: { receiptPath: result.receiptPath }
-      },
-      ...(receipt ? { receiptId: receipt.id } : {}),
-      visibleState: publicVisibleState,
-      result: publicResult,
-      warnings: result.warnings
-    };
-  }
-  return {
-    ok: true,
-    ...(receipt ? { receiptId: receipt.id } : {}),
-    visibleState: publicVisibleState,
-    result: publicResult,
-    warnings: result.warnings
-  };
-}
-
-function connectorException(error: unknown): MotionDebugResult {
-  return {
-    ok: false,
-    error: { code: "connector_failed", message: error instanceof Error ? error.message : String(error) },
-    warnings: []
-  };
-}
-
-async function persistReceipt(services: IntegrationDomainServices, root: string, receipt: OperationReceipt): Promise<string> {
+async function persistReceipt(
+  services: IntegrationServices,
+  root: string,
+  receipt: OperationReceipt
+): Promise<string> {
   if (!services.writeReceipt) throw new Error("Receipt persistence capability is unavailable");
   return services.writeReceipt(root, receipt);
 }
@@ -465,25 +390,33 @@ function canvasPackageFailure(error: unknown): MotionDebugResult {
   };
 }
 
-function enrichCanvasPackageReceipt(receipt: OperationReceipt, paths: {
-  packageDir: string;
-  manifestPath: string;
-  motionPath: string;
-  resourceCatalogPath: string;
-  assetRefs: string[];
-  copiedAssetRefs: string[];
-  missingAssetRefs: string[];
-}): OperationReceipt {
-  const output = typeof receipt.output === "object" && receipt.output !== null && !Array.isArray(receipt.output)
-    ? { ...receipt.output }
-    : {};
+async function mirrorCanvasPackageReceipt(
+  services: IntegrationServices,
+  root: string,
+  receipt: OperationReceipt
+): Promise<{ path?: string; warning?: string }> {
+  try {
+    if (!services.writeReceipt) throw new Error("Receipt persistence capability is unavailable.");
+    return { path: await services.writeReceipt(root, receipt) };
+  } catch (error) {
+    return { warning: `Canvas package committed, but host receipt mirror failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+function canvasPackageCommitUncertain(error: PublicationCommitUncertainError): MotionDebugResult {
+  const evidence = error.evidence;
+  const detail = {
+    possiblyCommitted: true,
+    packageDir: evidence.publicPath,
+    publicPaths: [evidence.publicPath],
+    expectedClosedTree: evidence.expected,
+    expectedPublications: [evidence]
+  };
   return {
-    ...receipt,
-    output: { ...output, ...paths },
-    warnings: [
-      ...receipt.warnings,
-      ...paths.missingAssetRefs.map((assetRef) => `Canvas asset was not copied into package: ${assetRef}`)
-    ]
+    ok: false,
+    error: { code: "publication_commit_uncertain", message: error.message, detail },
+    result: detail,
+    warnings: []
   };
 }
 
@@ -493,6 +426,10 @@ function invalidArgs(message: string): MotionDebugResult {
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return { ok: false, error: { code: "capability_unavailable", message }, warnings: [] };
+}
+
+function inputSourceCount(scriptPath: string | null, script: Record<string, unknown> | null, storyboard: Record<string, unknown> | null): number {
+  return Number(Boolean(scriptPath)) + Number(Boolean(script)) + Number(Boolean(storyboard));
 }
 
 type ConnectorPanelCommand =
@@ -530,6 +467,7 @@ interface ConnectorPanelCard {
   outputKind: "mp4" | "cut-import-plan";
   requiredInputs: string[];
   optionalInputs: string[];
+  inputConstraint?: string;
   outputArtifacts: string[];
   receipts: string[];
   render: ConnectorPanelRender;
@@ -589,13 +527,13 @@ const CONNECTOR_PANEL_CARDS: ConnectorPanelCard[] = [
     targetProduct: "shellx-cut",
     outputKind: "cut-import-plan",
     requiredInputs: ["canvasSelectionPath", "outDir"],
-    optionalInputs: ["cutImportMode", "dryRunRender", "createdAt"],
-    outputArtifacts: ["motion_package", "rendered_media", "cut_plan", "connector_receipt"],
-    receipts: ["connector_receipt", "render_receipt", "cut_plan"],
-    render: { required: "conditional", dryRunSupported: true, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264", "webm-vp9", "png-sequence"] },
+    optionalInputs: ["cutImportMode"],
+    outputArtifacts: ["motion_package", "preview_frame", "rendered_media", "artifact_handle", "cut_plan", "connector_receipt"],
+    receipts: ["connector_receipt", "preview_receipt", "render_receipt", "cut_plan"],
+    render: { required: true, dryRunSupported: false, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264"] },
     cutHandoff: {
       supported: true,
-      importModes: ["rendered_media", "live_overlay", "editable_lowering"]
+      importModes: ["rendered_media"]
     },
     qualityGate: { supported: false, defaultEnabled: false },
     surfaces: ["shellx-canvas", "shellx-cut", "shellx-motion"],
@@ -609,16 +547,17 @@ const CONNECTOR_PANEL_CARDS: ConnectorPanelCard[] = [
     sourceProduct: "scripted-video",
     targetProduct: "shellx-cut",
     outputKind: "cut-import-plan",
-    requiredInputs: ["scriptPath", "outDir"],
-    optionalInputs: ["script", "storyboard", "cutImportMode", "dryRunRender", "createdAt"],
-    outputArtifacts: ["scripted_video", "motion_package", "rendered_media", "cut_plan", "connector_receipt"],
-    receipts: ["connector_receipt", "render_receipt", "quality_receipt", "cut_plan"],
-    render: { required: true, dryRunSupported: true, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264", "webm-vp9"] },
+    requiredInputs: ["outDir"],
+    optionalInputs: ["scriptPath", "script", "storyboard", "cutImportMode", "startMs", "durationMs", "track"],
+    inputConstraint: "Exactly one of scriptPath, script, or storyboard is required.",
+    outputArtifacts: ["motion_package", "preview_frame", "rendered_media", "artifact_handle", "cut_plan", "connector_receipt"],
+    receipts: ["connector_receipt", "preview_receipt", "render_receipt", "cut_plan"],
+    render: { required: true, dryRunSupported: false, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264"] },
     cutHandoff: {
       supported: true,
       importModes: ["rendered_media"]
     },
-    qualityGate: { supported: true, defaultEnabled: true },
+    qualityGate: { supported: false, defaultEnabled: false },
     surfaces: ["shellx-cut", "shellx-motion"],
     templateDriven: false,
     requiresSourceImport: false
@@ -631,15 +570,15 @@ const CONNECTOR_PANEL_CARDS: ConnectorPanelCard[] = [
     targetProduct: "shellx-cut",
     outputKind: "cut-import-plan",
     requiredInputs: ["sourcePath", "outDir"],
-    optionalInputs: ["maxFrames", "frameDurationMs", "width", "height", "fps", "cutImportMode", "dryRunRender", "createdAt"],
-    outputArtifacts: ["source_markdown", "storyboard", "motion_package", "rendered_media", "cut_plan", "source_to_cut_receipt"],
-    receipts: ["source_to_cut_receipt", "source_storyboard_receipt", "render_receipt", "quality_receipt", "cut_plan"],
-    render: { required: true, dryRunSupported: true, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264", "webm-vp9"] },
+    optionalInputs: ["maxFrames", "frameDurationMs", "width", "height", "fps", "cutImportMode"],
+    outputArtifacts: ["storyboard", "motion_package", "preview_frame", "rendered_media", "artifact_handle", "cut_plan", "source_to_cut_receipt"],
+    receipts: ["source_to_cut_receipt", "source_storyboard_receipt", "preview_receipt", "render_receipt", "cut_plan"],
+    render: { required: true, dryRunSupported: false, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264"] },
     cutHandoff: {
       supported: true,
       importModes: ["rendered_media"]
     },
-    qualityGate: { supported: true, defaultEnabled: true },
+    qualityGate: { supported: false, defaultEnabled: false },
     surfaces: ["shellx-cut", "shellx-motion"],
     templateDriven: false,
     requiresSourceImport: true
@@ -673,13 +612,13 @@ const CONNECTOR_PANEL_CARDS: ConnectorPanelCard[] = [
     targetProduct: "shellx-cut",
     outputKind: "cut-import-plan",
     requiredInputs: ["packageRoot", "outDir", "values"],
-    optionalInputs: ["cutImportMode", "dryRunRender"],
-    outputArtifacts: ["motion_package", "rendered_media", "cut_plan", "connector_receipt"],
-    receipts: ["connector_receipt", "template_apply_receipt", "render_receipt", "cut_plan"],
-    render: { required: "conditional", dryRunSupported: true, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264", "webm-vp9", "png-sequence"] },
+    optionalInputs: ["cutImportMode"],
+    outputArtifacts: ["motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"],
+    receipts: ["connector_receipt", "template_apply_receipt", "preview_receipt", "render_receipt", "cut_plan"],
+    render: { required: true, dryRunSupported: false, defaultFrameLane: "browser", producesRenderedMedia: true, presets: ["mp4-h264"] },
     cutHandoff: {
       supported: true,
-      importModes: ["rendered_media", "editable_lowering"]
+      importModes: ["rendered_media"]
     },
     qualityGate: { supported: false, defaultEnabled: false },
     surfaces: ["shellx-cut", "shellx-motion"],
@@ -693,6 +632,7 @@ function buildConnectorPanel(): ConnectorPanel {
     ...card,
     requiredInputs: [...card.requiredInputs],
     optionalInputs: [...card.optionalInputs],
+    ...(card.inputConstraint ? { inputConstraint: card.inputConstraint } : {}),
     outputArtifacts: [...card.outputArtifacts],
     receipts: [...card.receipts],
     render: { ...card.render, presets: [...card.render.presets] },

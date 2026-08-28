@@ -22,12 +22,15 @@
  */
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { dispatchDebugCommand } from "@shellx-motion/debug-api";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { runCli } from "./main";
 
 const tempDirs: string[] = [];
+const fixturePackagesRoot = fileURLToPath(new URL("../../../fixtures/packages/", import.meta.url));
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -38,6 +41,7 @@ interface Verdict {
   ok: boolean;
   code?: string;
   message?: string;
+  validation?: unknown;
   schemaErrorCount?: number;
   schemaErrors?: unknown;
 }
@@ -54,6 +58,7 @@ async function cliVerdict(packageRoot: string): Promise<Verdict> {
     ok: result.ok === true,
     ...(typeof error.code === "string" ? { code: error.code } : {}),
     ...(typeof error.message === "string" ? { message: error.message } : {}),
+    ...(result.validation !== undefined ? { validation: result.validation } : {}),
     ...(result.schemaErrorCount !== undefined ? { schemaErrorCount: result.schemaErrorCount as number } : {}),
     ...(result.schemaErrors !== undefined ? { schemaErrors: result.schemaErrors } : {})
   };
@@ -68,9 +73,19 @@ async function mcpVerdict(packageRoot: string): Promise<Verdict> {
     ok: response.ok === true,
     ...(typeof error.code === "string" ? { code: error.code } : {}),
     ...(typeof error.message === "string" ? { message: error.message } : {}),
+    ...(result.validation !== undefined ? { validation: result.validation } : {}),
     ...(result.schemaErrorCount !== undefined ? { schemaErrorCount: result.schemaErrorCount as number } : {}),
     ...(result.schemaErrors !== undefined ? { schemaErrors: result.schemaErrors } : {})
   };
+}
+
+/** Exercise both public doors inside the same explicit host-approved workspace authority. */
+async function bothVerdicts(packageRoot: string): Promise<readonly [Verdict, Verdict]> {
+  const anchor = await createTrustedWorkspaceAnchor(dirname(packageRoot));
+  return await withTrustedWorkspaceAnchor(anchor, async () => [
+    await cliVerdict(packageRoot),
+    await mcpVerdict(packageRoot),
+  ] as const);
 }
 
 /** Copy a shipped fixture into a temp dir and hand its parsed motion document to `mutate`. */
@@ -81,7 +96,7 @@ async function brokenCopyOf(
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-validate-parity-"));
   tempDirs.push(root);
   const packageRoot = join(root, "package");
-  await cp(resolve(`../../fixtures/packages/${fixture}`), packageRoot, { recursive: true });
+  await cp(resolve(fixturePackagesRoot, fixture), packageRoot, { recursive: true });
   const motionPath = join(packageRoot, "motion.json");
   const motion = JSON.parse(await readFile(motionPath, "utf8")) as { layers: Array<Record<string, unknown>> };
   mutate(motion);
@@ -94,8 +109,8 @@ async function brokenCopyOf(
  *
  * `environment.backgroundColor` set to a named CSS colour is the real defect that shipped: it loads
  * cleanly, passes the renderability and keyframe verdicts, and fails only the schema's `#RRGGBB`
- * rule — the exact case that used to pass validation and then be refused at preview. It is also why
- * the schema check has to exist behind the two specialised ones rather than instead of them.
+ * rule — the exact case that used to pass validation and then be refused at preview. It must fail
+ * structural stage one before any semantic/renderability claim is considered.
  */
 function schemaInvalidPackage(): Promise<string> {
   return brokenCopyOf("environment-rain-cinematic", (motion) => {
@@ -105,29 +120,45 @@ function schemaInvalidPackage(): Promise<string> {
   });
 }
 
+async function missingPackageAsset(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "shellx-motion-validate-missing-asset-"));
+  tempDirs.push(root);
+  const packageRoot = join(root, "package");
+  await cp(resolve(fixturePackagesRoot, "keyframed-lower-third"), packageRoot, { recursive: true });
+  const manifestPath = join(packageRoot, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { assets: string[] };
+  manifest.assets = [...manifest.assets, "assets/missing-before-render.png"];
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return packageRoot;
+}
+
 describe("motion.package.validate and shellx-motion validate — one verdict per directory", () => {
   it("both doors REFUSE a schema-invalid document, with the same code and offenders", async () => {
     const packageRoot = await schemaInvalidPackage();
 
-    const cli = await cliVerdict(packageRoot);
-    const mcp = await mcpVerdict(packageRoot);
+    const [cli, mcp] = await bothVerdicts(packageRoot);
 
     // The regression: this document used to be reported valid by both doors, then refused at preview.
     expect(cli.ok).toBe(false);
     expect(mcp.ok).toBe(false);
     expect(mcp.code).toBe("invalid_motion_document");
     expect(mcp.schemaErrors).toEqual([
-      { path: "/layers/0/environment/backgroundColor", message: "must be a #RRGGBB color" }
+      { path: "/layers/0/environment/backgroundColor", message: "must match pattern ^#[0-9A-Fa-f]{6}$" }
     ]);
+    expect(mcp.validation).toEqual({
+      contract: "shellx-motion/motion-validation@1",
+      structural: "failed",
+      semantic: "not_run",
+      renderability: "not_proven",
+    });
     // The point of the file: not "each says something sensible" but "they say the SAME thing".
     expect(mcp).toEqual(cli);
   }, 60000);
 
-  it("both doors give the SPECIALISED keyframe verdict, not the schema one, for {t,v} keyframes", async () => {
-    // Ordering, not just presence. `{ t, v }` keyframes fail the schema too, so a door that ran the
-    // schema first would answer "does not satisfy shellx-motion/motion@1: N error(s)" instead of
-    // naming the four unreadable keyframes and the correct `{ atMs, value }` form. The general
-    // checker must cover what the specific ones do not — never shadow them.
+  it("both doors stop at structural stage one for {t,v} keyframes", async () => {
+    // `{ t, v }` keyframes fail JSON Schema. The timeline panel can still explain unreadable
+    // keyframes separately, but package validation must not imply runtime semantic/renderability
+    // work ran after stage one failed.
     const packageRoot = await brokenCopyOf("keyframed-lower-third", (motion) => {
       const layer = motion.layers.find((entry) => entry.keyframes) as { keyframes: Record<string, unknown[]> };
       expect(layer, "fixture must still carry a keyframed layer").toBeDefined();
@@ -136,32 +167,38 @@ describe("motion.package.validate and shellx-motion validate — one verdict per
         .map((entry) => ({ t: entry.atMs, v: entry.value }));
     });
 
-    const cli = await cliVerdict(packageRoot);
-    const mcp = await mcpVerdict(packageRoot);
+    const [cli, mcp] = await bothVerdicts(packageRoot);
 
-    expect(mcp.code).toBe("keyframes_unreadable");
-    expect(mcp.message).toContain("cannot be read by the timeline evaluator");
+    expect(mcp.code).toBe("invalid_motion_document");
+    expect(mcp.validation).toMatchObject({ structural: "failed", semantic: "not_run", renderability: "not_proven" });
     expect(mcp).toEqual(cli);
   }, 60000);
 
   it("both doors PASS a sound document, and neither invents a schema error", async () => {
-    const packageRoot = resolve("../../fixtures/packages/keyframed-lower-third");
+    const packageRoot = resolve(fixturePackagesRoot, "keyframed-lower-third");
 
-    const cli = await cliVerdict(packageRoot);
-    const mcp = await mcpVerdict(packageRoot);
+    const [cli, mcp] = await bothVerdicts(packageRoot);
 
     expect(cli.ok).toBe(true);
     expect(mcp.ok).toBe(true);
     expect(mcp.schemaErrors).toBeUndefined();
+    expect(mcp.validation).toMatchObject({ structural: "passed", semantic: "passed", renderability: "not_proven" });
+    expect(mcp).toEqual(cli);
+  }, 60000);
+
+  it("both doors refuse a missing package-local asset before rendering", async () => {
+    const packageRoot = await missingPackageAsset();
+    const [cli, mcp] = await bothVerdicts(packageRoot);
+
+    expect(cli).toMatchObject({ ok: false, code: "invalid_package_assets", message: expect.stringContaining("1 invalid package-local asset") });
     expect(mcp).toEqual(cli);
   }, 60000);
 
   it("both doors PASS every shipped environment fixture unmodified", async () => {
     // Guards the other direction: a validator wired in too aggressively would refuse what ships.
     for (const fixture of ["environment-rain-cinematic", "environment-water-cinematic", "environment-rain-footage"]) {
-      const packageRoot = resolve(`../../fixtures/packages/${fixture}`);
-      const cli = await cliVerdict(packageRoot);
-      const mcp = await mcpVerdict(packageRoot);
+      const packageRoot = resolve(fixturePackagesRoot, fixture);
+      const [cli, mcp] = await bothVerdicts(packageRoot);
       expect(cli.ok, `${fixture} must pass the CLI door`).toBe(true);
       expect(mcp, `${fixture} doors disagree`).toEqual(cli);
     }
