@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, lstat, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { loadMotionPackage, MAX_MOTION_DOCUMENT_LAYERS, readMotionDocument } from "./package";
 import { extractMotionPackageArchive } from "./package-archive";
@@ -83,12 +83,19 @@ describe("package JSON structural admission", () => {
     }
   }, 45_000);
 
-  it("retains the checked-in 4,502-layer generator package within the package admission budgets", async () => {
-    const packageRoot = resolve("../../templates/generators/samples/grok-transformer-v4/package");
-    const pkg = await withTrustedWorkspaceAnchor(
-      await createTrustedWorkspaceAnchor(dirname(packageRoot)),
-      async () => await loadMotionPackage(packageRoot)
-    );
+  it("retains a 4,502-layer package snapshot within the package admission budgets", () => {
+    const files = {
+      "manifest.json": manifestText(),
+      "motion.json": JSON.stringify({
+        ...minimalMotionDocument(),
+        layers: Array.from({ length: 4_502 }, (_entry, index) => ({ ...minimalLayer(), id: `layer_${index}` }))
+      })
+    };
+    const snapshot = new Map(Object.entries(files).map(([path, text]) => {
+      const bytes = Buffer.from(text, "utf8");
+      return [path, { bytes, sha256: createHash("sha256").update(bytes).digest("hex") }] as const;
+    }));
+    const pkg = loadMotionPackageFromAdmittedFiles("/virtual/json-admission", snapshot);
     expect(pkg.motion.layers).toHaveLength(4_502);
   }, 45_000);
 });

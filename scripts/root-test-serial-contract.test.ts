@@ -15,6 +15,7 @@ describe("root test resource contract", () => {
     const implementationHygiene = manifest.scripts?.["source-hygiene:implementation"] ?? "";
 
     expect(rootTest).toBe("pnpm run test:public");
+    expect(publicTests).toContain("--no-bail");
     expect(publicTests).toContain("--workspace-concurrency=1");
     expect(publicTests).toContain("--pool=forks --maxWorkers=1 --no-file-parallelism");
     expect(publicTests).not.toContain("templates/generators");

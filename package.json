@@ -37,7 +37,7 @@
     "build:clean": "node scripts/build.mjs --clean",
     "build:verify": "node scripts/verify-install.mjs",
     "test": "pnpm run test:public",
-    "test:public": "pnpm run source-hygiene:public && pnpm docs:check && pnpm run args:check && pnpm run version:check && pnpm run architecture:check && pnpm run corpus:check && pnpm run test:scripts && pnpm -r --workspace-concurrency=1 --if-present run test --pool=forks --maxWorkers=1 --no-file-parallelism",
+    "test:public": "pnpm run source-hygiene:public && pnpm docs:check && pnpm run args:check && pnpm run version:check && pnpm run architecture:check && pnpm run corpus:check && pnpm run test:scripts && pnpm -r --no-bail --workspace-concurrency=1 --if-present run test --pool=forks --maxWorkers=1 --no-file-parallelism",
     "test:implementation": "pnpm run source-hygiene:implementation && pnpm run test:generators && pnpm run test:public && pnpm run test:scripts:implementation",
     "test:generators": "pnpm run test:rigid-body-bake && pnpm run test:creative-samples",
     "test:scripts": "vitest run --config vitest.scripts.config.ts --exclude scripts/qualify-v25c4-native.test.ts --pool=forks --maxWorkers=1 --no-file-parallelism",
