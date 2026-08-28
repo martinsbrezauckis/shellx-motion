@@ -38,6 +38,8 @@ export interface MotionDebugServerSecurityContext extends EffectModuleWorkbenchS
   templateRoots: string[];
   /** Exact startup identities behind templateRoots; posters never inherit general artifact roots. */
   templateRootAuthorities: readonly RetainedDirectoryAuthority[];
+  /** Host-only test seam; no HTTP request, command, or package can invoke this callback. */
+  onWorkbenchPosterPackageAdmission?: (packageRoot: string) => void | Promise<void>;
   /** Browser-session-owned opaque preview handles; never populated from request paths. */
   workbenchArtifactSessions: WorkbenchArtifactSessions;
   agentSnapshotSource?: MotionAgentSnapshotResourceSource;

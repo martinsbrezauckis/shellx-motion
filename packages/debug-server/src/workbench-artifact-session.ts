@@ -11,6 +11,8 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
+import type { RetainedDirectoryAuthority } from "@shellx-motion/core";
 
 const WORKBENCH_ARTIFACT_SESSION_COOKIE = "shellx_motion_workbench_artifact_session";
 const MAX_SESSIONS = 16;
@@ -19,7 +21,14 @@ const MAX_HANDLES_PER_SESSION = 128;
 export interface WorkbenchArtifactSession {
   readonly token: string;
   readonly artifacts: Map<string, string>;
-  readonly posters: Map<string, string>;
+  readonly posters: Map<string, WorkbenchPosterHandle>;
+}
+
+/** A poster is bound to its exact catalog package, not merely its collection. */
+export interface WorkbenchPosterHandle {
+  readonly path: string;
+  readonly packageRoot: string;
+  readonly authority: RetainedDirectoryAuthority;
 }
 
 /** Opaque state; construct it only with {@link createWorkbenchArtifactSessions}. */
@@ -88,14 +97,22 @@ export function resolveWorkbenchArtifactHandle(
   return session.artifacts.get(handle) ?? null;
 }
 
-/** Mint an unguessable handle for a poster declared by this caller's catalog response. */
-export function mintWorkbenchPosterHandle(session: WorkbenchArtifactSession, path: string): string {
+/** Mint an unguessable handle for a canonical package-relative poster declaration. */
+export function mintWorkbenchPosterHandle(
+  session: WorkbenchArtifactSession,
+  packageRoot: string,
+  reference: string,
+  authority: RetainedDirectoryAuthority
+): string | null {
+  const root = resolve(packageRoot);
+  const path = resolvePackageRelativePosterPath(root, reference);
+  if (!path || authority.path !== root) return null;
   if (session.posters.size >= MAX_HANDLES_PER_SESSION) {
     const oldest = session.posters.keys().next().value;
     if (typeof oldest === "string") session.posters.delete(oldest);
   }
   const handle = `wp_${randomBytes(32).toString("base64url")}`;
-  session.posters.set(handle, path);
+  session.posters.set(handle, { path, packageRoot: root, authority });
   return handle;
 }
 
@@ -103,9 +120,26 @@ export function mintWorkbenchPosterHandle(session: WorkbenchArtifactSession, pat
 export function resolveWorkbenchPosterHandle(
   session: WorkbenchArtifactSession | null,
   handle: string | null
-): string | null {
+): WorkbenchPosterHandle | null {
   if (!session || !handle) return null;
   return session.posters.get(handle) ?? null;
+}
+
+function resolvePackageRelativePosterPath(packageRoot: string, reference: string): string | null {
+  if (!reference
+    || reference.includes("\0")
+    || reference.includes("\\")
+    || isAbsolute(reference)
+    || win32.isAbsolute(reference)) return null;
+  const segments = reference.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  const path = resolve(packageRoot, reference);
+  const pathFromPackage = relative(packageRoot, path);
+  if (!pathFromPackage
+    || pathFromPackage === ".."
+    || pathFromPackage.startsWith(`..${sep}`)
+    || isAbsolute(pathFromPackage)) return null;
+  return path;
 }
 
 function requestCookie(request: IncomingMessage, name: string): string | null {
