@@ -1,6 +1,7 @@
 import { lstat, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { compareCodeUnits } from "./canonical-json";
+import { stableFileIdentity, type StableFileIdentity } from "./stable-file-identity";
 import {
   BoundedResourceBudget,
   DEFAULT_PACKAGE_ARCHIVE_WRITE_LIMITS,
@@ -18,39 +19,53 @@ export interface PackageArchiveSourceEntry {
   data: Buffer;
 }
 
+/** Bounded fault seam for archive-input stability regressions; production callers omit it. */
+export interface PackageArchiveWriteInputServices {
+  /** Runs after every source has been reserved, before the first source byte is retained. */
+  afterEnumeration?: () => Promise<void>;
+}
+
+interface ReservedPackageArchiveSource {
+  absolutePath: string;
+  expectedIdentity: StableFileIdentity;
+}
+
 export async function collectBoundedPackageArchiveEntries(
   packageRoot: string,
-  overrides: Partial<MotionPackageArchiveWriteLimits> | undefined
+  overrides: Partial<MotionPackageArchiveWriteLimits> | undefined,
+  services: PackageArchiveWriteInputServices = {}
 ): Promise<PackageArchiveSourceEntry[]> {
   const limits = resolveArchiveWriteLimits(overrides);
   const budget = new BoundedResourceBudget(limits, "Package archive");
   const files = await collectPackageFiles(packageRoot, budget, 0, packageRoot);
+  await services.afterEnumeration?.();
   const entries: PackageArchiveSourceEntry[] = [];
-  for (const path of files) {
+  for (const file of files) {
     budget.beginRead();
     let source;
     try {
-      source = await readBoundedStableFile(path, {
-        label: `Package archive source ${packageRelativePath(packageRoot, path)}`,
+      source = await readBoundedStableFile(file.absolutePath, {
+        label: `Package archive source ${packageRelativePath(packageRoot, file.absolutePath)}`,
         maxBytes: limits.maxFileBytes,
-        withinRoot: packageRoot
+        withinRoot: packageRoot,
+        expectedIdentity: file.expectedIdentity
       });
     } finally {
       budget.endRead();
     }
-    entries.push({ absolutePath: path, path: packageRelativePath(packageRoot, path), size: source.byteLength, sha256: source.sha256, data: source.bytes });
+    entries.push({ absolutePath: file.absolutePath, path: packageRelativePath(packageRoot, file.absolutePath), size: source.byteLength, sha256: source.sha256, data: source.bytes });
   }
   // Entry order decides the archive's bytes, so a locale-sensitive sort made the archive
   // hash depend on the machine that built it. Code-unit order is the same everywhere.
   return entries.sort((left, right) => compareCodeUnits(left.path, right.path));
 }
 
-async function collectPackageFiles(root: string, budget: BoundedResourceBudget, depth = 0, packageRoot = root): Promise<string[]> {
+async function collectPackageFiles(root: string, budget: BoundedResourceBudget, depth = 0, packageRoot = root): Promise<ReservedPackageArchiveSource[]> {
   if (depth > budget.limits.maxPathDepth) {
     throw new Error(`Package archive exceeds the ${budget.limits.maxPathDepth}-component depth limit.`);
   }
   const entries = await readdir(root, { withFileTypes: true });
-  const files: string[] = [];
+  const files: ReservedPackageArchiveSource[] = [];
   for (const entry of entries) {
     const path = join(root, entry.name);
     const info = await lstat(path);
@@ -61,10 +76,10 @@ async function collectPackageFiles(root: string, budget: BoundedResourceBudget, 
       files.push(...await collectPackageFiles(path, budget, depth + 1, packageRoot));
     } else if (info.isFile()) {
       budget.reserve(path, info.size, packageRoot);
-      files.push(path);
+      files.push({ absolutePath: path, expectedIdentity: stableFileIdentity(info) });
     }
   }
-  return files.sort((left, right) => compareCodeUnits(packageRelativePath(root, left), packageRelativePath(root, right)));
+  return files.sort((left, right) => compareCodeUnits(packageRelativePath(root, left.absolutePath), packageRelativePath(root, right.absolutePath)));
 }
 
 function resolveArchiveWriteLimits(overrides: Partial<MotionPackageArchiveWriteLimits> | undefined): MotionPackageArchiveWriteLimits {
