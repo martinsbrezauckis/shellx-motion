@@ -1,6 +1,6 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { ffmpegLooksAbsent, ffmpegMissingMessage, ffmpegRequirement, ffmpegSuggestedAction, type MotionToolRequirement } from "./tool-requirements.js";
 import {
   FFMPEG_TIMEOUT_EXIT_CODE,
@@ -3009,9 +3009,22 @@ export function resolveMotionToolLocation(tool: MotionToolName): {
 } {
   if (tool === "chromium") return resolveMotionBrowserExecutable();
   const override = readExecutableEnv(tool === "ffmpeg" ? "SHELLX_MOTION_FFMPEG" : "SHELLX_MOTION_FFPROBE");
-  if (override) return { executable: override, source: "override" };
+  if (override) {
+    if (process.platform !== "win32" || isAbsolute(override)) return { executable: override, source: "override" };
+    return {
+      executable: missingWindowsToolCandidate(tool),
+      source: "override",
+      problem: `${tool} override must be an absolute Windows executable path.`
+    };
+  }
   const bundled = discoverShellxFamilyFfmpegTool(tool === "ffmpeg" ? "ffmpeg.exe" : "ffprobe.exe");
   if (bundled) return { executable: bundled, source: "shellx-family" };
+  if (process.platform === "win32") {
+    const resolved = resolveWindowsPathTool(tool);
+    return resolved
+      ? { executable: resolved, source: "path" }
+      : { executable: missingWindowsToolCandidate(tool), source: "path", problem: `No trusted ${tool}.exe was found on the absolute Windows PATH entries.` };
+  }
   return { executable: tool, source: "path" };
 }
 
@@ -3419,6 +3432,30 @@ function ffmpegJobOperation(args: string[]): string {
 function readExecutableEnv(name: "SHELLX_MOTION_FFMPEG" | "SHELLX_MOTION_FFPROBE"): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
+}
+
+/** Resolve a fixed FFmpeg tool through absolute PATH entries without Windows' cwd-first search. */
+function resolveWindowsPathTool(tool: "ffmpeg" | "ffprobe"): string | null {
+  for (const rawEntry of process.env.PATH?.split(win32.delimiter) ?? []) {
+    const entry = rawEntry.trim().replace(/^"|"$/g, "");
+    if (!entry || !win32.isAbsolute(entry)) continue;
+    const candidate = win32.join(entry, `${tool}.exe`);
+    try {
+      const original = lstatSync(candidate);
+      if (!original.isFile() || original.isSymbolicLink()) continue;
+      const canonical = realpathSync(candidate);
+      if (!win32.isAbsolute(canonical) || !lstatSync(canonical).isFile()) continue;
+      return canonical;
+    } catch {
+      // Continue through the explicit absolute PATH entries only.
+    }
+  }
+  return null;
+}
+
+/** Absolute non-existent refusal target; never allows CreateProcess to search the current directory. */
+function missingWindowsToolCandidate(tool: "ffmpeg" | "ffprobe"): string {
+  return win32.join(String.raw`\\?\GLOBALROOT\SystemRoot`, "System32", `${tool}.exe`);
 }
 
 function discoverShellxFamilyFfmpegTool(fileName: "ffmpeg.exe" | "ffprobe.exe"): string | null {

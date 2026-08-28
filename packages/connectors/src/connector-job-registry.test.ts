@@ -56,7 +56,7 @@ describe.runIf(process.platform === "linux")("Motion connector job registry", ()
     const references: MotionConnectorReferenceAuthority = { async resolvePath() { resolutions += 1; return "/never"; } };
     const prepared = prepareAdmittedMotionConnectorJob(fixture.request);
     const drifted = { ...prepared, catalogFingerprint: "f".repeat(64) } as PreparedMotionConnectorJob;
-    await expect(executePreparedMotionConnectorJob(drifted, { references, signal: new AbortController().signal }))
+    await expect(executePreparedMotionConnectorJob(drifted, { callerId: "cut:workspace-a", references, signal: new AbortController().signal }))
       .resolves.toMatchObject({ ok: false, error: { code: "connector_descriptor_drift" } });
     expect(resolutions).toBe(0);
   });
@@ -67,7 +67,7 @@ describe.runIf(process.platform === "linux")("Motion connector job registry", ()
     controller.abort(new Error("operator cancelled"));
     let resolutions = 0;
     const references: MotionConnectorReferenceAuthority = { async resolvePath() { resolutions += 1; return "/never"; } };
-    await expect(executePreparedMotionConnectorJob(prepared, { references, signal: controller.signal }))
+    await expect(executePreparedMotionConnectorJob(prepared, { callerId: "cut:workspace-a", references, signal: controller.signal }))
       .resolves.toMatchObject({ ok: false, error: { code: "job_cancelled", message: "operator cancelled" } });
     expect(resolutions).toBe(0);
   });
@@ -75,7 +75,7 @@ describe.runIf(process.platform === "linux")("Motion connector job registry", ()
   it("refuses a host resolver that returns a relative path", async () => {
     const prepared = prepareAdmittedMotionConnectorJob(templateRequest().request);
     const references: MotionConnectorReferenceAuthority = { async resolvePath() { return "relative/path"; } };
-    await expect(executePreparedMotionConnectorJob(prepared, { references, signal: new AbortController().signal }))
+    await expect(executePreparedMotionConnectorJob(prepared, { callerId: "cut:workspace-a", references, signal: new AbortController().signal }))
       .resolves.toMatchObject({ ok: false, error: { code: "connector_reference_refused" } });
   });
 });

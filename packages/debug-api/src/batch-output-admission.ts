@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { OutputDirectoryReservation, OutputPathTopologyError } from "@shellx-motion/core";
 
 export interface DebugBatchOutputRoots {
@@ -12,9 +12,13 @@ export interface DebugBatchOutputRoots {
 
 export async function prepareDebugBatchOutput(
   outDir: string,
-  options: { resume: boolean; keepFrames?: boolean }
+  options: { resume: boolean; keepFrames?: boolean },
+  retainedResumeOutput?: OutputDirectoryReservation
 ): Promise<DebugBatchOutputRoots | null> {
-  const batchOutput = await acquireDebugBatchOutput(outDir, options.resume);
+  if (retainedResumeOutput && retainedResumeOutput.path !== resolve(outDir)) {
+    throw new OutputPathTopologyError("Retained batch output authority does not match the requested output directory.", outDir);
+  }
+  const batchOutput = retainedResumeOutput ?? await acquireDebugBatchOutput(outDir, options.resume);
   if (!batchOutput) return null;
   const packagesRoot = join(outDir, "packages");
   const renderRoot = join(outDir, "render");
@@ -31,6 +35,18 @@ export async function prepareDebugBatchOutput(
     await mkdir(framesRoot, { recursive: true, mode: 0o700 });
   }
   return { batchOutput, packagesRoot, renderRoot, receiptsRoot, framesRoot };
+}
+
+/**
+ * Reopen an existing batch output for ownership validation without creating any child directory.
+ * The returned reservation is then retained through the caller-approved resume write sequence.
+ */
+export async function inspectDebugBatchResumeOutput(outDir: string): Promise<OutputDirectoryReservation> {
+  return await OutputDirectoryReservation.acquire(outDir, {
+    allowExistingContents: true,
+    requireExisting: true,
+    requireExclusiveChildAuthority: true
+  });
 }
 
 export function debugBatchOutputTopologyError(error: unknown): OutputPathTopologyError | null {

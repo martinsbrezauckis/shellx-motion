@@ -1,5 +1,5 @@
 import { extname, posix, resolve, sep } from "node:path";
-import { replaceMarkupTags, scanMarkupAttributes } from "@shellx-motion/core";
+import { replaceMarkupTags } from "@shellx-motion/core";
 import {
   IMAGE_ASSET_EXTENSIONS,
   MAX_HTML_SNIPPET_BYTES,
@@ -152,25 +152,6 @@ export function escapeHtml(value: string): string {
 
 export function escapeAttr(value: string): string {
   return escapeHtml(value);
-}
-
-/** Read quoted attributes with the bounded core scanner; duplicates keep the last value. */
-export function parseAttributes(input: string): Record<string, string> {
-  const attrs: Record<string, string> = Object.create(null) as Record<string, string>;
-  for (const attribute of scanMarkupAttributes(input)) attrs[attribute.name.toLowerCase()] = decodeHtml(attribute.value);
-  return attrs;
-}
-
-export function parseStyle(input: string): Record<string, string> {
-  const style: Record<string, string> = Object.create(null) as Record<string, string>;
-  for (const declaration of input.split(";")) {
-    const separator = declaration.indexOf(":");
-    if (separator <= 0) continue;
-    const key = declaration.slice(0, separator).trim().toLowerCase();
-    const value = declaration.slice(separator + 1).trim();
-    if (key && value) style[key] = value;
-  }
-  return style;
 }
 
 export function stripTags(input: string): string {

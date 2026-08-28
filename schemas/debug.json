@@ -1285,7 +1285,7 @@
           },
           "resume": {
             "type": "boolean",
-            "description": "Reuse completed row outputs when idempotency evidence still matches."
+            "description": "Reuse completed row outputs only when idempotency and retained authenticated caller ownership match; resume without a host caller principal fails before output writes."
           }
         },
         "additionalProperties": true
@@ -1747,7 +1747,7 @@
             "type": "object",
             "maxProperties": 16,
             "additionalProperties": true,
-            "description": "Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles."
+            "description": "Closed descriptor-defined request. Filesystem paths and URLs are refused; reference fields contain only host-issued opaque handles, resolved only with the authenticated caller identity."
           }
         },
         "additionalProperties": false

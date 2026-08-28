@@ -89,7 +89,7 @@ export const RENDER_COMMAND_METADATA: MotionDebugCommandMetadata = {
         workflow: { type: "object", description: "Inline shellx-motion/browser-workflow@1 replay plan for each rendered row." },
         workflowPath: { type: "string", description: "Optional deterministic browser workflow JSON path to replay for each rendered row." },
         dryRun: { type: "boolean", description: "Plan expanded row packages and receipts without rendering media." },
-        resume: { type: "boolean", description: "Reuse completed row outputs when idempotency evidence still matches." }
+        resume: { type: "boolean", description: "Reuse completed row outputs only when idempotency and retained authenticated caller ownership match; resume without a host caller principal fails before output writes." }
       },
       additionalProperties: true
     },

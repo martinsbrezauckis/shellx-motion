@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, realpath, unlink, writeFile } from "node:fs/promises";
-import { delimiter, extname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { MotionPermissionTier } from "@shellx-motion/actions";
 import {
   cleanupWindowsJobObjectLaunchPlan,
@@ -22,6 +22,7 @@ import {
 
 import { antigravityAdapter } from "./antigravity";
 import { terminateAgentProcessTree, type AgentProcessTerminationMode } from "./agent-process-control";
+import { resolveNativeWindowsAgentCommand, revalidateNativeWindowsAgentCommand } from "./windows-agent-command";
 
 export {
   antigravityAdapter,
@@ -616,12 +617,23 @@ async function runWindowsContainedAgentChild(command: AgentCommand, options: Run
   // Windows launch path: same credential filtering as the POSIX path below. Named `childEnv` rather
   // than shadowing the imported `childEnvironment` helper, which is what builds it.
   const childEnv = childEnvironment({ extra: command.env });
+  let resolvedCommand: AgentCommand;
+  try {
+    resolvedCommand = await resolveNativeWindowsAgentCommand(command, childEnv);
+  } catch (error) {
+    options.reportProcessContainment(unavailableWindowsContainment("native_setup_failed"));
+    return {
+      exitCode: 127,
+      stdout: "",
+      stderr: error instanceof Error ? error.message : "Motion could not resolve a trusted Windows agent executable."
+    };
+  }
   let plan: WindowsJobObjectLaunchPlan;
   try {
     plan = await createWindowsJobObjectLaunchPlan({
-      executable: await resolveNativeWindowsAgentExecutable(command.executable, childEnv),
-      args: command.args,
-      workingDirectory: resolve(command.cwd ?? process.cwd()),
+      executable: resolvedCommand.executable,
+      args: resolvedCommand.args,
+      workingDirectory: resolve(resolvedCommand.cwd ?? process.cwd()),
       scratchRoot: options.scratchRoot,
       maxJobMemoryBytes: options.maxProcessTreeRssBytes,
       maxActiveProcesses: 4_096,
@@ -643,7 +655,8 @@ async function runWindowsContainedAgentChild(command: AgentCommand, options: Run
       );
     }
     options.reportProcessContainment(windowsTaskkillFallbackEvidence(reasonCode));
-    return runSpawnedAgentChild(command, options.signal, options.watchProcess, () => "windows-taskkill-fallback");
+    await revalidateNativeWindowsAgentCommand(resolvedCommand);
+    return runSpawnedAgentChild(resolvedCommand, options.signal, options.watchProcess, () => "windows-taskkill-fallback");
   }
 
   let terminationMode: AgentProcessTerminationMode = "windows-taskkill-fallback";
@@ -651,11 +664,12 @@ async function runWindowsContainedAgentChild(command: AgentCommand, options: Run
   const relayAbort = () => nativeController.abort(options.signal.reason);
   options.signal.addEventListener("abort", relayAbort, { once: true });
   if (options.signal.aborted) relayAbort();
+  await revalidateNativeWindowsAgentCommand(resolvedCommand);
   const nativeCommand: AgentCommand = {
-    ...command,
+    ...resolvedCommand,
     executable: plan.executable,
     args: plan.args,
-    env: command.env,
+    env: resolvedCommand.env,
     // The provider timeout starts after the actual agent child has entered the Job Object.
     timeoutMs: 0,
   };
@@ -729,7 +743,8 @@ async function runWindowsContainedAgentChild(command: AgentCommand, options: Run
   }
   options.reportProcessContainment(windowsTaskkillFallbackEvidence("native_setup_failed", plan.helperSha256));
   if (options.signal.aborted) throw options.signal.reason;
-  return runSpawnedAgentChild(command, options.signal, options.watchProcess, () => "windows-taskkill-fallback");
+  await revalidateNativeWindowsAgentCommand(resolvedCommand);
+  return runSpawnedAgentChild(resolvedCommand, options.signal, options.watchProcess, () => "windows-taskkill-fallback");
 }
 
 function runSpawnedAgentChild(
@@ -866,38 +881,6 @@ function runSpawnedAgentChild(
     }
     child.stdin.end();
   });
-}
-
-async function resolveNativeWindowsAgentExecutable(executable: string, environment: NodeJS.ProcessEnv): Promise<string> {
-  if (isAbsolute(executable)) return executable;
-  if (executable.includes("/") || executable.includes("\\")) return executable;
-  const pathValue = environment.PATH ?? environment.Path ?? environment.path ?? "";
-  const suppliedExtension = extname(executable).toLowerCase();
-  if (suppliedExtension && suppliedExtension !== ".exe" && suppliedExtension !== ".com") return executable;
-  const nativeExtensions = suppliedExtension
-    ? [""]
-    : [...new Set([
-        ".exe",
-        ".com",
-        ...(environment.PATHEXT ?? environment.Pathext ?? "")
-          .split(";")
-          .map((value) => value.trim().toLowerCase())
-          .filter((value) => value === ".exe" || value === ".com"),
-      ])];
-  for (const directory of pathValue.split(delimiter)) {
-    const root = directory.trim().replace(/^"|"$/g, "");
-    if (!root) continue;
-    for (const extension of nativeExtensions) {
-      const candidate = join(root, `${executable}${extension}`);
-      try {
-        const canonical = await realpath(candidate);
-        if ((await lstat(canonical)).isFile()) return canonical;
-      } catch {
-        // Continue through the bounded host PATH search.
-      }
-    }
-  }
-  return executable;
 }
 
 function nativeWindowsJobObjectRequired(): boolean {

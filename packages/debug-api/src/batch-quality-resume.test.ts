@@ -38,7 +38,7 @@ describe("Debug batch quality resume identity", () => {
         samples: [{ id, atMs: 0, baseline: "baseline.png", minBrightPixels: 0, maxChangedPixels: 2, maxMeanDiff: 255 }]
       }, null, 2)}\n`, "utf8");
       const args = { packageRoot: resolve("../../fixtures/packages/batch-card"), outDir, preset: "png-sequence" as const, dryRun: false, qualityManifestPath: manifestPath };
-      const context: MotionDebugContext = { tier: "render_motion", scratchRoot: tempRoot, browserFrameRenderer };
+      const context: MotionDebugContext = { tier: "render_motion", callerId: "test:batch-quality", scratchRoot: tempRoot, browserFrameRenderer };
 
       try {
         await writeFile(baselinePath, CONTRAST_PNG);

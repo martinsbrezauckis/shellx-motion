@@ -26,7 +26,8 @@ export interface CoordinatorConnectorSubmitServices {
 /** Journal and admit one exact catalog descriptor before resolving any caller reference. */
 export async function submitCoordinatedConnector(args: unknown, services: CoordinatorConnectorSubmitServices): Promise<MotionDebugResult> {
   if (services.jobTrackingDisabled) return coordinatorDisabled();
-  if (!services.callerId) return ownerPrincipalUnavailable();
+  const callerId = services.callerId;
+  if (!callerId) return ownerPrincipalUnavailable();
   if (!services.connectorJobReferences) return connectorAuthorityUnavailable();
   if (!services.connectorJobBindingJournal) return connectorBindingJournalUnavailable();
   const parsed = parseConnectorSubmit(args);
@@ -41,16 +42,16 @@ export async function submitCoordinatedConnector(args: unknown, services: Coordi
     const coordinator = services.coordinator();
     const jobId = parsed.jobId ?? mintMotionJobId();
     const bindingWrite = await services.connectorJobBindingJournal.write({
-      jobId, callerId: services.callerId, ...connectorBindingData(prepared), request: prepared.request
+      jobId, callerId, ...connectorBindingData(prepared), request: prepared.request
     });
     if (!bindingWrite.ok) return connectorBindingFailure(bindingWrite.code);
     const submitted = await coordinator.submit({
-      jobId, callerId: services.callerId, lane: "connector", operation: prepared.operation,
+      jobId, callerId, lane: "connector", operation: prepared.operation,
       submissionData: connectorSubmissionData(prepared, bindingWrite.binding.fingerprint),
-      execute: connectorExecution(prepared, services.connectorJobReferences)
+      execute: connectorExecution(prepared, services.connectorJobReferences, callerId)
     });
     if (!submitted.ok) return { ok: false, error: { code: submitted.code, message: submitted.message }, warnings: [] };
-    const initial = await coordinator.jobView().get({ jobId: submitted.value.jobId, callerId: services.callerId });
+    const initial = await coordinator.jobView().get({ jobId: submitted.value.jobId, callerId });
     const state = initial.ok ? initial.job.state : "pending";
     return {
       ok: true,
@@ -122,7 +123,7 @@ export async function retryCoordinatedJob(
   let bindingWrite;
   try {
     bindingWrite = await services.connectorJobBindingJournal.write({
-      jobId, callerId: input.callerId, ...connectorBindingData(prepared), request: prepared.request
+      jobId, callerId: stored.binding.callerId, ...connectorBindingData(prepared), request: prepared.request
     });
   } catch (error) {
     return coordinatorFailure("capability_unavailable", error instanceof Error ? error.message : "Connector retry binding could not be persisted.");
@@ -130,7 +131,7 @@ export async function retryCoordinatedJob(
   if (!bindingWrite.ok) return coordinatorFailure("capability_unavailable", `Connector retry binding was refused: ${bindingWrite.code}.`);
   const retryAttempt = (source.job.lineage?.retryAttempt ?? 0) + 1;
   const submitted = await coordinator.submit({
-    jobId, callerId: input.callerId, lane: "connector", operation: prepared.operation,
+    jobId, callerId: stored.binding.callerId, lane: "connector", operation: prepared.operation,
     submissionData: connectorSubmissionData(prepared, bindingWrite.binding.fingerprint),
     lineage: {
       priorJobId: input.jobId,
@@ -138,7 +139,7 @@ export async function retryCoordinatedJob(
       retryAttempt
     },
     initialEvents: [{ type: "retry_submitted", data: { priorJobId: input.jobId, retryAttempt } }],
-    execute: connectorExecution(prepared, services.connectorJobReferences)
+    execute: connectorExecution(prepared, services.connectorJobReferences, stored.binding.callerId)
   });
   return submitted.ok ? { ok: true, value: { jobId: submitted.value.jobId, priorJobId: input.jobId } } : submitted;
 }
@@ -157,9 +158,13 @@ function connectorSubmissionData(prepared: ReturnType<typeof prepareAdmittedMoti
   return { ...connectorBindingData(prepared), bindingFingerprint };
 }
 
-function connectorExecution(prepared: ReturnType<typeof prepareAdmittedMotionConnectorJob>, references: MotionConnectorReferenceAuthority) {
+function connectorExecution(
+  prepared: ReturnType<typeof prepareAdmittedMotionConnectorJob>,
+  references: MotionConnectorReferenceAuthority,
+  callerId: string
+) {
   return async (signal: AbortSignal) => {
-    const execution = await executePreparedMotionConnectorJob(prepared, { references, signal });
+    const execution = await executePreparedMotionConnectorJob(prepared, { callerId, references, signal });
     return execution.ok
       ? { ok: true, receiptPath: execution.receiptPath, committed: execution.committed }
       : { ok: false, error: execution.error };

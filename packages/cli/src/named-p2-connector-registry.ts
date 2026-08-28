@@ -22,6 +22,8 @@ export async function runNamedP2ConnectorThroughRegistry(input: {
   subcommand: NamedP2ConnectorSubcommand;
   inputPath: string;
   outputPath: string;
+  /** Optional CLI caller convention; named compatibility remains local when absent. */
+  callerId?: string;
   signal: AbortSignal;
   namedCompatibilityOptions: Readonly<Record<string, unknown>>;
 }): Promise<
@@ -41,6 +43,9 @@ export async function runNamedP2ConnectorThroughRegistry(input: {
     request: { input: "named_input", output: "named_output" }
   });
   const execution = await executePreparedMotionConnectorJob(prepared, {
+    // Named CLI compatibility does not consume host-minted opaque references. Keep its local
+    // adapter distinct while satisfying the generic registry's caller-qualified resolver shape.
+    callerId: input.callerId ?? "cli:named-compatibility",
     signal: input.signal,
     namedCompatibilityOptions: input.namedCompatibilityOptions,
     references: {

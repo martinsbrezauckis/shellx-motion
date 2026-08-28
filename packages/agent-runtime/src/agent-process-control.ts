@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { OwnedUnixProcessGroup } from "@shellx-motion/core";
+import { resolveWindowsSystemExecutable, type OwnedUnixProcessGroup } from "@shellx-motion/core";
 
 export type AgentProcessTerminationMode = "windows-job-object" | "windows-taskkill-fallback" | "unix-process-group" | "direct-child";
 
@@ -16,7 +16,7 @@ export function terminateAgentProcessTree(
   const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
   if (mode === "windows-taskkill-fallback" && child.pid) {
     try {
-      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
+      const killer = spawn(resolveWindowsSystemExecutable("taskkill"), ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
         shell: false,
         stdio: "ignore",
         windowsHide: true,

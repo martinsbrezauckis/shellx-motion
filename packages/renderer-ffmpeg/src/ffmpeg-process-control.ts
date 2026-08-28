@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {
+  resolveWindowsSystemExecutable,
   type LocalMotionProcessContainmentEvidence,
   type OwnedUnixProcessGroup
 } from "@shellx-motion/core";
@@ -48,7 +49,7 @@ export function terminateFfmpegProcessTree(
   const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
   if (mode === "windows-taskkill-fallback" && child.pid) {
     try {
-      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
+      const killer = spawn(resolveWindowsSystemExecutable("taskkill"), ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
         shell: false,
         stdio: "ignore",
         windowsHide: true

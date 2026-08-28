@@ -6,11 +6,12 @@ import { normalizePublicationUncertainty } from "./publication-uncertainty.js";
 export function readDebugBatchResumeMatch(
   previousJobs: Map<string, Record<string, unknown>>,
   idempotencyKey: unknown,
-  outputPath: unknown
+  outputPath: unknown,
+  callerId: unknown
 ): Record<string, unknown> | null {
-  if (typeof idempotencyKey !== "string" || typeof outputPath !== "string") return null;
+  if (typeof idempotencyKey !== "string" || typeof outputPath !== "string" || typeof callerId !== "string") return null;
   const previous = previousJobs.get(idempotencyKey);
-  if (!previous || previous.outputPath !== outputPath) return null;
+  if (!previous || previous.outputPath !== outputPath || previous.callerId !== callerId) return null;
   const previousStatus = typeof previous.status === "string" ? previous.status : "";
   if (previousStatus !== "skipped" && jobOutcomeForReceiptStatus(previousStatus) !== "succeeded") return null;
   const sourceReceiptPath = debugBatchResumeSourceReceiptPath(previous);
