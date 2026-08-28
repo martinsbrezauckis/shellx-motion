@@ -49,6 +49,9 @@ export function createFakePromptRuntime(): MotionPromptRuntime {
     label: "Fake Prompt Agent",
     transport: "local-cli",
     billing: "cli-subscription",
+    // The stub consumes only the explicit stdin prompt and exposes no filesystem tools.
+    // Keep tests behind the same fail-closed context declaration required in production.
+    promptContextMode: "prompt-only",
     probeCommand: () => ({ executable: "shellx-motion-fake-agent", args: ["--version"], shell: false }),
     promptCommand: (input) => ({
       executable: "shellx-motion-fake-agent",
