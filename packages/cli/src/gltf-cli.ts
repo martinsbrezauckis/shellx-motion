@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import type { MotionDebugCommand } from "@shellx-motion/debug-api";
+import { resolveCliInputPath, resolveCliOutputPath } from "./cli-path-resolution";
 
 export const GLTF_DEBUG_COMMANDS = {
   "gltf-import": "motion.scene3d.gltf.import",
@@ -13,8 +14,8 @@ export function gltfDebugArgs(
   const sourcePath = option(argv, "--source") ?? option(argv, "--in");
   const outDir = option(argv, "--out") ?? option(argv, "--package-dir");
   return {
-    ...(sourcePath ? { sourcePath: resolve(sourcePath) } : {}),
-    ...(outDir ? { outDir: resolve(outDir) } : {}),
+    ...(sourcePath ? { sourcePath: resolveCliInputPath(sourcePath) } : {}),
+    ...(outDir ? { outDir: resolveCliOutputPath(outDir) } : {}),
     createdBy: option(argv, "--created-by"),
     createdAt: option(argv, "--created-at"),
   };

@@ -402,7 +402,7 @@ function textLayer(
     durationMs: context.durationMs,
     transform: { x, y },
     style: {
-      fontFamily: "Inter",
+      fontFamily: "Inter, Arial, Helvetica, sans-serif",
       fontSize,
       fontWeight,
       lineHeight: 1.08,

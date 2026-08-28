@@ -14,7 +14,8 @@
  * Dependencies: the integration and workspace domain dispatchers, and the published argument
  * contract for `motion.canvas.package`.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstatSync } from "node:fs";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,9 +27,6 @@ import { dispatchIntegrationCommand } from "./integration.js";
 import { dispatchWorkspaceCommand } from "./workspace.js";
 
 const tempDirs: string[] = [];
-
-/** Minimal services: the Canvas import only needs somewhere to put the receipt JSON. */
-const services = { writeJson: async () => {} };
 
 function rectSelection(): Record<string, unknown> {
   return {
@@ -62,7 +60,7 @@ describe("motion.canvas.package fixture contract", () => {
     return await dispatchIntegrationCommand("motion.canvas.package", {
       selection,
       packageDir: join(root, "pkg")
-    }, services);
+    }, { authoringOutputRoots: [root] });
   }
 
   it("refuses a kind no lane renders instead of writing a package validate would call valid", async () => {
@@ -96,7 +94,7 @@ describe("motion.canvas.package fixture contract", () => {
     expect(contract.example).toEqual(CANVAS_FIXTURE_EXAMPLE);
   });
 
-  it("accepts the example it publishes", async () => {
+  it.runIf(publicationFilesystemAvailable())("accepts the example it publishes", async () => {
     const result = await packageSelection(structuredClone(CANVAS_FIXTURE_EXAMPLE));
 
     expect(result).toMatchObject({ ok: true, result: { packageId: "pkg_demo_frame_intro" } });
@@ -113,6 +111,73 @@ describe("motion.canvas.package fixture contract", () => {
     expect((result as any).result).toBeUndefined();
   });
 
+  it("refuses package output and asset-source paths outside host-configured authoring roots", async () => {
+    const inputRoot = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-input-root-"));
+    const outputRoot = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-output-root-"));
+    const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-outside-root-"));
+    tempDirs.push(inputRoot, outputRoot, outsideRoot);
+    const governed = {
+      authoringInputRoots: [inputRoot],
+      authoringOutputRoots: [outputRoot]
+    };
+
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      selection: structuredClone(CANVAS_FIXTURE_EXAMPLE),
+      packageDir: join(outsideRoot, "pkg")
+    }, governed)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", message: /Canvas package output must be inside an approved authoring output root/ }
+    });
+
+    await mkdir(join(outputRoot, "allowed-parent"));
+    const assetBearingSelection = structuredClone(CANVAS_FIXTURE_EXAMPLE) as Record<string, any>;
+    assetBearingSelection.frames[0].layers.push({ id: "asset", kind: "image", assetRef: "assets/pixel.png", startMs: 0, durationMs: 1_000 });
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      selection: assetBearingSelection,
+      packageDir: join(outputRoot, "allowed-parent", "pkg"),
+      sourceRoot: outsideRoot
+    }, governed)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", message: /Canvas asset source must be inside an approved authoring input root/ }
+    });
+  });
+
+  it("requires a configured output root, and never lets absent input roots authorize path or asset reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-required-roots-"));
+    tempDirs.push(root);
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      selection: structuredClone(CANVAS_FIXTURE_EXAMPLE),
+      packageDir: join(root, "package")
+    })).toMatchObject({
+      ok: false,
+      error: { code: "capability_unavailable", message: /configured host-approved authoring output root/ }
+    });
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      canvasSelectionPath: join(root, "selection.json"),
+      packageDir: join(root, "package")
+    }, { authoringOutputRoots: [root], readJson: async () => { throw new Error("must not read"); } })).toMatchObject({
+      ok: false,
+      error: { code: "capability_unavailable", message: /configured host-approved authoring input roots/ }
+    });
+    const assetSelection = structuredClone(CANVAS_FIXTURE_EXAMPLE) as Record<string, any>;
+    assetSelection.frames[0].layers.push({ id: "asset", kind: "image", assetRef: "assets/pixel.png", startMs: 0, durationMs: 1_000 });
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      selection: assetSelection,
+      packageDir: join(root, "package")
+    }, { authoringOutputRoots: [root] })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", message: /require an explicit sourceRoot/ }
+    });
+    expect(await dispatchIntegrationCommand("motion.canvas.package", {
+      selection: assetSelection,
+      packageDir: join(root, "package"),
+      sourceRoot: root
+    }, { authoringOutputRoots: [root] })).toMatchObject({
+      ok: false,
+      error: { code: "capability_unavailable", message: /configured host-approved authoring input roots/ }
+    });
+  });
+
   it("publishes the accepted kinds and a working example in the argument contract", () => {
     const contract = buildDebugCommandContracts(SURFACE_COMMAND_METADATA)
       .find((candidate) => candidate.command === "motion.canvas.package");
@@ -127,9 +192,13 @@ describe("motion.canvas.package fixture contract", () => {
   });
 });
 
-describe("motion.package.validate renderability verdict", () => {
-  const summary = { packageId: "pkg_hand", motionId: "motion_hand", name: "Hand", layers: 1 };
+function publicationFilesystemAvailable(): boolean {
+  if (process.platform !== "linux" || typeof process.getuid !== "function") return false;
+  const root = lstatSync("/");
+  return root.uid === process.getuid() || root.uid === 0;
+}
 
+describe("motion.package.validate renderability verdict", () => {
   /**
    * A loaded package carrying one layer of `type`, enough for the renderability gate.
    *
@@ -145,7 +214,7 @@ describe("motion.package.validate renderability verdict", () => {
   function loaderFor(type: string, extra: Record<string, unknown> = {}) {
     return async () => ({
       root: "/pkg",
-      manifest: { compatibility: { lanes: ["browser"], hosts: ["motion"] } },
+      manifest: { id: "pkg_hand", name: "Hand", assets: [], compatibility: { lanes: ["browser"], hosts: ["motion"] } },
       motion: {
         schema: "shellx-motion/motion@1",
         id: "motion_hand",
@@ -164,7 +233,6 @@ describe("motion.package.validate renderability verdict", () => {
 
   it("refuses to call a package valid when no lane can render one of its layers", async () => {
     const result = await dispatchWorkspaceCommand("motion.package.validate", { packageRoot: "/pkg" }, {
-      validatePackage: async () => summary,
       packageLoader: loaderFor("rect")
     });
 
@@ -177,7 +245,6 @@ describe("motion.package.validate renderability verdict", () => {
 
   it("still passes a package every layer of which some lane renders", async () => {
     const result = await dispatchWorkspaceCommand("motion.package.validate", { packageRoot: "/pkg" }, {
-      validatePackage: async () => summary,
       packageLoader: loaderFor("shape")
     });
 
@@ -186,7 +253,6 @@ describe("motion.package.validate renderability verdict", () => {
 
   it("matches the lanes by skipping hidden layers, as the render gate does", async () => {
     const result = await dispatchWorkspaceCommand("motion.package.validate", { packageRoot: "/pkg" }, {
-      validatePackage: async () => summary,
       packageLoader: loaderFor("rect", { visible: false })
     });
 

@@ -1,10 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import {
   compareCodeUnits,
-  hashBuffer,
-  hashFile,
-  loadMotionPackage,
   type MotionDocument,
   type MotionLayer,
   type MotionPackage,
@@ -13,6 +9,9 @@ import {
   type PackageManifest,
   type ReceiptArtifact
 } from "@shellx-motion/core";
+import { publishOtioExportOutputs, publishOtioImportPackage, readOtioInterchangeInput, serializeBoundedOtioTimeline } from "./otio-interchange";
+import { loadOtioExportInput } from "./otio-export-input.js";
+import { addBoundedOtioTimelineTime, assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission.js";
 
 export interface OtioExportOptions {
   packageRoot: string;
@@ -68,14 +67,11 @@ const OTIO_MEDIA_TYPE = "application/vnd.opentimelineio+json";
 const MOTION_PACKAGE_MEDIA_TYPE = "application/vnd.shellx.motion.package";
 
 export async function exportMotionPackageToOtio(options: OtioExportOptions): Promise<OtioExportResult> {
-  const pkg = await loadMotionPackage(options.packageRoot);
+  const { pkg, inputHashes } = await loadOtioExportInput(options.packageRoot);
   const otioPath = resolve(options.outPath);
   const { timeline, warnings, clipCount, gapCount } = buildOtioTimeline(pkg);
-  const timelineJson = `${JSON.stringify(timeline, null, 2)}\n`;
-  await mkdir(dirname(otioPath), { recursive: true });
-  await writeFile(otioPath, timelineJson, "utf8");
+  const { timelineJson, otioSha256 } = serializeBoundedOtioTimeline(timeline);
 
-  const otioSha256 = hashBuffer(Buffer.from(timelineJson, "utf8"));
   const receiptPath = `${otioPath}.receipt.json`;
   const artifacts: ReceiptArtifact[] = [
     { role: "otio_timeline", path: otioPath, status: "available", mediaType: OTIO_MEDIA_TYPE, primary: true },
@@ -88,8 +84,8 @@ export async function exportMotionPackageToOtio(options: OtioExportOptions): Pro
     status: warnings.length > 0 ? "warning" : "passed",
     packageId: pkg.manifest.id,
     inputHashes: {
-      "manifest.json": await hashFile(resolve(pkg.root, "manifest.json")),
-      [pkg.manifest.motion]: await hashFile(resolve(pkg.root, pkg.manifest.motion))
+      "manifest.json": inputHashes["manifest.json"],
+      [pkg.manifest.motion]: inputHashes[pkg.manifest.motion]
     },
     createdAt: options.createdAt ?? new Date().toISOString(),
     lane: "otio",
@@ -105,7 +101,7 @@ export async function exportMotionPackageToOtio(options: OtioExportOptions): Pro
     artifacts,
     warnings: warnings.map((warning) => `${warning.path}: ${warning.reason}`)
   };
-  await writeJson(receiptPath, receipt);
+  await publishOtioExportOutputs({ otioPath, receiptPath, timelineJson, receiptJson: serializeJson(receipt) });
 
   return {
     ok: true,
@@ -126,10 +122,12 @@ export async function exportMotionPackageToOtio(options: OtioExportOptions): Pro
 export async function importOtioTimelineToMotionPackage(options: OtioImportOptions): Promise<OtioImportResult> {
   const otioPath = resolve(options.otioPath);
   const packageDir = resolve(options.packageDir);
-  const timeline = parseOtioTimeline(JSON.parse(await readFile(otioPath, "utf8")));
+  const otioInput = await readOtioInterchangeInput(otioPath);
+  const timeline = parseOtioTimeline(JSON.parse(otioInput.bytes.toString("utf8")));
   const imported = convertOtioTimelineToMotionPackage(timeline, {
     createdBy: options.createdBy ?? "otio-adapter"
   });
+  await assertGeneratedOtioPackage(imported.manifest, imported.motion);
 
   const manifestPath = join(packageDir, "manifest.json");
   const motionPath = join(packageDir, imported.manifest.motion);
@@ -145,7 +143,7 @@ export async function importOtioTimelineToMotionPackage(options: OtioImportOptio
     status: imported.lossiness.length > 0 ? "warning" : "passed",
     packageId: imported.manifest.id,
     inputHashes: {
-      [otioPath]: await hashFile(otioPath)
+      [otioPath]: otioInput.sha256
     },
     createdAt: options.createdAt ?? new Date().toISOString(),
     lane: "otio",
@@ -161,10 +159,13 @@ export async function importOtioTimelineToMotionPackage(options: OtioImportOptio
     warnings: imported.lossiness.map((warning) => `${warning.path}: ${warning.reason}`)
   };
 
-  await mkdir(join(packageDir, "receipts"), { recursive: true });
-  await writeJson(manifestPath, imported.manifest);
-  await writeJson(motionPath, imported.motion);
-  await writeJson(receiptPath, receipt);
+  await publishOtioImportPackage({
+    packageDir,
+    manifestJson: serializeJson(imported.manifest),
+    motionFileName: imported.manifest.motion,
+    motionJson: serializeJson(imported.motion),
+    receiptJson: serializeJson(receipt)
+  });
 
   return {
     ok: true,
@@ -392,6 +393,7 @@ function convertOtioTimelineToMotionPackage(timeline: OtioTimeline, options: { c
   const tracks: MotionTrack[] = [];
   const lossiness: OtioLossinessFinding[] = [];
   const trackKindCounts: Record<"audio" | "video", number> = { audio: 0, video: 0 };
+  const seenLayerIds = new Set<string>();
 
   for (const [trackIndex, track] of timeline.tracks.children.entries()) {
     const trackKind = track.kind === "Audio" ? "audio" : "video";
@@ -404,7 +406,7 @@ function convertOtioTimelineToMotionPackage(timeline: OtioTimeline, options: { c
       const schema = readString(item.OTIO_SCHEMA);
       if (schema === "Gap.1") {
         const gap = parseOtioGap(item, path);
-        cursorMs += timeRangeDurationMs(gap.source_range, fps);
+        cursorMs = addBoundedOtioTimelineTime(cursorMs, requirePositiveOtioDuration(gap.source_range.duration, `${path}.source_range.duration`), path);
         continue;
       }
       if (schema !== "Clip.2") {
@@ -420,12 +422,14 @@ function convertOtioTimelineToMotionPackage(timeline: OtioTimeline, options: { c
         trackId,
         trackKind,
         startMs: cursorMs,
-        fps,
-        fallbackIndex: layers.length
+        fallbackIndex: layers.length,
+        path
       });
+      assertDistinctOtioLayerId(seenLayerIds, layer.id, path);
+      seenLayerIds.add(layer.id);
       layers.push(layer);
       layerIds.push(layer.id);
-      cursorMs += layer.durationMs;
+      cursorMs = addBoundedOtioTimelineTime(cursorMs, layer.durationMs, path);
     }
     tracks.push({
       id: trackId,
@@ -475,15 +479,15 @@ function convertOtioTimelineToMotionPackage(timeline: OtioTimeline, options: { c
   return { manifest, motion, lossiness };
 }
 
-function otioClipToMotionLayer(clip: OtioClip, options: { trackId: string; trackKind: "audio" | "video"; startMs: number; fps: number; fallbackIndex: number }): MotionLayer {
+function otioClipToMotionLayer(clip: OtioClip, options: { trackId: string; trackKind: "audio" | "video"; startMs: number; fallbackIndex: number; path: string }): MotionLayer {
   const meta = readRecord(clip.metadata?.shellx_motion);
   const media = readRecord(clip.media_reference);
   const targetUrl = readString(media?.target_url);
   const layerType = readString(meta?.layerType) ?? inferLayerType(options.trackKind, media, targetUrl);
   const id = readString(meta?.layerId) ?? slugId(clip.name || `clip_${options.fallbackIndex + 1}`);
   const sourceRange = clip.source_range;
-  const trimStartMs = rationalTimeMs(readRecord(sourceRange?.start_time), options.fps);
-  const durationMs = timeRangeDurationMs(sourceRange, options.fps);
+  const trimStartMs = deriveOtioMilliseconds(sourceRange.start_time, `${options.path}.source_range.start_time`);
+  const durationMs = requirePositiveOtioDuration(sourceRange.duration, `${options.path}.source_range.duration`);
   const transform = readMotionTransform(meta?.transform);
   const style = readRecord(meta?.style) ?? undefined;
   const layer: MotionLayer = {
@@ -555,7 +559,7 @@ function parseOtioClip(input: JsonRecord, path: string): OtioClip {
     OTIO_SCHEMA: "Clip.2",
     name: readString(input.name) ?? "",
     media_reference: parseOtioMediaReference(input.media_reference, `${path}.media_reference`),
-    source_range: input.source_range === undefined ? undefined : parseOtioTimeRange(input.source_range, `${path}.source_range`),
+    source_range: parseOtioTimeRange(input.source_range, `${path}.source_range`),
     metadata: readRecord(input.metadata) ?? {}
   };
 }
@@ -573,24 +577,11 @@ function parseOtioMediaReference(input: unknown, path: string): OtioMediaReferen
 }
 
 function parseOtioTimeRange(input: unknown, path: string): OtioTimeRange {
-  const range = expectRecord(input, path);
+  const range = requireOtioTimeRange(input, path);
   return {
     OTIO_SCHEMA: "TimeRange.1",
-    start_time: parseOtioRationalTime(range.start_time, `${path}.start_time`),
-    duration: parseOtioRationalTime(range.duration, `${path}.duration`)
-  };
-}
-
-function parseOtioRationalTime(input: unknown, path: string): OtioRationalTime {
-  const time = expectRecord(input, path);
-  const value = readNumber(time.value);
-  const rate = readPositiveNumber(time.rate);
-  if (value === undefined) throw new Error(`${path}.value must be a finite number.`);
-  if (rate === undefined) throw new Error(`${path}.rate must be a positive finite number.`);
-  return {
-    OTIO_SCHEMA: "RationalTime.1",
-    value,
-    rate
+    start_time: { OTIO_SCHEMA: "RationalTime.1", ...range.start_time },
+    duration: { OTIO_SCHEMA: "RationalTime.1", ...range.duration }
   };
 }
 
@@ -613,16 +604,6 @@ function rationalTime(ms: number, rate: number): OtioRationalTime {
   };
 }
 
-function rationalTimeMs(time: JsonRecord | null | undefined, fallbackRate: number): number {
-  if (!time) return 0;
-  const value = readNumber(time.value) ?? 0;
-  const rate = readPositiveNumber(time.rate) ?? fallbackRate;
-  return Math.round((value / rate) * 1000);
-}
-
-function timeRangeDurationMs(range: OtioTimeRange | undefined, fallbackRate: number): number {
-  return rationalTimeMs(readRecord(range?.duration), fallbackRate);
-}
 
 function firstTimelineRate(timeline: OtioTimeline): number | undefined {
   for (const track of timeline.tracks.children) {
@@ -719,8 +700,8 @@ function readPositiveNumber(value: unknown): number | undefined {
   return number && number > 0 ? number : undefined;
 }
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+function serializeJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 interface OtioTimeline {
@@ -747,7 +728,7 @@ interface OtioClip extends JsonRecord {
   OTIO_SCHEMA: "Clip.2";
   name: string;
   media_reference: OtioMediaReference;
-  source_range?: OtioTimeRange;
+  source_range: OtioTimeRange;
   metadata: JsonRecord;
 }
 

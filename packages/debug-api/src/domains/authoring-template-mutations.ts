@@ -4,6 +4,8 @@ import {
   hashBuffer,
   hashPackageFile,
   loadSchema,
+  MAX_PACKAGE_ASSET_IMPORT_BYTES,
+  readBoundedStableFile,
   replaceTemplateMedia,
   resolvePackageAsset,
   validateDocument,
@@ -16,9 +18,12 @@ import {
 import { basename, join, resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { objectArg, stringArg } from "./args.js";
+import { configuredAuthoringInputRoot } from "./authoring-root-policy.js";
 import { commitMotionDocumentEdit } from "./package-edit-transaction.js";
 
 export interface TemplateMutationServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   isUnsafePackageOutputDirectory?: (packageRoot: string, outputRoot: string) => Promise<boolean>;
@@ -84,6 +89,7 @@ async function apply(args: unknown, services: TemplateMutationServices): Promise
     };
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg, outputRoot: packageOutDir, patchedMotion: applied.motion,
+      authoringInputRoots: services.authoringInputRoots!, authoringOutputRoots: services.authoringOutputRoots!,
       receipt, receiptFileName: "template-apply.receipt.json",
       ...(receiptsRoot ? { receiptsRoot, writeHostReceipt: services.writeReceipt! } : {})
     });
@@ -125,13 +131,26 @@ async function replaceMedia(args: unknown, services: TemplateMutationServices): 
   try {
     const pkg = await services.packageLoader!(packageRoot);
     const sourceAssetPath = resolve(assetPath);
+    const sourceRoot = configuredAuthoringInputRoot(
+      sourceAssetPath,
+      services.authoringInputRoots,
+      "motion.template.media.replace assetPath",
+    );
+    const admittedSource = await readBoundedStableFile(sourceAssetPath, {
+      label: "Template media replacement source",
+      maxBytes: MAX_PACKAGE_ASSET_IMPORT_BYTES,
+      withinRoot: sourceRoot,
+      requireSingleLink: true,
+      captureIdentity: true,
+    });
+    if (!admittedSource.identity) throw new Error("Template media replacement source identity is unavailable.");
     const assetRef = stringArg(args, "assetRef") ?? `assets/${basename(sourceAssetPath)}`;
     const replaced = replaceTemplateMedia(pkg, { paramId, assetRef });
     if (!replaced.ok) return templateApplyFailure("template_media_replace_failed", "Template media could not be replaced.", replaced.errors);
     const packageOutDir = resolve(outDir);
     const outputError = await packageOutputError("motion.template.media.replace", pkg, packageOutDir, services);
     if (outputError) return outputError;
-    const sourceHash = await services.hashInputFile!(sourceAssetPath);
+    const sourceHash = admittedSource.sha256;
     const inputHashes: Record<string, string> = {
       "manifest.json": await hashPackageFile(resolvePackageAsset(pkg, "manifest.json")),
       [pkg.manifest.motion]: await hashPackageFile(resolvePackageAsset(pkg, pkg.manifest.motion)),
@@ -163,7 +182,15 @@ async function replaceMedia(args: unknown, services: TemplateMutationServices): 
     };
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg, outputRoot: packageOutDir, patchedMotion: replaced.motion, patchedManifest: replaced.manifest,
-      stagedFiles: [{ sourcePath: sourceAssetPath, targetAssetRef: replaced.assetRef, expectedSha256: sourceHash }],
+      authoringInputRoots: services.authoringInputRoots!, authoringOutputRoots: services.authoringOutputRoots!,
+      stagedFiles: [{
+        sourcePath: sourceAssetPath,
+        sourceRoot,
+        targetAssetRef: replaced.assetRef,
+        expectedSha256: sourceHash,
+        expectedByteLength: admittedSource.byteLength,
+        expectedIdentity: admittedSource.identity,
+      }],
       receipt, receiptFileName: "template-media-replace.receipt.json",
       ...(receiptsRoot ? { receiptsRoot, writeHostReceipt: services.writeReceipt! } : {})
     });
@@ -199,7 +226,7 @@ function mutationCapabilityError(
   if (!services.packageLoader || !services.isUnsafePackageOutputDirectory || !services.isEmptyOrAbsentDirectory) {
     return capabilityUnavailable("Atomic template package editing is unavailable.");
   }
-  if (needsInputHash && !services.hashInputFile) return capabilityUnavailable("Template media source hashing is unavailable.");
+  if (needsInputHash && !services.authoringInputRoots?.length) return capabilityUnavailable("Template media input-root admission is unavailable.");
   if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Template edit receipt persistence is unavailable.");
   return null;
 }

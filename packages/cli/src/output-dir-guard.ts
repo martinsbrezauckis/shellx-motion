@@ -45,6 +45,22 @@ export async function framesDirRefusal(
   return result.ok ? null : result.error;
 }
 
+/** Refuse an occupied final file before preparing frames, then enforce the frame-directory guard. */
+export async function materializedDeliveryRefusal(
+  outputPath: string,
+  framesPath: string,
+  options: { force: boolean; callerSupplied: boolean; withinRoot?: string }
+): Promise<OutputDirGuardError | { code: "derived_output_exists" | "derived_output_unsafe_parent"; message: string; path: string } | null> {
+  if (!options.force) {
+    const output = await outputFileRefusal(outputPath, { force: false });
+    if (output) {
+      const code = output.code === "output_path_unsafe_parent" ? "derived_output_unsafe_parent" : "derived_output_exists";
+      return { ...output, code };
+    }
+  }
+  return await framesDirRefusal(framesPath, options);
+}
+
 /**
  * Guard a single-file deliverable (`--out clip.mp4`) the same way `--out <dir>` is guarded.
  *

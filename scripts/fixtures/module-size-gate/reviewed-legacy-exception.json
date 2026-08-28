@@ -1,0 +1,6 @@
+{
+  "relativePath": "packages/core/src/capabilities.ts",
+  "lines": 400,
+  "expectedExit": 0,
+  "expectedOutput": "PASS packages/core/src/capabilities.ts: 400/453"
+}

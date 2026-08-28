@@ -13,8 +13,8 @@
  *   1. a foreign `receiptsRoot` in the SDK body is refused, and the victim's bytes do not appear
  *      anywhere in the response (a fence that refuses with the right code while leaking through some
  *      other field would satisfy a code-only assertion and fail the actual requirement);
- *   2. the fence covers EVERY SDK operation, not the one that was reported -- `/sdk` does not
- *      restrict input fields per operation, so `input.receiptsRoot` is reachable on all of them;
+ *   2. every SDK operation closes the same path through either its shared closed input contract or
+ *      the host-root fence, so future operations cannot accidentally inherit a readable root;
  *   3. a server that declared no receipts root at all still refuses. `startMotionDebugServer`
  *      defaults its context to `{}`, so a library embedder had no declaration and the shared policy's
  *      "a host that declares nothing is one where caller and host are the same party" reasoning --
@@ -23,7 +23,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MOTION_SDK_SCHEMA, type MotionSdkOperation } from "@shellx-motion/sdk";
 import { motionSdkCacheKey } from "@shellx-motion/sdk";
 import { startMotionDebugServer } from "./index.js";
@@ -92,7 +92,10 @@ afterEach(async () => {
   await rm(victimRoot, { recursive: true, force: true });
 });
 
-async function startFencedServer(context?: Record<string, unknown>, grantedTier: "read_motion" | "push_remote" = "push_remote"): Promise<URL> {
+async function startFencedServer(
+  context?: Record<string, unknown>,
+  grantedTier: "read_motion" | "edit_motion" | "push_remote" = "push_remote"
+): Promise<URL> {
   const server = await startMotionDebugServer({
     port: 0,
     grantedTier,
@@ -140,26 +143,50 @@ describe("POST /sdk is a fenced transport", () => {
     const answer = await postSdk(url, "status", { receiptsRoot: victimRoot });
 
     const error = (answer.body as { error: { detail?: unknown } }).error;
-    expect(error.detail).toMatchObject({ argument: "receiptsRoot", resolvedBy: "host_operator" });
-    expect(JSON.stringify(error.detail)).toContain(hostRoot);
+    expect(error.detail).toMatchObject({
+      argument: "receiptsRoot",
+      resolvedBy: "host_operator",
+      trustedRoots: [hostRoot]
+    });
   });
 
-  it("covers every SDK operation, because /sdk does not restrict input fields per operation", async () => {
-    // The reported case was `status`. `cancel` and `timelineEdit` take the same argument, and
-    // `readSdkRequest` validates only the cache key -- not the field set -- so `input.receiptsRoot`
-    // rides on any operation. Enumerating the operation table is what keeps an operation added
-    // tomorrow inside the fence without its author knowing this file exists.
+  it("covers every SDK operation through semantic validation or the shared root fence", async () => {
+    // Operations that own `receiptsRoot` reach the shared fence. Every other operation is rejected
+    // by the SDK's closed input contract before dispatch; either way the foreign store is unread.
     const url = await startFencedServer({ receiptsRoot: hostRoot });
 
     const admitted: string[] = [];
     for (const operation of Object.keys(SDK_OPERATION_TIER) as MotionSdkOperation[]) {
       const answer = await postSdk(url, operation, { receiptsRoot: victimRoot });
       const body = answer.body as { ok?: boolean; error?: { code?: string } };
-      if (body.ok !== false || body.error?.code !== "invalid_args") admitted.push(operation);
+      if (body.ok !== false || !["invalid_args", "invalid_sdk_request"].includes(String(body.error?.code))) admitted.push(operation);
       expect(answer.text).not.toContain(VICTIM_MARKER);
     }
 
     expect(admitted).toEqual([]);
+  });
+
+  it("rejects an invalid render idempotency key before the SDK transport can select scratch state", async () => {
+    const execute = vi.fn();
+    const server = await startMotionDebugServer({
+      port: 0,
+      grantedTier: "push_remote",
+      capabilityToken: TOKEN,
+      context: { receiptsRoot: hostRoot },
+      sdkTransport: { execute }
+    });
+    servers.push(server);
+
+    const answer = await postSdk(server.url, "render", {
+      packageRoot: hostRoot,
+      outputPath: join(hostRoot, "final.mp4"),
+      preset: "mp4-h264",
+      idempotencyKey: "../caller-selected-scratch"
+    });
+
+    expect(answer.status).toBe(400);
+    expect(answer.body).toMatchObject({ ok: false, error: { code: "invalid_sdk_request" } });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("refuses a foreign receiptsRoot on a server that declared no root at all", async () => {
@@ -173,6 +200,49 @@ describe("POST /sdk is a fenced transport", () => {
 
     expect(answer.body).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
     expect(answer.text).not.toContain(VICTIM_MARKER);
+  });
+
+  it("refuses SDK package edits outside host-approved authoring roots before transport execution", async () => {
+    const execute = vi.fn();
+    const server = await startMotionDebugServer({
+      port: 0,
+      grantedTier: "edit_motion",
+      capabilityToken: TOKEN,
+      context: { authoringInputRoots: [hostRoot], authoringOutputRoots: [hostRoot] },
+      sdkTransport: { execute }
+    });
+    servers.push(server);
+
+    const answer = await postSdk(server.url, "timelineEdit", {
+      packageRoot: victimRoot,
+      outDir: join(hostRoot, "edited"),
+      edit: { kind: "rich.set", layerId: "title", path: "text", value: "outside" }
+    });
+
+    expect(answer.status).toBe(403);
+    expect(answer.body).toMatchObject({ ok: false, error: { code: "authoring_path_not_approved" } });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an SDK package edit has no host-approved authoring roots", async () => {
+    const execute = vi.fn();
+    const server = await startMotionDebugServer({
+      port: 0,
+      grantedTier: "edit_motion",
+      capabilityToken: TOKEN,
+      sdkTransport: { execute }
+    });
+    servers.push(server);
+
+    const answer = await postSdk(server.url, "timelineEdit", {
+      packageRoot: hostRoot,
+      outDir: join(hostRoot, "edited"),
+      edit: { kind: "rich.set", layerId: "title", path: "text", value: "missing roots" }
+    });
+
+    expect(answer.status).toBe(403);
+    expect(answer.body).toMatchObject({ ok: false, error: { code: "authoring_path_not_approved" } });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("refuses a foreign receiptsRoot on POST /debug for a server that declared no root", async () => {

@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { DEBUG_COMMAND_CONTRACTS } from "@shellx-motion/debug-api";
-import { planMotionDebugServerCli, workbenchBootstrapUrl, writeEphemeralCapabilityFile } from "./cli";
+import {
+  planMotionDebugServerCli,
+  workbenchBootstrapUrl,
+  writeEphemeralCapabilityFile,
+  writeWorkbenchBootstrapHandoff
+} from "./cli";
 import { userLaunchArgs } from "./user-launcher";
 import {
   clearMotionServerPort,
@@ -13,6 +18,7 @@ import {
   readOrCreatePersistentCapabilityFile,
   writeMotionServerPort
 } from "./user-access";
+import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +32,17 @@ describe("motion debug server CLI", () => {
       "7310",
       "--tier",
       "edit_motion",
-      "--trusted-local-tier"
+      "--trusted-local-tier",
+      "--authoring-input-root",
+      "/srv/motion/packages",
+      "--authoring-output-root",
+      "/srv/motion/revisions",
+      "--render-package-root",
+      "/srv/motion/packages",
+      "--render-input-root",
+      "/srv/motion/inputs",
+      "--render-output-root",
+      "/srv/motion/renders"
     ]);
 
     expect(plan).toEqual({
@@ -36,11 +52,15 @@ describe("motion debug server CLI", () => {
       host: "127.0.0.1",
       port: 7310,
       grantedTier: "edit_motion",
-      allowNonLoopback: false,
       allowedHosts: [],
       allowedOrigins: [],
       artifactRoots: [],
       templateRoots: [],
+      authoringInputRoots: ["/srv/motion/packages"],
+      authoringOutputRoots: ["/srv/motion/revisions"],
+      renderPackageRoots: ["/srv/motion/packages"],
+      renderInputRoots: ["/srv/motion/inputs"],
+      renderOutputRoots: ["/srv/motion/renders"],
       persistentAccess: false,
       openWorkbench: false,
       transport: {
@@ -213,14 +233,30 @@ describe("motion debug server CLI", () => {
     }
   });
 
-  it("builds a non-secret startup manifest plus a one-use fragment URL for the human launcher", () => {
+  it("keeps the bootstrap value in a private handoff while the opener URL remains non-secret", async () => {
     const plan = planMotionDebugServerCli(["--persistent-access", "--open-workbench"]);
     expect(plan).toMatchObject({ ok: true, persistentAccess: true, openWorkbench: true });
     expect(userLaunchArgs([])).toEqual([
       "--tier", "write_local", "--trusted-local-tier", "--persistent-access", "--open-workbench"
     ]);
-    const url = workbenchBootstrapUrl(new URL("http://127.0.0.1:43210"), "bootstrap-token-000000000000000000000000");
-    expect(url).toBe("http://127.0.0.1:43210/workbench#bootstrap=bootstrap-token-000000000000000000000000");
+    const serverUrl = new URL("http://127.0.0.1:43210");
+    const bootstrap = "bootstrap-token-000000000000000000000000";
+    const handoff = await writeWorkbenchBootstrapHandoff(serverUrl, bootstrap);
+    try {
+      expect(workbenchBootstrapUrl(serverUrl)).toBe("http://127.0.0.1:43210/workbench");
+      expect(handoff.handoffUrl).toMatch(/^file:/);
+      expect(handoff.handoffUrl).not.toContain(bootstrap);
+      expect(await readFile(handoff.handoffFile, "utf8")).toContain(bootstrap);
+      if (process.platform === "win32") {
+        await expectWindowsUserOnlyAcl(handoff.handoffRoot);
+        await expectWindowsUserOnlyAcl(handoff.handoffFile);
+      } else {
+        expect((await stat(handoff.handoffRoot)).mode & 0o777).toBe(0o700);
+        expect((await stat(handoff.handoffFile)).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      await rm(handoff.handoffRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -232,7 +268,8 @@ async function expectWindowsUserOnlyAcl(path: string): Promise<void> {
     "$foreign = @($rules | Where-Object { $_.IdentityReference.Value -ne $sid })",
     "[pscustomobject]@{ protected = $acl.AreAccessRulesProtected; ruleCount = $rules.Count; foreignRuleCount = $foreign.Count } | ConvertTo-Json -Compress"
   ].join("; ");
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+  const executable = await resolveWorkbenchSystemExecutable("windows-powershell");
+  const { stdout } = await execFileAsync(executable, ["-NoProfile", "-NonInteractive", "-Command", script], {
     encoding: "utf8",
     windowsHide: true,
     env: { ...process.env, SHELLX_MOTION_TEST_ACL_PATH: path }

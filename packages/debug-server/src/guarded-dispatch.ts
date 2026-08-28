@@ -24,14 +24,16 @@
  * instead of `dispatchDebugCommand`, which means adding a transport that forgets the guard requires
  * writing a different function name rather than merely omitting a line.
  */
-import { callerSuppliedReceiptsRoot, dispatchDebugCommand, refuseUntrustedCallerReceiptsRoot } from "@shellx-motion/debug-api";
+import { DEBUG_COMMAND_CONTRACTS, callerSuppliedReceiptsRoot, dispatchCallerSteeredCommand, dispatchDebugCommand, refuseUntrustedCallerReceiptsRoot } from "@shellx-motion/debug-api";
+import { tierAllows } from "./mcp-tool-shape.js";
 
 type DispatchArgs = Parameters<typeof dispatchDebugCommand>;
 
 /**
  * Apply the external-request boundary checks, then dispatch.
  *
- * @param command Debug command id, already resolved and tier-checked by the transport.
+ * @param command Debug command id, already resolved by the transport. This function preserves
+ *   command-tier refusal precedence before applying filesystem boundary checks.
  * @param args Raw caller arguments, already schema-validated by the transport. These transports
  *   carry `receiptsRoot` at the TOP LEVEL of the argument object, which is why
  *   `callerSuppliedReceiptsRoot` is the right extractor here and `/sdk` needs its own.
@@ -43,11 +45,19 @@ export async function dispatchGuarded(
   args: DispatchArgs[1],
   context: DispatchArgs[2]
 ): ReturnType<typeof dispatchDebugCommand> {
+  // Permission is the first externally observable verdict. Path fences must not replace a tier
+  // refusal with configuration detail (for example, that the host declared no render roots).
+  // Calling the production dispatcher here is safe: this branch is limited to an unknown command
+  // or a tier that cannot reach the registered command, both of which return before any domain.
+  const contract = DEBUG_COMMAND_CONTRACTS.find((entry) => entry.command === command);
+  if (!contract || !tierAllows(context.tier, contract.permission)) {
+    return dispatchDebugCommand(command, args, context);
+  }
   const receiptsRootRefusal = await refuseUntrustedCallerReceiptsRoot(
     command,
     callerSuppliedReceiptsRoot(args),
     context
   );
   if (receiptsRootRefusal) return receiptsRootRefusal;
-  return dispatchDebugCommand(command, args, context);
+  return dispatchCallerSteeredCommand(command, args, context);
 }

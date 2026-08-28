@@ -85,9 +85,9 @@ export type MotionPromptResult =
   | {
       ok: false;
       plan?: MotionActionPlan;
-      // `suggestedAction` and a structured `detail` widen this to the same shape the Debug API's
-      // error carries, so a tier refusal built by `tierRefusal` survives the hop into
-      // `MotionDebugResult` without being flattened back into a bare code + message.
+      /** Failure evidence is optional: agent_unavailable has no receipt. */
+      agent?: Extract<AgentPromptResult, { ok: false }>;
+      // Preserve Debug API refusal detail rather than flattening it at this boundary.
       error: { code: string; message: string; suggestedAction?: string; detail?: unknown };
       receipt?: PromptRunReceipt;
     };
@@ -104,6 +104,7 @@ export interface PromptRunReceipt {
   output: {
     agentId?: string;
     agentReceiptId?: string;
+    agentReceiptPath?: string;
     requestSummary: string;
     requestSummaryTruncated: boolean;
     promptRetention: PromptRetentionRecord;
@@ -234,8 +235,9 @@ export async function runMotionPrompt(input: RunMotionPromptInput): Promise<Moti
     return {
       ok: false,
       plan,
+      ...(agent.receipt ? { agent } : {}),
       error: agent.error,
-      receipt: createPromptReceipt({
+      receipt: finalizePromptReceipt(createPromptReceipt({
         request: input.request,
         retention: retention.value,
         packageId,
@@ -243,10 +245,11 @@ export async function runMotionPrompt(input: RunMotionPromptInput): Promise<Moti
         status: "failed",
         plan,
         debugCommands,
-        agentId: input.agentId,
+        agentId: input.agentId ?? (agent.receipt ? String(agent.receipt.output.agentId) : undefined),
+        agentReceiptId: agent.receipt?.id,
         error: receiptError,
         warnings: withRetentionWarning([`Agent prompt failed with code ${safeErrorCode(agent.error.code)}.`], retention.value)
-      })
+      }), retention.value, now)
     };
   }
 
@@ -254,7 +257,7 @@ export async function runMotionPrompt(input: RunMotionPromptInput): Promise<Moti
     ok: true,
     plan,
     agent,
-    receipt: createPromptReceipt({
+    receipt: finalizePromptReceipt(createPromptReceipt({
       request: input.request,
       retention: retention.value,
       packageId,
@@ -270,7 +273,7 @@ export async function runMotionPrompt(input: RunMotionPromptInput): Promise<Moti
           : [],
         retention.value
       )
-    })
+    }), retention.value, now)
   };
 }
 
@@ -342,12 +345,11 @@ function createPromptReceipt(input: {
     output: {
       agentId: input.agentId,
       agentReceiptId: input.agentReceiptId,
+      ...(input.agentReceiptId ? { linkedReceiptIds: [input.agentReceiptId] } : {}),
       requestSummary: requestSummary.value,
       requestSummaryTruncated: requestSummary.truncated,
       promptRetention: input.retention,
-      // Keyed on `rawRequestRetained`, not just the mode: a redacted-state record (which
-      // `resolvePromptRetention` never produces, but the type now admits) must never re-embed
-      // the raw request it exists to remove.
+      // A redacted record must never re-embed the raw request it exists to remove.
       ...(input.retention.mode === "raw_request" && input.retention.rawRequestRetained ? { rawRequest: input.request } : {}),
       debugCommands: input.debugCommands,
       planTopic: requestSummary.value,
@@ -362,6 +364,7 @@ function createPromptReceipt(input: {
   };
 }
 
+function finalizePromptReceipt(receipt: PromptRunReceipt, retention: PromptRetentionRecord, now: () => string): PromptRunReceipt { return retention.mode === "raw_request" ? redactExpiredRawPrompt(receipt, now()).receipt : receipt; }
 function agentAuthoringPlanSummary(plan: MotionActionPlan, debugCommands: string[], safeTopic: string): AgentAuthoringPlanSummary {
   return {
     topic: safeTopic,
@@ -452,7 +455,7 @@ export interface RawPromptRetentionEnforceable {
  *
  * WHY THIS EXISTS: `resolvePromptRetention` validates `deleteAfter` at creation, but validation
  * alone made the deadline a recorded wish — nothing in the repository ever consumed it, so a raw
- * prompt persisted past its promised deletion date (Codex security review, 2026-08). This
+ * prompt persisted past its promised deletion date. This
  * function is the mechanism that consumes the deadline. The contract for every reader of
  * persisted prompt receipts:
  *
@@ -583,10 +586,7 @@ function summarizePromptPlan(
 }
 
 function withRetentionWarning(warnings: string[], retention: PromptRetentionRecord): string[] {
-  // The warning states the enforced lifecycle, not a bare "until": readers apply
-  // `redactExpiredRawPrompt` past the deadline, so the sentence is a contract, not a wish.
-  // Keyed on `rawRequestRetained` for the same reason as the receipt's raw embed — a
-  // redacted-state record must not announce retention it no longer performs.
+  // Readers redact past the deadline; a redacted state never announces active retention.
   return retention.mode === "raw_request" && retention.rawRequestRetained
     ? [...new Set([...warnings, `Raw prompt retained for ${retention.purpose} until ${retention.deleteAfter}; receipt readers redact it after that deadline.`])]
     : [...new Set(warnings)];

@@ -1,32 +1,37 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { convertCanvasFrameToMotionPackage, writeCanvasMotionPackage } from "@shellx-motion/adapters-canvas";
+import { admitCanvasMotionPackage, convertCanvasFrameToMotionPackage, writeCanvasMotionPackage } from "@shellx-motion/adapters-canvas";
 import { attachRenderedMediaToCutPlan, planCutImport } from "@shellx-motion/adapters-cut";
 import {
-  assertOutputDirGuard,
+  BoundedResourceBudget,
+  DEFAULT_HOST_INTERCHANGE_LIMITS,
   hashBuffer,
   loadMotionPackage,
-  prepareFramesDir,
+  readBudgetedStableFile,
   type AttestedArtifactHandleReference,
-  type MotionPackage,
   type OperationReceipt,
   type ShellXIntegrationNegotiation
 } from "@shellx-motion/core";
-import { renderMotionBrowserFrame } from "@shellx-motion/renderer-browser";
+import { assertClosedDirectoryInventoryAvailable } from "@shellx-motion/core/internal/closed-directory-inventory";
 import {
-  buildEncodeImageSequenceCommand,
-  encodeImageSequenceWithPolicy,
   readFfmpegExportPreset,
   resolveExportPreset,
   type FfmpegExportPreset,
-  type FfmpegCommand,
   type FfmpegRunner
 } from "@shellx-motion/renderer-ffmpeg";
 import { connectorReceiptStatus, type ConnectorArtifact } from "./artifacts";
-import { connectorArtifactOperationHash, connectorArtifactStagingPath, finalizeConnectorArtifactHandle, publishConnectorArtifact } from "./artifact-handle";
-import { packageAudioEncodeInput } from "./package-audio";
+import { connectorArtifactOperationHash, finalizeConnectorArtifactHandle } from "./artifact-handle";
 import { cutTargetCapabilitiesForMode } from "./cut-import-mode";
 import { assertConnectorOutputOwnership } from "./output-ownership";
+import {
+  createStreamingDryRunRenderReceipt,
+  assertConnectorGpuFinalPreset,
+  connectorGpuFinalReceiptBinding,
+  resolveConnectorFinalFrameLane,
+  type ConnectorRequestedFinalFrameLane,
+  renderConnectorStreamingArtifact,
+  type ConnectorStreamingFinalRenderer
+} from "./streaming-final";
 
 export type CanvasMp4ExportPreset = FfmpegExportPreset;
 
@@ -39,7 +44,11 @@ export interface CanvasMp4ExportInput {
    */
   force?: boolean;
   preset?: string;
+  /** Strict final-video producer. `gpu` never substitutes browser rendering. */
+  frameLane?: ConnectorRequestedFinalFrameLane;
   dryRunRender?: boolean;
+  /** High-level streamed-final seam for tests; this is not the legacy FFmpeg command runner. */
+  streamingRenderer?: ConnectorStreamingFinalRenderer;
   ffmpegRunner?: FfmpegRunner;
   now?: () => string;
 }
@@ -52,7 +61,7 @@ export interface CanvasMp4ExportResult {
     ok: boolean;
     dryRun: boolean;
     lane: "ffmpeg";
-    frameLane?: "browser";
+    frameLane?: ConnectorRequestedFinalFrameLane;
     preset: CanvasMp4ExportPreset;
     receiptPath: string;
     outputPath: string;
@@ -74,10 +83,13 @@ export interface CanvasMp4ExportResult {
 }
 
 export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<CanvasMp4ExportResult> {
+  const outDir = resolve(input.outDir);
+  assertClosedDirectoryInventoryAvailable(outDir, "Canvas-to-MP4 package publication");
   const dryRunRender = input.dryRunRender ?? true;
   const preset = normalizeCanvasMp4Preset(input.preset);
+  const frameLane = resolveConnectorFinalFrameLane(input.frameLane);
+  assertConnectorGpuFinalPreset(frameLane, preset);
   const createdAt = input.now?.() ?? new Date().toISOString();
-  const outDir = resolve(input.outDir);
   const packageDir = join(outDir, "package");
   const receiptDir = join(outDir, "receipts");
   const renderReceiptPath = join(receiptDir, "ffmpeg-render.receipt.json");
@@ -85,7 +97,13 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
   const exportReceiptPath = join(outDir, "canvas-mp4-export.receipt.json");
   const cutPlanPath = join(outDir, "cut-import-plan.json");
   const canvasSelectionPath = resolve(input.canvasSelectionPath);
-  const canvasSelectionBytes = await readFile(canvasSelectionPath);
+  const interchangeBudget = new BoundedResourceBudget(DEFAULT_HOST_INTERCHANGE_LIMITS, "Canvas-to-MP4 interchange");
+  const canvasSelectionSource = await readBudgetedStableFile(canvasSelectionPath, {
+    label: "Canvas selection input",
+    budget: interchangeBudget,
+    withinRoot: dirname(canvasSelectionPath)
+  });
+  const canvasSelectionBytes = canvasSelectionSource.bytes;
   const canvasSelection: unknown = JSON.parse(canvasSelectionBytes.toString("utf8"));
 
   // Negotiate the untrusted connector envelope before creating output state.
@@ -94,6 +112,10 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
     createdAt,
     inputPath: canvasSelectionPath
   });
+  const canvasAdmission = await admitCanvasMotionPackage(canvasExport, {
+    sourceRoot: dirname(canvasSelectionPath),
+    budget: interchangeBudget
+  });
   // the output-ownership invariant: no guard ran here, so a caller's `<out>/package` was overwritten with ok:true.
   await assertConnectorOutputOwnership({
     packageDir,
@@ -101,15 +123,15 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
     ownedFiles: [cutPlanPath, exportReceiptPath],
     force: input.force === true
   });
-  await mkdir(receiptDir, { recursive: true });
   const writtenPackage = await writeCanvasMotionPackage(canvasExport, {
     packageDir,
-    sourceRoot: dirname(canvasSelectionPath)
+    sourceRoot: dirname(canvasSelectionPath),
+    budget: interchangeBudget,
+    admission: canvasAdmission
   });
 
   const pkg = await loadMotionPackage(packageDir);
   const renderOutputPath = join(outDir, "render", `${pkg.manifest.id}.${extensionForPreset(preset)}`);
-  const framesDir = join(outDir, "frames", pkg.manifest.id);
   const operationHash = connectorArtifactOperationHash({
     packageId: pkg.manifest.id,
     motionId: pkg.motion.id,
@@ -118,31 +140,25 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
   });
   const renderResult = dryRunRender
     ? {
-        frameLane: undefined,
-        receipt: createDryRunRenderReceipt({
-          packageId: pkg.manifest.id,
-          motionHash: hashBuffer(Buffer.from(JSON.stringify(pkg.motion), "utf8")),
+        frameLane,
+        receipt: createStreamingDryRunRenderReceipt({
+          pkg,
           createdAt,
-          framesDir,
-          fps: pkg.motion.fps,
-          durationMs: pkg.motion.durationMs,
+          outputPath: renderOutputPath,
           preset,
-          outputPath: renderOutputPath
+          frameLane,
+          quality: { minUniqueFrameHashes: 2 }
         })
       }
-    : await renderRealFfmpegArtifact({
+    : await renderConnectorStreamingArtifact({
         pkg,
-        packageId: pkg.manifest.id,
-        durationMs: pkg.motion.durationMs,
-        fps: pkg.motion.fps,
-        width: pkg.motion.width,
-        height: pkg.motion.height,
-        framesDir,
         outputPath: renderOutputPath,
         preset,
-        createdAt,
-        force: input.force === true,
-        runner: input.ffmpegRunner
+        frameLane,
+        quality: { minUniqueFrameHashes: 2 },
+        streamingRenderer: input.streamingRenderer,
+        runner: input.ffmpegRunner,
+        now: () => createdAt
       });
 
   renderResult.receipt.inputHashes = { ...renderResult.receipt.inputHashes, operation: operationHash };
@@ -174,13 +190,14 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
     renderOk,
     renderPreset: preset,
     renderFrameLane: renderResult.frameLane,
+    renderGpu: connectorGpuFinalReceiptBinding({ frameLane, dryRun: dryRunRender, receipt: renderResult.receipt }),
     renderReceiptPath,
     renderOutputPath,
     artifacts,
     warnings,
     operationHash
   });
-  await writeJson(exportReceiptPath, exportReceipt);
+  await writeJson(exportReceiptPath, exportReceipt, true);
   const artifactHandle = !dryRunRender && renderOk
     ? await finalizeConnectorArtifactHandle({
       root: outDir,
@@ -200,7 +217,7 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
       planCutImport(pkg, cutTargetCapabilitiesForMode({ targetId: "shellx-cut", mode: "rendered_media" })),
       { dryRun: false, handle: artifactHandle.reference }
     );
-    await writeJson(cutPlanPath, cutPlan);
+    await writeJson(cutPlanPath, cutPlan, true);
   }
 
   return {
@@ -258,150 +275,6 @@ function canvasMp4Artifacts(input: {
   return artifacts;
 }
 
-function createDryRunRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  framesDir: string;
-  fps: number;
-  durationMs: number;
-  preset: CanvasMp4ExportPreset;
-  outputPath: string;
-}): OperationReceipt {
-  const command = buildEncodeImageSequenceCommand({
-    framesDir: input.framesDir,
-    fps: input.fps,
-    durationMs: input.durationMs,
-    outputPath: input.outputPath,
-    preset: input.preset,
-    inputRoots: [input.framesDir],
-    outputRoots: [dirname(input.outputPath)]
-  });
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `render-dry-run-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "not_run",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      dryRun: true,
-      preset: input.preset,
-      command
-    },
-    warnings: []
-  };
-}
-
-async function renderRealFfmpegArtifact(input: {
-  pkg: MotionPackage;
-  packageId: string;
-  durationMs: number;
-  fps: number;
-  width: number;
-  height: number;
-  framesDir: string;
-  /** Overwrite a frames directory holding files Motion did not write. */
-  force?: boolean;
-  outputPath: string;
-  preset: CanvasMp4ExportPreset;
-  createdAt: string;
-  runner?: FfmpegRunner;
-}): Promise<{ receipt: OperationReceipt; frameLane: "browser" }> {
-  // the directory ownership invariant: this was a bare `rm(framesDir, { recursive: true, force: true })` while all three sibling
-  // connectors called the guard — `<out>/frames/<packageId>` sits under a caller-supplied `--out`,
-  // and a caller's files there were destroyed by a run that reported ok:true.
-  assertOutputDirGuard(await prepareFramesDir(input.framesDir, { force: input.force === true, callerSupplied: true }));
-  await mkdir(input.framesDir, { recursive: true });
-  await mkdir(dirname(input.outputPath), { recursive: true });
-  const frameCount = frameCountFor(input.durationMs, input.fps);
-  for (let index = 0; index < frameCount; index += 1) {
-    await renderMotionBrowserFrame(input.pkg, {
-      outDir: input.framesDir,
-      outputPath: join(input.framesDir, frameFileName(index)),
-      atMs: frameTimestampMs(index, input.fps, input.durationMs),
-      now: () => input.createdAt
-    });
-  }
-
-  const stagingOutputPath = connectorArtifactStagingPath(input.outputPath);
-  // Final encode through the shared encode policy: hardware GPU encoding by default with a cached
-  // per-host probe, honoring SHELLX_MOTION_FORCE_SOFTWARE_ENCODE; the same host selects the same encoder
-  // as the CLI and debug-api render paths.
-  const encoded = await encodeImageSequenceWithPolicy({
-    packageId: input.packageId,
-    framesDir: input.framesDir,
-    fps: input.fps,
-    width: input.width,
-    height: input.height,
-    durationMs: input.durationMs,
-    outputPath: stagingOutputPath,
-    preset: input.preset,
-    ...packageAudioEncodeInput(input.pkg),
-    inputRoots: [input.framesDir, input.pkg.root],
-    outputRoots: [dirname(input.outputPath)],
-    quality: { minUniqueFrameHashes: 2 },
-    runner: input.runner,
-    now: () => input.createdAt
-  });
-  if (!encoded.ok) {
-    await rm(stagingOutputPath, { force: true });
-    return {
-      receipt: createFailedRenderReceipt({
-        packageId: input.packageId,
-        motionHash: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-        createdAt: input.createdAt,
-        outputPath: input.outputPath,
-        preset: input.preset,
-        command: encoded.command,
-        error: encoded.error
-      }),
-      frameLane: "browser"
-    };
-  }
-  await publishConnectorArtifact(stagingOutputPath, input.outputPath);
-  encoded.receipt.output = {
-    ...(readRecord(encoded.receipt.output) ?? {}),
-    path: input.outputPath,
-    frameLane: "browser"
-  };
-  encoded.receipt.artifacts = encoded.receipt.artifacts?.map((artifact) => artifact.role === "rendered_media"
-    ? { ...artifact, path: input.outputPath }
-    : artifact);
-  return { receipt: encoded.receipt, frameLane: "browser" };
-}
-
-function createFailedRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  outputPath: string;
-  preset: CanvasMp4ExportPreset;
-  command: FfmpegCommand;
-  error: { code: string; message: string };
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `ffmpeg-render-failed-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}:${input.error.code}:${input.error.message}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "failed",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      path: input.outputPath,
-      frameLane: "browser",
-      preset: input.preset,
-      command: input.command,
-      error: input.error
-    },
-    warnings: [input.error.message]
-  };
-}
-
 function createCanvasMp4ExportReceipt(input: {
   packageId: string;
   createdAt: string;
@@ -411,7 +284,8 @@ function createCanvasMp4ExportReceipt(input: {
   renderDryRun: boolean;
   renderOk: boolean;
   renderPreset: CanvasMp4ExportPreset;
-  renderFrameLane?: "browser";
+  renderFrameLane?: ConnectorRequestedFinalFrameLane;
+  renderGpu?: ReturnType<typeof connectorGpuFinalReceiptBinding>;
   renderReceiptPath: string;
   renderOutputPath: string;
   artifacts: ConnectorArtifact[];
@@ -438,7 +312,8 @@ function createCanvasMp4ExportReceipt(input: {
         frameLane: input.renderFrameLane,
         preset: input.renderPreset,
         receiptPath: input.renderReceiptPath,
-        outputPath: input.renderOutputPath
+        outputPath: input.renderOutputPath,
+        ...(input.renderGpu ? input.renderGpu : {})
       }
     },
     warnings: input.warnings
@@ -463,25 +338,11 @@ function mediaTypeForPreset(preset: CanvasMp4ExportPreset): string {
   return `video/${container}`;
 }
 
-function frameCountFor(durationMs: number, fps: number): number {
-  return Math.max(1, Math.ceil((durationMs / 1000) * fps));
-}
-
-function frameTimestampMs(index: number, fps: number, durationMs: number): number {
-  return Math.min(durationMs - 1, Math.round((index / fps) * 1000));
-}
-
-function frameFileName(index: number): string {
-  return `${String(index + 1).padStart(6, "0")}.png`;
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+async function writeJson(path: string, value: unknown, exclusive = false): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  if (exclusive) {
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    return;
+  }
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value))
-    : null;
 }

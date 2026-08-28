@@ -2,7 +2,7 @@
  * browser-egress-scope.test.ts — regression coverage for the three ways the browser lane's egress
  * policy could be stepped around WITHOUT the receipt saying so.
  *
- * Findings (Codex security review, pre-0.1.0):
+ * Previously observed failure modes, fixed before 0.1.0:
  *
  * 1. POPUPS RENDERED OUTSIDE THE GUARD. `attachBrowserRedirectGuard` opens one CDP session against
  *    one target. A `window.open()` popup is a different target, and Playwright never routes
@@ -29,7 +29,7 @@
  * the assumption that made the hole invisible.
  */
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright-core";
@@ -38,14 +38,19 @@ import { loadMotionPackage } from "@shellx-motion/core";
 import { attachBrowserRedirectGuard } from "./browser-redirect-guard";
 import {
   authorizeBrowserRouteRequest,
+  createApprovedAgentScriptProvenanceAuthority,
   createBrowserDocumentSchemeMemory,
-  renderBrowserFrame,
+  createHostBoundBrowserFrameRenderer,
   type BrowserFrameNetworkState,
   type BrowserRoutePolicy,
   type RoutedBrowserRequest
 } from "./index";
 
 const tempDirs: string[] = [];
+
+async function temporaryRoot(prefix: string): Promise<string> {
+  return await mkdtemp(join(await realpath(tmpdir()), prefix));
+}
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -69,12 +74,14 @@ function freshNetworkState(): BrowserFrameNetworkState {
 function policyFor(options: {
   allowedOrigins?: string[];
   documentScheme?: ReturnType<typeof createBrowserDocumentSchemeMemory>;
+  denySecondaryExecutableRequests?: boolean;
 } = {}): BrowserRoutePolicy {
   return {
     allowedOrigins: new Set(options.allowedOrigins ?? []),
     packageRootPath: "/nonexistent-package-root",
     renderPage: RENDER_PAGE,
-    documentScheme: options.documentScheme ?? createBrowserDocumentSchemeMemory()
+    documentScheme: options.documentScheme ?? createBrowserDocumentSchemeMemory(),
+    ...(options.denySecondaryExecutableRequests ? { denySecondaryExecutableRequests: true } : {})
   };
 }
 
@@ -176,11 +183,15 @@ describe("secondary-page (popup) egress suppression", () => {
     const approvedOrigin = await listen(redirector);
     const root = await writePopupBrowserPackage(approvedOrigin);
     const pkg = await loadMotionPackage(root);
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-browser-popup-"));
-    tempDirs.push(root, outDir);
+    const outDir = await temporaryRoot("shellx-motion-browser-popup-");
+    const stateRoot = await temporaryRoot("shellx-motion-browser-popup-authority-");
+    tempDirs.push(root, outDir, stateRoot);
+    const authority = createApprovedAgentScriptProvenanceAuthority({ stateRoot });
+    await authority.mint({ package: pkg });
+    const renderApproved = createHostBoundBrowserFrameRenderer({ agentScriptAuthority: authority });
 
     try {
-      const result = await renderBrowserFrame(pkg, {
+      const result = await renderApproved(pkg, {
         atMs: 0,
         outDir,
         networkAccess: { approvedOrigins: [approvedOrigin], allowPrivateNetwork: true }
@@ -192,13 +203,47 @@ describe("secondary-page (popup) egress suppression", () => {
       expect(popupTargetHits).toBe(0);
       expect(pixelHits).toBeGreaterThan(0);
       expect(result.receipt.status).not.toBe("passed");
-      expect(result.receipt.warnings.some((warning) => warning.startsWith("Blocked browser popup or secondary page:"))).toBe(true);
+      // Chromium's event order is platform-dependent here: some builds emit the context `page`
+      // event before the refused first popup request, while Windows can abort that request before
+      // the popup becomes an observable page. Both warnings prove the same shipped invariant: the
+      // request came from outside the captured page and was refused before egress.
+      expect(result.receipt.warnings.some((warning) =>
+        warning.startsWith("Blocked browser popup or secondary page:")
+        || warning.startsWith("Blocked browser request from a page other than the captured page:")
+      )).toBe(true);
       expect(result.receipt.warnings.some((warning) => warning.includes("SECRET-FROM-POPUP"))).toBe(false);
     } finally {
       await closeServer(redirector);
       await closeServer(unapproved);
     }
   }, 45_000);
+});
+
+describe("approved-agent-entry secondary executable suppression", () => {
+  it("refuses secondary script and worker resources while preserving data assets", async () => {
+    const policy = policyFor({ denySecondaryExecutableRequests: true });
+    const codeRequest = (kind: "script" | "worker"): RoutedBrowserRequest => ({
+      url: () => "data:text/javascript,secondary%20code",
+      redirectedFrom: () => null,
+      isNavigationRequest: () => false,
+      frame: () => frameOn("file:///package/entry.html"),
+      resourceType: () => kind
+    });
+    const state = freshNetworkState();
+    await expect(authorizeBrowserRouteRequest(codeRequest("script"), policy, state)).resolves.toBe("abort");
+    await expect(authorizeBrowserRouteRequest(codeRequest("worker"), policy, state)).resolves.toBe("abort");
+    const childDocument: RoutedBrowserRequest = {
+      ...codeRequest("script"),
+      resourceType: () => "document",
+      isNavigationRequest: () => true,
+      frame: () => ({ ...frameOn("file:///package/child.html"), parentFrame: () => frameOn("file:///package/entry.html") })
+    };
+    await expect(authorizeBrowserRouteRequest(childDocument, policy, state)).resolves.toBe("abort");
+    expect(state.blockedSecondaryCodeRequests).toEqual(["script", "worker", "document"]);
+
+    const image: RoutedBrowserRequest = { ...codeRequest("script"), resourceType: () => "image" };
+    await expect(authorizeBrowserRouteRequest(image, policy, freshNetworkState())).resolves.toBe("continue");
+  });
 });
 
 describe("https document downgrade refusal (non-redirect shapes)", () => {
@@ -294,6 +339,22 @@ describe("route authorization fails closed on an unparseable URL", () => {
 });
 
 describe("redirect guard liveness failsafe", () => {
+  it("observes only HTTP(S) responses, leaving snapshot-fulfilled package files to the route layer", async () => {
+    const { context, page, sent } = fakeGuardTarget();
+
+    await attachBrowserRedirectGuard(context, page, new Set<string>(), () => freshNetworkState());
+
+    expect(sent).toContainEqual({
+      method: "Fetch.enable",
+      params: {
+        patterns: [
+          { urlPattern: "http://*", requestStage: "Response" },
+          { urlPattern: "https://*", requestStage: "Response" }
+        ]
+      }
+    });
+  });
+
   it("records a mid-render CDP detach so the frame cannot report passed", async () => {
     const { context, page, cdp } = fakeGuardTarget();
     const state = freshNetworkState();
@@ -332,13 +393,15 @@ function fakeGuardTarget(): {
   context: BrowserContext;
   page: Page;
   cdp: { emit(event: string, payload?: unknown): void };
+  sent: Array<{ method: string; params: Record<string, unknown> }>;
   emitPageEvent(event: string): void;
 } {
   const cdpListeners = new Map<string, Array<(payload?: unknown) => void>>();
   const pageListeners = new Map<string, Array<() => void>>();
+  const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
   const cdp = {
     on(event: string, listener: (payload?: unknown) => void) { cdpListeners.set(event, [...(cdpListeners.get(event) ?? []), listener]); return cdp; },
-    async send() { return {}; },
+    async send(method: string, params: Record<string, unknown>) { sent.push({ method, params }); return {}; },
     emit(event: string, payload?: unknown) { for (const listener of cdpListeners.get(event) ?? []) listener(payload); }
   };
   const page = {
@@ -349,6 +412,7 @@ function fakeGuardTarget(): {
     context: context as unknown as BrowserContext,
     page: page as unknown as Page,
     cdp,
+    sent,
     emitPageEvent: (event: string) => { for (const listener of pageListeners.get(event) ?? []) listener(); }
   };
 }
@@ -370,7 +434,7 @@ async function closeServer(server: Server): Promise<void> {
  * loads an approved pixel, so the test also proves the normal path is untouched.
  */
 async function writePopupBrowserPackage(requestOrigin: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "shellx-motion-browser-popup-package-"));
+  const root = await temporaryRoot("shellx-motion-browser-popup-package-");
   await mkdir(root, { recursive: true });
   await writeFile(
     join(root, "manifest.json"),
@@ -399,7 +463,11 @@ async function writePopupBrowserPackage(requestOrigin: string): Promise<string> 
         { id: "web-card", type: "web", source: "card.html", startMs: 0, durationMs: 1000, allowedOrigins: [requestOrigin] }
       ],
       assets: [],
-      provenance: { sourceApp: "shellx-motion", createdBy: "test" }
+      provenance: { sourceApp: "shellx-motion", createdBy: "test" },
+      "x-shellx-motion-script-execution": {
+        schema: "shellx-motion/script-execution-request@1",
+        requestedMode: "trusted-local-agent-authored"
+      }
     }, null, 2)}\n`
   );
   await writeFile(

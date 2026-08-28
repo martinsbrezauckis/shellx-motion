@@ -20,13 +20,13 @@
  * Dependencies: `@shellx-motion/core` (MotionJobView). Primary caller: the render domain router.
  */
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
-import { JOB_STATUS_CONTRACT, type MotionJobStatus, type MotionJobView } from "@shellx-motion/core";
-import { positiveIntegerArg, stringArg } from "./args.js";
+import { JOB_STATUS_CONTRACT, type MotionJobCoordinator, type MotionJobCoordinatorResult, type MotionJobStatus, type MotionJobView } from "@shellx-motion/core";
+import { nonNegativeNumberArg, positiveIntegerArg, stringArg } from "./args.js";
 
 export interface RenderJobQueryServices {
   /** Reads the live lease directory and the terminal record store as one. */
   jobView?: MotionJobView;
-  /** The owner identity this dispatch is answered as, derived from the transport-observed actor. */
+  /** Server-generated/authenticated owner principal this dispatch is answered as. */
   jobCallerId?: string;
   /**
    * Whether this host granted cross-caller visibility.
@@ -35,6 +35,10 @@ export interface RenderJobQueryServices {
    * agent, which is exactly the distinction that makes this safe to expose at all.
    */
   jobCrossCallerScopeGranted?: boolean;
+  /** Process-owned coordinator; controls are unavailable when the host has no worker authority. */
+  jobCoordinator?: MotionJobCoordinator;
+  /** Host-owned retry router; durable connector bindings use this instead of an in-memory closure. */
+  retryCoordinatedJob?: (input: { jobId: string; callerId: string; newJobId?: string }) => Promise<MotionJobCoordinatorResult<{ jobId: string; priorJobId: string }>>;
 }
 
 /** Guidance for each query error, taken from the authored contract rather than restated here. */
@@ -47,7 +51,12 @@ export async function dispatchRenderJobQueryCommand(
   args: unknown,
   services: RenderJobQueryServices
 ): Promise<MotionDebugResult | null> {
+  if (command === "motion.job.events") return await eventsResult(args, services);
+  if (command === "motion.job.cancel") return await cancelResult(args, services);
+  if (command === "motion.job.retry") return await retryResult(args, services);
   if (command !== "motion.job.get" && command !== "motion.job.list") return null;
+  const callerId = trustedJobCallerId(services);
+  if (!callerId) return ownerPrincipalUnavailable();
   if (!services.jobView) {
     return capabilityUnavailable("Motion job tracking is unavailable on this host.");
   }
@@ -71,11 +80,60 @@ export async function dispatchRenderJobQueryCommand(
       warnings: []
     };
   }
-  const callerId = services.jobCallerId ?? "unattributed";
   const requestScope = scope ?? "own";
   return command === "motion.job.get"
     ? await getResult(args, services.jobView, callerId, requestScope)
     : await listResult(args, services.jobView, callerId, requestScope);
+}
+
+async function eventsResult(args: unknown, services: RenderJobQueryServices): Promise<MotionDebugResult> {
+  const jobId = stringArg(args, "jobId");
+  const after = nonNegativeNumberArg(args, "after");
+  if (!jobId) return invalidArgs("motion.job.events requires jobId.", "Pass the id returned by motion.job.submit.");
+  if (after === false || (after !== null && !Number.isSafeInteger(after))) return invalidArgs("motion.job.events after must be a non-negative integer.", "Omit after for the retained event log, or pass the last event sequence you processed.");
+  if (!services.jobCoordinator) return capabilityUnavailable("Live job events require the persistent local Motion job coordinator.");
+  const callerId = trustedJobCallerId(services);
+  if (!callerId) return ownerPrincipalUnavailable();
+  const answer = await services.jobCoordinator.events({ jobId, callerId, ...(after === null ? {} : { after }) });
+  if (!answer.ok) return coordinatorFailure(answer.code, answer.message);
+  return { ok: true, visibleState: { panel: "render", operation: "job.events", jobId, eventCount: answer.value.events.length }, result: { ok: true, jobId, events: answer.value.events }, warnings: [] };
+}
+
+async function cancelResult(args: unknown, services: RenderJobQueryServices): Promise<MotionDebugResult> {
+  const jobId = stringArg(args, "jobId");
+  const reason = stringArg(args, "reason") ?? undefined;
+  if (!jobId) return invalidArgs("motion.job.cancel requires jobId.", "Pass the id returned by motion.job.submit.");
+  if (!services.jobCoordinator) return capabilityUnavailable("Live cancellation requires the persistent local Motion job coordinator.");
+  const callerId = trustedJobCallerId(services);
+  if (!callerId) return ownerPrincipalUnavailable();
+  const answer = await services.jobCoordinator.cancel({ jobId, callerId, ...(reason ? { reason } : {}) });
+  if (!answer.ok) return coordinatorFailure(answer.code, answer.message);
+  return {
+    ok: true,
+    visibleState: { panel: "render", operation: "job.cancel", jobId, state: answer.value.job.state, cancelRequested: true },
+    result: { ok: true, job: answer.value.job, cancelRequested: true }, warnings: []
+  };
+}
+
+async function retryResult(args: unknown, services: RenderJobQueryServices): Promise<MotionDebugResult> {
+  const jobId = stringArg(args, "jobId");
+  const newJobId = stringArg(args, "newJobId") ?? undefined;
+  if (!jobId) return invalidArgs("motion.job.retry requires jobId.", "Pass a retryable failed job id.");
+  if (!services.jobCoordinator) return capabilityUnavailable("Live retry requires the persistent local Motion job coordinator.");
+  const callerId = trustedJobCallerId(services);
+  if (!callerId) return ownerPrincipalUnavailable();
+  const retry = services.retryCoordinatedJob ?? (async (input) => await services.jobCoordinator!.retry(input));
+  const answer = await retry({ jobId, callerId, ...(newJobId ? { newJobId } : {}) });
+  if (!answer.ok) return coordinatorFailure(answer.code, answer.message);
+  return {
+    ok: true,
+    visibleState: { panel: "render", operation: "job.retry", jobId: answer.value.jobId, priorJobId: answer.value.priorJobId },
+    result: { ok: true, ...answer.value }, warnings: []
+  };
+}
+
+function coordinatorFailure(code: string, message: string): MotionDebugResult {
+  return { ok: false, error: { code, message, suggestedAction: code === "job_not_retryable" ? "Retry only a failed job whose error is marked retryable; never restart a cancelled job automatically." : "Re-read the job id and caller identity from the submission response." }, warnings: [] };
 }
 
 async function getResult(args: unknown, view: MotionJobView, callerId: string, scope: "own" | "all"): Promise<MotionDebugResult> {
@@ -141,4 +199,20 @@ function invalidArgs(message: string, suggestedAction: string): MotionDebugResul
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return { ok: false, error: { code: "capability_unavailable", message, suggestedAction: "Configure the required host capability and retry." }, warnings: [] };
+}
+
+function trustedJobCallerId(services: RenderJobQueryServices): string | undefined {
+  return services.jobCallerId?.trim() || undefined;
+}
+
+function ownerPrincipalUnavailable(): MotionDebugResult {
+  return {
+    ok: false,
+    error: {
+      code: "capability_unavailable",
+      message: "Motion job access requires a server-authenticated owner principal.",
+      suggestedAction: "Ask the host operator to use an authenticated Motion transport or configure a trusted in-process caller identity."
+    },
+    warnings: []
+  };
 }

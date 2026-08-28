@@ -17,8 +17,8 @@ import { tempDirs } from "./main.test-support";
 
 export async function writeBatchPackageWithAsset(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-batch-assets-"));
-  await mkdir(join(root, "assets"), { recursive: true });
-  await mkdir(join(root, "data"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
+  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "product.txt"), "asset payload\n", "utf8");
   await writeFile(join(root, "data", "rows.json"), `${JSON.stringify([{ id: "one", title: "One" }], null, 2)}\n`, "utf8");
   await writeFile(
@@ -67,8 +67,8 @@ export async function writeBatchPackageWithAsset(): Promise<string> {
 
 export async function writeAudioBatchPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-audio-batch-"));
-  await mkdir(join(root, "assets"), { recursive: true });
-  await mkdir(join(root, "data"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
+  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "music.wav"), "fake wav bytes", "utf8");
   await writeFile(join(root, "data", "rows.json"), `${JSON.stringify({
     schema: "shellx-motion/data-rows@1",
@@ -131,7 +131,7 @@ export async function writeAudioBatchPackage(): Promise<string> {
 
 export async function writeFastBatchPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-fast-batch-"));
-  await mkdir(join(root, "data"), { recursive: true });
+  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "data", "rows.json"), `${JSON.stringify({
     schema: "shellx-motion/data-rows@1",
     rows: [
@@ -196,7 +196,7 @@ export async function writeFastBatchPackage(): Promise<string> {
 
 export async function writeVariantBatchPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-variant-batch-"));
-  await mkdir(join(root, "data"), { recursive: true });
+  await mkdir(join(root, "data"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "data", "rows.json"), `${JSON.stringify({
     schema: "shellx-motion/data-rows@1",
     rows: [
@@ -274,7 +274,7 @@ export async function writeVariantBatchPackage(): Promise<string> {
 export async function writeCanvasBridgeRoot(): Promise<string> {
   const canvasRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-root-"));
   tempDirs.push(canvasRoot);
-  await mkdir(join(canvasRoot, "app", "server"), { recursive: true });
+  await mkdir(join(canvasRoot, "app", "server"), { recursive: true, mode: 0o700 });
   await writeFile(join(canvasRoot, "app", "package.json"), JSON.stringify({ name: "shellx-canvas" }), "utf8");
   await writeFile(
     join(canvasRoot, "app", "server", "motion-package.mjs"),
@@ -300,7 +300,7 @@ export async function writeCanvasBridgeRoot(): Promise<string> {
         };
       }
       export async function writeMotionFrameSelection(selection, options) {
-        await mkdir(dirname(options.outPath), { recursive: true });
+        await mkdir(dirname(options.outPath), { recursive: true, mode: 0o700 });
         await writeFile(options.outPath, JSON.stringify(selection, null, 2) + "\\n", "utf8");
         return { ok: true, path: options.outPath, schema: selection.schema };
       }

@@ -1,14 +1,31 @@
 {
   "name": "@shellx-motion/debug-api",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./internal/package-edit-transaction": "./src/internal/package-edit-transaction.ts",
+    "./internal/gltf-object-scene-package": "./src/internal/gltf-object-scene-package.ts",
+    "./internal/layout-authority-repair": "./src/internal/layout-authority-repair.ts",
+    "./internal/physics-bake-durable": "./src/internal/physics-bake-durable.ts",
+    "./internal/physics-bake-rapier": "./src/internal/physics-bake-rapier.ts",
+    "./internal/physics-visual-binding": "./src/internal/physics-visual-binding.ts",
+    "./internal/physics-visual-retained-render": "./src/internal/physics-visual-retained-render.ts",
+    "./internal/physics-visual-installed-final-video": "./src/internal/physics-visual-installed-final-video.ts"
   },
   "files": [
     "dist"
   ],
+  "shellxMotion": {
+    "hostInternalExports": [
+      "./internal/physics-bake-durable",
+      "./internal/physics-bake-rapier",
+      "./internal/physics-visual-binding",
+      "./internal/physics-visual-retained-render",
+      "./internal/physics-visual-installed-final-video"
+    ]
+  },
   "publishConfig": {
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -16,6 +33,34 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./internal/package-edit-transaction": {
+        "types": "./dist/internal/package-edit-transaction.d.ts",
+        "default": "./dist/internal/package-edit-transaction.js"
+      },
+      "./internal/layout-authority-repair": {
+        "types": "./dist/internal/layout-authority-repair.d.ts",
+        "default": "./dist/internal/layout-authority-repair.js"
+      },
+      "./internal/physics-bake-durable": {
+        "types": "./dist/internal/physics-bake-durable.d.ts",
+        "default": "./dist/internal/physics-bake-durable.js"
+      },
+      "./internal/physics-bake-rapier": {
+        "types": "./dist/internal/physics-bake-rapier.d.ts",
+        "default": "./dist/internal/physics-bake-rapier.js"
+      },
+      "./internal/physics-visual-binding": {
+        "types": "./dist/internal/physics-visual-binding.d.ts",
+        "default": "./dist/internal/physics-visual-binding.js"
+      },
+      "./internal/physics-visual-retained-render": {
+        "types": "./dist/internal/physics-visual-retained-render.d.ts",
+        "default": "./dist/internal/physics-visual-retained-render.js"
+      },
+      "./internal/physics-visual-installed-final-video": {
+        "types": "./dist/internal/physics-visual-installed-final-video.d.ts",
+        "default": "./dist/internal/physics-visual-installed-final-video.js"
       }
     }
   },
@@ -25,6 +70,8 @@
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   },
   "dependencies": {
+    "@babel/parser": "7.29.8",
+    "@dimforge/rapier3d-deterministic-compat": "0.20.0",
     "@shellx-motion/actions": "workspace:*",
     "@shellx-motion/analysis-tracking": "workspace:*",
     "@shellx-motion/adapters-canvas": "workspace:*",
@@ -36,6 +83,7 @@
     "@shellx-motion/core": "workspace:*",
     "@shellx-motion/prompt": "workspace:*",
     "@shellx-motion/renderer-browser": "workspace:*",
-    "@shellx-motion/renderer-ffmpeg": "workspace:*"
+    "@shellx-motion/renderer-ffmpeg": "workspace:*",
+    "@shellx-motion/renderer-native": "workspace:*"
   }
 }

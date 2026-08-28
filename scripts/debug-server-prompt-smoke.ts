@@ -21,6 +21,8 @@ const server = await startMotionDebugServer({
   context: {
     scratchRoot: outDir,
     receiptsRoot,
+    authoringInputRoots: [packageRoot, outDir],
+    authoringOutputRoots: [outDir],
     promptRuntime: {
       runPrompt: async (input) => ({
         ok: true as const,

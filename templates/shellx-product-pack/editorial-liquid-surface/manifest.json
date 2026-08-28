@@ -4,10 +4,15 @@
   "name": "ShellX Editorial Liquid Surface",
   "motion": "motion.json",
   "template": "template.json",
-  "assets": ["assets/samples/coastal-editorial.svg"],
+  "assets": [
+    "assets/samples/coastal-editorial.svg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-800-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
   "sourceApp": "shellx-motion",
   "compatibility": {
-    "lanes": ["browser", "ffmpeg"],
+    "lanes": ["browser", "ffmpeg", "gpu"],
     "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
   },
   "workflow": "template-pack-editorial-liquid-surface"

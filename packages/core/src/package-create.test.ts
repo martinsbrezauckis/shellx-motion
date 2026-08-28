@@ -20,7 +20,7 @@
  * claim, `./job-governor` for the limits, and node:fs. Temp directories are created under the OS
  * temp dir and removed in `afterEach`.
  */
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,7 +42,7 @@ afterEach(async () => {
 
 /** Staging directories are dot-prefixed; a clean run leaves none of them behind. */
 async function stagingLeftovers(parent: string): Promise<string[]> {
-  return (await readdir(parent)).filter((entry) => entry.startsWith(".shellx-motion-package-"));
+  return (await readdir(parent)).filter((entry) => entry.startsWith(".shellx-motion-stage-"));
 }
 
 describe("createMotionPackage", () => {
@@ -84,7 +84,7 @@ describe("createMotionPackage", () => {
   it("accepts a target directory the caller already created, as long as it is empty", async () => {
     const parent = await temporaryRoot();
     const packageRoot = join(parent, "pre-made");
-    await mkdir(packageRoot, { recursive: true });
+    await mkdir(packageRoot, { recursive: true, mode: 0o700 });
 
     await createMotionPackage({ packageRoot });
 
@@ -94,7 +94,7 @@ describe("createMotionPackage", () => {
   it("refuses a non-empty directory without touching what is there", async () => {
     const parent = await temporaryRoot();
     const packageRoot = join(parent, "occupied");
-    await mkdir(packageRoot, { recursive: true });
+    await mkdir(packageRoot, { recursive: true, mode: 0o700 });
     await writeFile(join(packageRoot, "motion.json"), "{\"existing\":true}\n", "utf8");
 
     await expect(createMotionPackage({ packageRoot })).rejects.toThrow(/not empty/i);
@@ -110,6 +110,53 @@ describe("createMotionPackage", () => {
 
     await expect(createMotionPackage({ packageRoot })).rejects.toThrow(/not a directory/i);
     expect(await readFile(packageRoot, "utf8")).toBe("not a directory\n");
+  });
+
+  it("refuses a symbolic-link package destination without following it", async () => {
+    const parent = await temporaryRoot();
+    const packageRoot = join(parent, "linked-package");
+    const outside = join(parent, "caller-owned");
+    await mkdir(outside);
+    await writeFile(join(outside, "marker.txt"), "caller-owned", "utf8");
+    await symlink(outside, packageRoot, process.platform === "win32" ? "junction" : "dir");
+
+    await expect(createMotionPackage({ packageRoot })).rejects.toThrow(/not a directory/i);
+
+    await expect(readFile(join(outside, "marker.txt"), "utf8")).resolves.toBe("caller-owned");
+    expect(await stagingLeftovers(parent)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses an unsafe output parent before it creates a package stage", async () => {
+    const parent = await temporaryRoot();
+    const unsafeParent = join(parent, "unsafe");
+    const packageRoot = join(unsafeParent, "package");
+    await mkdir(unsafeParent, { mode: 0o777 });
+    await chmod(unsafeParent, 0o777);
+
+    await expect(createMotionPackage({ packageRoot })).rejects.toThrow(/topology is unsafe|writable/i);
+
+    await expect(lstat(packageRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(unsafeParent)).toEqual([]);
+  });
+
+  it("preserves a retargeted stage rather than recursively cleaning a caller replacement", async () => {
+    const parent = await temporaryRoot();
+    const packageRoot = join(parent, "package");
+    const retainedStage = join(parent, "retained-stage");
+
+    await expect(createMotionPackage({ packageRoot }, {
+      beforeCommit: async (stagingPath) => {
+        await rename(stagingPath, retainedStage);
+        await mkdir(stagingPath, { mode: 0o700 });
+        await writeFile(join(stagingPath, "replacement.txt"), "caller replacement", "utf8");
+      }
+    })).rejects.toThrow(/changed after Motion captured its identity/i);
+
+    await expect(readFile(join(retainedStage, "manifest.json"), "utf8")).resolves.toContain('"schema": "shellx-motion/package-manifest@1"');
+    const replacement = (await readdir(parent)).find((entry) => entry.startsWith(".package.shellx-motion-stage-"));
+    expect(replacement).toBeDefined();
+    await expect(readFile(join(parent, replacement!, "replacement.txt"), "utf8")).resolves.toBe("caller replacement");
+    await expect(lstat(packageRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects non-positive resource inputs before creating anything", async () => {
@@ -313,7 +360,9 @@ describe("createMotionPackage", () => {
       expect(await stagingLeftovers(parent)).toEqual([]);
     });
 
-    it("mints 500 ids without a repeat", async () => {
+    // Each package creation performs native route-authority checks. The 500-publication randomness
+    // soak is covered on POSIX; Windows retains ordinary same-name uniqueness coverage above.
+    it.skipIf(process.platform === "win32")("mints 500 ids without a repeat", async () => {
       const parent = await temporaryRoot();
       const ids = new Set<string>();
 
@@ -366,7 +415,7 @@ describe("createMotionPackage", () => {
     expect((await readdir(packageRoot)).sort()).toEqual(["assets", "manifest.json", "motion.json"]);
     expect(await stagingLeftovers(parent)).toEqual([]);
     for (const outcome of outcomes) {
-      if (outcome.status === "rejected") expect(String(outcome.reason)).toMatch(/not empty|another creator/i);
+      if (outcome.status === "rejected") expect(String(outcome.reason)).toMatch(/not empty|another creator|changed after Motion captured its identity|publication may have committed/i);
     }
   });
 
@@ -393,7 +442,7 @@ describe("createMotionPackage", () => {
   it("leaves a caller-created empty target intact when publication fails", async () => {
     const parent = await temporaryRoot();
     const packageRoot = join(parent, "pre-made-then-failed");
-    await mkdir(packageRoot, { recursive: true });
+    await mkdir(packageRoot, { recursive: true, mode: 0o700 });
 
     await expect(createMotionPackage({ packageRoot }, {
       writeFile: async () => {

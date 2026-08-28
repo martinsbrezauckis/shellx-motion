@@ -132,6 +132,12 @@ Every expensive Motion operation runs inside the job governor
 watches — for a browser render, the whole Chromium tree — and aborts the job the moment a sample
 exceeds the ceiling.
 
+Final browser delivery also runs Core's materialised-sequence preflight before it allocates the
+full request/result/cache cardinality. Its dry-run and receipt evidence identify the resolved
+admission budget and conservative estimate; a refusal means split or simplify the job before
+rendering. This is not a frame-streaming encoder path; a bounded producer-to-encoder handoff
+remains future work.
+
 One thing is deliberately OUTSIDE it: the tool identity probe behind `shellx-motion doctor` and
 `motion.platform.requirements`, which runs `ffmpeg -version` / `chrome --version`. Slot admission is
 global and takes no account of what the operation is, so a governed probe would spend one of the
@@ -142,16 +148,29 @@ not printed its version in 15 seconds is reported `broken`, not waited on.
 
 | Policy field | Default | Environment override | Clamped to |
 |---|---|---|---|
-| `maxProcessTreeRssBytes` | **6 GiB** (6 442 450 944 B) | `SHELLX_MOTION_MAX_JOB_RSS_BYTES` | 64 MiB … 1024 GiB |
+| `maxProcessTreeRssBytes` | adaptive from total/free RAM and concurrency; 6 GiB only without host facts | `SHELLX_MOTION_MAX_JOB_RSS_BYTES` | adaptive 512 MiB … 64 GiB; override 64 MiB … 1024 GiB |
 | `rssPollIntervalMs` | 1 000 ms | `SHELLX_MOTION_RSS_POLL_MS` | 25 … 60 000 ms |
 | `maxWallClockMs` | 30 min | `SHELLX_MOTION_MAX_JOB_MS` | 100 ms … 24 h |
 | `maxConcurrentJobs` | 2 | `SHELLX_MOTION_MAX_CONCURRENT_JOBS` | 1 … 16 |
 
 The ceiling is **per job**, and it is a sampled peak at 1 Hz, not an average. Crossing it raises
 `LocalMotionJobError` with `code: "job_rss_limit_exceeded"` and job state `rss_limit_exceeded`.
-Through the CLI that error is **not** wrapped in the usual `{"ok": false, …}` envelope: the process
-exits non-zero with a stack trace, so an agent parsing stdout as JSON gets nothing to parse. Treat a
-non-zero exit with no JSON on a long browser render as this limit until you have checked otherwise.
+Through the CLI, that error is written to stdout as a structured JSON failure envelope (`ok: false`,
+with `error.code: "job_rss_limit_exceeded"`) and the process exits non-zero. Branch on the error
+code and use its suggested action to reduce the job's resource demand before retrying.
+
+### GPU shutter sampling
+
+The strict GPU lane admits fixed rain, water, snow, and fog with 2..8 authored motion-blur samples.
+It keeps the four-active-environment ceiling separate from the maximum 32 sample draws, evaluates
+every draw at canonical Motion time, and accumulates premultiplied results before one outer layer
+composite. Scene and effect-mask textures remain immutable inputs. The frame plan and receipt bind
+sample work, retained arena high-water resources, pipeline identity, and cleanup; explicit GPU use
+refuses unsupported temporal layer kinds instead of removing their blur.
+
+That retained WebGPU path is distinct from the WebGL/browser measurements below. Do not use those
+RSS numbers as GPU throughput or memory evidence; only a fresh native GPU receipt supports a host
+claim.
 
 ### What it costs in practice — measured, one host
 
@@ -203,9 +222,9 @@ When a piece does not fit, in the order that actually moves the number:
 3. **Reduce the number of simultaneous environment layers** — overlap two atmospheres only where the
    composition genuinely needs both on screen at once.
 4. **Lower `environment.quality`** for a modest saving and a real per-frame cost saving.
-5. **Raise the ceiling deliberately** with `SHELLX_MOTION_MAX_JOB_RSS_BYTES` — a host-operator
-   decision, not an agent's. Remember `maxConcurrentJobs` defaults to 2, so two jobs may each reach
-   the ceiling on the same machine.
+5. **Read the adaptive ceiling in `doctor` first.** Motion reserves max(4 GiB, 20% of physical RAM),
+   considers current free RAM, and divides the safe pool across concurrent jobs. Raise it with
+   `SHELLX_MOTION_MAX_JOB_RSS_BYTES` only as a host-operator decision, never from package/agent data.
 
 Verify rather than assume: every render receipt carries `resources.peakProcessTreeRssBytes` and
 `resources.policy.maxProcessTreeRssBytes`. Render a short prefix of the piece, read the ratio, and

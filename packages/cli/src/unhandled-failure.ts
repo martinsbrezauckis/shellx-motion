@@ -41,6 +41,8 @@ export function unhandledFailure(error: unknown): CliResult {
       message: error instanceof Error ? error.message : String(error),
       suggestedAction: code === "job_rss_limit_exceeded"
         ? "The render exceeded Motion's process-tree memory ceiling. Reduce frame count, resolution, motion-blur samples or environment layers, or raise SHELLX_MOTION_MAX_JOB_RSS_BYTES. See skill/shellx-motion/references/environments-depth-and-budget.md."
+        : code === "job_input_budget_exceeded"
+          ? "The render exceeds this host's bounded input capacity. Run doctor and motion.capabilities.match, then reduce the stated workload or use a host with a larger admitted tier."
         : "This is an unhandled Motion error. Re-run with the same arguments to confirm it reproduces, and report the code and message."
     }
   };

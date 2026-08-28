@@ -2,22 +2,17 @@
 import {
   bakeMotionProceduralRelationships,
   detachMotionProceduralRelationship,
-  evaluateMotionProceduralLayers,
   hashBuffer,
   hashPackageFile,
   loadSchema,
-  proceduralRelationshipGraphFingerprint,
   resolvePackageAsset,
   setMotionProceduralRelationship,
   setMotionProceduralRelationshipEnabled,
   validateDocument,
-  validateMotionProceduralGraph,
   type MotionDocument,
-  type MotionPackage,
   type MotionProceduralRelationship,
-  type OperationReceipt,
 } from "@shellx-motion/core";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import {
   booleanArg,
@@ -29,21 +24,23 @@ import {
   stringArrayArg,
 } from "./args.js";
 import { commitMotionDocumentEdit, PackageEditTransactionError } from "./package-edit-transaction.js";
+import { produceProceduralAudioEnvelope } from "./procedural-audio-envelope.js";
+import {
+  failure,
+  invalid,
+  proceduralReceipt,
+  relationshipState,
+  unavailable,
+  type ProceduralAuthoringServices,
+  type ProceduralMutation,
+} from "./procedural-domain-support.js";
 import {
   assertConfiguredAuthoringInputRoot,
   assertConfiguredAuthoringOutputRoot,
   AuthoringRootPolicyError,
 } from "./authoring-root-policy.js";
 
-export interface ProceduralAuthoringServices {
-  receiptsRoot?: string;
-  packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
-  writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
-  authoringInputRoots?: string[];
-  authoringOutputRoots?: string[];
-}
-
-type Mutation = "set" | "enabled.set" | "bake" | "detach";
+export type { ProceduralAuthoringServices } from "./procedural-domain-support.js";
 
 export async function dispatchProceduralAuthoringCommand(
   command: MotionDebugCommand,
@@ -51,6 +48,7 @@ export async function dispatchProceduralAuthoringCommand(
   services: ProceduralAuthoringServices,
 ): Promise<MotionDebugResult | null> {
   if (command === "motion.procedural.inspect") return inspect(args, services);
+  if (command === "motion.procedural.audio-envelope.produce") return produceProceduralAudioEnvelope(args, services);
   if (command === "motion.procedural.relationship.set") return mutate(command, "set", args, services);
   if (command === "motion.procedural.relationship.enabled.set") return mutate(command, "enabled.set", args, services);
   if (command === "motion.procedural.relationship.bake") return mutate(command, "bake", args, services);
@@ -83,7 +81,7 @@ async function inspect(args: unknown, services: ProceduralAuthoringServices): Pr
 
 async function mutate(
   command: MotionDebugCommand,
-  mutation: Mutation,
+  mutation: ProceduralMutation,
   args: unknown,
   services: ProceduralAuthoringServices,
 ): Promise<MotionDebugResult> {
@@ -124,6 +122,8 @@ async function mutate(
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg,
       outputRoot,
+      authoringInputRoots: services.authoringInputRoots!,
+      authoringOutputRoots: services.authoringOutputRoots!,
       patchedMotion: edit.motion,
       receipt,
       receiptFileName,
@@ -174,7 +174,7 @@ interface ParsedMutation {
   receiptInput: Record<string, unknown>;
 }
 
-function mutationArgs(command: string, mutation: Mutation, args: unknown): ParsedMutation | MotionDebugResult {
+function mutationArgs(command: string, mutation: ProceduralMutation, args: unknown): ParsedMutation | MotionDebugResult {
   const input = objectArg(args);
   const packageRoot = stringArg(args, "packageRoot");
   const outDir = stringArg(args, "outDir");
@@ -213,7 +213,7 @@ function mutationArgs(command: string, mutation: Mutation, args: unknown): Parse
   };
 }
 
-function applyMutation(motion: MotionDocument, mutation: Mutation, args: ParsedMutation) {
+function applyMutation(motion: MotionDocument, mutation: ProceduralMutation, args: ParsedMutation) {
   if (mutation === "set") {
     const result = setMotionProceduralRelationship(motion, structuredClone(args.relationship) as unknown as MotionProceduralRelationship);
     return { motion: result.motion, changedPaths: [result.changedPath] };
@@ -242,64 +242,4 @@ function applyMutation(motion: MotionDocument, mutation: Mutation, args: ParsedM
       fingerprint: baked.fingerprint,
     },
   };
-}
-
-function relationshipState(motion: MotionDocument, atMs?: number) {
-  const graph = motion.relationships ? structuredClone(motion.relationships) : null;
-  const validation = graph ? validateMotionProceduralGraph(graph, motion) : null;
-  const relationships = graph?.relationships.map((relationship) => ({
-    id: relationship.id,
-    enabled: relationship.enabled,
-    target: structuredClone(relationship.target),
-    sources: relationship.nodes
-      .filter((node) => node.type === "property")
-      .map((node) => structuredClone(node.ref)),
-    audioEnvelopeIds: relationship.nodes
-      .filter((node) => node.type === "audio-envelope")
-      .map((node) => node.envelopeId),
-    nodeCount: relationship.nodes.length,
-    outputNodeId: relationship.outputNodeId,
-  })) ?? [];
-  const fingerprint = graph ? proceduralRelationshipGraphFingerprint(graph) : null;
-  const evaluation = graph && atMs !== undefined
-    ? { atMs, values: evaluateMotionProceduralLayers(motion, atMs).values }
-    : null;
-  return { graph, relationships, validation, fingerprint, evaluation };
-}
-
-function proceduralReceipt(
-  operation: string,
-  mutation: Mutation,
-  pkg: MotionPackage,
-  inputHashes: Record<string, string>,
-  output: Record<string, unknown>,
-  outputRoot: string,
-  receiptFileName: string,
-): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `procedural-${mutation.replace(".", "-")}-${hashBuffer(Buffer.from(JSON.stringify({ packageId: pkg.manifest.id, inputHashes }), "utf8")).slice(0, 16)}`,
-    operation,
-    status: "passed",
-    packageId: pkg.manifest.id,
-    inputHashes,
-    createdAt: new Date().toISOString(),
-    lane: "debug-api",
-    output,
-    artifacts: [
-      { role: "motion_package", path: outputRoot, status: "available", primary: true },
-      { role: "procedural_relationship_receipt", path: join(outputRoot, "receipts", receiptFileName), status: "available", mediaType: "application/json" },
-    ],
-    warnings: [],
-  };
-}
-
-function invalid(message: string): MotionDebugResult {
-  return { ok: false, error: { code: "invalid_args", message }, warnings: [] };
-}
-function unavailable(message: string): MotionDebugResult {
-  return { ok: false, error: { code: "capability_unavailable", message }, warnings: [] };
-}
-function failure(code: string, error: unknown): MotionDebugResult {
-  return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] };
 }

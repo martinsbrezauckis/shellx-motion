@@ -1,6 +1,9 @@
 import type { MotionDocument, MotionLayer } from "./types";
 import { SCENE_3D_CONTROL_BOUNDS } from "./scene-3d";
 import { validateScene3DLayers } from "./scene-3d-validate";
+import { editParticleFieldRichControl } from "./particle-field-rich-controls";
+import { editPathRevealRichControl } from "./path-reveal-rich-control";
+import { MAX_TRAIL_DURATION_MS, MAX_TRAIL_SAMPLES, MIN_TRAIL_SAMPLES } from "./motion-trail"; import { gpuMaterialUniformRule, isMotionGpuMaterialUniform } from "./gpu-material"; import { GPU_COMPUTE_PARTICLE_MAX_COUNT, GPU_COMPUTE_PARTICLE_MIN_COUNT } from "./gpu-particle-compute"; import { PARTICLE_FIELD_V2_SCHEMA } from "./particle-field-types";
 
 export interface TimelineLayerRichControlSet {
   layerId: string;
@@ -70,6 +73,8 @@ function assertCanonicalScene3DLayer(layer: MotionLayer, path: string): void {
 
 function richControlEdit(layer: MotionLayer, path: string, rawValue: unknown): RichEdit {
   if (path === "depth") return assignRootNumber(layer, "depth", rawValue, -0.9, 10, path);
+  const pathReveal = editPathRevealRichControl(layer, path, rawValue);
+  if (pathReveal) return pathReveal;
 
   const shaderUniform = /^shader\.uniforms\.([A-Za-z_][A-Za-z0-9_-]{0,63})$/.exec(path);
   if (shaderUniform) {
@@ -77,15 +82,17 @@ function richControlEdit(layer: MotionLayer, path: string, rawValue: unknown): R
     const uniforms = requiredRecord(shader.uniforms, "shader uniforms", layer.type, "shader");
     const name = shaderUniform[1];
     if (!Object.hasOwn(uniforms, name)) throw new Error(`Shader uniform is not declared: ${name}.`);
-    return assignNumber(uniforms, name, rawValue, -1_000_000, 1_000_000, `shader/uniforms/${name}`, path);
+    const bounds=shader.gpuMaterial&&isMotionGpuMaterialUniform(name)?gpuMaterialUniformRule(name):[-1_000_000,1_000_000] as const;return assignNumber(uniforms, name, rawValue, bounds[0], bounds[1], `shader/uniforms/${name}`, path);
   }
   if (path === "shader.seed") return assignInteger(requiredRecord(layer.shader, "shader", layer.type, "shader"), "seed", rawValue, 0, 0xffff_ffff, "shader/seed", path);
   if (path === "shader.fallbackColor") return assignColor(requiredRecord(layer.shader, "shader", layer.type, "shader"), "fallbackColor", rawValue, "shader/fallbackColor", path);
 
   if (path.startsWith("emitter.")) {
   const emitter = requiredRecord(layer.emitter, "particle emitter", layer.type, "particles");
+  const fieldEdit = editParticleFieldRichControl(emitter, layer.type, path, rawValue);
+  if (fieldEdit) return fieldEdit;
   const emitterRules: Record<string, [number, number, boolean?]> = {
-    seed: [0, 0xffff_ffff, true], count: [1, 1000, true], lifetimeMs: [1, 60_000],
+    seed: [0, 0xffff_ffff, true], count: isParticleFieldV2(emitter.field) ? [GPU_COMPUTE_PARTICLE_MIN_COUNT, GPU_COMPUTE_PARTICLE_MAX_COUNT, true] : [1, 1000, true], lifetimeMs: [1, 60_000],
     minSize: [0.1, 4096], maxSize: [0.1, 4096], minSpeed: [0, 10_000], maxSpeed: [0, 10_000],
     direction: [-360, 360], spread: [0, 360], gravity: [-5000, 5000]
   };
@@ -240,17 +247,17 @@ function richControlEdit(layer: MotionLayer, path: string, rawValue: unknown): R
   }
 
   if (path.startsWith("effects.")) {
-  const effects = requiredRecord(layer.effects, "layer effects", layer.type, layer.type);
-  const effectPath = /^effects\.(motionBlur|vignette|filmGrain)\.([A-Za-z]+)$/.exec(path);
+  const effects = requiredRecord(layer.effects, "layer effects", layer.type, layer.type); const effectPath = /^effects\.(motionBlur|vignette|filmGrain|trail)\.([A-Za-z]+)$/.exec(path);
   if (effectPath) {
-    const family = effectPath[1];
-    const property = effectPath[2];
+    const family = effectPath[1]; const property = effectPath[2];
     const effect = requiredRecord(effects[family], family, layer.type, layer.type);
+    if (family === "trail" && layer.type !== "particles" && layer.type !== "points") throw new Error("trail is available only on particles and points layers.");
     if (family === "vignette" && property === "color") return assignColor(effect, property, rawValue, `effects/${family}/${property}`, path);
     const rules: Record<string, [number, number, boolean?]> = {
       "motionBlur.samples": [2, layer.type === "video" ? 4 : 8, true], "motionBlur.shutterAngle": [0.01, 360],
       "vignette.amount": [0, 1], "vignette.softness": [0, 1], "filmGrain.amount": [0, 1],
-      "filmGrain.size": [1, 8, true], "filmGrain.seed": [0, 0xffff_ffff, true]
+      "filmGrain.size": [1, 8, true], "filmGrain.seed": [0, 0xffff_ffff, true],
+      "trail.durationMs": [1, MAX_TRAIL_DURATION_MS], "trail.samples": [MIN_TRAIL_SAMPLES, MAX_TRAIL_SAMPLES, true]
     };
     const rule = rules[`${family}.${property}`];
     if (rule) return rule[2]
@@ -260,7 +267,7 @@ function richControlEdit(layer: MotionLayer, path: string, rawValue: unknown): R
   }
   throw new Error(`Unsupported rich control path: ${path}.`);
 }
-
+function isParticleFieldV2(value: unknown): boolean { return Boolean(value && typeof value === "object" && !Array.isArray(value) && (value as { schema?: unknown }).schema === PARTICLE_FIELD_V2_SCHEMA); }
 function requiredRecord(value: unknown, label: string, type: unknown, expectedType: string): Record<string, unknown> {
   if (type !== expectedType || !value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} is not available on this layer.`);
   return value as Record<string, unknown>;

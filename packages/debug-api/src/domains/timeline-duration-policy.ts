@@ -33,6 +33,8 @@ export interface DurationPolicy {
 }
 
 export interface TimelineDurationPolicyServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   isUnsafePackageOutputDirectory?: (packageRoot: string, outputRoot: string) => Promise<boolean>;
@@ -126,6 +128,8 @@ export async function dispatchTimelineDurationPolicyCommand(
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg,
       outputRoot: packageOutDir,
+      authoringInputRoots: services.authoringInputRoots!,
+      authoringOutputRoots: services.authoringOutputRoots!,
       patchedMotion,
       receipt,
       receiptFileName: "timeline-duration-policy.receipt.json",

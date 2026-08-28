@@ -1,10 +1,12 @@
-import { readFile } from "node:fs/promises";
 import { canonicalJson, compareCodeUnits } from "./canonical-json";
 import { assertReadableLayerKeyframes } from "./keyframe-readability";
 import { resolvePackageAsset } from "./package";
 import { hashBuffer } from "./receipts";
+import { applyMotionRowTemplateValues } from "./data-template-bindings";
+import { readMotionDataRowsText } from "./data-file-load";
+import { applyChartCompositionRecipe } from "./chart-composition-recipe";
 import type { MotionDocument, MotionLayer, MotionPackage, PackageManifest } from "./types";
-
+export { MAX_MOTION_DATA_ROWS_BYTES } from "./data-file-load";
 export interface MotionDataRow {
   id: string;
   index: number;
@@ -22,18 +24,17 @@ export interface ExpandedMotionJob {
 export type MotionDataRowFilterResult =
   | { ok: true; rows: MotionDataRow[]; requestedRowIds: string[] }
   | { ok: false; requestedRowIds: string[]; missingRowIds: string[]; message: string };
-
 export async function loadPackageDataRows(pkg: MotionPackage, ref?: string): Promise<MotionDataRow[]> {
   const rowsRef = ref ?? manifestRowsRef(pkg.manifest);
   if (!rowsRef) {
     throw new Error("Motion package has no data.rows ref; pass --rows or add manifest.data.rows.");
   }
   const rowsPath = resolvePackageAsset(pkg, rowsRef);
-  return loadDataRowsFile(rowsPath);
+  return loadDataRowsFile(rowsPath, { withinRoot: pkg.root });
 }
 
-export async function loadDataRowsFile(rowsPath: string): Promise<MotionDataRow[]> {
-  return parseMotionDataRowsText(await readFile(rowsPath, "utf8"));
+export async function loadDataRowsFile(rowsPath: string, options: { withinRoot?: string } = {}): Promise<MotionDataRow[]> {
+  return parseMotionDataRowsText(await readMotionDataRowsText(rowsPath, options.withinRoot));
 }
 
 export function parseMotionDataRowsText(input: string): MotionDataRow[] {
@@ -133,19 +134,18 @@ export function expandMotionPackageRows(pkg: MotionPackage, rows: MotionDataRow[
       assets: mergeAssetRefs(pkg.manifest.assets ?? [], rowMediaReplacementAssetRefs(replacements)),
       workflow: String(pkg.manifest.workflow ?? "batch-render")
     };
-    // Expansion order, widest to narrowest, so the more specific mechanism always wins:
-    //   1. `{{token}}` interpolation from the row values,
-    //   2. `replace.text` / `replace.media` layer maps,
-    //   3. `layers` per-layer patches (the row diff against a literal shipped document),
-    //   4. `motion` document-level overrides (canvas size, duration, fps, background).
-    const motion = applyMotionRowOverrides(
+    // Expansion order: tokens, template bindings, replacements, patches, overrides, family materialization.
+    const interpolated = motionDocumentFromInterpolated(interpolateJson(pkg.motion, row.values));
+    const templateApplied = applyMotionRowTemplateValues(pkg, interpolated, row.values, row.id);
+    const overridden = applyMotionRowOverrides(
       applyMotionRowLayerPatches(
-        applyMotionRowReplacements(motionDocumentFromInterpolated(interpolateJson(pkg.motion, row.values)), replacements),
+        applyMotionRowReplacements(templateApplied, replacements),
         row.values,
         row.id
       ),
       row.values
     );
+    const motion = applyChartCompositionRecipe(overridden, row.values, row.id);
     const provenanceRecord = readRecord(motion.provenance) ?? {};
     return {
       row,
@@ -516,7 +516,7 @@ function motionDocumentFromInterpolated(value: unknown): MotionDocument {
     fps: readRequiredNumber(record.fps, "motion.fps"),
     width: readRequiredNumber(record.width, "motion.width"),
     height: readRequiredNumber(record.height, "motion.height"),
-    background: typeof record.background === "string" ? record.background : undefined,
+    ...(typeof record.background === "string" ? { background: record.background } : {}),
     layers: record.layers.map((layer, index) => motionLayerFromInterpolated(layer, index)),
     assets: Array.isArray(record.assets) ? record.assets : [],
     provenance: {

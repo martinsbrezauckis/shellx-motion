@@ -16,7 +16,9 @@ shellx-motion doctor --operation render.final    # just what you are about to do
   "result": { "satisfied": false,
     "operation": { "operation": "render.final", "satisfied": false, "possible": true, "blockedBy": ["chromium"],
                    "alternative": { "flag": "--frame-lane native", "avoids": ["chromium"], "packageDependent": true } },
-    "platform": { "tools": [ { "tool": "ffmpeg", "status": "ready", "version": "ffmpeg version 6.1.1 …" },
+    "platform": { "capacity": { "source": "host-adaptive", "jobs": { "maxProcessTreeRssBytes": 18790481920 },
+                                "points": { "tier": "maximum", "maxPointsPerLayer": 65536 } },
+                  "tools": [ { "tool": "ffmpeg", "status": "ready", "version": "ffmpeg version 6.1.1 …" },
                              { "tool": "chromium", "status": "missing", "problem": "…", "installOptions": [ … ] } ],
                   "operations": [ { "operation": "quality.check", "satisfied": false, "possible": false, "blockedBy": ["ffprobe"] }, … ] } } }
 ```
@@ -33,6 +35,8 @@ Read it correctly and you can tell a user something useful instead of "broken":
 - Scope by operation. `preview.frame` needs nothing external by default; `render.final` needs FFmpeg plus Chromium for its default frame lane,
   `quality.check` needs FFprobe. Without FFmpeg, preview frames and all authoring still work; say
   that, do not report the engine as down.
+- Read `platform.capacity` for this process's actual adaptive per-job RSS and point-cloud tier. It is
+  the same snapshot the governor and browser/native admission gates use; packages cannot raise it.
 
 A render that fails this way reports `ffmpeg_not_configured` with the same guidance and the raw
 error in `detail`.

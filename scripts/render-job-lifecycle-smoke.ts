@@ -36,8 +36,8 @@ const failedReceipt = renderReceipt({
   outputPath: join(outDir, "failed.mp4")
 });
 
-await writeJsonFile(join(receiptsRoot, "queued.receipt.json"), queuedReceipt);
-await writeJsonFile(join(receiptsRoot, "failed.receipt.json"), failedReceipt);
+await writeJsonFile(join(receiptsRoot, `${queuedReceipt.id}.receipt.json`), queuedReceipt);
+await writeJsonFile(join(receiptsRoot, `${failedReceipt.id}.receipt.json`), failedReceipt);
 
 const cancel = await runCli([
   "debug",

@@ -14,7 +14,7 @@
  *   3. Contract coverage. Every generated state must be documented in docs/public/JOB_STATUS.md with
  *      all of its facets, so a state cannot be added without its prose.
  *
- * Run from `pnpm test` via `pnpm source-hygiene:check`. Known pre-contract vocabularies are
+ * Run from public `pnpm test` via `pnpm run source-hygiene:public`. Known pre-contract vocabularies are
  * listed in ALLOWED_LEGACY below with the migration step that retires each one; that list may
  * shrink but must never grow.
  */

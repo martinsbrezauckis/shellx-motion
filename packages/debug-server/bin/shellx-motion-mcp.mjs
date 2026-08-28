@@ -8,6 +8,16 @@ const accessRoot = process.env.SHELLX_MOTION_ACCESS_ROOT || join(homedir(), ".sh
 const tokenFile = join(accessRoot, "access.token");
 const portFile = join(accessRoot, "server.port");
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
+const COORDINATOR_TOOL_NAMES = new Set([
+  "motion_job_submit",
+  "motion_connector_submit",
+  "motion_job_get",
+  "motion_job_list",
+  "motion_job_events",
+  "motion_job_cancel",
+  "motion_job_retry"
+]);
+let connection;
 
 for await (const line of lines) {
   if (!line.trim()) continue;
@@ -24,28 +34,8 @@ for await (const line of lines) {
   }
   const notification = !("id" in request);
   try {
-    const [token, portText] = await Promise.all([
-      readPrivateRegularFile(tokenFile),
-      readPrivateRegularFile(portFile)
-    ]);
-    const port = Number(portText.trim());
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid live port");
-    const headers = mcpHeaders(request, token.trim());
-    const response = await fetch(`http://127.0.0.1:${port}/rpc`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(30_000)
-    });
-    const body = await response.json().catch(() => null);
-    if (!notification) {
-      if (body && typeof body === "object") writeResponse(body);
-      else writeResponse({
-        jsonrpc: "2.0",
-        id: request.id ?? null,
-        error: { code: -32000, message: `Motion MCP returned an unreadable response (${response.status}).` }
-      });
-    }
+    const body = await sendMcpRequest(request, notification);
+    if (!notification && body) writeResponse(body);
   } catch {
     if (!notification) {
       writeResponse({
@@ -58,6 +48,148 @@ for await (const line of lines) {
       });
     }
   }
+}
+
+connection?.close();
+
+/**
+ * Coordinator tools need a server-minted connection owner. Keep just that bounded surface on one
+ * WebSocket for the stdio process; ordinary MCP calls retain the stateless HTTP transport and its
+ * modern-header compatibility.
+ */
+async function sendMcpRequest(request, notification) {
+  if (!isCoordinatorTool(request)) return await sendHttpRequest(request, notification);
+  const active = await connectedBridge();
+  if (notification) {
+    active.socket.send(JSON.stringify(request));
+    return null;
+  }
+  return active.request(request);
+}
+
+async function sendHttpRequest(request, notification) {
+  const [token, portText] = await Promise.all([
+    readPrivateRegularFile(tokenFile),
+    readPrivateRegularFile(portFile)
+  ]);
+  const port = Number(portText.trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid live port");
+  const response = await fetch(`http://127.0.0.1:${port}/rpc`, {
+    method: "POST",
+    headers: mcpHeaders(request, token.trim()),
+    body: JSON.stringify(request),
+    signal: AbortSignal.timeout(30_000)
+  });
+  const body = await response.json().catch(() => null);
+  if (notification) return null;
+  if (body && typeof body === "object") return body;
+  return {
+    jsonrpc: "2.0",
+    id: request.id ?? null,
+    error: { code: -32000, message: `Motion MCP returned an unreadable response (${response.status}).` }
+  };
+}
+
+async function connectedBridge() {
+  if (connection?.open) return connection;
+  const [token, portText] = await Promise.all([
+    readPrivateRegularFile(tokenFile),
+    readPrivateRegularFile(portFile)
+  ]);
+  const port = Number(portText.trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid live port");
+
+  const next = await openBridgeConnection(port, token.trim());
+  connection = next;
+  return next;
+}
+
+function openBridgeConnection(port, token) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, [
+      "shellx-motion-debug-v1",
+      `shellx-motion-token.${token}`
+    ]);
+    const pending = new Map();
+    let open = false;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      socket.close();
+      fail();
+    }, 30_000);
+    const fail = () => {
+      clearTimeout(timeout);
+      const error = new Error("Motion MCP WebSocket disconnected.");
+      for (const resolvePending of pending.values()) resolvePending({ error });
+      pending.clear();
+      if (connection?.socket === socket) connection = undefined;
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
+    const bridge = {
+      socket,
+      get open() {
+        return open && socket.readyState === WebSocket.OPEN;
+      },
+      request(request) {
+        return new Promise((resolveRequest, rejectRequest) => {
+          const key = responseKey(request.id);
+          if (!key || pending.has(key)) {
+            rejectRequest(new Error("Motion MCP requests require a unique string or number id."));
+            return;
+          }
+          pending.set(key, ({ body, error }) => error ? rejectRequest(error) : resolveRequest(body));
+          try {
+            socket.send(JSON.stringify(request));
+          } catch (error) {
+            pending.delete(key);
+            rejectRequest(error);
+          }
+        });
+      },
+      close() {
+        socket.close();
+      }
+    };
+    socket.addEventListener("open", () => {
+      open = true;
+      clearTimeout(timeout);
+      if (!settled) {
+        settled = true;
+        resolve(bridge);
+      }
+    }, { once: true });
+    socket.addEventListener("message", (event) => {
+      let body;
+      try {
+        body = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) return;
+      const resolvePending = pending.get(responseKey(body.id));
+      if (!resolvePending) return;
+      pending.delete(responseKey(body.id));
+      resolvePending({ body });
+    });
+    socket.addEventListener("close", fail, { once: true });
+    socket.addEventListener("error", fail, { once: true });
+  });
+}
+
+function responseKey(value) {
+  return typeof value === "string" ? `string:${value}`
+    : typeof value === "number" && Number.isFinite(value) ? `number:${value}`
+      : null;
+}
+
+function isCoordinatorTool(request) {
+  if (request.method !== "tools/call") return false;
+  const params = request.params;
+  return params && typeof params === "object" && !Array.isArray(params)
+    && COORDINATOR_TOOL_NAMES.has(params.name);
 }
 
 async function readPrivateRegularFile(path) {

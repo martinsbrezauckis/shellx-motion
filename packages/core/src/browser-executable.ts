@@ -205,6 +205,8 @@ export function untrustedMotionBrowserCaches(): MotionBrowserCacheRefusal[] {
 export interface MotionBrowserExecutableLocation {
   executable: string;
   source: MotionToolSource;
+  /** Present only when `executable` came from the auto-discovered Playwright cache. */
+  autoDiscoveredCache?: true;
   /**
    * Set ONLY when `SHELLX_MOTION_BROWSER` is set to something Motion cannot use.
    *
@@ -231,12 +233,37 @@ export function resolveMotionBrowserExecutable(): MotionBrowserExecutableLocatio
   if (override.kind === "unusable") {
     return { executable: override.value, source: "override", problem: override.problem };
   }
-  const candidates = browserExecutableCandidates();
-  const executable = candidates.find(isUsableExecutable)
-    ?? candidates.find((candidate) => isAbsolute(candidate))
-    ?? SYSTEM_BROWSER_CANDIDATES[0];
+  const cacheCandidates = scanPlaywrightBrowserCache().candidates;
+  const candidates: Array<{ executable: string; autoDiscoveredCache?: true }> = [
+    ...(override.kind === "usable" ? [{ executable: override.executable }] : []),
+    ...cacheCandidates.map((executable) => ({ executable, autoDiscoveredCache: true as const })),
+    ...SYSTEM_BROWSER_CANDIDATES.map((executable) => ({ executable }))
+  ];
+  const selected = candidates.find((candidate) => isUsableExecutable(candidate.executable))
+    ?? candidates.find((candidate) => isAbsolute(candidate.executable))
+    ?? { executable: SYSTEM_BROWSER_CANDIDATES[0] };
   return {
-    executable,
-    source: override.kind === "usable" && executable === override.executable ? "override" : "path"
+    executable: selected.executable,
+    source: override.kind === "usable" && selected.executable === override.executable ? "override" : "path",
+    ...(selected.autoDiscoveredCache ? { autoDiscoveredCache: true as const } : {})
   };
+}
+
+/**
+ * Revalidate a browser immediately before a caller gives it to a process-creation API.
+ *
+ * Node and Playwright expose a pathname rather than an open executable descriptor, so they cannot
+ * make the final check and `exec` one indivisible operation. The cache is therefore rescanned at
+ * each repository-native process boundary; a changed, symlinked, non-regular or untrusted layout
+ * is rejected rather than handed to the probe or launcher. Explicit pins and fixed system paths
+ * deliberately retain their documented trust model, while still requiring a regular file to exist.
+ */
+export function motionBrowserExecutableVerificationProblem(location: MotionBrowserExecutableLocation): string | null {
+  if (location.problem) return location.problem;
+  if (!isUsableExecutable(location.executable)) return "the selected browser executable is no longer a regular file";
+  if (!location.autoDiscoveredCache) return null;
+  if (!scanPlaywrightBrowserCache().candidates.includes(location.executable)) {
+    return "the auto-discovered Playwright cache executable no longer passes canonical-path, ownership, mode, and regular-file checks";
+  }
+  return null;
 }

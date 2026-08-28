@@ -27,6 +27,8 @@ import { canonicalPathForBrowserSafety, isPathInsideOrEqual } from "./browser-pa
 export interface RoutedBrowserFrame {
   url(): string;
   page(): unknown;
+  /** Playwright supplies this for real frames; null identifies the one top-level capture frame. */
+  parentFrame?(): RoutedBrowserFrame | null;
 }
 
 /**
@@ -44,6 +46,8 @@ export interface RoutedBrowserRequest {
   redirectedFrom(): RoutedBrowserRequest | null;
   isNavigationRequest?(): boolean;
   frame?(): RoutedBrowserFrame | null;
+  /** Playwright resource kind; optional so synthetic redirect tests remain minimal. */
+  resourceType?(): string;
 }
 
 /**
@@ -76,12 +80,22 @@ export interface BrowserRoutePolicy {
   /** Canonical package root; `file:` reads may not escape it. */
   packageRootPath: string;
   /**
+   * Optional renderer-owned fulfillment admission.  When supplied the caller
+   * serves a verified byte snapshot for every admitted file request instead of
+   * allowing Chromium to reopen the pathname after this policy returns.
+   */
+  packageFileUrlPermitted?: (url: string) => boolean;
+  /**
    * The one page whose pixels become the frame. Requests from any other page are refused — see
    * `requestOrigination`. Required rather than optional so a caller cannot wire the route handler
    * and silently leave popup suppression off.
    */
   renderPage: unknown;
   documentScheme: BrowserDocumentSchemeMemory;
+  /** An attested entry may run inline, but may never load a second executable resource. */
+  denySecondaryExecutableRequests?: boolean;
+  /** Host-derived canonical URL for the one approved main document, when active. */
+  approvedAgentEntryUrl?: string;
 }
 
 /**
@@ -129,8 +143,20 @@ export async function authorizeBrowserRouteRequest(
     state.blockedForeignPageRequests.push(remoteOrigin(url) ?? url);
     return "abort";
   }
+  if (policy.approvedAgentEntryUrl && approvedEntryReplacement(request, frame, policy.approvedAgentEntryUrl, state)) {
+    (state.blockedApprovedEntryNavigations ??= []).push("top_level_document");
+    return "abort";
+  }
+  const executableKind = policy.denySecondaryExecutableRequests ? secondaryExecutableKind(request) : undefined;
+  if (executableKind) {
+    (state.blockedSecondaryCodeRequests ??= []).push(executableKind);
+    return "abort";
+  }
   if (url.startsWith("file:")) {
-    if (await isPackageLocalFileUrl(url, policy.packageRootPath)) return "continue";
+    const permitted = policy.packageFileUrlPermitted
+      ? policy.packageFileUrlPermitted(url)
+      : await isPackageLocalFileUrl(url, policy.packageRootPath);
+    if (permitted) return "continue";
     state.blockedExternalFileRequest = true;
     return "abort";
   }
@@ -159,6 +185,45 @@ export async function authorizeBrowserRouteRequest(
     policy.documentScheme.rememberSecureDocument(frame, origin);
   }
   return "continue";
+}
+
+function secondaryExecutableKind(request: RoutedBrowserRequest): "script" | "worker" | "document" | undefined {
+  if (typeof request.resourceType !== "function") return undefined;
+  try {
+    const kind = request.resourceType();
+    if (kind === "script" || kind === "worker") return kind;
+    if (kind !== "document" || !isDocumentNavigation(request) || typeof request.frame !== "function") return undefined;
+    const frame = request.frame();
+    // A real main-frame navigation has a null parent. A secondary document can execute inline
+    // script from a package file without issuing a script request, so it must not become a side
+    // door around the one attested entry. If the frame shape cannot prove top-level status, refuse.
+    if (!frame || typeof frame.parentFrame !== "function") return "document";
+    return frame.parentFrame() === null ? undefined : "document";
+  } catch {
+    // An unreadable resource kind is not permission to treat it as executable.
+    return "script";
+  }
+}
+
+/** Allows exactly the host-initiated entry load; every later main-document replacement is refused. */
+function approvedEntryReplacement(
+  request: RoutedBrowserRequest,
+  frame: RoutedBrowserFrame | "not-applicable",
+  approvedEntryUrl: string,
+  state: BrowserFrameNetworkState
+): boolean {
+  if (frame === "not-applicable" || !isDocumentNavigation(request)) return false;
+  try {
+    if (typeof frame.parentFrame !== "function") return true;
+    if (frame.parentFrame() !== null) return false;
+    if (state.approvedAgentEntryInitialNavigationPending === true && new URL(request.url()).href === approvedEntryUrl) {
+      state.approvedAgentEntryInitialNavigationPending = false;
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
 }
 
 /**

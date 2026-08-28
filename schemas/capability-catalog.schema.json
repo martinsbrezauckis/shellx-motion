@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/capability-catalog@2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "protocol", "integrationCapabilities", "resources", "descriptors", "fingerprint"],
+  "properties": {
+    "schema": { "const": "shellx-motion/capability-catalog@2" },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "integrationCapabilities": { "$ref": "integration-capabilities.schema.json" },
+    "resources": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/documentationResource" } },
+    "descriptors": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/descriptor" } },
+    "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  },
+  "$defs": {
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "preferred"],
+      "properties": {
+        "min": { "const": 2 },
+        "max": { "const": 2 },
+        "preferred": { "const": 2 }
+      }
+    },
+    "descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "revision", "fingerprint", "title", "summary", "category", "documentation", "availability", "request", "invocation", "outputs", "requirements"],
+      "properties": {
+        "schema": { "const": "shellx-motion/capability-descriptor@2" },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,119}@[0-9]{1,8}$" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "category": { "enum": ["cut-handoff", "host-bridge", "render-export", "scene-orchestration"] },
+        "documentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resource", "anchor", "resourceFingerprint"],
+          "properties": {
+            "resource": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" },
+            "anchor": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,127}$" },
+            "resourceFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        },
+        "availability": { "$ref": "#/$defs/availability" },
+        "request": { "$ref": "#/$defs/request" },
+        "invocation": { "$ref": "#/$defs/invocation" },
+        "outputs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/output" } },
+        "requirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["integrationModes", "integrationFeatures", "permissionTier"],
+          "properties": {
+            "integrationModes": { "$ref": "#/$defs/requirementIdentifiers" },
+            "integrationFeatures": { "$ref": "#/$defs/requirementIdentifiers" },
+            "permissionTier": { "enum": ["render_motion", "write_local"] }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "availability": { "properties": { "state": { "const": "refused" } }, "required": ["state"] } }, "required": ["availability"] },
+          "then": { "properties": { "outputs": { "maxItems": 0 } } },
+          "else": { "properties": { "outputs": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "availability": { "properties": { "state": { "const": "conditional" } }, "required": ["state"] } }, "required": ["availability"] },
+          "then": {
+            "properties": {
+              "invocation": { "$ref": "#/$defs/admittedInvocation" },
+              "requirements": { "properties": { "permissionTier": { "const": "render_motion" } }, "required": ["permissionTier"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "availability": { "properties": { "state": { "const": "compatibility-only" } }, "required": ["state"] } }, "required": ["availability"] },
+          "then": {
+            "properties": {
+              "invocation": { "$ref": "#/$defs/compatibilityInvocation" },
+              "requirements": { "properties": { "permissionTier": { "const": "write_local" } }, "required": ["permissionTier"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "availability": { "properties": { "state": { "const": "refused" } }, "required": ["state"] } }, "required": ["availability"] },
+          "then": {
+            "properties": {
+              "invocation": { "$ref": "#/$defs/refusedInvocation" },
+              "requirements": { "properties": { "permissionTier": { "const": "write_local" } }, "required": ["permissionTier"] }
+            }
+          }
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "maxBytes", "fields"],
+      "properties": {
+        "schema": { "const": "shellx-motion/connector-request-schema@1" },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9._/-]{0,95}@[0-9]{1,8}$" },
+        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "fields": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/requestField" } }
+      }
+    },
+    "documentationResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "revision", "fingerprint"],
+      "properties": {
+        "schema": { "const": "shellx-motion/docs-resource@1" },
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "requestField": {
+      "oneOf": [
+        { "$ref": "#/$defs/booleanField" },
+        { "$ref": "#/$defs/enumField" },
+        { "$ref": "#/$defs/integerField" },
+        { "$ref": "#/$defs/opaqueReferenceField" },
+        { "$ref": "#/$defs/stringField" }
+      ]
+    },
+    "booleanField": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "required"],
+      "properties": { "id": { "$ref": "#/$defs/identifier" }, "type": { "const": "boolean" }, "required": { "type": "boolean" } }
+    },
+    "enumField": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "required", "values"],
+      "properties": { "id": { "$ref": "#/$defs/identifier" }, "type": { "const": "enum" }, "required": { "type": "boolean" }, "values": { "$ref": "#/$defs/identifiers" } }
+    },
+    "integerField": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "required", "minimum", "maximum"],
+      "properties": { "id": { "$ref": "#/$defs/identifier" }, "type": { "const": "integer" }, "required": { "type": "boolean" }, "minimum": { "type": "integer", "minimum": -1000000, "maximum": 1000000 }, "maximum": { "type": "integer", "minimum": -1000000, "maximum": 1000000 } }
+    },
+    "opaqueReferenceField": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "required", "maxLength"],
+      "properties": { "id": { "$ref": "#/$defs/identifier" }, "type": { "const": "opaque-reference" }, "required": { "type": "boolean" }, "maxLength": { "type": "integer", "minimum": 1, "maximum": 1024 } }
+    },
+    "stringField": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "required", "maxLength"],
+      "properties": { "id": { "$ref": "#/$defs/identifier" }, "type": { "const": "string" }, "required": { "type": "boolean" }, "maxLength": { "type": "integer", "minimum": 1, "maximum": 1024 } }
+    },
+    "availability": {
+      "oneOf": [
+        { "$ref": "#/$defs/conditionalAvailability" },
+        { "$ref": "#/$defs/compatibilityAvailability" },
+        { "$ref": "#/$defs/refusedAvailability" }
+      ]
+    },
+    "invocation": {
+      "oneOf": [
+        { "$ref": "#/$defs/admittedInvocation" },
+        { "$ref": "#/$defs/compatibilityInvocation" },
+        { "$ref": "#/$defs/refusedInvocation" }
+      ]
+    },
+    "admittedInvocation": {
+      "type": "object", "additionalProperties": false, "required": ["schema", "model", "admission", "jobControls"],
+      "properties": {
+        "schema": { "const": "shellx-motion/connector-job@2" },
+        "model": { "const": "fixed-generic-connector-job" },
+        "admission": { "const": "admitted" },
+        "jobControls": { "const": ["cancel", "events", "get", "list", "retry"] }
+      }
+    },
+    "compatibilityInvocation": {
+      "type": "object", "additionalProperties": false, "required": ["schema", "model", "admission", "jobControls"],
+      "properties": {
+        "schema": { "const": "shellx-motion/connector-job@2" },
+        "model": { "const": "fixed-generic-connector-job" },
+        "admission": { "const": "compatibility-only" },
+        "jobControls": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "refusedInvocation": {
+      "type": "object", "additionalProperties": false, "required": ["schema", "model", "admission", "jobControls"],
+      "properties": {
+        "schema": { "const": "shellx-motion/connector-job@2" },
+        "model": { "const": "fixed-generic-connector-job" },
+        "admission": { "const": "not-admitted" },
+        "jobControls": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "conditionalAvailability": {
+      "type": "object", "additionalProperties": false, "required": ["state", "reason", "platforms", "execution"],
+      "properties": { "state": { "const": "conditional" }, "reason": { "$ref": "#/$defs/reason" }, "platforms": { "$ref": "#/$defs/platforms" }, "execution": { "const": "generic-connector-job" } }
+    },
+    "compatibilityAvailability": {
+      "type": "object", "additionalProperties": false, "required": ["state", "reason", "platforms", "execution"],
+      "properties": { "state": { "const": "compatibility-only" }, "reason": { "$ref": "#/$defs/reason" }, "platforms": { "$ref": "#/$defs/platforms" }, "execution": { "const": "named-cli-compatibility-only" } }
+    },
+    "refusedAvailability": {
+      "type": "object", "additionalProperties": false, "required": ["state", "reason", "platforms", "execution"],
+      "properties": { "state": { "const": "refused" }, "reason": { "$ref": "#/$defs/reason" }, "platforms": { "$ref": "#/$defs/platforms" }, "execution": { "const": "not-admitted" } }
+    },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 320 },
+    "platforms": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["darwin", "linux", "win32"] } },
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "mediaKinds", "schemas"],
+      "properties": {
+        "role": { "enum": ["artifact_handle", "canvas_frame_selection", "cut_import_plan", "motion_package", "receipt", "rendered_media"] },
+        "mediaKinds": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "schemas": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9._/-]{0,95}@[0-9]{1,8}$" } }
+      }
+    },
+    "identifiers": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" }
+    },
+    "requirementIdentifiers": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" }
+    }
+  }
+}

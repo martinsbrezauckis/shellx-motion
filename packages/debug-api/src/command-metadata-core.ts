@@ -8,7 +8,15 @@
  *
  * Dependencies: command-registry.ts types only. Primary caller: command-metadata.ts.
  */
-import type { MotionDebugArgPropertySchema, MotionDebugCommandMetadata } from "./command-registry.js";
+import type { MotionDebugArgPropertySchema, MotionDebugArgsSchema, MotionDebugCommandMetadata } from "./command-registry.js";
+
+const LINUX_STABLE_RECEIPT_ROOT = "Trusted host receipt root. Identity-stable receipt reads and receipt-derived controls currently require Linux; macOS and Windows return capability_unavailable before reading or writing receipt state.";
+
+const SCRIPT_INPUT_ONE_OF: MotionDebugArgsSchema[] = [
+  { type: "object", required: ["scriptPath"], properties: { scriptPath: { type: "string" } }, additionalProperties: true },
+  { type: "object", required: ["script"], properties: { script: { type: "object" } }, additionalProperties: true },
+  { type: "object", required: ["storyboard"], properties: { storyboard: { type: "object" } }, additionalProperties: true }
+];
 
 /**
  * Template discovery arguments — the roots to search, the delivery target to score against, and the
@@ -38,6 +46,15 @@ const TEMPLATE_SELECTION: Record<string, MotionDebugArgPropertySchema> = {
   requiresAudio: { type: "boolean", description: "Keep only templates that do (true) or do not (false) require caller-supplied audio." },
   designFamily: { type: "string", description: "Keep only templates in this design family." }
 };
+
+// Discovery merges every supplied root, so this is an at-least-one requirement rather than the
+// mutually exclusive `oneOf` used by source-shape commands. Keeping it in the published command
+// schema lets action plans distinguish a real required choice from an optional field list.
+const TEMPLATE_ROOT_ANY_OF: MotionDebugArgsSchema[] = [
+  { type: "object", required: ["templateRoot"], properties: { templateRoot: TEMPLATE_SELECTION.templateRoot }, additionalProperties: true },
+  { type: "object", required: ["packageRoot"], properties: { packageRoot: TEMPLATE_SELECTION.packageRoot }, additionalProperties: true },
+  { type: "object", required: ["packageRoots"], properties: { packageRoots: TEMPLATE_SELECTION.packageRoots }, additionalProperties: true }
+];
 
 export const CORE_COMMAND_METADATA = {
   "motion.capabilities.match": {
@@ -278,9 +295,10 @@ export const CORE_COMMAND_METADATA = {
       required: ["packageRoot"],
       properties: {
         packageRoot: { type: "string", description: "Motion package root to preview." },
+        lane: { type: "string", enum: ["browser", "gpu"], default: "browser", description: "Preview raster lane. gpu is the strict general hardware WebGPU PNG lane with no CPU/browser fallback. For admitted CFR video, its host-owned provider consumes Core exact-microsecond requests, binds immutable-source and decoded-RGBA evidence, and replaces stable dynamic textures under fixed cache limits. This is visual-only preview: no audio, final-video staging, encoding, or mux claim; provider controls are never command arguments." },
         atMs: { type: "number", minimum: 0, description: "Frame timestamp in milliseconds." },
         outDir: { type: "string", description: "Directory for generated preview artifacts." },
-        outputPath: { type: "string", description: "Explicit preview frame output path." },
+        outputPath: { type: "string", description: "Explicit preview frame output path. When omitted, the host allocates a unique no-clobber PNG inside outDir." },
         createdAt: { type: "string", description: "Deterministic ISO timestamp for emitted preview receipts." },
         workflowPath: { type: "string", description: "Optional deterministic browser workflow JSON path." },
         workflow: { type: "object", description: "Optional inline deterministic browser workflow, used instead of workflowPath." }
@@ -288,7 +306,8 @@ export const CORE_COMMAND_METADATA = {
       additionalProperties: true
     },
     expectedReceipts: [
-      { operation: "preview.frame", mode: "emits", required: true, artifactRoles: ["preview_frame"] }
+      { operation: "preview.frame", mode: "emits", required: true, artifactRoles: ["preview_frame"] },
+      { operation: "preview.gpu.frame", mode: "emits", required: false, artifactRoles: ["preview_frame"] }
     ]
   },
   "motion.browser.workflow.capture": {
@@ -304,8 +323,8 @@ export const CORE_COMMAND_METADATA = {
         workflowPath: { type: "string", description: "Path to a shellx-motion/browser-workflow@1 replay plan." },
         catalogPath: { type: "string", description: "Optional browser workflow catalog path for drift evidence." },
         workflowCatalogPath: { type: "string", description: "Alias for catalogPath." },
-        recordingManifestPath: { type: "string", description: "Optional path for a sampled deterministic browser recording manifest." },
-        recordingFramesDir: { type: "string", description: "Optional directory for sampled browser recording frames." },
+        recordingManifestPath: { type: "string", description: "Optional path for a sampled deterministic browser recording manifest, strictly below outDir and distinct from recordingFramesDir and other capture leaves." },
+        recordingFramesDir: { type: "string", description: "Optional directory for sampled browser recording frames, strictly below outDir and distinct from recordingManifestPath and other capture leaves." },
         recordingSampleCount: { type: "number", minimum: 1, maximum: 240, description: "Number of deterministic frame samples to include in the recording manifest. Capped because each sample is a browser render written to disk." },
         failOnDrift: { type: "boolean", description: "Return an error when catalog drift is detected." }
       },
@@ -320,7 +339,7 @@ export const CORE_COMMAND_METADATA = {
     argsSchema: {
       type: "object",
       properties: {
-        receiptsRoot: { type: "string", description: "Host receipts root to inspect for render jobs." }
+        receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT }
       },
       additionalProperties: false
     },
@@ -334,7 +353,7 @@ export const CORE_COMMAND_METADATA = {
     argsSchema: {
       type: "object",
       properties: {
-        receiptsRoot: { type: "string", description: "Host receipts root to inspect for prompt and local-agent jobs." }
+        receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT }
       },
       additionalProperties: false
     },
@@ -350,7 +369,7 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["receiptsRoot", "receiptId"],
       properties: {
-        receiptsRoot: { type: "string", description: "Host receipts root containing the target prompt job receipt." },
+        receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT },
         receiptId: { type: "string", aliases: ["id"], description: "Queued or running prompt job receipt id to cancel." },
         reason: { type: "string", description: "Optional cancellation reason for receipt evidence." }
       },
@@ -366,7 +385,7 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["receiptsRoot", "receiptId"],
       properties: {
-        receiptsRoot: { type: "string", description: "Host receipts root containing the source prompt job receipt." },
+        receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT },
         receiptId: { type: "string", aliases: ["id"], description: "Failed or cancelled prompt job receipt id to retry." },
         reason: { type: "string", description: "Optional retry reason for receipt evidence." }
       },
@@ -421,7 +440,7 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["sourcePath", "outDir"],
       properties: {
-        sourcePath: { type: "string", aliases: ["source", "sourceMarkdownPath"], description: "Imported source.md path from motion.source.import." },
+        sourcePath: { type: "string", aliases: ["source", "sourceMarkdownPath"], description: "Imported source.md path inside a host-approved authoring input root." },
         outDir: { type: "string", description: "Trusted empty output directory for scripted-video JSON and receipt evidence." },
         receiptsRoot: { type: "string", description: "Optional host receipts root for source-storyboard receipt copies." },
         maxFrames: { type: "number", minimum: 1, description: "Maximum storyboard frames to emit." },
@@ -516,7 +535,8 @@ export const CORE_COMMAND_METADATA = {
     argsSchema: {
       type: "object",
       properties: TEMPLATE_SELECTION,
-      additionalProperties: false
+      additionalProperties: false,
+      anyOf: TEMPLATE_ROOT_ANY_OF
     },
     expectedReceipts: [
       { operation: "template.catalog", mode: "reads", required: false }
@@ -532,7 +552,8 @@ export const CORE_COMMAND_METADATA = {
         values: { type: "object", description: "Optional draft template param values keyed by param id; used to classify provided, defaulted, and missing inputs before mutation." },
         ...TEMPLATE_SELECTION
       },
-      additionalProperties: false
+      additionalProperties: false,
+      anyOf: TEMPLATE_ROOT_ANY_OF
     },
     expectedReceipts: [
       { operation: "template.plan", mode: "reads", required: false }
@@ -561,7 +582,7 @@ export const CORE_COMMAND_METADATA = {
       required: ["outDir"],
       properties: {
         packageRoot: { type: "string", description: "Optional Motion package root to include in diagnostics." },
-        outDir: { type: "string", description: "Trusted empty output directory for the support bundle." },
+        outDir: { type: "string", description: "Linux-only trusted absent output directory for the support bundle. Exact closed-tree publication is unavailable on macOS and Windows, which refuse before creating output state." },
         receiptsRoot: { type: "string", description: "Optional host receipts root to summarize." }
       },
       additionalProperties: false
@@ -574,7 +595,7 @@ export const CORE_COMMAND_METADATA = {
     argsSchema: {
       type: "object",
       properties: {
-        receiptsRoot: { type: "string", description: "Host receipts root containing platform verification receipts." },
+        receiptsRoot: { type: "string", description: LINUX_STABLE_RECEIPT_ROOT },
         requiredHosts: { type: "array", description: "Optional required host ids to compare against collected receipts." }
       },
       additionalProperties: false
@@ -590,7 +611,7 @@ export const CORE_COMMAND_METADATA = {
       required: ["canvasSelectionPath", "outDir"],
       properties: {
         canvasSelectionPath: { type: "string", description: "Canvas frame-selection JSON exported by Canvas or motion.canvas.bridge_export." },
-        outDir: { type: "string", description: "Trusted output directory for the Motion package, render artifacts, and connector receipt." },
+        outDir: { type: "string", description: "Linux-only trusted output directory for the Motion package, render artifacts, and connector receipt. Exact closed-tree package publication is unavailable on macOS and Windows, which refuse before creating connector output state." },
         preset: { type: "string", enumRef: "exportPreset", default: "mp4-h264", description: "Export preset for the rendered output." },
         dryRunRender: { type: "boolean", description: "Plan the render without encoding media." }
       },
@@ -605,17 +626,14 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["canvasSelectionPath", "outDir"],
       properties: {
-        canvasSelectionPath: { type: "string", description: "Canvas frame-selection JSON exported by Canvas or motion.canvas.bridge_export." },
-        outDir: { type: "string", description: "Trusted output directory for package, render, Cut import plan, and connector receipt artifacts." },
-        cutImportMode: { type: "string", description: "Cut import mode, such as rendered_media or editable_lowering." },
-        dryRunRender: { type: "boolean", description: "Plan required renders without encoding media." },
-        createdAt: { type: "string", description: "Deterministic ISO timestamp for connector receipts and package provenance." }
+        canvasSelectionPath: { type: "string", description: "Host-approved Canvas frame-selection input evidence." },
+        outDir: { type: "string", description: "Linux-only absent or empty delivery directory for one committed P2B package, Browser preview, H.264 media, artifact handle, Cut plan, and receipts." },
+        cutImportMode: { type: "string", enum: ["rendered_media"], default: "rendered_media", description: "Optional P2B mode. Only rendered_media is accepted." }
       },
       additionalProperties: false
     },
     expectedReceipts: [
-      { operation: "connector.canvas_to_cut", mode: "emits", required: true, artifactRoles: ["canvas_selection", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-      { operation: "connector.canvas_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+      { operation: "connector.canvas_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
     ]
   },
   "motion.connector.script_to_cut": {
@@ -623,19 +641,20 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["outDir"],
       properties: {
-        scriptPath: { type: "string", description: "Path to a shellx-motion scripted-video JSON document." },
-        script: { type: "object", description: "Inline shellx-motion scripted-video document." },
-        storyboard: { type: "object", description: "Alias for script when called from Cut Generate workflows." },
-        outDir: { type: "string", description: "Trusted output directory for package, preview, render, Cut import plan, and connector receipt artifacts." },
-        cutImportMode: { type: "string", description: "Cut import mode, such as rendered_media or editable_lowering." },
-        dryRunRender: { type: "boolean", description: "Plan required renders without encoding media." },
-        createdAt: { type: "string", description: "Deterministic ISO timestamp for connector receipts and package provenance." }
+        scriptPath: { type: "string", description: "Host-approved scripted-video JSON input evidence; the external input is not a delivery artifact." },
+        script: { type: "object", description: "Inline scripted-video input. Inline success emits no scripted_video file." },
+        storyboard: { type: "object", description: "Alias for one inline scripted-video input. It cannot be combined with script or scriptPath." },
+        outDir: { type: "string", description: "Linux-only absent or empty delivery directory for one committed P2B package, Browser preview, H.264 media, artifact handle, Cut plan, and receipts." },
+        cutImportMode: { type: "string", enum: ["rendered_media"], default: "rendered_media", description: "Optional P2B mode. Only rendered_media is accepted." },
+        startMs: { type: "number", minimum: 0, description: "Optional non-negative Cut placement start in milliseconds." },
+        durationMs: { type: "number", exclusiveMinimum: 0, description: "Optional positive Cut placement duration in milliseconds." },
+        track: { type: "string", description: "Optional non-empty Cut placement track." }
       },
-      additionalProperties: false
+      additionalProperties: false,
+      oneOf: SCRIPT_INPUT_ONE_OF
     },
     expectedReceipts: [
-      { operation: "connector.script_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-      { operation: "connector.script_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+      { operation: "connector.script_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
     ]
   },
   "motion.connector.source_to_cut": {
@@ -643,22 +662,19 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["sourcePath", "outDir"],
       properties: {
-        sourcePath: { type: "string", description: "Path to imported source Markdown from motion.source.import or an equivalent trusted source document." },
-        outDir: { type: "string", description: "Trusted output directory for storyboard, package, preview, render, Cut import plan, and connector receipt artifacts." },
-        maxFrames: { type: "number", description: "Maximum review-required storyboard frames to derive from the source." },
-        frameDurationMs: { type: "number", description: "Duration for each generated storyboard frame." },
-        width: { type: "number", description: "Storyboard and Motion package width." },
-        height: { type: "number", description: "Storyboard and Motion package height." },
-        fps: { type: "number", description: "Storyboard and Motion package frame rate." },
-        cutImportMode: { type: "string", description: "Cut import mode, such as rendered_media or editable_lowering." },
-        dryRunRender: { type: "boolean", description: "Plan required renders without encoding media." },
-        createdAt: { type: "string", description: "Deterministic ISO timestamp for connector receipts and package provenance." }
+        sourcePath: { type: "string", description: "Host-approved imported Markdown input evidence; source bytes and import receipt are not delivery artifacts." },
+        outDir: { type: "string", description: "Linux-only absent or empty delivery directory for one committed P2B storyboard, package, Browser preview, H.264 media, artifact handle, Cut plan, and receipts." },
+        maxFrames: { type: "number", minimum: 1, description: "Maximum review-required storyboard frames to derive from the source." },
+        frameDurationMs: { type: "number", minimum: 1, description: "Duration for each generated storyboard frame." },
+        width: { type: "number", minimum: 1, description: "Storyboard and Motion package width." },
+        height: { type: "number", minimum: 1, description: "Storyboard and Motion package height." },
+        fps: { type: "number", minimum: 1, description: "Storyboard and Motion package frame rate." },
+        cutImportMode: { type: "string", enum: ["rendered_media"], default: "rendered_media", description: "Optional P2B mode. Only rendered_media is accepted." }
       },
       additionalProperties: false
     },
     expectedReceipts: [
-      { operation: "connector.source_to_cut", mode: "emits", required: true, artifactRoles: ["source_markdown", "scripted_video", "source_storyboard_receipt", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "source_to_cut_receipt"] },
-      { operation: "connector.source_to_cut", mode: "emits", required: false, artifactRoles: ["source_import_receipt", "rendered_media"] }
+      { operation: "connector.source_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "source_storyboard_receipt", "motion_package", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt", "source_to_cut_receipt"] }
     ]
   },
   "motion.connector.cut_generate_to_cut": {
@@ -669,16 +685,17 @@ export const CORE_COMMAND_METADATA = {
         scriptPath: { type: "string", description: "Path to a Cut Generate scripted-video JSON document." },
         script: { type: "object", description: "Inline scripted-video document emitted by Cut Generate." },
         storyboard: { type: "object", description: "Alias for script when called from storyboard prompts." },
-        outDir: { type: "string", description: "Trusted output directory for package, preview, render, Cut import plan, and connector receipt artifacts." },
+        outDir: { type: "string", description: "Linux-only trusted output directory for exact closed-tree package, preview, render, Cut import plan, and connector receipt artifacts; macOS and Windows refuse before creating output state." },
         cutImportMode: { type: "string", description: "Cut import mode, such as rendered_media or editable_lowering." },
         dryRunRender: { type: "boolean", description: "Plan required renders without encoding media." },
         createdAt: { type: "string", description: "Deterministic ISO timestamp for connector receipts and package provenance." }
       },
-      additionalProperties: false
+      additionalProperties: false,
+      oneOf: SCRIPT_INPUT_ONE_OF
     },
     expectedReceipts: [
-      { operation: "connector.cut_generate_to_cut", mode: "emits", required: true, artifactRoles: ["scripted_video", "motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-      { operation: "connector.cut_generate_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+      { operation: "connector.cut_generate_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
+      { operation: "connector.cut_generate_to_cut", mode: "emits", required: false, artifactRoles: ["scripted_video", "rendered_media"] }
     ]
   },
   "motion.connector.template_to_cut": {
@@ -686,17 +703,15 @@ export const CORE_COMMAND_METADATA = {
       type: "object",
       required: ["packageRoot", "outDir", "values"],
       properties: {
-        packageRoot: { type: "string", description: "Template Motion package root to apply before generating the Cut import plan." },
-        outDir: { type: "string", description: "Trusted output directory for applied package, preview, render, Cut import plan, and connector receipt artifacts." },
+        packageRoot: { type: "string", description: "Template Motion package root admitted as input evidence before one P2A rendered-media delivery." },
+        outDir: { type: "string", description: "Linux-only absent or empty output directory for one no-clobber P2A package, Browser preview/final, handle, Cut plan, and connector receipt delivery." },
         values: { type: "object", description: "Template param values keyed by param id." },
-        cutImportMode: { type: "string", description: "Cut import mode, such as rendered_media or editable_lowering." },
-        dryRunRender: { type: "boolean", description: "Plan required renders without encoding media." }
+        cutImportMode: { type: "string", enum: ["rendered_media"], description: "Optional P2A mode. Only rendered_media is accepted; it is the default." }
       },
       additionalProperties: false
     },
     expectedReceipts: [
-      { operation: "connector.template_to_cut", mode: "emits", required: true, artifactRoles: ["template_source", "motion_package", "template_apply_receipt", "preview_frame", "preview_receipt", "render_receipt", "cut_plan", "connector_receipt"] },
-      { operation: "connector.template_to_cut", mode: "emits", required: false, artifactRoles: ["rendered_media"] }
+      { operation: "connector.template_to_cut", mode: "emits", required: true, artifactRoles: ["motion_package", "template_apply_receipt", "preview_frame", "preview_receipt", "rendered_media", "artifact_handle", "render_receipt", "cut_plan", "connector_receipt"] }
     ]
   },
   "motion.canvas.bridge_export": {
@@ -705,7 +720,7 @@ export const CORE_COMMAND_METADATA = {
       required: ["canvasRoot", "outPath"],
       properties: {
         canvasRoot: { type: "string", description: "Trusted shellx-canvas checkout root containing app/server/motion-package.mjs." },
-        outPath: { type: "string", description: "Frame-selection JSON path to write." },
+        outPath: { type: "string", description: "Frame-selection JSON path to write. Debug refuses an existing selection or fixed sibling Canvas bridge receipt; use CLI --force to replace both." },
         path: { type: "string", description: "Alias for outPath." },
         target: { type: "string", description: "Bridge export target label for Canvas provenance." },
         projectName: { type: "string", description: "Project name to request from the Canvas bridge." },

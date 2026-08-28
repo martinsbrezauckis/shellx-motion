@@ -20,7 +20,7 @@ const EDIT = ["packageRoot", "outDir"];
 /** UI-control writes persist into the package's own trusted state directory, not a copy. */
 const CONTROL_STATE = {
   ...PACKAGE_ROOT,
-  receiptsRoot: { type: "string" as const, description: "Optional trusted host receipt mirror for the control-state receipt." }
+  receiptsRoot: { type: "string" as const, description: "Optional trusted host receipt mirror for the control-state receipt. Durable playhead, range, and viewport persistence currently requires Linux; macOS and Windows return capability_unavailable before creating package state or a receipt." }
 };
 
 const SCENE_ID = {

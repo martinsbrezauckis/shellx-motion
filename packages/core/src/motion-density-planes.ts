@@ -3,8 +3,8 @@
  *
  * Split out of motion-density.ts so the measurement state machine, the pixel arithmetic, and the
  * author-facing text each stay inside the repository's strict per-module size cap. Nothing here
- * knows about runs, spans or warnings: it converts a decoded RGBA frame into the Y/Cb/Cr planes
- * `vf_freezedetect` compares, and computes the mean absolute frame difference between two of them.
+ * knows about runs, spans or warnings: it converts decoded RGBA into Y/Cb/Cr planes, computes the
+ * `vf_freezedetect` mean difference and counts materially changed full-resolution luma pixels.
  *
  * See the header of motion-density.ts for why this metric mirrors ffmpeg's and where it differs.
  */
@@ -37,6 +37,15 @@ export function meanAbsoluteFrameDifference(current: MotionPlanes, reference: Mo
   for (let index = 0; index < current.cb.length; index += 1) sad += Math.abs(current.cb[index] - reference.cb[index]);
   for (let index = 0; index < current.cr.length; index += 1) sad += Math.abs(current.cr[index] - reference.cr[index]);
   return sad / current.sampleCount / 256;
+}
+
+/** Fraction of full-resolution luma pixels whose byte difference is greater than `delta`. */
+export function changedLumaPixelRatio(current: Uint8Array, previous: Uint8Array, delta: number): number {
+  let changed = 0;
+  for (let index = 0; index < current.length; index += 1) {
+    if (Math.abs(current[index] - previous[index]) > delta) changed += 1;
+  }
+  return changed / current.length;
 }
 
 // BT.709 luma coefficients scaled by 256 and summing to exactly 256, so luma is integer maths with

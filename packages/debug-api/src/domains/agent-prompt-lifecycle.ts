@@ -1,6 +1,7 @@
 /** Prompt queue and cancel/retry controls behind bounded receipt-derived ports. */
 import { hashBuffer, JOB_STATES, type JobState, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
+import type { StableReceiptSnapshot } from "../receipt-store-stable-reader.js";
 import { stringArg } from "./args.js";
 
 interface PromptQueueJob { state: string; availableActions: unknown[]; warnings?: string[] }
@@ -15,7 +16,7 @@ export type PromptControlTarget =
       state: string;
       request: unknown;
       agentId?: string;
-      sha256: string;
+      snapshot: StableReceiptSnapshot;
       retryCount: number;
     };
 
@@ -81,10 +82,10 @@ async function cancel(
   const output = {
     targetReceiptId: target.receipt.id, targetReceiptPath: target.path,
     targetOperation: target.receipt.operation, targetStatus: target.receipt.status,
-    targetState: target.state, request: target.request,
+    targetState: target.state, targetReceiptSnapshot: target.snapshot, request: target.request,
     ...(target.agentId ? { agentId: target.agentId } : {}), ...(reason ? { reason } : {})
   };
-  const inputHashes = { targetReceipt: target.sha256 };
+  const inputHashes = { targetReceipt: target.snapshot.sha256 };
   const receipt: OperationReceipt = {
     schema: "shellx-motion/receipt@1",
     id: `prompt-cancel-${safeFileToken(target.receipt.id)}-${hashBuffer(Buffer.from(JSON.stringify({ inputHashes, output }), "utf8")).slice(0, 16)}`,
@@ -120,11 +121,11 @@ async function retry(
   const output = {
     sourceReceiptId: source.receipt.id, sourceReceiptPath: source.path,
     sourceOperation: source.receipt.operation, sourceStatus: source.receipt.status,
-    sourceState: source.state, request: source.request,
+    sourceState: source.state, sourceReceiptSnapshot: source.snapshot, request: source.request,
     ...(source.agentId ? { agentId: source.agentId } : {}), retryAttempt,
     ...(reason ? { reason } : {})
   };
-  const inputHashes = { sourceReceipt: source.sha256 };
+  const inputHashes = { sourceReceipt: source.snapshot.sha256 };
   const receipt: OperationReceipt = {
     schema: "shellx-motion/receipt@1",
     id: `prompt-retry-${safeFileToken(source.receipt.id)}-${hashBuffer(Buffer.from(JSON.stringify({ inputHashes, output }), "utf8")).slice(0, 16)}`,

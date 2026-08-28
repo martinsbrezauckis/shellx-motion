@@ -5,15 +5,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveFfmpegExecutable } from "../packages/renderer-ffmpeg/src/index";
 import { runCli } from "../packages/cli/src/main";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "../packages/core/src/output-path-trusted-workspace";
 import {
   assertReceiptSucceeded,
   MOTION_DENSITY_ADVISORY,
   STATIC_SEQUENCE_ADVISORY
 } from "./render-smoke-status";
+import { renderingSamplesProofRoot } from "./rendering-samples-proof-root";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const outDir = join(repoRoot, ".scratch", "render-audio-smoke");
+const outDir = renderingSamplesProofRoot(join(repoRoot, ".scratch", "render-audio-smoke"));
 const packageRoot = join(outDir, "package");
 const assetsDir = join(packageRoot, "assets");
 const audioPath = join(assetsDir, "tone.wav");
@@ -24,6 +26,8 @@ const outputPath = join(outDir, "audio-lower-third.mp4");
 // Host gate for audio delivery: generate a local WAV, mux it, then enforce audio quality.
 await rm(outDir, { recursive: true, force: true });
 await mkdir(assetsDir, { recursive: true });
+const workspaceAuthority = await createTrustedWorkspaceAnchor(outDir);
+const inWorkspace = async <T>(operation: () => Promise<T>): Promise<T> => await withTrustedWorkspaceAnchor(workspaceAuthority, operation);
 
 await runProcess(resolveFfmpegExecutable(), [
   "-y",
@@ -97,17 +101,17 @@ await writeJson(join(packageRoot, "motion.json"), {
   }
 });
 
-const validated = await runCli(["validate", packageRoot]);
+const validated = await inWorkspace(async () => await runCli(["validate", packageRoot]));
 assert(validated.ok, `Audio smoke package validation failed: ${JSON.stringify(validated, null, 2)}`);
 
-const render = await runCli([
+const render = await inWorkspace(async () => await runCli([
   "render",
   packageRoot,
   "--lane",
   "ffmpeg",
   "--out",
   outputPath
-], { scratchRoot: framesRoot });
+], { scratchRoot: framesRoot }));
 
 assert(render.ok, `Audio render smoke failed: ${JSON.stringify(render, null, 2)}`);
 assert(readObjectField(render, "command", "render.command") === "render", "unexpected render command");
@@ -143,7 +147,7 @@ const renderArtifacts = readArray(readObjectField(renderReceipt, "artifacts", "r
 const mp4Artifact = renderArtifacts.find((artifact) => readObjectField(artifact, "mediaType", "artifact.mediaType") === "video/mp4");
 assert(mp4Artifact, "render receipt missing video/mp4 artifact");
 
-const quality = await runCli([
+const quality = await inWorkspace(async () => await runCli([
   "quality-check",
   outputPath,
   "--at-ms",
@@ -165,7 +169,7 @@ const quality = await runCli([
   "-45",
   "--max-audio-peak-db",
   "-1"
-], { scratchRoot: qualityScratchRoot });
+], { scratchRoot: qualityScratchRoot }));
 
 assert(quality.ok, `Audio quality-check failed: ${JSON.stringify(quality, null, 2)}`);
 assert(readObjectField(quality, "command", "quality.command") === "quality-check", "unexpected quality command");

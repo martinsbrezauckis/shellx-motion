@@ -1,0 +1,43 @@
+{
+  "schema": "shellx-motion/rendering-sample-family-authorities@1",
+  "primaryLayerTypeFamilies": [
+    { "layerType": "text", "familyId": "family.2d-geometry-text-keyframes@1" },
+    { "layerType": "shape", "familyId": "family.2d-geometry-text-keyframes@1" },
+    { "layerType": "image", "familyId": "family.keying-and-roto@1" },
+    { "layerType": "video", "familyId": "family.tracking-and-stabilization@1" },
+    { "layerType": "caption", "familyId": "family.caption-import-and-delivery@1" },
+    { "layerType": "audio", "familyId": "family.audio-delivery@1" },
+    { "layerType": "web", "familyId": "family.html-css-and-canvas@1" },
+    { "layerType": "html", "familyId": "family.html-css-and-canvas@1" },
+    { "layerType": "canvas", "familyId": "family.html-css-and-canvas@1" },
+    { "layerType": "adjustment", "familyId": "family.governed-shader-and-hybrid-gpu-delivery@1" },
+    { "layerType": "camera", "familyId": "family.environments-and-depth@1" },
+    { "layerType": "particles", "familyId": "family.points-particles-trails@1" },
+    { "layerType": "points", "familyId": "family.points-particles-trails@1" },
+    { "layerType": "shader", "familyId": "family.governed-shader-and-hybrid-gpu-delivery@1" },
+    { "layerType": "scene3d", "familyId": "family.fixed-scene3d-and-gltf@1" },
+    { "layerType": "environment", "familyId": "family.environments-and-depth@1" },
+    { "layerType": "group", "familyId": "family.cutout-rig-bake@1" }
+  ],
+  "families": [
+    { "id": "family.2d-geometry-text-keyframes@1", "title": "2D geometry, text, and keyframes", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "authoring-and-animation" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.keyframe.upsert" } },
+    { "id": "family.path-reveals@1", "title": "Path geometry and reveals", "documentation": { "path": "docs/public/path-reveals.md", "anchor": "browser-and-bounded-gpu-path-reveals" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.layer.rich.set" } },
+    { "id": "family.environments-and-depth@1", "title": "Environments and depth-aware composition", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.layer.create" } },
+    { "id": "family.points-particles-trails@1", "title": "Points, particles, and trails", "documentation": { "path": "docs/public/trails.md", "anchor": "bounded-particles-and-points-trails" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.particles.emitter.trail.add" } },
+    { "id": "family.analytic-particle-field-compute@2", "title": "Bounded analytic particle-field compute", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.particles.field.source.insert" } },
+    { "id": "family.procedural-bindings@1", "title": "Procedural bindings", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.procedural.relationship.set" } },
+    { "id": "family.compositing-graphs@1", "title": "Compositing graphs", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.compositing.graph.set" } },
+    { "id": "family.governed-shader-and-hybrid-gpu-delivery@1", "title": "Governed shader and hybrid GPU delivery", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.render.final" } },
+    { "id": "family.keying-and-roto@1", "title": "Keying and roto", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.keying.apply" } },
+    { "id": "family.tracking-and-stabilization@1", "title": "Tracking and stabilization", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "rich-rendering-and-effects" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.analysis.tracking.request" } },
+    { "id": "family.fixed-scene3d-and-gltf@1", "title": "Fixed 3D scenes and glTF import", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "interchange" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.scene3d.gltf.import" } },
+    { "id": "family.scene3d-animation-gpu-preview@1", "title": "Scene3D animation strict GPU preview", "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motiontimelinescene3d-animationinspect" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.timeline.scene3d-animation.inspect" } },
+    { "id": "family.html-css-and-canvas@1", "title": "Bounded HTML/CSS import and host-gated Canvas packaging", "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motionhtmlsnippetimport" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.html.snippet.import" } },
+    { "id": "family.lottie-and-dotlottie@1", "title": "Lottie and dotLottie import", "documentation": { "path": "docs/public/FEATURES.md", "anchor": "interchange" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.lottie.import" } },
+    { "id": "family.templates-data-and-batch@1", "title": "Templates, data, and batch authoring", "documentation": { "path": "docs/public/templates.md", "anchor": "the-product-pack-12-families" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.template.catalog" } },
+    { "id": "family.cutout-rig-bake@1", "title": "Cutout-rig bake", "documentation": { "path": "docs/public/cutout-rigging.md", "anchor": "bounded-cutout-rig-bake" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.cutout.rig.bake" } },
+    { "id": "family.transition-presets@1", "title": "Transition presets", "documentation": { "path": "docs/public/transition-presets.md", "anchor": "named-transition-presets" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.transition.preset.apply" } },
+    { "id": "family.audio-delivery@1", "title": "Audio-layer final delivery", "documentation": { "path": "docs/public/rendering.md", "anchor": "audio-master-verification-matrix" }, "machineAuthority": { "path": "schemas/debug.json", "kind": "debug-command", "id": "motion.render.final" } },
+    { "id": "family.caption-import-and-delivery@1", "title": "Caption import and delivery", "documentation": { "path": "docs/public/DEBUG_API_COMMANDS.md", "anchor": "motiontimelinecaptionimport" }, "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.caption.import" } }
+  ]
+}

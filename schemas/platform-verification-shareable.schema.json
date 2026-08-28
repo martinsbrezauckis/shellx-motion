@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/platform-verification-shareable@1",
+  "type": "object",
+  "required": ["schema", "source", "status", "evidence"],
+  "properties": {
+    "schema": { "const": "shellx-motion/platform-verification-shareable@1" },
+    "source": {
+      "type": "object",
+      "required": ["schema", "sha256"],
+      "properties": {
+        "schema": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "minLength": 64 }
+      }
+    },
+    "status": { "enum": ["planned", "running", "passed", "failed"] },
+    "evidence": { "type": "object" }
+  }
+}

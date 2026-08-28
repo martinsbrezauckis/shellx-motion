@@ -63,7 +63,9 @@ async function hostedServer(options: { declareReceiptsRoot: boolean }) {
   const tempRoot = await mkdtemp(join(tmpdir(), "motion-receipts-root-"));
   roots.push(tempRoot);
   const receiptsRoot = join(tempRoot, "receipts");
-  await mkdir(receiptsRoot, { recursive: true });
+  // This is the host-declared trusted receipts root. Pin a private fixture mode so the authority
+  // assertion is independent of the operator's umask.
+  await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
   await seedReceipt(receiptsRoot);
   const handle = await startMotionDebugServer({
     host: "127.0.0.1",

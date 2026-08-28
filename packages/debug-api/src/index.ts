@@ -3,22 +3,24 @@ import { analyzeTrackingMedia } from "@shellx-motion/analysis-tracking";
 import { importHtmlSnippetToMotionPackage, writeHtmlSnippetExport } from "@shellx-motion/adapters-html";
 import { exportMotionPackageToOtio, importOtioTimelineToMotionPackage } from "@shellx-motion/adapters-otio";
 import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "@shellx-motion/adapters-script";
-import { resolvePackageAudioInputs } from "@shellx-motion/connectors";
+import { packageAudioEncodeInput, resolvePackageAudioInputs, type MotionConnectorReferenceAuthority } from "@shellx-motion/connectors";
 import type { AgentRuntime } from "@shellx-motion/agent-runtime";
 import {
-	  comparePngFiles,
+  comparePngFiles,
+  acquireDerivedOutputPublication,
   audioQualityMeasurementRequired,
   evaluateAudioQuality,
   extractMotionPackageArchive,
 	  expandMotionPackageRows,
   filterMotionDataRows,
-	  applyReceiptActor,
+  applyReceiptActor,
 	  readReceiptActor,
 	  compareCodeUnits,
+	  canonicalJsonSha256,
 	  hashBuffer,
 	  hashFile,
 	  hashFramePaths,
-	  hashPackageFile,
+  hashPackageFile,
 		  inspectPngFile,
 	  inspectPngFileRegion,
   inspectFrameSequence,
@@ -27,17 +29,27 @@ import {
   easingToken,
   fetchSourceDocument,
   listRendererCapabilityCards,
+  preflightMaterializedFrameSequence,
   matchRendererCapabilityCards,
   resolveRendererCapabilityPipeline,
   writeMotionPackageArchive,
   readSupportedKeyframeTarget,
-  loadDataRowsFile,
   loadSchema,
   loadPackageDataRows,
   listMotionEasingPresets,
   listTemplateControls,
   loadMotionPackage,
+  loadStableRenderPackage,
+  bindFinalRenderReceiptLineage,
+  requiredLoadedPackageDocumentHashes,
+	  batchQualityInputEvidence,
+	  createBatchQualityRequestBudget,
+	  MAX_BATCH_QUALITY_ROWS,
+  prepareBatchQualityManifestSnapshot,
+  publishBatchQualityManifestSnapshot,
+  copyVerifiedPackageAssetSnapshots,
   parseCubicBezierEasing,
+  platformVerificationReceiptSemanticProblems,
   prepareFramesDir,
   upsertBrowserWorkflowCatalog,
   resolveEasing,
@@ -50,7 +62,6 @@ import {
   validateDocument,
   writeReviewBundle,
   escalateReceiptStatusForWarnings,
-  jobOutcomeForReceiptStatus,
   type ExpandedMotionJob,
   type AudioQualityThresholds,
   type MotionPackage,
@@ -61,6 +72,7 @@ import {
   type MotionEasing,
   type MotionKeyframe,
   type MotionLayer,
+  type MaterializedFrameSequencePreflightOptions, type RetainedDirectoryAuthority, type BatchQualityInputEvidence, type PreparedBatchQualityManifestSnapshot, type PublishedBatchQualityManifestSnapshot,
   // One readability rule for every surface: the panels below, the timeline evaluator and
   // motion.package.validate all ask core the same question about a keyframe.
   isReadableMotionKeyframe,
@@ -74,12 +86,8 @@ import {
   type MotionTrack,
   JOB_STATES,
   createMotionPackage,
-  motionCallerId,
   MotionHostJob,
-  runInMotionHostJob,
-  MotionJobView,
-  JOB_STATUS_CONTRACT,
-  type JobErrorCode,
+  runInMotionHostJob, MotionConnectorJobBindingJournal, MotionJobCoordinator, MotionJobView,
   type JobState,
   type OperationReceipt,
   type ReceiptActor,
@@ -90,13 +98,13 @@ import {
   type TemplatePerformance,
   type TemplateValue
 } from "@shellx-motion/core";
-import { renderMotionBrowserFrame } from "@shellx-motion/renderer-browser";
+import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-browser"; import type { GpuActiveHardwareProbeResult, GpuEffectModuleUseAuthority } from "@shellx-motion/renderer-browser"; import type { DebugAgentScriptHostContext } from "./debug-agent-script-host-context.js"; import { writeContextReceipt, type DebugHostReceiptContext } from "./debug-host-receipt-writer.js"; import { selectDebugBrowserFrameRenderer } from "./debug-browser-frame-renderer-selection.js"; import { agentScriptBatchCopyRefusal } from "./agent-script-batch-refusal.js"; import { readDebugJson } from "./debug-json-read.js"; import { publishBrowserWorkflowJsonSidecar } from "./browser-workflow-sidecar-publication.js";
+import { debugBatchOutputTopologyError, prepareDebugBatchOutput } from "./batch-output-admission.js";
 import {
   audioWarningsForExportPreset,
   buildEncodeImageSequenceCommand,
   checkFfmpeg,
   createImageSequenceReceipt,
-  createGovernedFfmpegRunner,
   createStillFrameReceipt,
   encodeImageSequenceWithPolicy,
   ffmpegPresetOutputPathError,
@@ -106,54 +114,114 @@ import {
   readImageSequenceExportPreset,
   readMotionExportPreset,
   readStillFrameExportPreset,
+  planFinalVideoFrameTransport,
   listMotionExportPresets,
   measureAudioLevels,
   probeMedia,
+  redactAbortedFinalOutputEvidence,
   resolveMotionExportPreset,
   resolveFfmpegExecutable,
+  snapshotSelfContainedFfmpegMediaInput,
   stillFrameOutputPathError,
   type FfmpegCommand,
   type FfmpegAudioInput,
+  type RenderStreamingFinalInput,
+  type RenderStreamingFinalResult,
   type MotionExportPreset,
   type MotionExportPresetSpec,
   type FfmpegProcessResult,
   type FfmpegRunner
 } from "@shellx-motion/renderer-ffmpeg";
-import { type MotionPromptRuntime } from "@shellx-motion/prompt";
-import { enforceRawPromptExpiry } from "./receipt-raw-prompt-purge.js";
 import {
-  MAX_DEBUG_RECEIPT_BYTES,
-  discoverJsonFiles,
-  readPlatformReceiptEntries,
-  type PlatformReceiptEntry
-} from "./receipt-store-discovery.js";
+  browserWorkflowResultFields,
+  enrichRenderReceiptWithBrowserWorkflow,
+  nativeFrameLaneRefusal,
+  renderFinalDeliveryFrames,
+  renderFinalStillFrame
+} from "./render-final-frame-lane.js";
+import { frameCountFor, frameFileName, sequenceFrameIndexForAtMs } from "./render-frame-sequence.js";
+import { remapPublicationPaths } from "./publication-path-remap.js";
+import {
+  attachDebugQualityInputs,
+  displayDebugQualitySampleFrames,
+  debugQualityInputHashes,
+  debugQualityManifestDisplayPaths,
+  enrichDebugRenderReceiptWithQualityManifest,
+  readDebugQualityInputs,
+  retainDebugQualityManifestForEvaluation,
+} from "./quality-manifest-retention.js";
+import { coordinatedJobDomainServices } from "./coordinator-submit-handler.js";
+import { gpuBatchPlanRefusal } from "./gpu-batch-policy.js";
+import { type MotionPromptRuntime } from "@shellx-motion/prompt";
+import { enforceReceiptReadAcceptance } from "./receipt-raw-prompt-purge.js";
+import { readVerifiedJsonReceipt, readPlatformReceiptEntries, type PlatformReceiptEntry } from "./receipt-store-discovery.js";
+import { hasStableReceiptStoreCapability, readStableReceiptEntries, readStableReceiptEntry, type ReceiptStoreReadServices, type StableReceiptSnapshot } from "./receipt-store-stable-reader.js";
+import { reserveStableReceiptRoot } from "./stable-receipt-root-reservation.js";
+import { stableReceiptStoreCapabilityUnavailable, stableReceiptStoreRequired } from "./receipt-store-capability.js";
 import { constants as fsConstants, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { copyFile, cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { debugCommandDefinition, DEBUG_COMMANDS, type MotionDebugArgsSchema, type MotionDebugCommand, type MotionDebugResult } from "./command-registry.js";
+import { debugRenderQualityManifestFailure } from "./debug-render-quality-manifest-failure.js";
 import {
-  debugCommandDefinition,
-  DEBUG_COMMANDS,
-  type MotionDebugArgsSchema,
-  type MotionDebugCommand,
-  type MotionDebugResult
-} from "./command-registry.js";
+  debugBatchDeliveryFields,
+  debugBatchRenderCounts,
+  debugBatchRenderError,
+  debugBatchRenderedDelivery,
+  debugBatchResumeSourceReceiptPath,
+  readDebugBatchResumeMatch
+} from "./debug-batch-outcomes.js";
+import {
+  debugAudioWarningsForMotionExportPreset,
+  debugBatchOutputPath,
+  debugQualityCheckReceiptOutput,
+  supportsDebugBatchQualityManifestPreset
+} from "./debug-batch-output-policy.js";
 import { writeStaticGltfPackage } from "./domains/authoring-gltf-package.js";
 import { writeStaticLottiePackage } from "./domains/authoring-lottie-package.js";
 import { writeStaticDotLottiePackage } from "./domains/authoring-dotlottie-package.js";
+import { agentSnapshotHostServices, readMotionAgentSnapshotFromHost } from "./domains/agent-snapshot-host.js";
 import { dispatchDomainCommand } from "./domains/router.js";
-import { callerSuppliedReceiptsRoot, refuseCallerReceiptsRoot } from "./caller-boundary.js";
+import type { CheckpointStoryboardRecordStoreAuthority } from "./domains/checkpoint-storyboard-record-store.js";
+import type { CheckpointStoryboardMaterializationAuthority } from "./domains/checkpoint-storyboard-materialization-authority.js"; import type { CheckpointStoryboardBehaviorResolutionAuthority } from "./domains/checkpoint-storyboard-behavior-resolution-authority.js"; import type { CheckpointStoryboardRelationResolutionAuthority } from "./domains/checkpoint-storyboard-relation-resolution-authority.js"; import type { CheckpointStoryboardRelationActionResolutionAuthority } from "./domains/checkpoint-storyboard-relation-action-resolution-authority.js"; import type { CheckpointStoryboardLifecycleResolutionAuthority } from "./domains/checkpoint-storyboard-lifecycle-resolution-authority.js"; import type { CheckpointStoryboardGeometryMorphResolutionAuthority } from "./domains/checkpoint-storyboard-geometry-morph-resolution-authority.js"; import type { CheckpointStoryboardRetainedTraceResolutionAuthority } from "./domains/checkpoint-storyboard-retained-trace-resolution-authority.js"; import type { CheckpointStoryboardPreviewAuthority } from "./domains/checkpoint-storyboard-preview-authority.js"; import type { CheckpointStoryboardRetainedTracePreviewAuthority } from "./domains/checkpoint-storyboard-retained-trace-preview-authority.js"; import type { CheckpointStoryboardRetainedTraceReviewAuthority } from "./domains/checkpoint-storyboard-retained-trace-review-authority.js"; import type { CheckpointStoryboardCreativeReviewAuthority } from "./domains/checkpoint-storyboard-creative-review-authority.js"; import type { CheckpointStoryboardQualityReviewAuthority } from "./domains/checkpoint-storyboard-quality-review-authority.js";
+import type { ImmutableJsonPairCommitHooks } from "./domains/timeline-layout-application-authority-store.js";
+import { readApprovedCaptionSource } from "./domains/timeline-captions.js"; import { readApprovedSourceMarkdown } from "./domains/authoring-source.js";
+import { createAttestedRenderReuseFinalExecutor } from "./domains/attested-render-reuse-host.js";
+import type { AttestedRenderReuseProducerAuthority } from "./domains/attested-render-reuse-producer-authority.js";
+import { callerSuppliedReceiptsRoot, refuseCallerReceiptsRoot, refuseUntrustedCallerRenderPaths } from "./caller-boundary.js";
+import { promptCommandRefusal } from "./prompt-command-policy.js";
 import { matchRendererCapabilityCardsForRequest } from "./domains/capabilities.js";
 import { parseBrowserWorkflow, readBrowserWorkflowArg, type BrowserFrameRenderer } from "./domains/integration-browser-workflow.js";
 import type { FinalRenderRequest } from "./domains/render-final.js";
 import type { BatchRenderRequest } from "./domains/render-batch.js";
+import { runStreamedFinalDebugRender } from "./domains/render-streaming-final.js"; import { runSegmentedFinalDebugRender } from "./domains/render-segmented-final.js";
+import { abortedQualityCheckEvidence, materializedFinalEncodeFailure } from "./render-materialized-failure.js"; import { callerBoundFfmpegRunner, runGovernedFfmpegCommand } from "./governed-ffmpeg-command.js"; import type { DebugGpuPreviewVideoProviderFactory } from "./debug-gpu-preview-video-provider.js";
+import { debugFinalOutputFailure, invalidArgs, materializedPreflightFailure, stripFrameTimestampMs } from "./render-final-support.js";
 import { commitMotionDocumentEdit } from "./domains/package-edit-transaction.js";
+import { loadAdmittedDebugBatchPackage, loadAdmittedDebugBatchRows, qualityCheckInputRoots, renderFilesystemRootPolicy } from "./domains/render-host-context.js";
+import { refuseUntrustedCallerPackageAuthoring } from "./caller-package-edit-boundary.js";
+import { MOTION_ENGINE_VERSION } from "./version.js";
 export * from "./authoring-package-api.js";
 export { annotatePlanWithArgumentContracts } from "./domains/agent-plan-arguments.js";
-// Canonical engine version constant, re-exported so every engine surface reports one value.
 export { MOTION_ENGINE_VERSION } from "./version.js";
-// The one receipt tool-provenance rule, re-exported so the CLI and SDK render paths stamp FFprobe
-// through the same helper this package's own render handler uses (the tool-provenance invariant).
+export { AGENT_SNAPSHOT_SCHEMA, AGENT_SNAPSHOT_SCHEMA_DOCUMENT, MAX_AGENT_SNAPSHOT_BYTES } from "./domains/agent-snapshot.js";
+export {
+  assertConfiguredAuthoringOutputRoot,
+  assertConfiguredAuthoringPackageCreateRoot,
+  assertConfiguredAuthoringPackageEditRoots,
+  AuthoringRootPolicyError
+} from "./domains/authoring-root-policy.js";
+export {
+  admitConfiguredRenderPackageRoot,
+  admitConfiguredRenderInputFile,
+  assertConfiguredRenderOutputDirectory,
+  assertConfiguredRenderOutputFile,
+  assertConfiguredRenderPackageRoot,
+  RenderRootPolicyError,
+  type RenderRootPolicy
+} from "./domains/render-root-policy.js";
+// One shared FFprobe receipt-provenance rule serves Debug, CLI, and SDK.
 import { recordReceiptFfprobeProvenance } from "./receipt-tool-provenance.js";
 export {
   applyReceiptToolIdentity,
@@ -171,29 +239,36 @@ import {
 } from "./domains/timeline-controls.js";
 import { readMotionDurationPolicy, type DurationPolicy } from "./domains/timeline-duration-policy.js";
 
-export {
-  DEBUG_COMMANDS,
-  debugCommandDefinition,
-  debugCommandsByDomain,
-  type MotionDebugArgPropertySchema,
-  type MotionDebugArgsSchema,
-  type MotionDebugCommand,
-  type MotionDebugCommandContract,
-  type MotionDebugDomain,
-  type MotionDebugExpectedReceipt,
-  type MotionDebugResult
-} from "./command-registry.js";
+export { DEBUG_COMMANDS, debugCommandDefinition, debugCommandsByDomain, type MotionDebugArgPropertySchema, type MotionDebugArgsSchema, type MotionDebugCommand, type MotionDebugCommandContract, type MotionDebugDomain, type MotionDebugExpectedReceipt, type MotionDebugResult } from "./command-registry.js";
+export { rawPromptRetentionAdmissionError, type RawPromptRetentionAdmissionError, type RawPromptRetentionAdmissionServices } from "./raw-prompt-retention-admission.js";
+export { hasStableReceiptStoreCapability } from "./receipt-store-stable-reader.js";
+export { reserveStableReceiptRoot, type StableReceiptRootReservation } from "./stable-receipt-root-reservation.js";
 
 type MotionDebugError = Extract<MotionDebugResult, { ok: false }>["error"];
 
 export type { BrowserFrameRenderer } from "./domains/integration-browser-workflow.js";
+export { establishServerObservedMcpSession, isServerObservedMcpSession, type ServerObservedMcpSession } from "./server-observed-mcp-session.js";
+export { configureAttestedRenderReuseProducerAuthority, createEphemeralAttestedRenderReuseProducerAuthority, type AttestedRenderReuseProducerAuthority } from "./domains/attested-render-reuse-producer-authority.js";
 
 // Re-export the receipt actor-attribution types so transport hosts (debug-server) that only depend
 // on debug-api can build the `MotionDebugContext.actor` they pass into dispatch.
 export type { ReceiptActor, ReceiptActorKind, ReceiptActorTransport } from "@shellx-motion/core";
 
-export interface MotionDebugContext {
+export interface MotionDebugContext extends DebugAgentScriptHostContext, DebugHostReceiptContext {
   tier: MotionPermissionTier;
+  /** Host-only opaque authority for C6C record lifecycle; never read from command arguments. */
+  checkpointStoryboardRecordStore?: CheckpointStoryboardRecordStoreAuthority;
+  /** Host-only C6C B1a authority; its paths and bindings are never command data. */
+  checkpointStoryboardMaterializationAuthority?: CheckpointStoryboardMaterializationAuthority;
+  /** Host-only C6C B2 authority; only Debug/MCP identity commands can invoke it. */
+  checkpointStoryboardBehaviorResolutionAuthority?: CheckpointStoryboardBehaviorResolutionAuthority;
+  /** Host-only C6C B3a/B4a/B5/B6/B7 authorities; only Debug/MCP identity commands can invoke them. */ checkpointStoryboardRelationResolutionAuthority?: CheckpointStoryboardRelationResolutionAuthority; checkpointStoryboardRelationActionResolutionAuthority?: CheckpointStoryboardRelationActionResolutionAuthority; checkpointStoryboardLifecycleResolutionAuthority?: CheckpointStoryboardLifecycleResolutionAuthority; checkpointStoryboardGeometryMorphResolutionAuthority?: CheckpointStoryboardGeometryMorphResolutionAuthority; checkpointStoryboardRetainedTraceResolutionAuthority?: CheckpointStoryboardRetainedTraceResolutionAuthority;
+  /** Host-only C6C B7 preview authority for one exact-schedule private GPU PNG. */ checkpointStoryboardRetainedTracePreviewAuthority?: CheckpointStoryboardRetainedTracePreviewAuthority;
+  /** Host-only C6C B7 authority for exact arbitrary-time review associations. */ checkpointStoryboardRetainedTraceReviewAuthority?: CheckpointStoryboardRetainedTraceReviewAuthority;
+  /** Host-only C6C B1b authority for private Browser preview evidence. */
+  checkpointStoryboardPreviewAuthority?: CheckpointStoryboardPreviewAuthority;
+  checkpointStoryboardCreativeReviewAuthority?: CheckpointStoryboardCreativeReviewAuthority;
+  /** Host-only C6C B1e authority: bounded endpoint-witness registry and matching B1a/B1b/B1c authorities. */ checkpointStoryboardQualityReviewAuthority?: CheckpointStoryboardQualityReviewAuthority;
   /**
    * Transport-observed actor attribution for this dispatch (see {@link ReceiptActor}). Populated by
    * the transport choke points — debug-server HTTP/WS/MCP dispatch, the CLI, and the local SDK — and
@@ -212,32 +287,73 @@ export interface MotionDebugContext {
    * work. See docs/public/host-integration.md.
    */
   callerId?: string;
-  /**
-   * Whether this host allows a caller to read jobs it does not own (`scope: "all"`).
-   *
-   * Defaults to false, and is a host decision rather than a permission tier because the tiers
-   * describe what a caller may *do* to a package, while this describes whose evidence it may see.
-   * An operator console is started with it; an agent embedded in a host is not, which is what stops
-   * a Cut agent enumerating Design Studio's work.
-   */
+  /** Host-selected cross-caller job visibility; defaults false and is not a permission tier. */
   crossCallerJobScope?: boolean;
   /**
    * Reads live leases and terminal job records as one. Defaults to the per-user stores, so
-   * `motion.job.get` works without host configuration; pass null to disable job tracking.
+   * `motion.job.get` works without host configuration; pass null to disable every coordinator
+   * surface (submission, query, events, cancel, and retry) without constructing coordinator state.
    */
   jobView?: MotionJobView | null;
+  /** Persistent owner of submitted local work. Omit to use this process's coordinator. */
+  jobCoordinator?: MotionJobCoordinator;
+  /** Host-owned opaque-reference resolver and immutable binding store for generic connectors. */
+  connectorJobReferences?: MotionConnectorReferenceAuthority; connectorJobBindingJournal?: MotionConnectorJobBindingJournal;
+  /** Internal execution signal supplied only by the local coordinator. */ executionSignal?: AbortSignal;
   agentRuntime?: Pick<AgentRuntime, "health">;
-  promptRuntime?: MotionPromptRuntime;
+  promptRuntime?: MotionPromptRuntime; promptNow?: () => string;
+  /** Test-only host seam before a governed raw-prompt receipt write; never command data. */ rawPromptReceiptWriteTestHook?: (receipt: OperationReceipt) => Promise<void> | void;
   promptCwdRoots?: string[];
   ffmpegRunner?: FfmpegRunner;
   browserFrameRenderer?: BrowserFrameRenderer;
-  sourceFetcher?: SourceImportFetcher;
-  sourceResolver?: NetworkAddressResolver;
+  /** Host-only streamed-final seam; false makes GPU job submission refuse before queueing. */
+  streamingFinalRenderer?: (input: RenderStreamingFinalInput) => Promise<RenderStreamingFinalResult>; gpuFinalExecutionAvailable?: boolean;
+  /** Host-owned active GPU proof; arguments/old receipts cannot supply liveness evidence. */
+  gpuHardwareProof?: unknown;
+  retainedBatchQualityManifest?: { published: PublishedBatchQualityManifestSnapshot; evidence: BatchQualityInputEvidence };
+  /** Host/test seam for the explicit GPU hardware operation; command arguments cannot set it. */
+  gpuHardwareProbeRunner?: () => Promise<GpuActiveHardwareProbeResult>;
+  /** Host-only V25-B1 preview-decoder substitution; command arguments cannot configure it. */ gpuPreviewVideoProviderFactory?: DebugGpuPreviewVideoProviderFactory;
+  /** Opaque host-minted C2 module-use authority; never request or package data. */ gpuEffectModuleUseAuthority?: GpuEffectModuleUseAuthority;
+  sourceFetcher?: SourceImportFetcher; sourceResolver?: NetworkAddressResolver;
   scratchRoot?: string;
+  /** Batch orchestration owns a row-specific quality evidence directory; never caller-supplied. */
+  finalRenderQualityOutDir?: string;
   qualityInputRoots?: string[];
+  /** Render filesystem authority owned by the embedding host, never request arguments. */
+  renderPackageRoots?: string[];
+  renderInputRoots?: string[];
+  renderOutputRoots?: string[];
+  /** A network host must fail closed until it explicitly configures every render root class. */
+  enforceRenderRoots?: boolean;
+  /** Session-scoped roots granted by the Workbench's native chooser. */
+  operatorRenderPackageRoots?: string[];
+  operatorRenderInputRoots?: string[];
+  operatorRenderOutputRoots?: string[];
+  /** Server-owned roots admitted only for template catalog/plan discovery. */
+  templateRoots?: string[];
   authoringInputRoots?: string[];
   authoringOutputRoots?: string[];
+  /** Test-only C2 host-pair fault injection. It is host context, never a command argument. */
+  layoutGapAuthorityPairHooks?: ImmutableJsonPairCommitHooks;
+  /** Test-only batch bookkeeping fault seams. They are host context, never command arguments. */
+  batchTestHooks?: {
+    beforePostRenderAssert?: () => Promise<void> | void;
+    beforeNextRow?: () => Promise<void> | void;
+    beforeAggregateReceiptWrite?: () => Promise<void> | void;
+  };
+  /** Test-only batch source race seam after host admission and before stable open. */
+  batchRowsPathAfterAdmission?: (input: { root: string; rowsPath: string }) => Promise<void> | void;
+  /** Test-only race seam after a receipt target has been admitted; never command arguments. */
+  receiptControlTargetTestHook?: (input: { kind: "prompt" | "render"; receiptsRoot: string; receiptId: string }) => Promise<void>;
+  /** Test-only stable-reader leaf-open race seam; never command arguments. */
+  receiptControlTargetAfterLeafOpen?: (input: { receiptPath: string }) => Promise<void>;
+  /** Test-only host seams; command arguments never select platform, procfs availability, or reader observation. */
+  stableReceiptStorePlatform?: NodeJS.Platform; stableReceiptStoreProcSelfFdUsable?: () => boolean;
+  stableReceiptStoreReadTestServices?: ReceiptStoreReadServices;
+  /** Host-approved roots for caller-supplied motion.agent.snapshot packageRoot values. */ snapshotPackageRoots?: string[];
   receiptsRoot?: string;
+  /** Host-only producer authentication for attested final-render reuse; never command data. */ attestedRenderReuseProducerAuthority?: AttestedRenderReuseProducerAuthority;
   /**
    * Receipt roots a human granted during this server session through the Workbench's native folder
    * chooser. Set by the host, never by a caller — see `domains/receipts-root-policy.ts`.
@@ -251,14 +367,14 @@ export interface MotionDebugContext {
    * bundle someone then shares. Letting a CALLER pass the approval list would restore exactly that,
    * one level up, so this arrives only from host configuration.
    */
-  artifactRoots?: string[];
+  artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[];
+  /** Trusted host-only cap/policy evidence for materialized final-render frame sequences. */
+  materializedFrameSequencePreflight?: MaterializedFrameSequencePreflightOptions;
 }
-
 interface PromptDebugCommandProposal {
   command: MotionDebugCommand;
   args: unknown;
 }
-
 interface PromptDebugCommandExecutionRecord {
   command: MotionDebugCommand;
   ok: boolean;
@@ -266,13 +382,11 @@ interface PromptDebugCommandExecutionRecord {
   error?: { code: string; message: string; suggestedAction?: string; detail?: unknown };
   warnings: string[];
 }
-
 interface PromptDebugCommandExecutionSummary {
   commandCount: number;
   receiptIds: string[];
   commands: PromptDebugCommandExecutionRecord[];
 }
-
 /**
  * The assembled command contracts live in ./command-metadata.ts so that domain modules can read
  * argument contracts without importing this dispatcher (which would be an import cycle).
@@ -287,7 +401,23 @@ export { DEBUG_COMMAND_CONTRACTS, DEBUG_COMMAND_METADATA, debugCommandArgumentCo
  * the actions package.
  */
 export { purposeForCall } from "@shellx-motion/actions";
-
+export {
+  configureCheckpointStoryboardRecordStore,
+  issueCheckpointStoryboardRecordStoreQuiescentAdmission,
+  recoverCheckpointStoryboardRecordStoreForQuiescentHost,
+  type CheckpointStoryboardRecordStoreAuthority,
+} from "./domains/checkpoint-storyboard-record-store.js"; export { configureCheckpointStoryboardMaterializationAuthority, type CheckpointStoryboardMaterializationAuthority, type CheckpointStoryboardMaterializationBinding } from "./domains/checkpoint-storyboard-materialization-authority.js";
+export { configureCheckpointStoryboardBehaviorResolutionAuthority, type CheckpointStoryboardBehaviorResolutionAuthority, type CheckpointStoryboardBehaviorResolutionBinding } from "./domains/checkpoint-storyboard-behavior-resolution-authority.js";
+export { configureCheckpointStoryboardRelationResolutionAuthority, type CheckpointStoryboardRelationResolutionAuthority, type CheckpointStoryboardRelationResolutionBinding } from "./domains/checkpoint-storyboard-relation-resolution-authority.js"; export { configureCheckpointStoryboardRelationActionResolutionAuthority, type CheckpointStoryboardRelationActionResolutionAuthority, type CheckpointStoryboardRelationActionResolutionBinding } from "./domains/checkpoint-storyboard-relation-action-resolution-authority.js"; export { configureCheckpointStoryboardLifecycleResolutionAuthority, type CheckpointStoryboardLifecycleResolutionAuthority } from "./domains/checkpoint-storyboard-lifecycle-resolution-authority.js"; export { configureCheckpointStoryboardGeometryMorphResolutionAuthority, type CheckpointStoryboardGeometryMorphResolutionAuthority } from "./domains/checkpoint-storyboard-geometry-morph-resolution-authority.js"; export { configureCheckpointStoryboardRetainedTraceResolutionAuthority, type CheckpointStoryboardRetainedTraceResolutionAuthority } from "./domains/checkpoint-storyboard-retained-trace-resolution-authority.js";
+export { configureCheckpointStoryboardRetainedTracePreviewAuthority, type CheckpointStoryboardRetainedTracePreviewAuthority, type CheckpointStoryboardRetainedTracePreviewRenderer } from "./domains/checkpoint-storyboard-retained-trace-preview-authority.js";
+export { configureCheckpointStoryboardRetainedTraceReviewAuthority, type CheckpointStoryboardRetainedTraceReviewAuthority } from "./domains/checkpoint-storyboard-retained-trace-review-authority.js"; export type { HostRetainedTraceReviewRegistration } from "./domains/checkpoint-storyboard-retained-trace-review-host-registry.js";
+export {
+  configureCheckpointStoryboardPreviewAuthority,
+  type CheckpointStoryboardPreviewAuthority,
+  type CheckpointStoryboardPreviewSessionFactory,
+} from "./domains/checkpoint-storyboard-preview-authority.js";
+export { configureCheckpointStoryboardCreativeReviewAuthority, type CheckpointStoryboardCreativeReviewAuthority } from "./domains/checkpoint-storyboard-creative-review-authority.js";
+export { configureCheckpointStoryboardQualityReviewAuthority, type CheckpointStoryboardQualityReviewAuthority, type HostEndpointWitnessRegistration } from "./domains/checkpoint-storyboard-quality-review-authority.js";
 /**
  * Tier-refusal wording, re-exported for the same reason as `purposeForCall`.
  *
@@ -311,19 +441,11 @@ export { MOTION_DEBUG_ARG_ENUMS, debugArgEnum } from "./command-metadata-enums.j
 
 const TIER_ORDER: MotionPermissionTier[] = ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"];
 
-/** The owner identity for a dispatch: the host's explicit value, else derived from the actor. */
-export function dispatchCallerId(context: Pick<MotionDebugContext, "callerId" | "actor">): string {
-  return motionCallerId({ ...(context.callerId ? { callerId: context.callerId } : {}), ...(context.actor ?? {}) });
+/** Job ownership accepts only a host-authenticated principal, never caller-provided actor labels. */
+export function dispatchCallerId(context: Pick<MotionDebugContext, "callerId" | "actor">): string | undefined {
+  return context.callerId?.trim() || undefined;
 }
 
-/**
- * The commands that are a *host's* unit of work rather than Motion's.
- *
- * Each of these takes minutes and is something a caller waits on, so each becomes one observable
- * job. The governed operations underneath — frame passes, capability probes, encodes — hold leases
- * for capacity but are never reported: one render is six of them, and listing "ffmpeg.version" as a
- * job answers a question nobody asked.
- */
 const HOST_JOB_OPERATIONS: Partial<Record<MotionDebugCommand, { lane: string; operation: string }>> = {
   "motion.render.final": { lane: "ffmpeg", operation: "render.final" },
   "motion.render.batch": { lane: "batch", operation: "render.batch" }
@@ -356,16 +478,33 @@ export async function refuseUntrustedCallerReceiptsRoot(
  * between the two is a statement about where the arguments came from, not about which command is
  * being run — see `caller-boundary.ts`.
  */
-export async function dispatchCallerSteeredCommand(
-  command: MotionDebugCommand,
-  args: unknown,
-  context: MotionDebugContext
-): Promise<MotionDebugResult> {
+export async function dispatchCallerSteeredCommand(command: MotionDebugCommand, args: unknown, context: MotionDebugContext): Promise<MotionDebugResult> {
   const refusal = await refuseUntrustedCallerReceiptsRoot(command, callerSuppliedReceiptsRoot(args), context);
-  return refusal ?? dispatchDebugCommand(command, args, context);
+  if (refusal) return refusal;
+  const renderPathRefusal = await refuseUntrustedCallerRenderPaths(command, args, context);
+  if (renderPathRefusal) return renderPathRefusal;
+  const packageAuthoringRefusal = await refuseUntrustedCallerPackageAuthoring(command, args, context); if (packageAuthoringRefusal) return packageAuthoringRefusal;
+  return dispatchDebugCommand(command, args, context);
 }
 
 export { callerSuppliedReceiptsRoot } from "./caller-boundary.js";
+export { renderFilesystemRootPolicy } from "./domains/render-host-context.js";
+
+/**
+ * Direct read path for the fixed MCP resource.
+ *
+ * This deliberately invokes the shared snapshot projector instead of dispatching a caller-selected
+ * command. Its roots are supplied by the debug-server's host configuration, never resource URI
+ * parameters, and the caller id remains the authenticated transport identity for own-job scope.
+ */
+export async function readMotionAgentSnapshotResource(args: { packageRoot?: string; receiptsRoot?: string }, context: MotionDebugContext): Promise<MotionDebugResult> {
+  if ((args.receiptsRoot || context.receiptsRoot) && !hasStableReceiptStoreCapability(context.stableReceiptStorePlatform, context.stableReceiptStoreProcSelfFdUsable)) return stableReceiptStoreCapabilityUnavailable("motion.agent.snapshot", context);
+  return await readMotionAgentSnapshotFromHost(args, snapshotServices(context));
+}
+
+function snapshotServices(context: MotionDebugContext) {
+  return agentSnapshotHostServices(context, { isPathInsideTrustedRoot, readSnapshotReceipts: readReceiptEntriesWithStatus, jobCallerId: dispatchCallerId(context) });
+}
 
 export async function dispatchDebugCommand(command: MotionDebugCommand, args: unknown, context: MotionDebugContext): Promise<MotionDebugResult> {
   const hostJobScope = HOST_JOB_OPERATIONS[command];
@@ -378,13 +517,20 @@ export async function dispatchDebugCommand(command: MotionDebugCommand, args: un
       return unhandledDebugCommandError(command, error);
     }
   }
+  // A refused caller never owned a host job. Check the immutable command tier before creating a
+  // lease or terminal record so permission failures cannot consume shared job-retention capacity.
+  const definition = debugCommandDefinition(command);
+  if (definition) {
+    const refusal = insufficientTierRefusal(command, definition.permission, context);
+    if (refusal) return refusal;
+  }
   // Read directly rather than through a domain arg helper: this runs before dispatch, above the
   // layer those helpers belong to.
   const argsRecord = typeof args === "object" && args !== null && !Array.isArray(args) ? args as Record<string, unknown> : {};
   const suppliedJobId = typeof argsRecord.jobId === "string" ? argsRecord.jobId : undefined;
   const job = await MotionHostJob.begin({
     ...(suppliedJobId ? { jobId: suppliedJobId } : {}),
-    callerId: dispatchCallerId(context),
+    callerId: dispatchCallerId(context) ?? "unattributed",
     lane: hostJobScope.lane,
     operation: hostJobScope.operation
   });
@@ -393,7 +539,7 @@ export async function dispatchDebugCommand(command: MotionDebugCommand, args: un
     if (result.ok) {
       await job.succeeded({ ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}) });
     } else {
-      await job.failed({ error: { code: hostJobErrorCode(result.error.code), message: result.error.message } });
+      await job.failed({ error: result.error });
     }
     // Echoed so a caller that did not name its own job still learns the handle it can query.
     return { ...result, jobId: job.jobId } as unknown as MotionDebugResult;
@@ -403,17 +549,6 @@ export async function dispatchDebugCommand(command: MotionDebugCommand, args: un
   }
 }
 
-/**
- * The contract's error codes are a closed set; anything outside it is an argument problem.
- *
- * Derived from the authored contract rather than restated, so a code added to
- * schemas/job-status.json cannot silently fail to be recognised here.
- */
-const JOB_ERROR_CODES: ReadonlySet<string> = new Set(JOB_STATUS_CONTRACT.errorCodes.map((entry) => entry.code));
-function hostJobErrorCode(code: string): JobErrorCode {
-  return JOB_ERROR_CODES.has(code) ? code as JobErrorCode : "invalid_args";
-}
-
 async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unknown, context: MotionDebugContext): Promise<MotionDebugResult> {
   const definition = debugCommandDefinition(command);
   if (!definition) {
@@ -421,28 +556,39 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
   }
 
   const requiredTier = definition.permission;
-  if (!hasTier(context.tier, requiredTier)) {
-    // Worded by @shellx-motion/actions' tierRefusal, not here. The old suggestedAction was
-    // "Retry with <tier> permission." — an instruction the receiving agent cannot carry out, since
-    // Motion has no elevation command and requestedTier is capped at the host's startup grant. A
-    // suggestedAction has to name something its reader can actually do, which for a tier refusal
-    // means naming the host operator's change. See packages/actions/src/permission-refusal.ts.
-    return {
-      ok: false,
-      error: tierRefusal({
-        subject: command,
-        requiredTier,
-        ...(context.tier ? { grantedTier: context.tier } : {})
-      }),
-      warnings: []
-    };
-  }
-
+  const refusal = insufficientTierRefusal(command, requiredTier, context);
+  if (refusal) return refusal;
+  if (stableReceiptStoreRequired(command, args, context) && !hasStableReceiptStoreCapability(context.stableReceiptStorePlatform, context.stableReceiptStoreProcSelfFdUsable)) return stableReceiptStoreCapabilityUnavailable(command, context);
+  const browserRenderer = selectDebugBrowserFrameRenderer(context.browserFrameRenderer, context.agentScriptAuthority);
+  const coordinatedJobs = coordinatedJobDomainServices({
+    jobView: context.jobView, jobCoordinator: context.jobCoordinator,
+    injectedBrowserRenderer: browserRenderer.injectedForFrameTransport, gpuFinalExecutionAvailable: context.gpuFinalExecutionAvailable === true, callerId: dispatchCallerId(context),
+    connectorJobReferences: context.connectorJobReferences, connectorJobBindingJournal: context.connectorJobBindingJournal,
+    executeFinal: async (renderArgs, signal) => await dispatchDebugCommandUnsafe("motion.render.final", renderArgs, { ...context, executionSignal: signal }),
+    unhandled: (error) => unhandledDebugCommandError("motion.job.submit", error), connectorUnhandled: (error) => unhandledDebugCommandError("motion.connector.submit", error)
+  });
+  const withAttestedRenderReuse = createAttestedRenderReuseFinalExecutor({ engineVersion: MOTION_ENGINE_VERSION, writeReceipt: async (root, receipt) => await writeReceiptFile(root, applyReceiptActor(receipt, context.actor)), invalidArgs, ...(context.attestedRenderReuseProducerAuthority ? { producerAuthority: context.attestedRenderReuseProducerAuthority } : {}) });
   const domainResult = await dispatchDomainCommand(definition.domain, command, args, {
+    checkpointStoryboardRecordStore: context.checkpointStoryboardRecordStore,
+    checkpointStoryboardMaterializationAuthority: context.checkpointStoryboardMaterializationAuthority, checkpointStoryboardBehaviorResolutionAuthority: context.checkpointStoryboardBehaviorResolutionAuthority, checkpointStoryboardRelationResolutionAuthority: context.checkpointStoryboardRelationResolutionAuthority, checkpointStoryboardRelationActionResolutionAuthority: context.checkpointStoryboardRelationActionResolutionAuthority, checkpointStoryboardLifecycleResolutionAuthority: context.checkpointStoryboardLifecycleResolutionAuthority, checkpointStoryboardGeometryMorphResolutionAuthority: context.checkpointStoryboardGeometryMorphResolutionAuthority, checkpointStoryboardRetainedTraceResolutionAuthority: context.checkpointStoryboardRetainedTraceResolutionAuthority, checkpointStoryboardRetainedTracePreviewAuthority: context.checkpointStoryboardRetainedTracePreviewAuthority, checkpointStoryboardRetainedTraceReviewAuthority: context.checkpointStoryboardRetainedTraceReviewAuthority,
+    checkpointStoryboardPreviewAuthority: context.checkpointStoryboardPreviewAuthority,
+    checkpointStoryboardCreativeReviewAuthority: context.checkpointStoryboardCreativeReviewAuthority,
+    checkpointStoryboardQualityReviewAuthority: context.checkpointStoryboardQualityReviewAuthority,
+    executionSignal: context.executionSignal,
     agentRuntime: context.agentRuntime,
-    tier: context.tier,
-    promptRuntime: context.promptRuntime,
+    promptRuntime: context.promptRuntime, ...(context.promptNow ? { promptNow: context.promptNow } : {}),
     promptCwdRoots: (context.promptCwdRoots ?? [resolve(".")]).map((root) => resolve(root)),
+    hasStableReceiptPurgeCapability: () => hasStableReceiptStoreCapability(context.stableReceiptStorePlatform, context.stableReceiptStoreProcSelfFdUsable),
+    reserveRawPromptReceiptRoot: async (root) => {
+      const reservation = await reserveStableReceiptRoot(root);
+      return reservation ? {
+        writeReceipt: async (receipt) => {
+          await context.rawPromptReceiptWriteTestHook?.(receipt);
+          return await reservation.writeJson(`${safeFileToken(receipt.id)}.receipt.json`, applyReceiptActor(receipt, context.actor));
+        },
+        close: async () => await reservation.close()
+      } : null;
+    },
     executePromptCommands: (proposals, receiptsRoot) => executePromptDebugCommands(proposals, {
       ...context,
       ...(receiptsRoot ? { receiptsRoot } : {})
@@ -452,9 +598,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       const entries = await readReceiptEntries(input.receiptsRoot);
       let targetEntry: ReceiptEntry | undefined;
       if (input.receiptPath) {
-        const normalizedReceiptPath = resolve(input.receiptPath);
-        const receipt = await readReceiptFile(normalizedReceiptPath);
-        targetEntry = receipt ? { path: normalizedReceiptPath, receipt } : undefined;
+        const read = await readReceiptEntryInsideRoot(input.receiptsRoot, input.receiptPath);
+        targetEntry = read.entry ?? undefined;
       } else if (input.receiptId) {
         targetEntry = findReceiptEntryById(entries, input.receiptId);
       }
@@ -495,10 +640,12 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       return { jobs, stateCounts: promptStateCounts(jobs) };
     },
     readPromptControlTarget: async (root, receiptId) => {
-      const entries = await readReceiptEntries(root);
+      const entries = await readReceiptEntries(root, receiptControlReadServices(context));
       const entry = findReceiptEntryById(entries, receiptId);
       if (!entry) return { kind: "missing" as const };
       if (!isPromptJobReceipt(entry.receipt)) return { kind: "not_prompt" as const };
+      if (!entry.snapshot) return { kind: "missing" as const };
+      await context.receiptControlTargetTestHook?.({ kind: "prompt", receiptsRoot: root, receiptId });
       const controls = promptControlIndex(entries);
       const job = promptStatusJob(entry, controls);
       return {
@@ -508,18 +655,24 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         state: job.state,
         request: job.request,
         ...(job.agentId ? { agentId: job.agentId } : {}),
-        sha256: await hashFile(entry.path),
+        snapshot: entry.snapshot,
         retryCount: controls.retriesBySource.get(entry.receipt.id)?.length ?? 0
       };
     },
-    ffmpegRunner: context.ffmpegRunner,
-    browserFrameRenderer: context.browserFrameRenderer ?? renderMotionBrowserFrame,
+    ffmpegRunner: callerBoundFfmpegRunner(context.ffmpegRunner, dispatchCallerId(context) ?? "unattributed"),
+    ...(context.streamingFinalRenderer ? { streamingFinalRenderer: context.streamingFinalRenderer } : {}),
+    browserFrameRenderer: browserRenderer.renderer, activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable, ...(browserRenderer.sessionFactory ? { browserPreviewStripSessionFactory: browserRenderer.sessionFactory } : {}),
+    ...snapshotServices(context),
     packageLoader: loadMotionPackage,
+    agentScriptAuthority: context.agentScriptAuthority,
+    observedMcpAgentSession: context.observedMcpAgentSession,
+    actor: context.actor,
+    tier: context.tier,
     trackingAnalyzer: analyzeTrackingMedia,
     ensureDirectory: async (path) => { await mkdir(path, { recursive: true }); },
-    workflowCatalogUpserter: upsertBrowserWorkflowCatalog,
+    workflowCatalogUpserter: upsertBrowserWorkflowCatalog, publishJsonSidecar: publishBrowserWorkflowJsonSidecar,
     browsePackages: buildPackageBrowser,
-    listReceiptEntries: readReceiptEntries,
+    listReceiptEntries: async (root) => await readReceiptEntries(root, context.stableReceiptStoreReadTestServices),
     readReceiptEntryInsideRoot,
     summarizeReceipt: receiptSummary,
     summarizeReceiptsPanel: receiptsPanelSummary,
@@ -529,7 +682,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     archivePackage: writeMotionPackageArchive,
     extractPackage: extractMotionPackageArchive,
     writeReviewBundle,
-    ...(context.artifactRoots ? { artifactRoots: context.artifactRoots } : {}),
+    ...(context.artifactRoots ? { artifactRoots: context.artifactRoots } : {}), ...(context.artifactRootAuthorities ? { artifactRootAuthorities: context.artifactRootAuthorities } : {}),
     scriptedPackageWriter: writeScriptedMotionPackage,
     htmlSnippetExporter: writeHtmlSnippetExport,
     htmlSnippetImporter: importHtmlSnippetToMotionPackage,
@@ -543,7 +696,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     fetchSource: (url) => fetchSourceDocument(url, { fetcher: context.sourceFetcher, resolver: context.sourceResolver }),
     isEmptyOrAbsentDirectory: isEmptyOrAbsentDir,
     isUnsafePackageOutputDirectory: isUnsafePackageOutputDir,
-    readText: (path) => readFile(path, "utf8"),
+    readSourceMarkdown: readApprovedSourceMarkdown,
+    readCaptionSource: readApprovedCaptionSource,
     hashInputFile: hashPackageFile,
     writeText: async (path, value) => {
       await mkdir(dirname(path), { recursive: true });
@@ -573,10 +727,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     missingPlatformVerification: exportPlanMissingPlatformVerification,
     buildStoryboardPanel,
     buildStoryboardGraph,
-    hashPackageIdentity: async (pkg) => ({
-      "manifest.json": await hashPackageFile(resolvePackageAsset(pkg, "manifest.json")),
-      [pkg.manifest.motion]: await hashPackageFile(resolvePackageAsset(pkg, pkg.manifest.motion))
-    }),
+    hashPackageIdentity: async (pkg) => requiredLoadedPackageDocumentHashes(pkg, "Preview receipts"),
     readTimelineState: async (pkg) => {
       const loaded = await readTimelineControlState(pkg);
       return {
@@ -588,7 +739,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       };
     },
     readReceiptRenderState: async (root) => {
-      const entries = root ? await readReceiptEntries(root) : [];
+      const entries = root ? await readReceiptEntries(root, context.stableReceiptStoreReadTestServices) : [];
       const controls = renderControlIndex(entries);
       const receipts = entries.map((entry) => receiptSummary(entry));
       const jobs = entries
@@ -602,36 +753,10 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         warnings: receipts.flatMap((receipt) => Array.isArray(receipt.warnings) ? receipt.warnings as string[] : [])
       };
     },
-    // Live job queries answer as the dispatch's caller, never as whoever asks. Resolving the owner
-    // here rather than reading it from the arguments is what makes the boundary real: a caller
-    // cannot name someone else's callerId to see their work.
-    // Constructed per dispatch rather than cached: a view holds no handles, and resolving its roots
-    // from the environment each time is what lets a host relocate its runtime directory.
-    jobView: context.jobView === null ? undefined : context.jobView ?? new MotionJobView(),
-    // The runner `motion.render.final` and the quality probe encode and read media with. Handed to
-    // the requirements surface so an embedded host with a bundled or injected FFmpeg is told about
-    // THAT executable, not about whatever happens to be on PATH — a readiness answer describing a
-    // different binary than the one that would render is worse than no answer (the readiness-parity invariant).
-    // Injected here, at the dispatcher, where every other host capability is supplied from; the
-    // previous FFmpeg-only `checkFfmpegHealth` probe was deleted rather than deprecated in place,
-    // because a second, differently-shaped readiness path is the defect itself.
-    ...(context.ffmpegRunner ? { ffmpegRunner: context.ffmpegRunner } : {}),
+    ...coordinatedJobs,
+    // Platform readiness names the same injected FFmpeg and host-owned GPU evidence its renderer uses.
+    ...(context.ffmpegRunner ? { platformRequirementsRunner: context.ffmpegRunner } : {}), ...(context.gpuHardwareProof !== undefined ? { gpuHardwareProof: context.gpuHardwareProof } : {}), ...(context.gpuHardwareProbeRunner ? { gpuHardwareProbeRunner: context.gpuHardwareProbeRunner } : {}), ...(context.scratchRoot ? { gpuHardwareProbeScratchRoot: context.scratchRoot } : {}),
     createPackage: async (input) => await createMotionPackage(input) as unknown as Record<string, unknown>,
-    validatePackage: async (packageRoot) => {
-      const pkg = await loadMotionPackage(packageRoot);
-      return {
-        packageId: pkg.manifest.id,
-        motionId: pkg.motion.id,
-        name: pkg.manifest.name,
-        layers: pkg.motion.layers.length,
-        width: pkg.motion.width,
-        height: pkg.motion.height,
-        fps: pkg.motion.fps,
-        durationMs: pkg.motion.durationMs,
-        hosts: pkg.manifest.compatibility.hosts,
-        lanes: pkg.manifest.compatibility.lanes
-      };
-    },
     jobCallerId: dispatchCallerId(context),
     jobCrossCallerScopeGranted: context.crossCallerJobScope === true,
     readRenderLifecycleState: async (root) => {
@@ -647,10 +772,12 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       };
     },
     readRenderControlTarget: async (root, receiptId) => {
-      const entries = await readReceiptEntries(root);
+      const entries = await readReceiptEntries(root, receiptControlReadServices(context));
       const entry = findReceiptEntryById(entries, receiptId);
       if (!entry) return { kind: "missing" as const };
       if (!isRenderJobReceipt(entry.receipt)) return { kind: "not_render" as const };
+      if (!entry.snapshot) return { kind: "missing" as const };
+      await context.receiptControlTargetTestHook?.({ kind: "render", receiptsRoot: root, receiptId });
       const controls = renderControlIndex(entries);
       const job = renderStatusJob(entry, controls);
       return {
@@ -658,7 +785,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         receipt: entry.receipt,
         path: entry.path,
         state: job.state,
-        sha256: await hashFile(entry.path),
+        snapshot: entry.snapshot,
         retryCount: controls.retriesBySource.get(entry.receipt.id)?.length ?? 0,
         ...(readReceiptOutputPath(entry.receipt) ? { outputPath: readReceiptOutputPath(entry.receipt) } : {})
       };
@@ -707,6 +834,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       };
     },
     qualityInputRoots: qualityCheckInputRoots(context),
+    renderRootPolicy: renderFilesystemRootPolicy(context),
+    ...(context.batchRowsPathAfterAdmission ? { batchRowsPathAfterAdmission: context.batchRowsPathAfterAdmission } : {}),
     qualityOutputRoots: [context.scratchRoot ?? ".scratch", ...(context.receiptsRoot ? [context.receiptsRoot] : [])].map((root) => resolve(root)),
     isQualityPathInsideRoots: async (path, roots) => {
       for (const root of roots) {
@@ -714,25 +843,51 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       }
       return false;
     },
-    probeQualityMedia: (inputPath, inputRoots) => probeMedia(inputPath, { runner: context.ffmpegRunner, inputRoots }),
-    measureQualityAudio: (inputPath, inputRoots) => measureAudioLevels(inputPath, { runner: context.ffmpegRunner, inputRoots }),
-    runQualityManifest: (input) => runDebugQualityManifest({
-      ...input,
-      media: input.media as Awaited<ReturnType<typeof probeMedia>>,
-      runner: context.ffmpegRunner,
-      // Domain-driven quality manifests (e.g. quality.panel) inherit this dispatch's actor.
-      actor: context.actor
-    }),
+    snapshotQualityMedia: async (inputPath, inputRoots) => await snapshotSelfContainedFfmpegMediaInput(inputPath, inputRoots, "quality"),
+    probeQualityMedia: (inputPath, inputRoots) => probeMedia(inputPath, { runner: context.ffmpegRunner, inputRoots, admittedQualityInput: true }),
+    measureQualityAudio: (inputPath, inputRoots) => measureAudioLevels(inputPath, { runner: context.ffmpegRunner, inputRoots, admittedQualityInput: true }),
+    runQualityManifest: async (input) => {
+      let retained: Awaited<ReturnType<typeof retainDebugQualityManifestForEvaluation>>;
+      try {
+        retained = await retainDebugQualityManifestForEvaluation({
+          sourcePath: input.manifestPath,
+          targetRoot: join(input.outDir, ".quality-inputs"),
+          packageId: input.packageId,
+          packageDir: dirname(input.receiptInputPath ?? input.inputPath),
+          outputPath: input.receiptInputPath ?? input.inputPath
+        });
+      } catch (error) {
+        return invalidArgs(error instanceof Error ? error.message : String(error));
+      }
+      const displayPaths = debugQualityManifestDisplayPaths(retained, input.manifestPath); const result = await runDebugQualityManifest({
+        ...input,
+        displayInputPath: input.receiptInputPath ?? input.displayInputPath,
+        manifestPath: retained.published.appliedPath, displayManifestPath: displayPaths.manifestPath, displayBaselinePath: displayPaths.baselinePath,
+        media: input.media as Awaited<ReturnType<typeof probeMedia>>, receiptInputHashes: {
+          ...(input.receiptInputHash ? { [input.receiptInputPath ?? input.inputPath]: input.receiptInputHash } : {}), [input.manifestPath]: retained.evidence.manifestSha256,
+          ...debugQualityInputHashes(retained.evidence)
+        },
+        runner: context.ffmpegRunner,
+        // Domain-driven quality manifests (e.g. quality.panel) inherit this dispatch's actor.
+        actor: context.actor
+      });
+      return attachDebugQualityInputs(
+        result,
+        input.manifestPath,
+        retained.published.appliedPath,
+        retained.evidence
+      );
+    },
     extractQualityFrame: async (input) => {
       await mkdir(dirname(input.framePath), { recursive: true });
       const seekArgs = input.atMs > 0 ? ["-ss", formatSeconds(input.atMs / 1000)] : [];
       const media = input.media as Awaited<ReturnType<typeof probeMedia>>;
       const extractCommand: FfmpegCommand = {
         executable: resolveFfmpegExecutable(),
-        args: ["-y", ...seekArgs, ...frameExtractionInputArgs(media, input.inputPath), ...frameExtractionPngOutputArgs(media, input.framePath)],
+        args: ["-y", ...seekArgs, ...frameExtractionInputArgs(media, input.inputPath, { admittedQualityInput: true }), ...frameExtractionPngOutputArgs(media, input.framePath)],
         shell: false
       };
-      const extracted = await runFfmpegCommand(extractCommand, context.ffmpegRunner);
+      const extracted = await runGovernedFfmpegCommand(extractCommand, context.ffmpegRunner);
       if (extracted.exitCode === 0) return { ok: true as const };
       return {
         ok: false as const,
@@ -747,10 +902,14 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         : { ok: false as const, message: inspected.message };
     },
     compareQualityFrames: (framePath, baselinePath) => comparePngFiles(framePath, baselinePath),
-    createQualityReceipt: createDebugQualityReceipt,
-    executeStillFinalRender: (renderArgs) => runDebugStillFinalRender(renderArgs, context),
-    executeSequenceFinalRender: (renderArgs) => runDebugSequenceFinalRender(renderArgs, context),
-    executeFfmpegFinalRender: (renderArgs) => runDebugFfmpegFinalRender(renderArgs, context),
+    createQualityReceipt: async (input) => await createDebugQualityReceipt({
+      ...input,
+      ...(input.inputHash ? { inputHashes: { [input.inputPath]: input.inputHash } } : {})
+    }),
+    executeStillFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugStillFinalRender(request, context)), executeSequenceFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugSequenceFinalRender(request, context)), executeFfmpegFinalRender: async (renderArgs) => await withAttestedRenderReuse(renderArgs, (request) => runDebugFfmpegFinalRender(request, context)),
+    gpuFinalExecutionAvailable: context.gpuFinalExecutionAvailable === true,
+    retainedBatchQualityManifestPath: context.retainedBatchQualityManifest?.published.appliedPath,
+    producerAuthority: context.attestedRenderReuseProducerAuthority,
     executeBatchPlan: (renderArgs) => runDebugBatchPlan(renderArgs, context),
     executeBatchRun: (renderArgs) => runDebugBatchExecution(renderArgs, context),
     readTimelineControls: readTimelineControlState,
@@ -758,30 +917,37 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     buildKeyframesPanel: buildTimelineKeyframesPanel,
     buildTransitionsPanel: buildTimelineTransitionsPanel,
     buildEasingPanel: buildTimelineEasingPanel,
+    gpuPreviewVideo: { scratchRoot: context.scratchRoot, callerId: dispatchCallerId(context), signal: context.executionSignal, ffmpegRunner: context.ffmpegRunner, providerFactory: context.gpuPreviewVideoProviderFactory, effectModuleAuthority: context.gpuEffectModuleUseAuthority },
     scratchRoot: context.scratchRoot,
     receiptsRoot: context.receiptsRoot,
+    layoutGapAuthorityPairHooks: context.layoutGapAuthorityPairHooks,
     readReceipt: readReceiptFile,
-    readJson: async (path) => JSON.parse(await readFile(path, "utf8")),
-    // The single receipt-persistence choke point for every domain (template.apply, timeline.edit,
-    // keying, tracking, procedural, script, preview, render-lifecycle, prompt, timeline-controls…):
-    // stamp the transport-observed actor onto each host receipt just before it lands in the receipts
-    // root the engine-room History reads. Wrapping the service here attributes all domains without
-    // threading actor context through any domain module. applyReceiptActor mutates in place, so the
-    // inline result.receipt (same object) carries identical attribution.
-    writeReceipt: (root, receipt) => writeReceiptFile(root, applyReceiptActor(receipt, context.actor)),
+    readJson: readDebugJson,
+    receiptActor: context.actor,
+    writeReceipt: (root, receipt) => writeContextReceipt(context, root, applyReceiptActor(receipt, context.actor), writeReceiptFile),
     writeJson: writeJsonFile
   });
   if (domainResult) return domainResult;
-
-
   async function runDebugStillFinalRender(request: FinalRenderRequest, context: MotionDebugContext): Promise<MotionDebugResult> {
     const { packageRoot, outputPath, frameLane, preset, workflow, workflowPath, qualityManifestPath, dryRun } = request;
     const receiptsRoot = request.receiptsRoot ?? context.receiptsRoot;
     const atMs = request.atMs;
-    try {
-      const pkg = await loadMotionPackage(packageRoot);
+    let publication: Awaited<ReturnType<typeof acquireDerivedOutputPublication>> | undefined; let published = false;
+    try { if (frameLane === "gpu") return invalidArgs("GPU final rendering supports streamed FFmpeg video only, not still-frame presets.");
+      const { pkg, lineage } = await loadStableRenderPackage(packageRoot);
       const stillFramePreset = readStillFrameExportPreset(preset);
       if (!stillFramePreset) return invalidArgs(`Unsupported still-frame export preset: ${preset}.`);
+      if (frameLane === "native" && stillFramePreset !== "png-frame") {
+        return {
+          ok: false,
+          error: { code: "unsupported_frame_lane", message: "Native still-frame renders currently support png-frame only." },
+          warnings: []
+        };
+      }
+      const nativeRefusal = nativeFrameLaneRefusal(pkg, frameLane, "still-frame");
+      if (nativeRefusal) return { ok: false, ...nativeRefusal };
+      const browserTypographyRefusal = frameLane === "browser" ? browserTypographyAttestationRefusal(pkg) : null;
+      if (browserTypographyRefusal) return { ok: false, error: browserTypographyRefusal, warnings: [] };
       const spec = resolveMotionExportPreset(stillFramePreset);
       const outputPathError = stillFrameOutputPathError(stillFramePreset, outputPath);
       if (outputPathError) return invalidArgs(outputPathError);
@@ -818,23 +984,35 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         };
       }
 
-      await mkdir(dirname(outputPath), { recursive: true });
-      const renderer = context.browserFrameRenderer ?? renderMotionBrowserFrame;
-      const frame = await renderer(pkg, {
-        outDir: dirname(outputPath), outputPath, atMs: atMs ?? 0,
+      const framePass = await renderFinalStillFrame({
+        pkg,
+        packageRoot,
+        outputPath,
+        atMs: atMs ?? 0,
+        frameLane,
+        format: stillFramePreset === "jpeg-frame" ? "jpeg" : "png",
         ...(workflow ? { workflow } : {}),
-        format: stillFramePreset === "jpeg-frame" ? "jpeg" : "png"
+        browserFrameRenderer: browserRenderer.renderer
       });
-      const workflowEvidence = browserWorkflowEvidenceFromFrame(frame);
+      if (!framePass.ok) {
+        return {
+          ok: false,
+          error: framePass.error,
+          result: { lane: "image", frameLane, preset: stillFramePreset, outputPath, frameReceipt: framePass.frameReceipt },
+          warnings: framePass.warnings
+        };
+      }
+      publication = framePass.publication;
       const receipt = await createStillFrameReceipt({
-        packageId: pkg.manifest.id, outputPath, preset: stillFramePreset,
+        packageId: pkg.manifest.id, outputPath: publication.stagingPath, preset: stillFramePreset,
         width: pkg.motion.width, height: pkg.motion.height, atMs: atMs ?? 0,
         warnings: stillFrameWarnings
       });
-      enrichRenderReceiptWithBrowserWorkflow(receipt, workflowEvidence);
+      framePass.applyTo(receipt);
+      enrichRenderReceiptWithBrowserWorkflow(receipt, framePass.workflowEvidence);
       const qualityCheck = qualityManifestPath
         ? await runDebugRenderQualityManifest({
-            inputPath: outputPath, manifestPath: qualityManifestPath, preset: stillFramePreset,
+            inputPath: publication.stagingPath, displayInputPath: outputPath, manifestPath: qualityManifestPath, preset: stillFramePreset,
             packageRoot, packageId: pkg.manifest.id, durationMs: pkg.motion.durationMs,
             fps: pkg.motion.fps, outDir: join(context.scratchRoot ?? dirname(outputPath), "quality"),
             receiptsRoot, context
@@ -843,14 +1021,19 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (qualityManifestPath && qualityCheck) {
         await enrichDebugRenderReceiptWithQualityManifest(receipt, qualityManifestPath, qualityCheck);
         if (!qualityCheck.ok) {
+          await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+          remapPublicationPaths(receipt, publication.stagingPath, outputPath);
+          remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
           return debugRenderQualityManifestFailure({
             lane: "image", frameLane, preset: stillFramePreset, outputPath, receipt,
-            frameReceipt: frame.receipt, qualityManifestPath, qualityCheck, extra: { stillFrame }
+            frameReceipt: framePass.frameReceipt, qualityManifestPath, qualityCheck, extra: { stillFrame }
           });
         }
       }
-      // Stamp the transport-observed actor before persisting the primary render receipt (still
-      // frame + image sequence handlers both share this line). See applyReceiptActor precedence.
+      await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+      await publication.publishFile(await publication.verifyFile());
+      published = true;
+      remapPublicationPaths(receipt, publication.stagingPath, outputPath); remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
       const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(receipt, context.actor)) : undefined;
       return {
         ok: true,
@@ -860,11 +1043,11 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           ok: true, lane: "image", frameLane, preset: stillFramePreset,
           packageId: pkg.manifest.id, outputPath,
           ...(workflowPath ? { workflowPath } : {}),
-          ...browserWorkflowResultFields(workflowEvidence),
+          ...browserWorkflowResultFields(framePass.workflowEvidence),
           ...(qualityManifestPath ? { qualityManifestPath } : {}),
           output: receipt.output, receipt,
           ...(receiptPath ? { receiptPath } : {}),
-          frameReceipt: frame.receipt,
+          frameReceipt: framePass.frameReceipt,
           ...(qualityCheck ? { qualityCheck } : {}),
           warnings: receipt.warnings,
           stillFrame
@@ -872,7 +1055,9 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         warnings: receipt.warnings
       };
     } catch (error) {
-      return { ok: false, error: { code: "render_failed", message: error instanceof Error ? error.message : String(error) }, warnings: [] };
+      return debugFinalOutputFailure(error);
+    } finally {
+      if (publication && !published) await publication.abort();
     }
   }
 
@@ -880,12 +1065,21 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     const { packageRoot, outputPath, frameLane, preset, workflow, workflowPath, qualityManifestPath, dryRun } = request;
     const receiptsRoot = request.receiptsRoot ?? context.receiptsRoot;
     const quality = request.minUniqueFrameHashes ? { minUniqueFrameHashes: request.minUniqueFrameHashes } : undefined;
-    try {
-      const pkg = await loadMotionPackage(packageRoot);
+    let publication: Awaited<ReturnType<typeof acquireDerivedOutputPublication>> | undefined; let published = false;
+    try { if (frameLane === "gpu") return invalidArgs("GPU final rendering supports streamed FFmpeg video only, not image-sequence presets.");
+      const { pkg, lineage } = await loadStableRenderPackage(packageRoot);
       const imageSequencePreset = readImageSequenceExportPreset(preset);
       if (!imageSequencePreset) return invalidArgs(`Unsupported image-sequence export preset: ${preset}.`);
+      const nativeRefusal = frameLane === "native" ? nativeFrameLaneRefusal(pkg, frameLane, "delivery") : null;
+      if (nativeRefusal) return { ok: false, ...nativeRefusal };
+      const browserTypographyRefusal = frameLane === "browser" ? browserTypographyAttestationRefusal(pkg) : null;
+      if (browserTypographyRefusal) return { ok: false, error: browserTypographyRefusal, warnings: [] };
       const audioTracks = resolvePackageAudioInputs(pkg);
       const frameCount = frameCountFor(pkg.motion.durationMs, pkg.motion.fps);
+      const resourcePreflight = preflightMaterializedFrameSequence({
+        frameCount, width: pkg.motion.width, height: pkg.motion.height, frameLane, motion: pkg.motion
+      }, context.materializedFrameSequencePreflight);
+      if (resourcePreflight.status === "refused") return materializedPreflightFailure(resourcePreflight);
       const sequenceWarnings = audioTracks.length > 0
         ? [`Export preset ${imageSequencePreset} does not support audio; ${audioTracks.length} requested audio ${audioTracks.length === 1 ? "track" : "tracks"} will be ignored.`]
         : [];
@@ -904,43 +1098,54 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             ...(quality ? { quality } : {}),
             ...(qualityManifestPath ? { qualityManifestPath } : {}),
             ...(sequenceWarnings.length ? { warnings: sequenceWarnings } : {}),
-            dryRun: true, sequence
+            dryRun: true, resourcePreflight, sequence
           },
           warnings: sequenceWarnings
         };
       }
       if (await isUnsafePackageOutputDir(pkg.root, outputPath)) return invalidArgs("motion.render.final image sequence outputPath must be outside packageRoot.");
-      if (!await isEmptyOrAbsentDir(outputPath)) return invalidArgs("motion.render.final image sequence outputPath must be empty or absent before render.");
-      await rm(outputPath, { recursive: true, force: true });
-      await mkdir(outputPath, { recursive: true });
-      let lastFrameReceipt: unknown = null;
-      let workflowEvidence: BrowserWorkflowRenderEvidence | undefined;
-      const framePaths: string[] = [];
-      const renderer = context.browserFrameRenderer ?? renderMotionBrowserFrame;
-      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-        const framePath = join(outputPath, frameFileName(frameIndex));
-        framePaths.push(framePath);
-        const atMs = frameTimestampMs(frameIndex, pkg.motion.fps, pkg.motion.durationMs);
-        const frame = await renderer(pkg, { outDir: outputPath, outputPath: framePath, atMs, ...(workflow ? { workflow } : {}) });
-        lastFrameReceipt = frame.receipt;
-        workflowEvidence = browserWorkflowEvidenceFromFrame(frame);
+      publication = await acquireDerivedOutputPublication({ outputPath, kind: "directory" });
+      const framePass = await renderFinalDeliveryFrames({
+        pkg,
+        packageRoot,
+        outputDir: publication.stagingPath,
+        frameLane,
+        frameCount,
+        ...(workflow ? { workflow } : {}),
+        browserFrameRenderer: browserRenderer.renderer, activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable, ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {})
+      });
+      if (!framePass.ok) {
+        return {
+          ok: false,
+          error: framePass.error,
+          result: {
+            lane: "image-sequence",
+            frameLane,
+            preset: imageSequencePreset,
+            outputPath,
+            frameReceipt: framePass.frameReceipt,
+            frames: { dir: outputPath, count: framePass.renderedFrameCount }
+          },
+          warnings: [...sequenceWarnings, ...framePass.warnings]
+        };
       }
       const sequenceQuality = await inspectFrameSequence({
-        framePaths, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps,
+        framePaths: framePass.framePaths, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps,
         ...(quality ? { minUniqueFrameHashes: quality.minUniqueFrameHashes } : {})
       });
       if (!sequenceQuality.ok) {
         return { ok: false, error: { code: "frame_quality_failed", message: sequenceQuality.message }, warnings: [...sequenceWarnings, ...sequenceQuality.warnings] };
       }
       const receipt = await createImageSequenceReceipt({
-        packageId: pkg.manifest.id, framesDir: outputPath, fps: pkg.motion.fps,
+        packageId: pkg.manifest.id, framesDir: publication.stagingPath, fps: pkg.motion.fps,
         width: pkg.motion.width, height: pkg.motion.height, durationMs: pkg.motion.durationMs,
-        frameCount, warnings: [...sequenceWarnings, ...sequenceQuality.warnings]
+        frameCount, resourcePreflight, warnings: [...sequenceWarnings, ...sequenceQuality.warnings]
       });
-      enrichRenderReceiptWithBrowserWorkflow(receipt, workflowEvidence);
+      framePass.applyTo(receipt);
+      enrichRenderReceiptWithBrowserWorkflow(receipt, framePass.workflowEvidence);
       const qualityCheck = qualityManifestPath
         ? await runDebugRenderQualityManifest({
-            inputPath: outputPath, manifestPath: qualityManifestPath, preset: imageSequencePreset,
+            inputPath: publication.stagingPath, displayInputPath: outputPath, manifestPath: qualityManifestPath, preset: imageSequencePreset,
             packageRoot, packageId: pkg.manifest.id, durationMs: pkg.motion.durationMs,
             fps: pkg.motion.fps, outDir: join(context.scratchRoot ?? dirname(outputPath), "quality"),
             receiptsRoot, context
@@ -949,15 +1154,20 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (qualityManifestPath && qualityCheck) {
         await enrichDebugRenderReceiptWithQualityManifest(receipt, qualityManifestPath, qualityCheck);
         if (!qualityCheck.ok) {
+          await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
           return debugRenderQualityManifestFailure({
             lane: "image-sequence", frameLane, preset: imageSequencePreset, outputPath, receipt,
-            frameReceipt: lastFrameReceipt, frames: { dir: outputPath, count: frameCount },
+            frameReceipt: framePass.frameReceipt, frames: { dir: outputPath, count: frameCount },
             qualityManifestPath, qualityCheck, extra: { sequence }
           });
         }
       }
-      // Stamp the transport-observed actor before persisting the primary render receipt (still
-      // frame + image sequence handlers both share this line). See applyReceiptActor precedence.
+      await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+      const expectedFrames = framePass.framePaths.map((path) => basename(path));
+      await publication.publishDirectory(await publication.verifyDirectory(expectedFrames), expectedFrames);
+      published = true;
+      remapPublicationPaths(receipt, publication.stagingPath, outputPath);
+      remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
       const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(receipt, context.actor)) : undefined;
       return {
         ok: true, receiptId: receipt.id,
@@ -966,19 +1176,21 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           ok: true, lane: "image-sequence", frameLane, preset: imageSequencePreset,
           packageId: pkg.manifest.id, outputPath,
           ...(workflowPath ? { workflowPath } : {}),
-          ...browserWorkflowResultFields(workflowEvidence),
+          ...browserWorkflowResultFields(framePass.workflowEvidence),
           ...(qualityManifestPath ? { qualityManifestPath } : {}),
           output: receipt.output, receipt,
           ...(receiptPath ? { receiptPath } : {}),
-          frameReceipt: lastFrameReceipt, frames: { dir: outputPath, count: frameCount },
+          frameReceipt: framePass.frameReceipt, frames: { dir: outputPath, count: frameCount },
           ...(quality ? { quality } : {}),
           ...(qualityCheck ? { qualityCheck } : {}),
-          warnings: receipt.warnings, sequence
+          warnings: receipt.warnings, resourcePreflight, sequence
         },
         warnings: receipt.warnings
       };
     } catch (error) {
-      return { ok: false, error: { code: "render_failed", message: error instanceof Error ? error.message : String(error) }, warnings: [] };
+      return debugFinalOutputFailure(error);
+    } finally {
+      if (publication && !published) await publication.abort();
     }
   }
 
@@ -989,18 +1201,62 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     const framesRoot = framesDirArg ?? context.scratchRoot ?? ".scratch/debug-render-frames";
     const receiptsRoot = request.receiptsRoot ?? context.receiptsRoot;
     const minUniqueFrameHashes = request.minUniqueFrameHashes;
+    const retainFrames = request.keepFrames === true;
+    let transientFramesDir: string | undefined;
+    let publication: Awaited<ReturnType<typeof acquireDerivedOutputPublication>> | undefined; let published = false;
 
     try {
-      const pkg = await loadMotionPackage(packageRoot);
+      const { pkg, lineage } = await loadStableRenderPackage(packageRoot);
       const framesDir = framesDirArg ?? join(framesRoot, pkg.manifest.id);
       const quality = minUniqueFrameHashes ? { minUniqueFrameHashes } : undefined;
       const audioTracks = resolvePackageAudioInputs(pkg);
+      const audioMaster = packageAudioEncodeInput(pkg).audioMaster;
       const frameCount = frameCountFor(pkg.motion.durationMs, pkg.motion.fps);
       const ffmpegPreset = readFfmpegExportPreset(preset);
       if (!ffmpegPreset) return invalidArgs(`Unsupported export preset: ${preset}.`);
       const outputPathError = ffmpegPresetOutputPathError(ffmpegPreset, outputPath);
       if (outputPathError) return invalidArgs(outputPathError);
+      if (request.segmented) {
+        const warnings = audioWarningsForExportPreset(ffmpegPreset, audioTracks.length);
+        return runSegmentedFinalDebugRender({
+          pkg, lineage, outputPath, frameLane, preset: ffmpegPreset, segmented: request.segmented, quality,
+          receiptsRoot, warnings, dryRun,
+          context: {
+            ...context,
+            activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable,
+            ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {})
+          },
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor))
+        });
+      }
+      const nativeRefusal = frameLane === "native" ? nativeFrameLaneRefusal(pkg, frameLane, "delivery") : null;
+      if (nativeRefusal) return { ok: false, ...nativeRefusal };
+      const browserTypographyRefusal = frameLane === "browser" ? browserTypographyAttestationRefusal(pkg) : null;
+      if (browserTypographyRefusal) return { ok: false, error: browserTypographyRefusal, warnings: [] };
       const warnings = audioWarningsForExportPreset(ffmpegPreset, audioTracks.length);
+      const retainedBatchQualityManifest = qualityManifestPath === context.retainedBatchQualityManifest?.published.appliedPath ? context.retainedBatchQualityManifest : undefined;
+      const transport = planFinalVideoFrameTransport({ keepFrames: request.keepFrames, capturedBrowserWorkflow: Boolean(workflow), exactSourceQuality: Boolean(qualityManifestPath) && !retainedBatchQualityManifest, minUniqueFrameHashes, injectedFrameRenderer: browserRenderer.injectedForFrameTransport }); if (frameLane === "gpu" && transport.delivery !== "streamed") return invalidArgs(`GPU final rendering requires the strict streamed FFmpeg path; ${transport.reason} requires materialized frames and GPU never falls back.`);
+      if (transport.delivery === "streamed") {
+        return runStreamedFinalDebugRender({
+          pkg, lineage, outputPath, frameLane, preset: ffmpegPreset, quality,
+          receiptsRoot, warnings, transport,
+          context: { ...context, activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable, ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {}) },
+          dryRun,
+          ...(retainedBatchQualityManifest && qualityManifestPath ? { evaluateDeliveredQuality: async (receipt: OperationReceipt) => {
+            const qualityCheck = await runDebugRenderQualityManifest({ inputPath: outputPath, manifestPath: qualityManifestPath, preset: ffmpegPreset, packageRoot, packageId: pkg.manifest.id, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps, outDir: context.finalRenderQualityOutDir ?? join(context.scratchRoot ?? dirname(outputPath), "quality"), receiptsRoot, context, retainedBatchQualityManifest });
+            await enrichDebugRenderReceiptWithQualityManifest(receipt, qualityManifestPath, qualityCheck); await recordReceiptFfprobeProvenance(receipt, { contributed: debugQualityReadbackUsedFfprobe(ffmpegPreset), ...(context.ffmpegRunner ? { runner: context.ffmpegRunner } : {}) });
+            if (qualityCheck.ok) return { qualityCheck }; redactAbortedFinalOutputEvidence(receipt, { code: qualityCheck.error.code, message: qualityCheck.error.message }); const failed = abortedQualityCheckEvidence(qualityCheck);
+            return { qualityCheck: failed, failure: debugRenderQualityManifestFailure({ lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath, receipt, qualityManifestPath, qualityCheck: failed, extra: { frameTransport: transport } }) };
+          }} : {}),
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor))
+        });
+      }
+      if (frameLane === "gpu") return invalidArgs("GPU final rendering requires the strict streamed FFmpeg path and never falls back to materialized frames.");
+
+      const resourcePreflight = preflightMaterializedFrameSequence({
+        frameCount, width: pkg.motion.width, height: pkg.motion.height, frameLane, motion: pkg.motion
+      }, context.materializedFrameSequencePreflight);
+      if (resourcePreflight.status === "refused") return materializedPreflightFailure(resourcePreflight);
       const ffmpegInputRoots = [framesDir, pkg.root];
       const planned = buildEncodeImageSequenceCommand({
         framesDir,
@@ -1010,6 +1266,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         preset: ffmpegPreset,
         ...(audioTracks.length === 1 ? { audio: audioTracks[0] } : {}),
         ...(audioTracks.length > 1 ? { audioTracks } : {}),
+        ...(audioMaster ? { audioMaster } : {}),
         inputRoots: ffmpegInputRoots,
         outputRoots: [dirname(outputPath)]
       });
@@ -1028,6 +1285,8 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             ...(qualityManifestPath ? { qualityManifestPath } : {}),
             ...(warnings.length ? { warnings } : {}),
             dryRun: true,
+            frameTransport: transport,
+            resourcePreflight,
             ffmpeg: planned
           },
           warnings
@@ -1041,50 +1300,49 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (!health.ok) {
         return { ok: false, error: health.error, warnings: [] };
       }
-      // Share the CLI's frames-directory guard instead of keeping a second, stricter copy of the
-      // policy. The old check here was `readdir(path).length === 0` and nothing else, which refused
-      // the exact directory state MOTION ITSELF produces: a render killed by the RSS ceiling leaves
-      // its own `000001.png…` behind, so every retry at the same framesDir was refused — precisely
-      // when an agent most needs to retry with a cheaper package. A stray `.DS_Store` or
-      // `desktop.ini` had the same effect, and there was no `force` escape.
-      //
-      // It also bought no safety: the next two lines recursively deleted that directory anyway, so
-      // the check only decided WHETHER Motion would proceed to delete it, never protected it.
-      // `prepareFramesDir` allows reuse when every entry is evidence Motion wrote it, refuses and
-      // NAMES anything else, and handles the exists-but-not-a-directory case the old check missed.
       const framesGuard = await prepareFramesDir(framesDir, {
         force: false,
         callerSupplied: Boolean(framesDirArg),
-        // Same reason as the CLI: framesDir carries a package-supplied identifier.
         withinRoot: framesRoot
       });
       if (!framesGuard.ok) {
-        // The shared guard's message ends by suggesting `--force`, which is a CLI flag. This surface
-        // has no such argument, and telling an agent to pass an option that does not exist is the
-        // same defect as documenting a binary that is not shipped. State the remedy that is real
-        // here: choose another directory, or clear this one outside Motion.
         return {
           ok: false,
           error: {
             code: "invalid_args",
-            message: `motion.render.final ${framesGuard.error.message.replace(/,? or pass --force to (?:overwrite|replace) it\.$/, ".")}`,
-            suggestedAction: "Pass a different framesDir, or remove the listed entries yourself. motion.render.final has no force argument, deliberately: it will not delete files it cannot prove Motion wrote."
+            message: `motion.render.final ${framesGuard.error.message.replace(/,? or pass --force to (?:overwrite|replace) (?:it|its contents)\.$/, ".")}`,
+            suggestedAction: "Pass a different framesDir, or clear this directory yourself. motion.render.final has no force argument, deliberately: it will not delete caller-owned files."
           },
           warnings: []
         };
       }
-      await mkdir(dirname(outputPath), { recursive: true });
-      let lastFrameReceipt: unknown = null;
-      let workflowEvidence: BrowserWorkflowRenderEvidence | undefined;
-      const renderer = context.browserFrameRenderer ?? renderMotionBrowserFrame;
-      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-        const framePath = join(framesDir, frameFileName(frameIndex));
-        const atMs = frameTimestampMs(frameIndex, pkg.motion.fps, pkg.motion.durationMs);
-        const frame = await renderer(pkg, { outDir: framesDir, outputPath: framePath, atMs, ...(workflow ? { workflow } : {}) });
-        lastFrameReceipt = frame.receipt;
-        workflowEvidence = browserWorkflowEvidenceFromFrame(frame);
+      if (!retainFrames) transientFramesDir = framesDir;
+      publication = await acquireDerivedOutputPublication({ outputPath, kind: "file" });
+      const framePass = await renderFinalDeliveryFrames({
+        pkg,
+        packageRoot,
+        outputDir: framesDir,
+        frameLane,
+        frameCount,
+        intermediateFfmpegFrames: true,
+        ...(workflow ? { workflow } : {}),
+        browserFrameRenderer: browserRenderer.renderer, activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable, ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {})
+      });
+      if (!framePass.ok) {
+        return {
+          ok: false,
+          error: framePass.error,
+          result: {
+            lane: "ffmpeg",
+            frameLane,
+            preset: ffmpegPreset,
+            outputPath,
+            ...(retainFrames ? { frameReceipt: framePass.frameReceipt } : {}),
+            ...(retainFrames ? { frames: { dir: framesDir, count: framePass.renderedFrameCount } } : {})
+          },
+          warnings: [...warnings, ...framePass.warnings]
+        };
       }
-
       const encoded = await encodeImageSequenceWithPolicy({
         packageId: pkg.manifest.id,
         framesDir,
@@ -1093,68 +1351,83 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         height: pkg.motion.height,
         durationMs: pkg.motion.durationMs,
         outputPath,
+        outputPublication: publication,
         preset: ffmpegPreset,
         ...(audioTracks.length === 1 ? { audio: audioTracks[0] } : {}),
         ...(audioTracks.length > 1 ? { audioTracks } : {}),
+        ...(audioMaster ? { audioMaster } : {}),
         inputRoots: ffmpegInputRoots,
         outputRoots: [dirname(outputPath)],
         ...(quality ? { quality } : {}),
-        // Hardware (GPU) encoding is the default for final renders, resolved through the shared encode
-        // policy so CLI, Debug API, and connectors agree on the encoder and cache the probe across
-        // renders. SHELLX_MOTION_FORCE_SOFTWARE_ENCODE still forces software for reproducibility.
+        resourcePreflight,
         ...(health.version ? { ffmpegVersion: health.version } : {}),
         runner: context.ffmpegRunner
       });
       if (!encoded.ok) {
-        return {
-          ok: false,
-          error: encoded.error,
-          warnings
-        };
+        if (encoded.receipt) await bindFinalRenderReceiptLineage(encoded.receipt, pkg, lineage);
+        return materializedFinalEncodeFailure({
+          encoded,
+          framePass,
+          receiptsRoot,
+          actor: renderContext.actor,
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor)),
+          frameLane,
+          preset: ffmpegPreset,
+          packageId: pkg.manifest.id,
+          outputPath,
+          transport,
+          warnings,
+        });
       }
-      enrichRenderReceiptWithBrowserWorkflow(encoded.receipt, workflowEvidence);
+      framePass.applyTo(encoded.receipt);
+      encoded.receipt.output = {
+        ...(objectRecord(encoded.receipt.output) ?? {}),
+        frameTransportPlan: transport
+      };
+      enrichRenderReceiptWithBrowserWorkflow(encoded.receipt, framePass.workflowEvidence);
       const qualityCheck = qualityManifestPath
         ? await runDebugRenderQualityManifest({
-            inputPath: outputPath,
+            inputPath: publication.stagingPath, displayInputPath: outputPath,
             manifestPath: qualityManifestPath,
             preset: ffmpegPreset,
             packageRoot,
             packageId: pkg.manifest.id,
             durationMs: pkg.motion.durationMs,
             fps: pkg.motion.fps,
-            outDir: join(context.scratchRoot ?? dirname(outputPath), "quality"),
+            outDir: context.finalRenderQualityOutDir ?? join(context.scratchRoot ?? dirname(outputPath), "quality"),
             receiptsRoot,
             context
           })
         : undefined;
       if (qualityManifestPath && qualityCheck) {
         await enrichDebugRenderReceiptWithQualityManifest(encoded.receipt, qualityManifestPath, qualityCheck);
-        // FFprobe read this media back to produce the quality evidence above, so it belongs in the
-        // receipt's tool provenance alongside the encoder that wrote it — through the SAME helper
-        // the CLI uses, so an agent's receipt carries the evidence a human's does (the tool-provenance invariant). Passed
-        // `contributed` from the readback path itself: `png-frame`/`png-sequence` manifests are
-        // answered by a pure PNG reader, and a receipt must not name a tool that never ran.
         await recordReceiptFfprobeProvenance(encoded.receipt, {
           contributed: debugQualityReadbackUsedFfprobe(ffmpegPreset),
           ...(context.ffmpegRunner ? { runner: context.ffmpegRunner } : {})
         });
         if (!qualityCheck.ok) {
+          redactAbortedFinalOutputEvidence(encoded.receipt, { code: qualityCheck.error.code, message: qualityCheck.error.message });
+          await bindFinalRenderReceiptLineage(encoded.receipt, pkg, lineage);
           return debugRenderQualityManifestFailure({
             lane: "ffmpeg",
             frameLane,
             preset: ffmpegPreset,
             outputPath,
             receipt: encoded.receipt,
-            frameReceipt: lastFrameReceipt,
-            frames: { dir: framesDir, count: frameCount },
+            ...(retainFrames ? { frameReceipt: framePass.frameReceipt } : {}),
+            ...(retainFrames ? { frames: { dir: framesDir, count: frameCount } } : {}),
             qualityManifestPath,
-            qualityCheck,
-            extra: { ffmpeg: encoded.command }
+            qualityCheck: abortedQualityCheckEvidence(qualityCheck),
+            extra: {
+              frameTransport: transport
+            }
           });
         }
       }
-      // Stamp the transport-observed actor before persisting the ffmpeg render receipt (this handler
-      // names its context `renderContext`). See applyReceiptActor precedence.
+      await bindFinalRenderReceiptLineage(encoded.receipt, pkg, lineage);
+      await publication.publishFile(await publication.verifyFile());
+      published = true;
+      remapPublicationPaths(encoded, publication.stagingPath, outputPath);
       const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(encoded.receipt, renderContext.actor)) : undefined;
 
       return {
@@ -1175,29 +1448,27 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           packageId: pkg.manifest.id,
           outputPath,
           ...(workflowPath ? { workflowPath } : {}),
-          ...browserWorkflowResultFields(workflowEvidence),
+          ...browserWorkflowResultFields(framePass.workflowEvidence),
           ...(qualityManifestPath ? { qualityManifestPath } : {}),
           output: encoded.receipt.output,
           receipt: encoded.receipt,
           ...(receiptPath ? { receiptPath } : {}),
-          frameReceipt: lastFrameReceipt,
-          frames: { dir: framesDir, count: frameCount },
+          ...(retainFrames ? { frameReceipt: framePass.frameReceipt } : {}),
+          ...(retainFrames ? { frames: { dir: framesDir, count: frameCount } } : {}),
           ...(quality ? { quality } : {}),
           ...(qualityCheck ? { qualityCheck } : {}),
           warnings: encoded.receipt.warnings,
-          ffmpeg: encoded.command
+          frameTransport: transport,
+          resourcePreflight,
+          ...(retainFrames ? { ffmpeg: encoded.command } : {})
         },
         warnings: encoded.receipt.warnings
       };
     } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "render_failed",
-          message: error instanceof Error ? error.message : String(error)
-        },
-        warnings: []
-      };
+      return debugFinalOutputFailure(error);
+    } finally {
+      if (transientFramesDir) await rm(transientFramesDir, { recursive: true, force: true });
+      if (publication && !published) await publication.abort();
     }
   }
 
@@ -1209,105 +1480,109 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     };
   }
 
-  async function prepareDebugBatchRender(request: BatchRenderRequest) {
+  async function prepareDebugBatchRender(request: BatchRenderRequest, renderContext?: MotionDebugContext) {
     try {
       const quality = request.minUniqueFrameHashes ? { minUniqueFrameHashes: request.minUniqueFrameHashes } : undefined;
       const workflowIdempotencyHash = await debugBatchWorkflowIdempotencyHash({ workflow: request.workflow, workflowPath: request.workflowPath });
-      const pkg = await loadMotionPackage(request.packageRoot);
+      const pkg = await loadAdmittedDebugBatchPackage(request);
       const allRows = request.rowsPath
-        ? await loadDataRowsFile(request.rowsPath)
+        ? await loadAdmittedDebugBatchRows(request)
         : await loadPackageDataRows(pkg);
       const rowFilter = filterMotionDataRows(allRows, request.rowIds);
       if (!rowFilter.ok) return { ok: false as const, result: invalidArgs(rowFilter.message) };
       const rows = rowFilter.rows;
+      if (request.qualityManifestPath && rows.length > MAX_BATCH_QUALITY_ROWS) {
+        return { ok: false as const, result: invalidArgs(`motion.render.batch accepts at most ${MAX_BATCH_QUALITY_ROWS} selected rows.`) };
+      }
       const expanded = expandMotionPackageRows(pkg, rows);
+      const scriptCopyRefusal = agentScriptBatchCopyRefusal(expanded); if (scriptCopyRefusal) return { ok: false as const, result: scriptCopyRefusal };
       const presetPlan = planDebugBatchRenderPresets(expanded, request.preset, request.forcePreset);
       if (!presetPlan.ok) {
         return { ok: false as const, result: invalidArgs(`Unsupported export preset for row ${presetPlan.rowId}: ${presetPlan.preset}.`) };
       }
+      if (request.keepFrames === true) {
+        const nonVideoPreset = presetPlan.presets.find((candidate) => !readFfmpegExportPreset(candidate));
+        if (nonVideoPreset) {
+          return { ok: false as const, result: invalidArgs(`motion.render.batch keepFrames requires final-video FFmpeg presets; ${nonVideoPreset} is not eligible.`) };
+        }
+      }
       const presetSummary = debugBatchPresetSummary(request.preset, presetPlan.uniquePresets);
+      const gpuRefusal = gpuBatchPlanRefusal(request, presetPlan.presets); if (gpuRefusal) return { ok: false as const, result: invalidArgs(gpuRefusal) };
       if (request.qualityManifestPath) {
         const unsupportedQualityPreset = presetPlan.presets.find((candidate) => !supportsDebugBatchQualityManifestPreset(candidate));
         if (unsupportedQualityPreset) {
           return { ok: false as const, result: invalidArgs(`Batch quality manifest checks for preset ${unsupportedQualityPreset} currently require a video, GIF, png-frame, or png-sequence export preset.`) };
         }
       }
-      const jobs = expanded.map((job, index) => {
+      const jobs = [];
+      const qualitySnapshots: Array<PreparedBatchQualityManifestSnapshot | undefined> = [];
+      const qualityRequestBudget = request.qualityManifestPath ? createBatchQualityRequestBudget() : undefined;
+      for (let index = 0; index < expanded.length; index += 1) {
+        const job = expanded[index];
         const jobPreset = presetPlan.presets[index];
-        const idempotencyKey = debugBatchJobIdempotencyKey({
-          packageId: job.manifest.id,
-          rowId: job.row.id,
-          rowHash: job.row.hash,
-          manifest: job.manifest,
-          motion: job.motion,
-          preset: jobPreset,
-          quality,
-          qualityManifestPath: request.qualityManifestPath,
-          workflowIdempotencyHash
-        });
-        const audioWarnings = debugAudioWarningsForMotionExportPreset(
-          jobPreset,
-          resolvePackageAudioInputs({ root: pkg.root, manifest: job.manifest, motion: job.motion }).length
-        );
-        return {
+        const frameTransport = readFfmpegExportPreset(jobPreset) ? planFinalVideoFrameTransport({ keepFrames: request.keepFrames, capturedBrowserWorkflow: Boolean(request.workflow || request.workflowPath), exactSourceQuality: request.frameLane !== "gpu" && Boolean(request.qualityManifestPath), minUniqueFrameHashes: request.minUniqueFrameHashes, injectedFrameRenderer: Boolean(renderContext?.browserFrameRenderer || renderContext?.agentScriptAuthority) }) : undefined;
+        const packageDir = join(request.outDir, "packages", job.manifest.id);
+        const outputPath = debugBatchOutputPath(join(request.outDir, "render"), job.manifest.id, jobPreset);
+        const qualitySnapshot = request.qualityManifestPath ? await prepareBatchQualityManifestSnapshot({ sourcePath: request.qualityManifestPath, context: { values: job.row.values, rowId: job.row.id, rowIndex: job.row.index, rowHash: job.row.hash, rowKey: job.row.key, packageId: job.manifest.id, packageDir, outputPath }, requestBudget: qualityRequestBudget }) : undefined, qualityInputs = qualitySnapshot ? batchQualityInputEvidence(qualitySnapshot) : undefined;
+        const idempotencyKey = debugBatchJobIdempotencyKey({ packageId: job.manifest.id, rowId: job.row.id, rowHash: job.row.hash, manifest: job.manifest, motion: job.motion, preset: jobPreset, quality, qualityInputs, frameLane: request.frameLane, keepFrames: request.keepFrames, workflowIdempotencyHash });
+        const audioWarnings = debugAudioWarningsForMotionExportPreset(jobPreset, resolvePackageAudioInputs({ root: pkg.root, manifest: job.manifest, motion: job.motion }).length);
+        jobs.push({
           rowId: job.row.id,
           rowHash: job.row.hash,
           rowKey: job.row.key,
           idempotencyKey,
           packageId: job.manifest.id,
-          packageDir: join(request.outDir, "packages", job.manifest.id),
-	          outputPath: debugBatchOutputPath(join(request.outDir, "render"), job.manifest.id, jobPreset),
-	          preset: jobPreset,
-	          ...(quality ? { quality } : {}),
-	          ...(request.qualityManifestPath ? { qualityManifestPath: request.qualityManifestPath } : {}),
-	          status: "not_run",
-	          ...(audioWarnings.length > 0 ? { warnings: audioWarnings } : {})
-	        };
-	      });
-      return { ok: true as const, value: { request, pkg, rows, expanded, presetPlan, presetSummary, quality, jobs } };
+          packageDir,
+          outputPath,
+          preset: jobPreset,
+          frameLane: request.frameLane,
+          ...(frameTransport ? { frameTransport } : {}),
+          ...(request.keepFrames !== undefined ? { keepFrames: request.keepFrames } : {}),
+          ...(quality ? { quality } : {}),
+          ...(request.qualityManifestPath ? { qualityManifestPath: request.qualityManifestPath } : {}),
+          ...(qualityInputs ? { qualityInputs } : {}),
+          status: "not_run",
+          ...(audioWarnings.length > 0 ? { warnings: audioWarnings } : {})
+        });
+        qualitySnapshots.push(qualitySnapshot);
+      }
+      return { ok: true as const, value: { request, pkg, rows, expanded, presetPlan, presetSummary, quality, jobs, qualitySnapshots } };
     } catch (error) {
       return { ok: false as const, result: renderBatchFailure(error) };
     }
   }
 
   async function runDebugBatchPlan(request: BatchRenderRequest, context: MotionDebugContext): Promise<MotionDebugResult> {
-    const prepared = await prepareDebugBatchRender(request);
+    const prepared = await prepareDebugBatchRender(request, context);
     if (!prepared.ok) return prepared.result;
     const { pkg, rows, expanded, presetSummary, quality, jobs } = prepared.value;
     const { outDir, qualityManifestPath } = request;
     try {
       if (await isUnsafePackageOutputDir(pkg.root, outDir)) return invalidArgs("motion.render.batch outDir must be outside packageRoot.");
-      if (!await isEmptyOrAbsentDir(outDir)) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
-      const packagesRoot = join(outDir, "packages");
-      const renderRoot = join(outDir, "render");
-      // A caller-named `outDir` becomes a receipt store here, and that was reviewed rather than
-      // fenced. It grants no authority the command does not already have: `outDir` IS the batch's
-      // declared output, so writing `receipts/` beside `render/` and `packages/` is the same write
-      // the caller asked for, bounded by the two checks above (outside packageRoot, empty or
-      // absent). What would make it a disclosure primitive is READING the store back, and that is
-      // refused: `receiptsRoot` at the transport boundary must be inside a host-declared root, and
-      // a caller's outDir is not one. Pinned by a live-server case in
-      // `packages/debug-server/src/sdk-transport-fence.test.ts`. Constraining where renders may
-      // land at all is a host-declared output-root decision (`authoringOutputRoots`), not something
-      // to bolt onto this one command.
-      const receiptsRoot = join(outDir, "receipts");
-      await mkdir(packagesRoot, { recursive: true });
-      await mkdir(renderRoot, { recursive: true });
-      await mkdir(receiptsRoot, { recursive: true });
+      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume: false });
+      if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
+      const { batchOutput, packagesRoot, renderRoot, receiptsRoot } = preparedOutput;
+      // `outDir` was admitted against the host-owned render output roots before
+      // any package read or output claim. Its derived receipts/packages/render
+      // children therefore retain that same authority; a caller still cannot
+      // nominate a separate receipt store for later reads.
       for (let index = 0; index < expanded.length; index += 1) {
-        await writeExpandedMotionPackage(expanded[index], pkg, jobs[index].packageDir);
+        await batchOutput.assertCurrent();
+        const packageAssetInputHashes = await writeExpandedMotionPackage(expanded[index], pkg, jobs[index].packageDir);
+        await batchOutput.assertCurrent();
         const planReceiptPath = await writeDebugBatchRowPlanReceipt({
           receiptsRoot, dryRun: true, packageId: expanded[index].manifest.id,
           row: expanded[index].row, manifest: expanded[index].manifest, motion: expanded[index].motion,
           packageDir: jobs[index].packageDir, outputPath: jobs[index].outputPath,
           preset: jobs[index].preset, status: "not_run", idempotencyKey: jobs[index].idempotencyKey,
-          quality, qualityManifestPath, warnings: debugResultWarnings(jobs[index]), actor: context.actor
+          quality, qualityManifestPath, qualityInputs: jobs[index].qualityInputs, frameLane: request.frameLane, frameTransport: jobs[index].frameTransport as ReturnType<typeof planFinalVideoFrameTransport> | undefined, packageAssetInputHashes, warnings: debugResultWarnings(jobs[index]), actor: context.actor
         });
         Object.assign(jobs[index], { planReceiptPath, receiptPath: planReceiptPath });
       }
+      await batchOutput.assertCurrent();
       const receipt = await writeDebugBatchReceipt({
         receiptsRoot, pkg, rows, dryRun: true, preset: request.preset, ...presetSummary,
-        quality, qualityManifestPath, jobs, status: "not_run", actor: context.actor
+        quality, qualityManifestPath, frameLane: request.frameLane, jobs, status: "not_run", actor: context.actor
       });
       const receiptPath = join(receiptsRoot, "batch-render.receipt.json");
       return {
@@ -1326,44 +1601,42 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         warnings: receipt.warnings
       };
     } catch (error) {
+      const topologyError = debugBatchOutputTopologyError(error); if (topologyError) return invalidArgs(topologyError.message);
       return renderBatchFailure(error);
     }
   }
 
-	  async function runDebugBatchExecution(request: BatchRenderRequest, renderContext: MotionDebugContext): Promise<MotionDebugResult> {
-	    const context = renderContext;
-    const prepared = await prepareDebugBatchRender(request);
+  async function runDebugBatchExecution(request: BatchRenderRequest, renderContext: MotionDebugContext): Promise<MotionDebugResult> {
+    const context = renderContext;
+    const prepared = await prepareDebugBatchRender(request, context);
     if (!prepared.ok) return prepared.result;
-    const { pkg, rows, expanded, presetPlan, presetSummary, quality, jobs } = prepared.value;
-    const { outDir, qualityManifestPath, resume, workflowPath } = request;
+    const { pkg, rows, expanded, presetPlan, presetSummary, quality, jobs, qualitySnapshots } = prepared.value;
+    const { outDir, qualityManifestPath, keepFrames, resume, workflowPath } = request;
     const workflowArg = request.workflow;
     const dryRun = false;
     const motionPreset = request.preset;
+    // Child deliveries are recorded before the first post-render batch assertion.  A later batch
+    // bookkeeping failure must return these reconciliation facts rather than erase a committed
+    // or possibly-committed final result behind a generic batch error.
+    const renderedJobs: Array<Record<string, unknown>> = [];
     try {
 
       if (await isUnsafePackageOutputDir(pkg.root, outDir)) {
         return invalidArgs("motion.render.batch outDir must be outside packageRoot.");
       }
-      if (!resume && !await isEmptyOrAbsentDir(outDir)) {
-        return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
-      }
-
-      const packagesRoot = join(outDir, "packages");
-      const renderRoot = join(outDir, "render");
-      const receiptsRoot = join(outDir, "receipts");
-      const framesRoot = join(outDir, "frames");
+      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume, keepFrames });
+      if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
+      const { batchOutput, packagesRoot, renderRoot, receiptsRoot, framesRoot } = preparedOutput;
       const previousBatchJobs = resume ? await readDebugBatchResumeJobs(join(receiptsRoot, "batch-render.receipt.json")) : new Map<string, Record<string, unknown>>();
-      await mkdir(packagesRoot, { recursive: true });
-      await mkdir(renderRoot, { recursive: true });
-      await mkdir(receiptsRoot, { recursive: true });
-      await mkdir(framesRoot, { recursive: true });
 
-      const renderedJobs: Array<Record<string, unknown>> = [];
       for (let index = 0; index < expanded.length; index += 1) {
+        if (index > 0) await context.batchTestHooks?.beforeNextRow?.();
+        await batchOutput.assertCurrent();
         const expandedJob = expanded[index];
         const planJob = jobs[index];
         const jobPreset = presetPlan.presets[index];
-        await writeExpandedMotionPackage(expandedJob, pkg, planJob.packageDir);
+        const packageAssetInputHashes = await writeExpandedMotionPackage(expandedJob, pkg, planJob.packageDir);
+        await batchOutput.assertCurrent();
         const planReceiptPath = await writeDebugBatchRowPlanReceipt({
           receiptsRoot,
           dryRun,
@@ -1378,12 +1651,17 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           idempotencyKey: planJob.idempotencyKey,
           quality,
           qualityManifestPath,
+          qualityInputs: planJob.qualityInputs,
+          frameLane: request.frameLane,
+          frameTransport: planJob.frameTransport as ReturnType<typeof planFinalVideoFrameTransport> | undefined,
+          packageAssetInputHashes,
           warnings: debugResultWarnings(planJob),
           actor: context.actor
         });
         Object.assign(planJob, { planReceiptPath });
+        await batchOutput.assertCurrent();
 
-        const resumeMatch = resume ? readDebugBatchResumeMatch(previousBatchJobs, planJob.idempotencyKey, planJob.outputPath) : null;
+        const resumeMatch = request.frameLane === "gpu" ? null : resume ? readDebugBatchResumeMatch(previousBatchJobs, planJob.idempotencyKey, planJob.outputPath) : null;
         if (resumeMatch) {
           const sourceReceiptPath = debugBatchResumeSourceReceiptPath(resumeMatch);
           renderedJobs.push({
@@ -1395,142 +1673,117 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           continue;
         }
 
+        const qualitySnapshot = qualitySnapshots[index];
+        const materialized = qualitySnapshot ? await publishBatchQualityManifestSnapshot({
+          snapshot: qualitySnapshot,
+          targetRoot: join(receiptsRoot, "quality-manifests", `${expandedJob.manifest.id}-${qualitySnapshot.closureSha256.slice(0, 24)}`)
+        }) : undefined;
+        const rowQualityManifestPath = materialized?.path;
+        const qualityManifestAppliedPath = materialized?.appliedPath;
         const renderResult = await dispatchDebugCommand(
           "motion.render.final",
           {
             packageRoot: planJob.packageDir,
             outputPath: planJob.outputPath,
-            framesDir: debugBatchFramesDir(framesRoot, expandedJob.manifest.id, planJob.idempotencyKey),
+            ...(keepFrames ? { framesDir: debugBatchFramesDir(framesRoot, expandedJob.manifest.id, planJob.idempotencyKey) } : {}),
             receiptsRoot,
             preset: jobPreset,
+            frameLane: request.frameLane,
             ...(workflowArg ? { workflow: workflowArg } : {}),
             ...(workflowPath ? { workflowPath } : {}),
+            ...(rowQualityManifestPath ? { qualityManifestPath: rowQualityManifestPath } : {}),
+            ...(keepFrames !== undefined ? { keepFrames } : {}),
             ...(quality ? { minUniqueFrameHashes: quality.minUniqueFrameHashes } : {}),
             dryRun: false
           },
-          context
+          {
+            ...context,
+            scratchRoot: context.scratchRoot ?? join(outDir, ".shellx-motion", "scratch"),
+            finalRenderQualityOutDir: join(receiptsRoot, "quality", expandedJob.manifest.id),
+            qualityInputRoots: [...(context.qualityInputRoots ?? []), outDir, renderRoot],
+            // These are not a request-derived expansion: batch already admitted
+            // outDir as its host-owned output root, then created these children.
+            // Re-entry must retain that authority for its own final-render fence.
+            renderPackageRoots: [...(context.renderPackageRoots ?? []), ...(context.operatorRenderPackageRoots ?? []), outDir],
+            // A workflow file previously admitted through the host-owned debug scratch root
+            // remains an input when this batch row re-enters the final-render boundary.
+            // Never infer a root from workflowPath itself.
+            renderInputRoots: [...(context.renderInputRoots ?? []), ...(context.operatorRenderInputRoots ?? []), ...(context.scratchRoot ? [context.scratchRoot] : []), outDir, renderRoot],
+            renderOutputRoots: [...(context.renderOutputRoots ?? []), ...(context.operatorRenderOutputRoots ?? []), outDir],
+            ...(materialized && planJob.qualityInputs ? { retainedBatchQualityManifest: { published: materialized, evidence: planJob.qualityInputs as BatchQualityInputEvidence } } : {})
+          }
         );
-	        const warnings = debugResultWarnings(renderResult);
-	        const renderPayload = renderResult.ok ? objectRecord(renderResult.result) : null;
-	        const receiptPath = typeof renderPayload?.receiptPath === "string" ? renderPayload.receiptPath : undefined;
-	        let qualityCheck: MotionDebugResult | undefined;
-	        let qualityManifestAppliedPath: string | undefined;
-	        if (renderResult.ok && qualityManifestPath) {
-	          const materialized = await materializeDebugBatchQualityManifest({
-	            sourcePath: qualityManifestPath,
-	            targetPath: join(receiptsRoot, "quality-manifests", `${expandedJob.manifest.id}.quality-manifest.json`),
-	            row: expandedJob.row,
-	            packageId: expandedJob.manifest.id,
-	            packageDir: planJob.packageDir,
-	            outputPath: planJob.outputPath
-	          });
-	          qualityManifestAppliedPath = materialized.appliedPath;
-	          qualityCheck = jobPreset === "png-frame"
-	            ? await runDebugPngStillFrameQualityManifest({
-	                inputPath: planJob.outputPath,
-	                manifestPath: materialized.path,
-	                outDir: join(receiptsRoot, "quality", expandedJob.manifest.id),
-	                receiptsRoot,
-	                packageId: expandedJob.manifest.id,
-	                actor: context.actor
-	              })
-	            : jobPreset === "png-sequence"
-	              ? await runDebugPngSequenceQualityManifest({
-	                  inputPath: planJob.outputPath,
-	                  manifestPath: materialized.path,
-	                  outDir: join(receiptsRoot, "quality", expandedJob.manifest.id),
-	                  receiptsRoot,
-	                  packageId: expandedJob.manifest.id,
-	                  durationMs: expandedJob.motion.durationMs,
-	                  fps: expandedJob.motion.fps,
-	                  actor: context.actor
-	                })
-	            : await dispatchDebugCommand(
-	                "motion.quality.check",
-	                {
-	                  inputPath: planJob.outputPath,
-	                  manifestPath: materialized.path,
-	                  outDir: join(receiptsRoot, "quality", expandedJob.manifest.id)
-	                },
-	                {
-	                  ...context,
-	                  scratchRoot: context.scratchRoot ?? outDir,
-	                  qualityInputRoots: [...(context.qualityInputRoots ?? []), outDir, renderRoot]
-	                }
-	              );
-	        }
-	        const qualityOk = qualityCheck ? qualityCheck.ok : true;
-	        const rowWarnings = dedupeWarnings([
-	          ...warnings,
-	          ...(qualityCheck ? debugResultWarnings(qualityCheck) : [])
-	        ]);
-	        const renderedJob = {
-	          ...planJob,
-	          // Same rule as the CLI batch (`packages/cli/src/main.ts`) and as the row's own render
-	          // receipt. This field is typed in RECEIPT vocabulary, so it answers the same question
-	          // that receipt answers and must answer it the same way. measured during cross-host verification before this
-	          // line escalated: rendering fixtures/packages/batch-card at mp4-h264 through BOTH batch
-	          // surfaces produced the identical `Rendered motion is static for 100.0%` advisory, and
-	          // the CLI reported `warning` on every row while this surface reported `passed` while
-	          // carrying it — the receipt must not claim success while reporting frozen output.
-	          // the cross-surface sweep fixed the CLI, the connectors and core but not this one.
-	          status: escalateReceiptStatusForWarnings(renderResult.ok && qualityOk ? "passed" : "failed", rowWarnings),
-	          ...(renderResult.ok && renderResult.receiptId ? { receiptId: renderResult.receiptId } : {}),
-	          ...(receiptPath ? { receiptPath } : {}),
-	          ...(qualityManifestAppliedPath ? { qualityManifestAppliedPath } : {}),
-	          ...(qualityCheck ? { qualityCheck: qualityCheck.ok ? qualityCheck.result : { ok: false, error: qualityCheck.error, warnings: qualityCheck.warnings } } : {}),
-	          ...(rowWarnings.length > 0 ? { warnings: rowWarnings } : {}),
-	          render: renderResult.ok ? renderResult.result : { ok: false, error: renderResult.error, warnings: renderResult.warnings }
-	        };
+        const { renderPayload, renderQualityCheck, receiptPath, possiblyCommittedPaths, rowWarnings, uncertaintyFields } = debugBatchRenderedDelivery(renderResult);
+        const renderedJob = {
+          ...planJob,
+          // Same rule as the CLI batch (`packages/cli/src/main.ts`) and as the row's own render
+          // receipt. This field is typed in RECEIPT vocabulary, so it answers the same question
+          // that receipt answers and must answer it the same way. measured during cross-host verification before this
+          // line escalated: rendering fixtures/packages/batch-card at mp4-h264 through BOTH batch
+          // surfaces produced the identical `Rendered motion is static for 100.0%` advisory, and
+          // the CLI reported `warning` on every row while this surface reported `passed` while
+          // carrying it — the receipt must not claim success while reporting frozen output.
+          // the cross-surface sweep fixed the CLI, the connectors and core but not this one.
+          status: escalateReceiptStatusForWarnings(possiblyCommittedPaths.length > 0 ? "warning" : renderResult.ok ? "passed" : "failed", rowWarnings),
+          ...(renderResult.ok && renderResult.receiptId ? { receiptId: renderResult.receiptId } : {}),
+          ...(receiptPath ? { receiptPath } : {}),
+          ...(renderResult.ok && typeof renderPayload?.outputPath === "string" && receiptPath
+            ? { renderCommitted: true, renderOutputPath: renderPayload.outputPath, renderReceiptPath: receiptPath }
+            : {}),
+          ...uncertaintyFields,
+          ...(qualityManifestAppliedPath ? { qualityManifestAppliedPath } : {}),
+          ...(renderQualityCheck ? { qualityCheck: renderQualityCheck.ok === true ? renderQualityCheck.result : renderQualityCheck } : {}),
+          ...(rowWarnings.length > 0 ? { warnings: rowWarnings } : {}),
+          render: renderResult.ok ? renderResult.result : { ok: false, error: renderResult.error, warnings: renderResult.warnings }
+        };
         renderedJobs.push(renderedJob);
+        await context.batchTestHooks?.beforePostRenderAssert?.();
+        await batchOutput.assertCurrent();
 
-	        if (!renderResult.ok) {
-	          const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
-	          const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "failed", actor: context.actor });
-	          return {
-	            ok: false,
-	            error: debugBatchRenderError(expandedJob, renderResult),
-	            warnings: receipt.warnings
-	          };
-	        }
-	        if (!qualityOk && qualityCheck) {
-	          const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
-	          const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "failed", actor: context.actor });
-	          return {
-	            ok: false,
-	            error: debugBatchQualityError(expandedJob, qualityCheck),
-	            warnings: receipt.warnings
-	          };
-	        }
-	      }
+        if (!renderResult.ok) {
+          const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
+          await batchOutput.assertCurrent();
+          await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
+          const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: possiblyCommittedPaths.length > 0 ? "warning" : "failed", actor: context.actor });
+          const delivery = debugBatchDeliveryFields(renderedJobs);
+          return {
+            ok: false,
+            error: debugBatchRenderError(expandedJob, renderResult),
+            result: { jobs: renderedJobs, receipt, receiptPath: join(receiptsRoot, "batch-render.receipt.json"), ...delivery },
+            warnings: receipt.warnings
+          };
+        }
+      }
 
-	      const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
-	      const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "passed", actor: context.actor });
-	      const receiptPath = join(receiptsRoot, "batch-render.receipt.json");
-	      return {
-	        ok: true,
+      const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
+      await batchOutput.assertCurrent();
+      await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
+      const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "passed", actor: context.actor });
+      const receiptPath = join(receiptsRoot, "batch-render.receipt.json");
+      return {
+        ok: true,
         receiptId: receipt.id,
         visibleState: {
           panel: "receipts",
           operation: "render.batch",
-	          packageId: pkg.manifest.id,
-	          preset: motionPreset,
-	          ...presetSummary,
-	          ...(quality ? { quality } : {}),
-	          ...(qualityManifestPath ? { qualityManifestPath } : {}),
-	          rows: rows.length,
-	          status: receipt.status
-	        },
+          packageId: pkg.manifest.id,
+          preset: motionPreset,
+          ...presetSummary,
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          rows: rows.length,
+          status: receipt.status
+        },
         result: {
           ok: true,
           packageId: pkg.manifest.id,
-	          dryRun,
-	          ...(resume ? { resume, ...batchCounts } : {}),
-	          preset: motionPreset,
-	          ...presetSummary,
-	          ...(quality ? { quality } : {}),
-	          ...(qualityManifestPath ? { qualityManifestPath } : {}),
-	          rows: rows.length,
+          dryRun,
+          ...(resume ? { resume, ...batchCounts } : {}),
+          preset: motionPreset,
+          ...presetSummary,
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          rows: rows.length,
           jobs: renderedJobs,
           receipt,
           receiptPath
@@ -1538,6 +1791,20 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         warnings: receipt.warnings
       };
     } catch (error) {
+      const topologyError = debugBatchOutputTopologyError(error); if (topologyError) return invalidArgs(topologyError.message);
+      const delivery = debugBatchDeliveryFields(renderedJobs);
+      if (Object.keys(delivery).length > 0) {
+        return {
+          ok: false,
+          error: {
+            code: "render_batch_bookkeeping_failed",
+            message: error instanceof Error ? error.message : String(error),
+            detail: delivery
+          },
+          result: { jobs: renderedJobs, ...delivery },
+          warnings: []
+        };
+      }
       return {
         ok: false,
         error: {
@@ -1559,6 +1826,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     warnings: []
   };
 }
+
 
 function unknownCommand(command: unknown): MotionDebugResult {
   return {
@@ -1596,14 +1864,13 @@ function unhandledDebugCommandError(command: unknown, error: unknown): MotionDeb
  * per-row paths are Motion's own; the difference is argument provenance, not the command name.
  */
 async function executePromptDebugCommands(
-  proposals: PromptDebugCommandProposal[],
-  context: MotionDebugContext
+  proposals: PromptDebugCommandProposal[], context: MotionDebugContext
 ): Promise<PromptDebugCommandExecutionSummary> {
   const commands: PromptDebugCommandExecutionRecord[] = [];
   const receiptIds: string[] = [];
-
   for (const proposal of proposals) {
-    const result = await dispatchCallerSteeredCommand(proposal.command, proposal.args, context);
+    const refusal = promptCommandRefusal(proposal.command);
+    const result: MotionDebugResult = refusal ? invalidArgs(refusal) : await dispatchCallerSteeredCommand(proposal.command, proposal.args, context);
     const childReceipt = result.ok ? operationReceiptFromDebugResult(result.result) : null;
     if (childReceipt && context.receiptsRoot) {
       // Prompt-driven child operations inherit the prompt's actor context: stamp the copied child
@@ -1646,6 +1913,24 @@ function hasTier(actual: MotionPermissionTier, required: MotionPermissionTier): 
   return TIER_ORDER.indexOf(actual) >= TIER_ORDER.indexOf(required);
 }
 
+function insufficientTierRefusal(command: MotionDebugCommand, requiredTier: MotionPermissionTier, context: MotionDebugContext): MotionDebugResult | null {
+  if (hasTier(context.tier, requiredTier)) return null;
+  // Worded by @shellx-motion/actions' tierRefusal, not here. The old suggestedAction was
+  // "Retry with <tier> permission." — an instruction the receiving agent cannot carry out, since
+  // Motion has no elevation command and requestedTier is capped at the host's startup grant. A
+  // suggestedAction has to name something its reader can actually do, which for a tier refusal
+  // means naming the host operator's change. See packages/actions/src/permission-refusal.ts.
+  return {
+    ok: false,
+    error: tierRefusal({
+      subject: command,
+      requiredTier,
+      ...(context.tier ? { grantedTier: context.tier } : {})
+    }),
+    warnings: []
+  };
+}
+
 function readStringArg(args: unknown, key: string): string | null {
   const record = objectRecord(args);
   if (!record || !(key in record)) return null;
@@ -1663,58 +1948,6 @@ function readRecordArg(args: unknown, key: string): Record<string, unknown> | nu
   const record = objectRecord(args);
   if (!record || !(key in record)) return null;
   return objectRecord(record[key]);
-}
-
-interface BrowserWorkflowRenderEvidence {
-  workflow?: unknown;
-  workflowTrace?: unknown;
-  workflowHash?: string;
-}
-
-function browserWorkflowEvidenceFromFrame(frame: { output?: unknown; receipt?: unknown }): BrowserWorkflowRenderEvidence | undefined {
-  const output = objectRecord(frame.output);
-  const receipt = objectRecord(frame.receipt);
-  const inputHashes = objectRecord(receipt?.inputHashes);
-  const workflow = output?.workflow;
-  const workflowTrace = output?.workflowTrace;
-  const workflowHash = typeof inputHashes?.workflow === "string"
-    ? inputHashes.workflow
-    : workflowHashFromTrace(workflowTrace);
-  if (workflow === undefined && workflowTrace === undefined && !workflowHash) return undefined;
-  return {
-    ...(workflow !== undefined ? { workflow } : {}),
-    ...(workflowTrace !== undefined ? { workflowTrace } : {}),
-    ...(workflowHash ? { workflowHash } : {})
-  };
-}
-
-function workflowHashFromTrace(value: unknown): string | undefined {
-  const trace = objectRecord(value);
-  return typeof trace?.workflowHash === "string" ? trace.workflowHash : undefined;
-}
-
-function enrichRenderReceiptWithBrowserWorkflow(
-  receipt: OperationReceipt,
-  evidence: BrowserWorkflowRenderEvidence | undefined
-): void {
-  if (!evidence) return;
-  if (evidence.workflowHash) {
-    receipt.inputHashes = { ...receipt.inputHashes, workflow: evidence.workflowHash };
-  }
-  const output = objectRecord(receipt.output) ?? {};
-  receipt.output = {
-    ...output,
-    ...(evidence.workflow !== undefined ? { workflow: evidence.workflow } : {}),
-    ...(evidence.workflowTrace !== undefined ? { workflowTrace: evidence.workflowTrace } : {})
-  };
-}
-
-function browserWorkflowResultFields(evidence: BrowserWorkflowRenderEvidence | undefined): Record<string, unknown> {
-  if (!evidence) return {};
-  return {
-    ...(evidence.workflow !== undefined ? { workflow: evidence.workflow } : {}),
-    ...(evidence.workflowTrace !== undefined ? { workflowTrace: evidence.workflowTrace } : {})
-  };
 }
 
 function readNonEmptyRecordString(record: Record<string, unknown>, key: string): string | null {
@@ -1790,51 +2023,6 @@ function readFiniteNumberArg(args: unknown, key: string): number | false | null 
   return typeof value === "number" && Number.isFinite(value) ? value : false;
 }
 
-function readKeyframeValueArg(args: unknown, key: string): string | number | false | null {
-  const record = objectRecord(args);
-  if (!record || !(key in record)) return null;
-  const value = record[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim().length > 0) return value.trim();
-  return false;
-}
-
-function readNonNegativeNumberArg(args: unknown, key: string): number | false | null {
-  const record = objectRecord(args);
-  if (!record || !(key in record)) return null;
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : false;
-}
-
-function readNonNegativeIntegerArg(args: unknown, key: string): number | false | null {
-  const record = objectRecord(args);
-  if (!record || !(key in record)) return null;
-  const value = record[key];
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : false;
-}
-
-function readPositiveNumberArg(args: unknown, key: string): number | false | null {
-  const record = objectRecord(args);
-  if (!record || !(key in record)) return null;
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : false;
-}
-
-function readPositiveIntegerArg(args: unknown, key: string): number | false | null {
-  const record = objectRecord(args);
-  if (!record || !(key in record)) return null;
-  const value = record[key];
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) return false;
-  return value;
-}
-
-function qualityCheckInputRoots(context: MotionDebugContext): string[] {
-  return [
-    ...(context.qualityInputRoots ?? []),
-    context.scratchRoot ?? ".scratch"
-  ].map((root) => resolve(root));
-}
-
 /**
  * Does a quality manifest over this preset read the delivered media back through FFprobe?
  *
@@ -1850,7 +2038,7 @@ function debugQualityReadbackUsedFfprobe(preset: MotionExportPreset): boolean {
 }
 
 async function runDebugRenderQualityManifest(input: {
-  inputPath: string;
+  inputPath: string; displayInputPath?: string;
   manifestPath: string;
   preset: MotionExportPreset;
   packageRoot: string;
@@ -1860,37 +2048,59 @@ async function runDebugRenderQualityManifest(input: {
   outDir: string;
   receiptsRoot?: string;
   context: MotionDebugContext;
+  retainedBatchQualityManifest?: { published: PublishedBatchQualityManifestSnapshot; evidence: BatchQualityInputEvidence };
 }): Promise<MotionDebugResult> {
+  let retained: Awaited<ReturnType<typeof retainDebugQualityManifestForEvaluation>> | undefined;
+  if (!input.retainedBatchQualityManifest) {
+    try {
+      retained = await retainDebugQualityManifestForEvaluation({
+        sourcePath: input.manifestPath,
+        targetRoot: join(input.outDir, ".quality-inputs"),
+        packageId: input.packageId,
+        packageDir: resolve(input.packageRoot),
+        outputPath: resolve(input.inputPath)
+      });
+    } catch (error) {
+      return invalidArgs(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const retainedBatch = input.retainedBatchQualityManifest;
+  const manifestPath = retainedBatch?.published.appliedPath ?? retained!.published.appliedPath, qualityInputs = retainedBatch?.evidence ?? retained!.evidence, qualityInputHashes = debugQualityInputHashes(qualityInputs);
+  const displayPaths = retained ? debugQualityManifestDisplayPaths(retained, input.manifestPath) : undefined; const callerQualityInputHashes = retained ? { [input.manifestPath]: qualityInputs.manifestSha256, ...qualityInputHashes } : qualityInputHashes;
+  const finish = (result: MotionDebugResult): MotionDebugResult => attachDebugQualityInputs(result, input.manifestPath, manifestPath, qualityInputs);
   // The two pure-reader lanes. `debugQualityReadbackUsedFfprobe` must stay false for exactly these
   // presets — `debugQualityReadbackUsedFfprobe agrees with the readback dispatch` in
   // receipt-tool-provenance.test.ts asserts that over the whole preset list.
   if (input.preset === "png-frame") {
-    return runDebugPngStillFrameQualityManifest({
-      inputPath: input.inputPath,
-      manifestPath: input.manifestPath,
+    return finish(await runDebugPngStillFrameQualityManifest({
+      inputPath: input.inputPath, displayInputPath: input.displayInputPath,
+      manifestPath, displayManifestPath: displayPaths?.manifestPath, displayBaselinePath: displayPaths?.baselinePath,
       outDir: input.outDir,
       receiptsRoot: input.receiptsRoot,
       packageId: input.packageId,
+      receiptInputHashes: callerQualityInputHashes,
+      qualityInputRoots: qualityCheckInputRoots(input.context),
       actor: input.context.actor
-    });
+    }));
   }
   if (input.preset === "png-sequence") {
-    return runDebugPngSequenceQualityManifest({
-      inputPath: input.inputPath,
-      manifestPath: input.manifestPath,
+    return finish(await runDebugPngSequenceQualityManifest({
+      inputPath: input.inputPath, displayInputPath: input.displayInputPath,
+      manifestPath, displayManifestPath: displayPaths?.manifestPath, displayBaselinePath: displayPaths?.baselinePath,
       outDir: input.outDir,
       receiptsRoot: input.receiptsRoot,
       packageId: input.packageId,
       durationMs: input.durationMs,
       fps: input.fps,
+      receiptInputHashes: callerQualityInputHashes,
+      qualityInputRoots: qualityCheckInputRoots(input.context),
       actor: input.context.actor
-    });
+    }));
   }
-
-  const inputRoots = [...qualityCheckInputRoots(input.context), dirname(input.inputPath), input.packageRoot];
-  let media: Awaited<ReturnType<typeof probeMedia>>;
+  const physicalInputPath = input.inputPath, publicInputPath = input.displayInputPath ?? physicalInputPath;
+  let snapshot: Awaited<ReturnType<typeof snapshotSelfContainedFfmpegMediaInput>>;
   try {
-    media = await probeMedia(input.inputPath, { runner: input.context.ffmpegRunner, inputRoots });
+    snapshot = await snapshotSelfContainedFfmpegMediaInput(physicalInputPath, [...qualityCheckInputRoots(input.context), dirname(physicalInputPath), resolve(input.packageRoot)], "quality");
   } catch (error) {
     return {
       ok: false,
@@ -1901,83 +2111,46 @@ async function runDebugRenderQualityManifest(input: {
       warnings: []
     };
   }
-
-  return runDebugQualityManifest({
-    inputPath: input.inputPath,
-    manifestPath: input.manifestPath,
-    media,
-    outDir: input.outDir,
-    runner: input.context.ffmpegRunner,
-    inputRoots,
-    receiptsRoot: input.receiptsRoot,
-    actor: input.context.actor,
-    packageId: input.packageId,
-    defaults: {
-      minBrightPixels: 0,
-      minEdgePixels: 0,
-      minTransparentPixels: 0,
-      minNonTransparentPixels: 0,
-      maxChangedPixels: 0,
-      maxMeanDiff: 0
+  try {
+    let media: Awaited<ReturnType<typeof probeMedia>>;
+    try {
+      media = await probeMedia(snapshot.path, { runner: input.context.ffmpegRunner, inputRoots: [snapshot.root], admittedQualityInput: true });
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "ffmpeg_failed",
+          message: error instanceof Error ? error.message : String(error)
+        },
+        warnings: []
+      };
     }
-  });
-}
-
-async function enrichDebugRenderReceiptWithQualityManifest(
-  receipt: OperationReceipt,
-  qualityManifestPath: string,
-  qualityCheck: MotionDebugResult
-): Promise<void> {
-  receipt.inputHashes = {
-    ...receipt.inputHashes,
-    qualityManifest: await hashFile(qualityManifestPath)
-  };
-  const output = objectRecord(receipt.output) ?? {};
-  receipt.output = {
-    ...output,
-    qualityManifestPath,
-    qualityCheck: {
-      status: qualityCheck.ok ? "passed" : "failed"
-    }
-  };
-  receipt.status = qualityCheck.ok ? receipt.status : "failed";
-  receipt.warnings = dedupeWarnings([...receipt.warnings, ...debugResultWarnings(qualityCheck)]);
-}
-
-function debugRenderQualityManifestFailure(input: {
-  lane: "ffmpeg" | "image-sequence" | "image";
-  frameLane: string;
-  preset: MotionExportPreset;
-  outputPath: string;
-  receipt: OperationReceipt;
-  frameReceipt: unknown;
-  frames?: { dir: string; count: number };
-  qualityManifestPath: string;
-  qualityCheck: MotionDebugResult;
-  extra?: Record<string, unknown>;
-}): MotionDebugResult {
-  return {
-    ok: false,
-    error: {
-      code: input.qualityCheck.ok ? "quality_check_failed" : input.qualityCheck.error.code,
-      message: input.qualityCheck.ok ? "Final render quality manifest check failed." : input.qualityCheck.error.message,
-      detail: {
-        lane: input.lane,
-        frameLane: input.frameLane,
-        preset: input.preset,
-        outputPath: input.outputPath,
-        receipt: input.receipt,
-        frameReceipt: input.frameReceipt,
-        ...(input.frames ? { frames: input.frames } : {}),
-        qualityManifestPath: input.qualityManifestPath,
-        qualityCheck: input.qualityCheck,
-        ...(input.extra ?? {})
+    const result = await runDebugQualityManifest({
+      inputPath: snapshot.path,
+      displayInputPath: publicInputPath,
+      manifestPath, displayManifestPath: displayPaths?.manifestPath, displayBaselinePath: displayPaths?.baselinePath,
+      media,
+      outDir: input.outDir,
+      runner: input.context.ffmpegRunner,
+      inputRoots: [...qualityCheckInputRoots(input.context), dirname(physicalInputPath), snapshot.root, resolve(input.packageRoot)],
+      receiptsRoot: input.receiptsRoot,
+      actor: input.context.actor,
+      packageId: input.packageId,
+      receiptInputHashes: { [publicInputPath]: snapshot.sha256, ...callerQualityInputHashes },
+      defaults: {
+        minBrightPixels: 0,
+        minEdgePixels: 0,
+        minTransparentPixels: 0,
+        minNonTransparentPixels: 0,
+        maxChangedPixels: 0,
+        maxMeanDiff: 0
       }
-    },
-    warnings: input.receipt.warnings
-  };
+    });
+    return finish(result);
+  } finally {
+    await snapshot.release();
+  }
 }
-
 interface DebugQualityManifestSample {
   id: string;
   atMs: number;
@@ -2083,10 +2256,14 @@ interface DebugQualityRegionResult {
   quality?: ReturnType<typeof summarizeFrameQuality>;
   error?: { code: string; message: string };
 }
-
 async function runDebugQualityManifest(input: {
   inputPath: string;
+  /** Public source name only; FFmpeg still receives `inputPath`, which may be private. */
+  displayInputPath?: string;
   manifestPath: string;
+  /** Caller-visible paths are bound into receipts before their single durable write. */
+  displayManifestPath?: string; displayBaselinePath?: (appliedPath: string) => string;
+  displayFramePath?: (physicalPath: string) => string;
   media: Awaited<ReturnType<typeof probeMedia>>;
 	  outDir: string;
 	  runner?: FfmpegRunner;
@@ -2109,6 +2286,8 @@ async function runDebugQualityManifest(input: {
     minSsim?: number;
   };
 }): Promise<MotionDebugResult> {
+  const publicInputPath = input.displayInputPath ?? input.inputPath; const publicManifestPath = input.displayManifestPath ?? input.manifestPath;
+  const receiptMedia = input.displayInputPath ? { ...input.media, path: publicInputPath } : input.media;
   let manifest: DebugQualityManifest;
   try {
     manifest = readDebugQualityManifest(
@@ -2143,9 +2322,10 @@ async function runDebugQualityManifest(input: {
 
 	  let audioLevels: Awaited<ReturnType<typeof measureAudioLevels>> | undefined;
 	  if (manifest.audio) {
-	    const audioCheck = await debugQualityCheckAudioPolicy({
-	      inputPath: input.inputPath,
-	      manifestPath: input.manifestPath,
+    const audioCheck = await debugQualityCheckAudioPolicy({
+      inputPath: input.inputPath,
+      displayInputPath: publicInputPath,
+      manifestPath: publicManifestPath,
 	      media: input.media,
 	      runner: input.runner,
 	      inputRoots: input.inputRoots,
@@ -2161,9 +2341,12 @@ async function runDebugQualityManifest(input: {
 	    if (!audioCheck.ok) return audioCheck.result;
 	    audioLevels = audioCheck.audioLevels;
 	  }
+	  const receiptAudioLevels = input.displayInputPath && audioLevels
+	    ? { ...audioLevels, path: publicInputPath }
+	    : audioLevels;
 
 	  const sampleResults: DebugQualitySampleResult[] = [];
-  const mediaName = basename(input.inputPath).replace(/\.[^.]+$/, "") || "media";
+  const mediaName = basename(publicInputPath).replace(/\.[^.]+$/, "") || "media";
   for (const sample of manifest.samples) {
     const framePath = join(input.outDir, `${mediaName}-${safeFileToken(sample.id)}-frame.png`);
     const resolvedSourceFrame = input.sourceFrameForSample?.(sample);
@@ -2176,7 +2359,8 @@ async function runDebugQualityManifest(input: {
       sourceFramePath: resolvedSourceFrame?.path ?? input.sourceFramePath,
       sourceFrameRequiresAtMsZero: resolvedSourceFrame
         ? resolvedSourceFrame.requiresAtMsZero ?? false
-        : Boolean(input.sourceFramePath)
+        : Boolean(input.sourceFramePath),
+      displayBaselinePath: input.displayBaselinePath?.(sample.baselinePath ?? "")
     });
     const previous = sampleResults.at(-1);
     if (result.ok && result.framePath && previous?.ok && previous.framePath
@@ -2206,47 +2390,47 @@ async function runDebugQualityManifest(input: {
 	      return qualityFailureWithReceipt({
 	        code,
 	        message,
-	        packageId: input.packageId,
-	        inputPath: input.inputPath,
-	        manifestPath: input.manifestPath,
-	        receiptsRoot: input.receiptsRoot,
-	        inputHashes: input.receiptInputHashes,
+        packageId: input.packageId,
+        inputPath: publicInputPath,
+        manifestPath: publicManifestPath,
+        receiptsRoot: input.receiptsRoot,
+        actor: input.actor, inputHashes: input.receiptInputHashes,
 	        output: {
-	          inputPath: input.inputPath,
-	          manifestPath: input.manifestPath,
-	          media: input.media,
+          inputPath: publicInputPath,
+          manifestPath: publicManifestPath,
+	          media: receiptMedia,
 	          ...(manifest.audio ? { audio: manifest.audio } : {}),
-	          ...(audioLevels ? { audioLevels } : {}),
+	          ...(receiptAudioLevels ? { audioLevels: receiptAudioLevels } : {}),
 	          sampleCount: sampleResults.length,
-	          samples: sampleResults
+	          samples: displayDebugQualitySampleFrames(sampleResults, input.displayFramePath)
 	        }
 	      });
 	    }
 	  }
 
-  const warnings = sampleResults.flatMap((entry) => entry.warnings ?? []);
-  const receiptId = `quality-check-${hashBuffer(Buffer.from(JSON.stringify({
-		    inputPath: input.inputPath,
-	    manifestPath: input.manifestPath,
-	    media: input.media,
+  const displaySamples = displayDebugQualitySampleFrames(sampleResults, input.displayFramePath); const warnings = sampleResults.flatMap((entry) => entry.warnings ?? []);
+	  const receiptId = `quality-check-${hashBuffer(Buffer.from(JSON.stringify({
+		    inputPath: publicInputPath,
+	    manifestPath: publicManifestPath,
+	    media: receiptMedia,
 	    audio: manifest.audio,
-	    audioLevels,
-		    samples: sampleResults
+	    audioLevels: receiptAudioLevels,
+		    samples: displaySamples
 		  }), "utf8")).slice(0, 16)}`;
 	  const output = {
-	    inputPath: input.inputPath,
-	    manifestPath: input.manifestPath,
-	    media: input.media,
+	    inputPath: publicInputPath,
+	    manifestPath: publicManifestPath,
+	    media: receiptMedia,
 	    ...(manifest.audio ? { audio: manifest.audio } : {}),
-	    ...(audioLevels ? { audioLevels } : {}),
+	    ...(receiptAudioLevels ? { audioLevels: receiptAudioLevels } : {}),
 	    sampleCount: sampleResults.length,
-	    samples: sampleResults
+	    samples: displaySamples
 	  };
 	  const receipt = await createDebugQualityReceipt({
 	    id: receiptId,
 	    packageId: input.packageId,
-	    inputPath: input.inputPath,
-	    manifestPath: input.manifestPath,
+	    inputPath: publicInputPath,
+	    manifestPath: publicManifestPath,
 	    output,
 	    inputHashes: input.receiptInputHashes,
 	    warnings
@@ -2259,8 +2443,8 @@ async function runDebugQualityManifest(input: {
 	    visibleState: {
 	      panel: "receipts",
 	      operation: "quality.check",
-		      inputPath: input.inputPath,
-		      manifestPath: input.manifestPath,
+		      inputPath: publicInputPath,
+		      manifestPath: publicManifestPath,
 		      ...(manifest.audio ? { audio: manifest.audio } : {}),
 		      ok: true,
 		      status: receipt.status,
@@ -2278,40 +2462,43 @@ async function runDebugQualityManifest(input: {
 		}
 
 async function runDebugPngStillFrameQualityManifest(input: {
-  inputPath: string;
+  inputPath: string; displayInputPath?: string;
   manifestPath: string;
+  displayManifestPath?: string; displayBaselinePath?: (appliedPath: string) => string;
   outDir: string;
   receiptsRoot?: string;
-  packageId: string;
+  packageId: string; qualityInputRoots: string[];
+  receiptInputHashes?: Record<string, string>;
   /** Transport-observed actor, threaded from the render context onto the quality receipt. */
   actor?: ReceiptActor;
 }): Promise<MotionDebugResult> {
-  const inspected = await inspectPngFile(input.inputPath);
+  const publicInputPath = input.displayInputPath ?? input.inputPath, inputHashes = { ...(input.receiptInputHashes ?? {}), [input.displayInputPath ?? input.inputPath]: await hashReceiptInputPath(input.inputPath) }, inspected = await inspectPngFile(input.inputPath);
   if (!inspected.ok) {
     return qualityFailureWithReceipt({
       code: "visual_quality_failed",
       message: inspected.message,
       packageId: input.packageId,
-      inputPath: input.inputPath,
-      manifestPath: input.manifestPath,
+      inputPath: publicInputPath,
+      manifestPath: input.displayManifestPath ?? input.manifestPath,
       receiptsRoot: input.receiptsRoot,
-      actor: input.actor,
+      actor: input.actor, inputHashes,
       output: {
-        inputPath: input.inputPath,
-        manifestPath: input.manifestPath
+        inputPath: publicInputPath,
+        manifestPath: input.displayManifestPath ?? input.manifestPath
       }
     });
   }
   return runDebugQualityManifest({
-    inputPath: input.inputPath,
-    manifestPath: input.manifestPath,
+    inputPath: input.inputPath, displayInputPath: publicInputPath,
+    manifestPath: input.manifestPath, displayManifestPath: input.displayManifestPath, displayBaselinePath: input.displayBaselinePath,
     media: debugPngStillFrameMedia(input.inputPath, inspected),
     outDir: input.outDir,
-    inputRoots: [dirname(input.inputPath)],
+    inputRoots: [...input.qualityInputRoots, dirname(input.inputPath)],
     receiptsRoot: input.receiptsRoot,
     actor: input.actor,
     packageId: input.packageId,
-    sourceFramePath: input.inputPath,
+    receiptInputHashes: inputHashes,
+    sourceFramePath: input.inputPath, displayFramePath: (path) => path === input.inputPath ? publicInputPath : path,
     defaults: {
       minBrightPixels: 0,
       minEdgePixels: 0,
@@ -2340,30 +2527,32 @@ function debugPngStillFrameMedia(path: string, png: { width: number; height: num
 }
 
 async function runDebugPngSequenceQualityManifest(input: {
-  inputPath: string;
+  inputPath: string; displayInputPath?: string;
   manifestPath: string;
+  displayManifestPath?: string; displayBaselinePath?: (appliedPath: string) => string;
   outDir: string;
   receiptsRoot?: string;
   packageId: string;
   durationMs: number;
-  fps: number;
+  fps: number; qualityInputRoots: string[];
+  receiptInputHashes?: Record<string, string>;
   /** Transport-observed actor, threaded from the render context onto the quality receipt. */
   actor?: ReceiptActor;
 }): Promise<MotionDebugResult> {
-  const firstFramePath = join(input.inputPath, frameFileName(0));
+  const publicInputPath = input.displayInputPath ?? input.inputPath, inputHashes = { ...(input.receiptInputHashes ?? {}), [input.displayInputPath ?? input.inputPath]: await hashReceiptInputPath(input.inputPath) }, firstFramePath = join(input.inputPath, frameFileName(0));
   const inspected = await inspectPngFile(firstFramePath);
   if (!inspected.ok) {
     return qualityFailureWithReceipt({
       code: "visual_quality_failed",
       message: inspected.message,
       packageId: input.packageId,
-      inputPath: input.inputPath,
-      manifestPath: input.manifestPath,
+      inputPath: publicInputPath,
+      manifestPath: input.displayManifestPath ?? input.manifestPath,
       receiptsRoot: input.receiptsRoot,
-      actor: input.actor,
+      actor: input.actor, inputHashes,
       output: {
-        inputPath: input.inputPath,
-        manifestPath: input.manifestPath
+        inputPath: publicInputPath,
+        manifestPath: input.displayManifestPath ?? input.manifestPath
       }
     });
   }
@@ -2378,18 +2567,16 @@ async function runDebugPngSequenceQualityManifest(input: {
     fps: input.fps
   });
   return runDebugQualityManifest({
-    inputPath: input.inputPath,
-    manifestPath: input.manifestPath,
+    inputPath: input.inputPath, displayInputPath: publicInputPath,
+    manifestPath: input.manifestPath, displayManifestPath: input.displayManifestPath, displayBaselinePath: input.displayBaselinePath,
     media: debugPngSequenceMedia(input.inputPath, inspected, { durationMs: input.durationMs, fps: input.fps }),
     outDir: input.outDir,
-    inputRoots: [input.inputPath],
+    inputRoots: [...input.qualityInputRoots, input.inputPath],
     receiptsRoot: input.receiptsRoot,
     actor: input.actor,
     packageId: input.packageId,
-    receiptInputHashes: { frames: sequenceHash },
-    sourceFrameForSample: (sample) => ({
-      path: join(input.inputPath, frameFileName(sequenceFrameIndexForAtMs(sample.atMs, input.durationMs, input.fps)))
-    }),
+    receiptInputHashes: { frames: sequenceHash, ...inputHashes },
+    sourceFrameForSample: (sample) => ({ path: join(input.inputPath, frameFileName(sequenceFrameIndexForAtMs(sample.atMs, input.durationMs, input.fps))) }), displayFramePath: (path) => join(publicInputPath, relative(input.inputPath, path)),
     defaults: {
       minBrightPixels: 0,
       minEdgePixels: 0,
@@ -2460,7 +2647,7 @@ async function createDebugQualityReceipt(input: {
   const inputHashes: Record<string, string> = input.inputHashes
     ? { ...input.inputHashes }
     : { [input.inputPath]: await hashReceiptInputPath(input.inputPath) };
-  if (input.manifestPath) {
+  if (input.manifestPath && inputHashes[input.manifestPath] === undefined) {
     inputHashes[input.manifestPath] = await hashFile(input.manifestPath);
   }
   return {
@@ -2508,7 +2695,7 @@ async function collectDirectoryHashEntries(root: string, dir: string): Promise<A
 }
 
 async function debugQualityCheckAudioPolicy(input: {
-  inputPath: string;
+  inputPath: string; displayInputPath?: string;
   manifestPath: string;
   media: Awaited<ReturnType<typeof probeMedia>>;
   runner?: FfmpegRunner;
@@ -2535,7 +2722,7 @@ async function debugQualityCheckAudioPolicy(input: {
 
   let audioLevels: Awaited<ReturnType<typeof measureAudioLevels>>;
   try {
-    audioLevels = await measureAudioLevels(input.inputPath, { runner: input.runner, inputRoots: input.inputRoots });
+    audioLevels = await measureAudioLevels(input.inputPath, { runner: input.runner, inputRoots: input.inputRoots, admittedQualityInput: true });
   } catch (error) {
     return debugAudioPolicyFailure(input, "ffmpeg_failed", error instanceof Error ? error.message : String(error));
   }
@@ -2559,11 +2746,12 @@ function pickDebugAudioQualityThresholds(input: AudioQualityThresholds): AudioQu
 }
 
 function debugAudioPolicyFailure(
-  input: { inputPath: string; manifestPath: string; media: Awaited<ReturnType<typeof probeMedia>> },
+  input: { inputPath: string; displayInputPath?: string; manifestPath: string; media: Awaited<ReturnType<typeof probeMedia>> },
   code: string,
   message: string,
   audioLevels?: Awaited<ReturnType<typeof measureAudioLevels>>
 ): { ok: false; result: MotionDebugResult } {
+  const inputPath = input.displayInputPath ?? input.inputPath;
   return {
     ok: false,
     result: {
@@ -2572,9 +2760,9 @@ function debugAudioPolicyFailure(
         code,
         message,
         detail: {
-          inputPath: input.inputPath,
+          inputPath,
           manifestPath: input.manifestPath,
-          media: input.media,
+          media: input.displayInputPath ? { ...input.media, path: inputPath } : input.media,
           ...(audioLevels ? { audioLevels } : {})
         }
       },
@@ -2591,6 +2779,7 @@ function debugAudioPolicyFailure(
   framePath: string;
   sourceFramePath?: string;
   sourceFrameRequiresAtMsZero?: boolean;
+  displayBaselinePath?: string;
 }): Promise<DebugQualitySampleResult> {
   const framePath = input.sourceFramePath ?? input.framePath;
   if (input.sourceFramePath && input.sourceFrameRequiresAtMsZero && input.sample.atMs !== 0) {
@@ -2610,10 +2799,10 @@ function debugAudioPolicyFailure(
     const seekArgs = input.sample.atMs > 0 ? ["-ss", formatSeconds(input.sample.atMs / 1000)] : [];
     const extractCommand: FfmpegCommand = {
       executable: resolveFfmpegExecutable(),
-      args: ["-y", ...seekArgs, ...frameExtractionInputArgs(input.media, input.inputPath), ...frameExtractionPngOutputArgs(input.media, framePath)],
+      args: ["-y", ...seekArgs, ...frameExtractionInputArgs(input.media, input.inputPath, { admittedQualityInput: true }), ...frameExtractionPngOutputArgs(input.media, framePath)],
       shell: false
     };
-    const extracted = await runFfmpegCommand(extractCommand, input.runner);
+    const extracted = await runGovernedFfmpegCommand(extractCommand, input.runner);
     if (extracted.exitCode !== 0) {
       return {
         ok: false,
@@ -2645,7 +2834,7 @@ function debugAudioPolicyFailure(
 	    atMs: input.sample.atMs,
 	    framePath,
 	    quality,
-	    ...(input.sample.baselinePath ? { baselinePath: input.sample.baselinePath } : {}),
+	    ...(input.sample.baselinePath ? { baselinePath: input.displayBaselinePath ?? input.sample.baselinePath } : {}),
 	    ...(input.sample.compareAlpha === false ? { compareAlpha: false } : {})
 	  };
 	  const regionResults = await inspectDebugQualityRegions(framePath, input.sample.regions);
@@ -3080,13 +3269,13 @@ function readDebugQualityManifestAudio(value: unknown): DebugQualityAudioPolicy 
   );
   return {
     expectAudio,
-    maxPeakDb,
-    minPeakDb,
-    minMeanDb,
-    minIntegratedLoudnessLufs,
-    maxIntegratedLoudnessLufs,
-    maxTruePeakDbtp,
-    maxLoudnessRangeLu
+    ...(maxPeakDb !== undefined ? { maxPeakDb } : {}),
+    ...(minPeakDb !== undefined ? { minPeakDb } : {}),
+    ...(minMeanDb !== undefined ? { minMeanDb } : {}),
+    ...(minIntegratedLoudnessLufs !== undefined ? { minIntegratedLoudnessLufs } : {}),
+    ...(maxIntegratedLoudnessLufs !== undefined ? { maxIntegratedLoudnessLufs } : {}),
+    ...(maxTruePeakDbtp !== undefined ? { maxTruePeakDbtp } : {}),
+    ...(maxLoudnessRangeLu !== undefined ? { maxLoudnessRangeLu } : {})
   };
 }
 
@@ -3214,11 +3403,6 @@ function formatSeconds(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-async function runFfmpegCommand(command: FfmpegCommand, runner?: FfmpegRunner, callerId?: string): Promise<FfmpegProcessResult> {
-  if (runner) return runner(command);
-  return createGovernedFfmpegRunner(callerId ? { callerId } : {})(command);
-}
-
 function summarizeProcessOutput(result: FfmpegProcessResult): string {
   return (result.stderr || result.stdout).trim().split(/\r?\n/).slice(-3).join("\n").trim();
 }
@@ -3226,6 +3410,8 @@ function summarizeProcessOutput(result: FfmpegProcessResult): string {
 interface ReceiptEntry {
   path: string;
   receipt: OperationReceipt;
+  /** Every stable reader return populates this; optional preserves legacy list-port variance. */
+  snapshot?: StableReceiptSnapshot;
 }
 
 interface PlatformVerificationPanelSummary {
@@ -3974,6 +4160,7 @@ interface AudioPanelTrack {
   pan?: number;
   fadeInMs?: number;
   fadeOutMs?: number;
+  fadeCurve?: "linear" | "equal-power";
 }
 
 interface AudioPanelInput {
@@ -4045,7 +4232,7 @@ interface AudioPanel {
     soloTracks: number;
     trackVolumeControls: number;
     trackPanControls: number;
-    trackFadeControls: number;
+    trackFadeControls: number; documentMaster: number; documentMasterLoudnessTarget: number;
   };
   tracks: AudioPanelTrack[];
   inputs: AudioPanelInput[];
@@ -5299,11 +5486,11 @@ function buildMediaPanel(pkg: MotionPackage, preset: MotionExportPreset | undefi
     warnings
   };
 }
-
 function buildAudioPanel(pkg: MotionPackage, preset: MotionExportPreset | undefined): AudioPanel {
   const audioInputs = resolvePackageAudioInputs(pkg);
   const audioLayers = pkg.motion.layers.filter(isAudioPanelLayer);
   const audioTracks = (pkg.motion.tracks ?? []).filter((track) => track.type === "audio");
+  const documentMaster = pkg.motion.audio?.master;
   const usedLayerIds = new Set<string>();
   const inputs = audioInputs.map((input, index) => audioPanelInputRow(pkg, audioLayers, input, index, usedLayerIds));
   const unreadableAutomationKeyframes = inputs.reduce((total, input) => total + (input.unreadableAutomationKeyframeCount ?? 0), 0);
@@ -5332,7 +5519,7 @@ function buildAudioPanel(pkg: MotionPackage, preset: MotionExportPreset | undefi
       soloTracks: audioTracks.filter((track) => track.solo === true).length,
       trackVolumeControls: audioTracks.filter((track) => typeof track.volume === "number").length,
       trackPanControls: audioTracks.filter((track) => typeof track.pan === "number").length,
-      trackFadeControls: audioTracks.filter((track) => typeof track.fadeInMs === "number" || typeof track.fadeOutMs === "number").length
+      trackFadeControls: audioTracks.filter((track) => typeof track.fadeInMs === "number" || typeof track.fadeOutMs === "number").length, documentMaster: documentMaster ? 1 : 0, documentMasterLoudnessTarget: documentMaster?.loudness ? 1 : 0,
     },
     tracks: audioTracks.map(audioPanelTrackRow),
     inputs,
@@ -6006,6 +6193,7 @@ function audioPanelInputRow(
     ...(typeof input.muted === "boolean" ? { muted: input.muted } : {}),
     ...(typeof input.fadeInMs === "number" ? { fadeInMs: input.fadeInMs } : {}),
     ...(typeof input.fadeOutMs === "number" ? { fadeOutMs: input.fadeOutMs } : {}),
+    ...(input.fadeCurve ? { fadeCurve: input.fadeCurve } : {}),
     ...(typeof input.normalizeLoudness === "boolean" ? { normalizeLoudness: input.normalizeLoudness } : {}),
     ...(typeof input.playbackRate === "number" ? { playbackRate: input.playbackRate } : {}),
     ...(input.ducking ? { ducking: input.ducking } : {}),
@@ -8190,77 +8378,16 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-async function writeExpandedMotionPackage(job: ExpandedMotionJob, sourcePkg: MotionPackage, packageDir: string): Promise<void> {
-  await mkdir(packageDir, { recursive: true });
+async function writeExpandedMotionPackage(job: ExpandedMotionJob, sourcePkg: MotionPackage, packageDir: string): Promise<Readonly<Record<string, string>>> {
+  await mkdir(packageDir, { recursive: true, mode: 0o700 });
   await writeJsonFile(join(packageDir, "manifest.json"), job.manifest);
   await writeJsonFile(join(packageDir, "motion.json"), job.motion);
-  for (const assetRef of job.manifest.assets ?? []) {
-    const targetPath = join(packageDir, assetRef);
-    await mkdir(dirname(targetPath), { recursive: true });
-    await copyFile(resolvePackageAsset(sourcePkg, assetRef), targetPath);
-  }
-}
-
-async function materializeDebugBatchQualityManifest(input: {
-  sourcePath: string;
-  targetPath: string;
-  row: MotionDataRow;
-  packageId: string;
-  packageDir: string;
-  outputPath: string;
-}): Promise<{ path: string; appliedPath?: string }> {
-  const sourceText = await readFile(input.sourcePath, "utf8");
-  if (!sourceText.includes("{{")) return { path: input.sourcePath };
-  const context: Record<string, unknown> = {
-    ...input.row.values,
-    rowId: input.row.id,
-    rowIndex: input.row.index,
-    rowHash: input.row.hash,
-    rowKey: input.row.key,
-    packageId: input.packageId,
-    packageDir: input.packageDir,
-    outputPath: input.outputPath
-  };
-  const materialized = resolveDebugQualityManifestBaselinePaths(
-    interpolateDebugQualityManifestValue(JSON.parse(sourceText), context),
-    dirname(input.sourcePath)
-  );
-  await writeJsonFile(input.targetPath, materialized);
-  return { path: input.targetPath, appliedPath: input.targetPath };
-}
-
-function interpolateDebugQualityManifestValue(value: unknown, context: Record<string, unknown>): unknown {
-  if (typeof value === "string") return interpolateDebugQualityManifestString(value, context);
-  if (Array.isArray(value)) return value.map((entry) => interpolateDebugQualityManifestValue(entry, context));
-  const record = objectRecord(value);
-  if (!record) return value;
-  return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, interpolateDebugQualityManifestValue(entry, context)])
-  );
-}
-
-function interpolateDebugQualityManifestString(value: string, context: Record<string, unknown>): string {
-  return value.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
-    const replacement = context[key];
-    if (replacement === undefined || replacement === null) return "";
-    return typeof replacement === "string" ? replacement : JSON.stringify(replacement);
-  });
-}
-
-function resolveDebugQualityManifestBaselinePaths(value: unknown, sourceDir: string): unknown {
-  const record = objectRecord(value);
-  if (!record || !Array.isArray(record.samples)) return value;
-  return {
-    ...record,
-    samples: record.samples.map((sample) => {
-      const sampleRecord = objectRecord(sample);
-      if (!sampleRecord || typeof sampleRecord.baseline !== "string" || !sampleRecord.baseline.trim()) return sample;
-      return {
-        ...sampleRecord,
-        baseline: isAbsolute(sampleRecord.baseline) ? sampleRecord.baseline : resolve(sourceDir, sampleRecord.baseline)
-      };
-    })
-  };
+  const qualityManifestRef = sourcePkg.template?.metadata?.qualityTargets?.manifest;
+  return await copyVerifiedPackageAssetSnapshots(sourcePkg, packageDir, [
+    ...(job.manifest.template ? [job.manifest.template] : []),
+    ...(job.manifest.assets ?? []),
+    ...(typeof qualityManifestRef === "string" && qualityManifestRef.length > 0 ? [qualityManifestRef] : [])
+  ], "Debug batch package snapshot");
 }
 
 async function writeDebugBatchReceipt(input: {
@@ -8271,6 +8398,7 @@ async function writeDebugBatchReceipt(input: {
   resume?: boolean;
   resumedRows?: number;
   renderedRows?: number;
+  frameLane: "browser" | "native" | "gpu";
   preset: MotionExportPreset;
   presets?: MotionExportPreset[];
   quality?: { minUniqueFrameHashes: number };
@@ -8280,13 +8408,17 @@ async function writeDebugBatchReceipt(input: {
   /** Transport-observed actor for by-whom attribution; no-op when absent. */
   actor?: ReceiptActor;
 }): Promise<OperationReceipt> {
-  const rowHash = hashBuffer(Buffer.from(JSON.stringify({
+  const receiptPath = join(input.receiptsRoot, "batch-render.receipt.json");
+  const qualityInputs = input.jobs.map((job) => job.qualityInputs).filter(Boolean);
+  const rowHash = canonicalJsonSha256({
     rows: input.rows.map((row) => ({ id: row.id, hash: row.hash })),
     preset: input.preset,
     presets: input.presets,
     quality: input.quality,
-    qualityManifestPath: input.qualityManifestPath
-  }), "utf8"));
+    frameLane: input.frameLane,
+    qualityManifestPath: input.qualityManifestPath,
+    ...(qualityInputs.length > 0 ? { qualityInputs } : {})
+  });
   // Every warning this batch is about to publish, in one place, because the aggregate status is
   // derived from exactly the set it ships.
   const warnings = dedupeWarnings(input.jobs.flatMap((job) => debugResultWarnings(job)));
@@ -8306,38 +8438,59 @@ async function writeDebugBatchReceipt(input: {
     packageId: input.pkg.manifest.id,
     inputHashes: {
       motion: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-      rows: rowHash
+      rows: rowHash,
+      ...(qualityInputs.length > 0 ? { qualityInputs: canonicalJsonSha256(qualityInputs) } : {})
     },
     createdAt: new Date().toISOString(),
     lane: "batch",
     output: {
-	      dryRun: input.dryRun,
-	      ...(input.resume ? { resume: true, resumedRows: input.resumedRows ?? 0, renderedRows: input.renderedRows ?? 0 } : {}),
-	      preset: input.preset,
-	      ...(input.presets ? { presets: input.presets } : {}),
-	      ...(input.quality ? { quality: input.quality } : {}),
-	      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {}),
-	      rows: input.rows.length,
-	      jobs: input.jobs.map((job) => ({
-	        rowId: job.rowId,
+      dryRun: input.dryRun,
+      ...(input.resume ? { resume: true, resumedRows: input.resumedRows ?? 0, renderedRows: input.renderedRows ?? 0 } : {}),
+      preset: input.preset,
+      frameLane: input.frameLane,
+      ...(input.presets ? { presets: input.presets } : {}),
+      ...(input.quality ? { quality: input.quality } : {}),
+      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {}),
+      rows: input.rows.length,
+      jobs: input.jobs.map((job) => ({
+        rowId: job.rowId,
         rowHash: job.rowHash,
         rowKey: job.rowKey,
         ...(job.idempotencyKey ? { idempotencyKey: job.idempotencyKey } : {}),
         packageId: job.packageId,
         outputPath: job.outputPath,
-	        preset: job.preset,
-	        status: job.status,
-	        ...(job.planReceiptPath ? { planReceiptPath: job.planReceiptPath } : {}),
-	        ...(job.receiptPath ? { receiptPath: job.receiptPath } : {}),
-	        ...(job.resume ? { resume: job.resume } : {}),
-	        ...(job.quality ? { quality: job.quality } : {}),
-	        ...(job.qualityManifestPath ? { qualityManifestPath: job.qualityManifestPath } : {}),
-	        ...(job.qualityManifestAppliedPath ? { qualityManifestAppliedPath: job.qualityManifestAppliedPath } : {}),
-	        ...debugBatchJobWorkflowReceiptOutput(job),
-	        ...debugQualityCheckReceiptOutput(job),
-	        ...(debugResultWarnings(job).length > 0 ? { warnings: debugResultWarnings(job) } : {})
-	      }))
-	    },
+        preset: job.preset,
+        ...(typeof job.frameLane === "string" ? { frameLane: job.frameLane } : {}),
+        ...(job.frameTransport ? { frameTransport: job.frameTransport } : {}),
+        status: job.status,
+        ...(job.planReceiptPath ? { planReceiptPath: job.planReceiptPath } : {}),
+        ...(job.receiptPath ? { receiptPath: job.receiptPath } : {}),
+        ...(job.renderCommitted === true && typeof job.renderOutputPath === "string" && typeof job.renderReceiptPath === "string"
+          ? { renderCommitted: true, renderOutputPath: job.renderOutputPath, renderReceiptPath: job.renderReceiptPath }
+          : {}),
+        ...(job.possiblyCommitted === true && Array.isArray(job.publicPaths)
+          ? {
+            possiblyCommitted: true,
+            publicationCommitPhase: typeof job.publicationCommitPhase === "string" ? job.publicationCommitPhase : "unknown",
+            publicPaths: job.publicPaths.filter((path): path is string => typeof path === "string"),
+            ...(Array.isArray(job.expectedPublications) && job.expectedPublications.length > 0
+              ? { expectedPublications: [...job.expectedPublications] }
+              : {})
+          }
+          : {}),
+        ...(job.resume ? { resume: job.resume } : {}),
+        ...(job.quality ? { quality: job.quality } : {}),
+        ...(job.qualityManifestPath ? { qualityManifestPath: job.qualityManifestPath } : {}),
+        ...(job.qualityInputs ? { qualityInputs: job.qualityInputs } : {}),
+        ...(job.qualityManifestAppliedPath ? { qualityManifestAppliedPath: job.qualityManifestAppliedPath } : {}),
+        ...debugBatchJobWorkflowReceiptOutput(job),
+        ...debugQualityCheckReceiptOutput(job),
+        ...(debugResultWarnings(job).length > 0 ? { warnings: debugResultWarnings(job) } : {})
+      }))
+    },
+    artifacts: [
+      { role: "batch_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
+    ],
     warnings
   };
   // Stamp the transport-observed actor onto the aggregate batch receipt so the
@@ -8346,7 +8499,7 @@ async function writeDebugBatchReceipt(input: {
   // choke closure that covers every domain service; applyReceiptActor mutates in
   // place and is a no-op when no actor was observed (direct/legacy callers).
   applyReceiptActor(receipt, input.actor);
-  await writeJsonFile(join(input.receiptsRoot, "batch-render.receipt.json"), receipt);
+  await writeJsonFile(receiptPath, receipt);
   return receipt;
 }
 
@@ -8415,7 +8568,9 @@ function debugBatchJobIdempotencyKey(input: {
   motion: unknown;
   preset: MotionExportPreset;
   quality?: { minUniqueFrameHashes: number };
-  qualityManifestPath?: string;
+  qualityInputs?: BatchQualityInputEvidence;
+  frameLane: "browser" | "native" | "gpu";
+  keepFrames?: boolean;
   workflowIdempotencyHash?: string;
 }): string {
   const digest = hashBuffer(Buffer.from(JSON.stringify({
@@ -8426,7 +8581,9 @@ function debugBatchJobIdempotencyKey(input: {
     motion: input.motion,
     preset: input.preset,
     quality: input.quality,
-    qualityManifestPath: input.qualityManifestPath,
+    qualityInputs: input.qualityInputs,
+    frameLane: input.frameLane,
+    keepFrames: input.keepFrames,
     workflowIdempotencyHash: input.workflowIdempotencyHash
   }), "utf8")).slice(0, 24);
   return `${input.packageId}:${input.rowId}:${input.preset}:${digest}`;
@@ -8465,35 +8622,6 @@ async function readDebugBatchResumeJobs(receiptPath: string): Promise<Map<string
   }
 }
 
-function readDebugBatchResumeMatch(previousJobs: Map<string, Record<string, unknown>>, idempotencyKey: unknown, outputPath: unknown): Record<string, unknown> | null {
-  if (typeof idempotencyKey !== "string" || typeof outputPath !== "string") return null;
-  const previous = previousJobs.get(idempotencyKey);
-  if (!previous) return null;
-  if (previous.outputPath !== outputPath) return null;
-  // MUST move with the two escalations above, and did not in the CLI: when a successful row began
-  // reporting `warning`, the old literal `!== "passed"` test stopped matching it and resume silently
-  // re-rendered every row it should have reused — no error, just the work done twice. Ask the
-  // generated receipt-status -> job-outcome mapping instead of naming statuses here, so a status
-  // added to `schemas/job-status.json` cannot quietly fall out of this predicate.
-  const previousStatus = typeof previous.status === "string" ? previous.status : "";
-  if (previousStatus !== "skipped" && jobOutcomeForReceiptStatus(previousStatus) !== "succeeded") return null;
-  const sourceReceiptPath = debugBatchResumeSourceReceiptPath(previous);
-  if (!sourceReceiptPath || !existsSync(sourceReceiptPath)) return null;
-  if (!existsSync(outputPath)) return null;
-  return previous;
-}
-
-function debugBatchResumeSourceReceiptPath(job: Record<string, unknown>): string | undefined {
-  if (typeof job.receiptPath === "string") return job.receiptPath;
-  const resume = objectRecord(job.resume);
-  return typeof resume?.sourceReceiptPath === "string" ? resume.sourceReceiptPath : undefined;
-}
-
-function debugBatchRenderCounts(jobs: Array<Record<string, unknown>>, dryRun: boolean): { resumedRows: number; renderedRows: number } {
-  const resumedRows = jobs.filter((job) => job.status === "skipped").length;
-  return { resumedRows, renderedRows: dryRun ? 0 : jobs.length - resumedRows };
-}
-
 async function writeDebugBatchRowPlanReceipt(input: {
   receiptsRoot: string;
   dryRun: boolean;
@@ -8508,6 +8636,10 @@ async function writeDebugBatchRowPlanReceipt(input: {
   idempotencyKey: string;
   quality?: { minUniqueFrameHashes: number };
   qualityManifestPath?: string;
+  qualityInputs?: BatchQualityInputEvidence;
+  frameLane: "browser" | "native" | "gpu";
+  frameTransport?: ReturnType<typeof planFinalVideoFrameTransport>;
+  packageAssetInputHashes?: Readonly<Record<string, string>>;
   warnings?: string[];
   /** Transport-observed actor for by-whom attribution; no-op when absent. */
   actor?: ReceiptActor;
@@ -8524,7 +8656,14 @@ async function writeDebugBatchRowPlanReceipt(input: {
       row: input.row.hash,
       manifest: hashBuffer(Buffer.from(JSON.stringify(input.manifest), "utf8")),
       motion: hashBuffer(Buffer.from(JSON.stringify(input.motion), "utf8")),
-      idempotencyKey: hashBuffer(Buffer.from(input.idempotencyKey, "utf8"))
+      idempotencyKey: hashBuffer(Buffer.from(input.idempotencyKey, "utf8")),
+      ...input.packageAssetInputHashes,
+      ...(input.qualityInputs ? {
+        qualityManifest: input.qualityInputs.manifestSha256,
+        qualityMaterializedManifest: input.qualityInputs.materializedManifestSha256,
+        qualityBaselines: input.qualityInputs.baselinesSha256,
+        qualityClosure: input.qualityInputs.closureSha256
+      } : {})
     },
     createdAt: new Date().toISOString(),
     lane: "batch",
@@ -8538,9 +8677,12 @@ async function writeDebugBatchRowPlanReceipt(input: {
       packageDir: input.packageDir,
       outputPath: input.outputPath,
       preset: input.preset,
+      frameLane: input.frameLane,
+      ...(input.frameTransport ? { frameTransport: input.frameTransport } : {}),
       status: input.status,
       ...(input.quality ? { quality: input.quality } : {}),
-      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {})
+      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {}),
+      ...(input.qualityInputs ? { qualityInputs: input.qualityInputs } : {})
     },
     artifacts: [
       { role: "row_package", path: input.packageDir, status: "available", mediaType: "application/vnd.shellx-motion.package+directory" },
@@ -8553,47 +8695,6 @@ async function writeDebugBatchRowPlanReceipt(input: {
   applyReceiptActor(receipt, input.actor);
   await writeJsonFile(receiptPath, receipt);
   return receiptPath;
-}
-
-function debugBatchOutputPath(renderRoot: string, packageId: string, preset: MotionExportPreset): string {
-  const spec = resolveMotionExportPreset(preset);
-  if (readImageSequenceExportPreset(preset)) return join(renderRoot, packageId);
-  return join(renderRoot, `${packageId}.${spec.extension}`);
-}
-
-function supportsDebugBatchQualityManifestPreset(preset: MotionExportPreset): boolean {
-  return Boolean(readFfmpegExportPreset(preset)) || preset === "png-frame" || preset === "png-sequence";
-}
-
-function debugAudioWarningsForMotionExportPreset(preset: MotionExportPreset, audioInputCount: number): string[] {
-  const ffmpegPreset = readFfmpegExportPreset(preset);
-  if (ffmpegPreset) return audioWarningsForExportPreset(ffmpegPreset, audioInputCount);
-  if (audioInputCount <= 0) return [];
-  const noun = audioInputCount === 1 ? "track" : "tracks";
-  return [`Export preset ${preset} does not support audio; ${audioInputCount} requested audio ${noun} will be ignored.`];
-}
-
-function debugQualityCheckReceiptOutput(job: Record<string, unknown>): { qualityCheck?: { status: "passed" | "failed" } } {
-  const qualityCheck = objectRecord(job.qualityCheck);
-  if (!qualityCheck) return {};
-  return {
-    qualityCheck: {
-      status: qualityCheck.ok === true ? "passed" : "failed"
-    }
-  };
-}
-
-function debugBatchRenderError(job: ExpandedMotionJob, renderResult: MotionDebugResult): { code: string; message: string; suggestedAction?: string } {
-  if (renderResult.ok) {
-    return {
-      code: "render_batch_failed",
-      message: `Batch row ${job.row.id} did not return a failed render result.`
-    };
-  }
-  return {
-    ...renderResult.error,
-    message: `Batch row ${job.row.id} (${job.manifest.id}) failed: ${renderResult.error.message}`
-  };
 }
 
 function debugBatchQualityError(job: ExpandedMotionJob, qualityResult: MotionDebugResult): { code: string; message: string; suggestedAction?: string; detail?: unknown } {
@@ -8642,14 +8743,19 @@ function dedupeWarnings(warnings: string[]): string[] {
   return [...new Set(warnings)];
 }
 
-async function readReceiptEntries(receiptsRoot: string): Promise<ReceiptEntry[]> {
-  const files = await discoverJsonFiles(receiptsRoot);
-  const entries: ReceiptEntry[] = [];
-  for (const path of files) {
-    const receipt = await readReceiptFile(path);
-    if (receipt) entries.push({ path, receipt });
-  }
-  return entries.sort((a, b) => compareCodeUnits(a.path, b.path));
+async function readReceiptEntries(receiptsRoot: string, services: ReceiptStoreReadServices = {}): Promise<ReceiptEntry[]> {
+  return (await readStableReceiptEntries(receiptsRoot, readOperationReceipt, enforceReceiptReadAcceptance, services)).entries;
+}
+
+function receiptControlReadServices(context: MotionDebugContext): ReceiptStoreReadServices {
+  return context.receiptControlTargetAfterLeafOpen
+    ? { afterLeafOpen: context.receiptControlTargetAfterLeafOpen }
+    : {};
+}
+
+/** The compact snapshot needs the bounded walk's completion signal without changing panel semantics. */
+async function readReceiptEntriesWithStatus(receiptsRoot: string): Promise<import("./domains/agent-snapshot.js").AgentSnapshotReceiptRead> {
+  return await readStableReceiptEntries(receiptsRoot, readOperationReceipt, enforceReceiptReadAcceptance);
 }
 
 async function readAgentRevisionQualityReceipts(
@@ -8682,9 +8788,10 @@ async function readAgentRevisionQualityReceipts(
     if (receiptsRoot && !await isReceiptPathInsideRoot(receiptsRoot, path)) {
       return { ok: false, message: "qualityReceiptPath must be inside receiptsRoot." };
     }
-    const receipt = await readReceiptFile(resolve(path));
-    if (!receipt) return { ok: false, message: `Quality receipt not found at path: ${path}.` };
-    receipts.push(receipt);
+    if (!receiptsRoot) return { ok: false, message: "qualityReceiptPath requires receiptsRoot." };
+    const read = await readReceiptEntryInsideRoot(receiptsRoot, path);
+    if (!read.insideRoot || !read.entry) return { ok: false, message: `Quality receipt not found at path: ${path}.` };
+    receipts.push(read.entry.receipt);
   }
 
   const qualityReceiptIds = [
@@ -8775,66 +8882,13 @@ function normalizeAgentRevisionContactSheet(value: unknown, fallbackPath?: strin
 }
 
 async function readReceiptFile(path: string): Promise<OperationReceipt | null> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    const before = await lstat(path);
-    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_DEBUG_RECEIPT_BYTES) return null;
-    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > MAX_DEBUG_RECEIPT_BYTES) return null;
-    const after = await lstat(path);
-    if (!after.isFile() || after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) return null;
-    const content = await handle.readFile({ encoding: "utf8" });
-    const final = await handle.stat();
-    if (final.size !== opened.size || final.mtimeMs !== opened.mtimeMs || final.ctimeMs !== opened.ctimeMs) return null;
-    // The parsed original travels alongside the projection: the purge rewrites those bytes, not the
-    // normalizer's view of them. See receipt-raw-prompt-purge.ts.
-    const parsed: unknown = JSON.parse(content);
-    return await enforceRawPromptExpiry(path, readOperationReceipt(parsed), parsed, { dev: opened.dev, ino: opened.ino });
-  } catch {
-    return null;
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-  }
+  return await readVerifiedJsonReceipt(path, readOperationReceipt, enforceReceiptReadAcceptance);
 }
-
 async function readReceiptEntryInsideRoot(receiptsRoot: string, receiptPath: string): Promise<{
   insideRoot: boolean;
   entry: ReceiptEntry | null;
 }> {
-  const requestedPath = resolve(receiptPath);
-  if (!isPathInsideOrEqual(receiptsRoot, requestedPath)) return { insideRoot: false, entry: null };
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    const [canonicalRoot, canonicalReceiptPath, before] = await Promise.all([
-      realpath(receiptsRoot),
-      realpath(requestedPath),
-      lstat(requestedPath)
-    ]);
-    if (!isPathInsideOrEqual(canonicalRoot, canonicalReceiptPath)) return { insideRoot: false, entry: null };
-    if (!before.isFile() || before.isSymbolicLink()) return { insideRoot: true, entry: null };
-    handle = await open(requestedPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > MAX_DEBUG_RECEIPT_BYTES) return { insideRoot: true, entry: null };
-    const [canonicalAfter, after] = await Promise.all([realpath(requestedPath), lstat(requestedPath)]);
-    if (canonicalAfter !== canonicalReceiptPath
-      || after.isSymbolicLink()
-      || !after.isFile()
-      || after.dev !== opened.dev
-      || after.ino !== opened.ino) return { insideRoot: true, entry: null };
-    const content = await handle.readFile({ encoding: "utf8" });
-    const final = await handle.stat();
-    if (final.size !== opened.size || final.mtimeMs !== opened.mtimeMs || final.ctimeMs !== opened.ctimeMs) {
-      return { insideRoot: true, entry: null };
-    }
-    const parsed: unknown = JSON.parse(content);
-    const receipt = await enforceRawPromptExpiry(requestedPath, readOperationReceipt(parsed), parsed, { dev: opened.dev, ino: opened.ino });
-    return { insideRoot: true, entry: receipt ? { path: requestedPath, receipt } : null };
-  } catch {
-    return { insideRoot: true, entry: null };
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-  }
+  return await readStableReceiptEntry(receiptsRoot, receiptPath, readOperationReceipt, enforceReceiptReadAcceptance);
 }
 
 async function isReceiptPathInsideRoot(receiptsRoot: string, receiptPath: string): Promise<boolean> {
@@ -9046,11 +9100,14 @@ function platformReceiptSummary(entry: PlatformReceiptEntry): Record<string, unk
 }
 
 function platformVerificationPanelSummary(entries: PlatformReceiptEntry[], explicitRequiredHosts?: string[]): PlatformVerificationPanelSummary {
-  const summaries = entries.map((entry) => platformReceiptSummary(entry));
+  const semanticEntries = entries.map((entry) => ({ entry, problems: platformVerificationReceiptSemanticProblems(entry.receipt) }));
+  const admittedEntries = semanticEntries.filter(({ problems }) => problems.length === 0).map(({ entry }) => entry);
+  const rejectedEntries = semanticEntries.filter(({ problems }) => problems.length > 0).map(({ entry }) => entry);
+  const summaries = admittedEntries.map((entry) => platformReceiptSummary(entry));
   const hostReceipts = summaries.filter((summary) => summary.schema === "shellx-motion/platform-verification@1");
   const aggregateReceipts = summaries.filter((summary) => summary.schema === "shellx-motion/platform-verification-aggregate@1");
-  const aggregateRequiredHosts = entries.flatMap((entry) => entry.receipt.schema === "shellx-motion/platform-verification-aggregate@1" ? readLooseStringArray(entry.receipt.requiredHosts) : []);
-  const hostMatrixRequiredHosts = entries.flatMap((entry) => {
+  const aggregateRequiredHosts = admittedEntries.flatMap((entry) => entry.receipt.schema === "shellx-motion/platform-verification-aggregate@1" ? readLooseStringArray(entry.receipt.requiredHosts) : []);
+  const hostMatrixRequiredHosts = admittedEntries.flatMap((entry) => {
     if (entry.receipt.schema !== "shellx-motion/platform-verification@1") return [];
     return readLooseStringArray(objectRecord(entry.receipt.hostMatrix)?.required);
   });
@@ -9078,19 +9135,25 @@ function platformVerificationPanelSummary(entries: PlatformReceiptEntry[], expli
     })
     .map((summary) => summary.hostId)
     .filter((hostId): hostId is string => typeof hostId === "string");
-  const failedHosts = uniqueStrings([...aggregateFailedHosts, ...failedHostReceipts]);
+  const rejectedHostReceipts = rejectedEntries
+    .filter((entry) => entry.receipt.schema === "shellx-motion/platform-verification@1")
+    .map((entry) => objectRecord(entry.receipt.host)?.id)
+    .filter((hostId): hostId is string => typeof hostId === "string");
+  const failedHosts = uniqueStrings([...aggregateFailedHosts, ...failedHostReceipts, ...rejectedHostReceipts]);
   const invalidReceiptCount = aggregateReceipts
     .map((summary) => objectRecord(summary))
-    .reduce((total, summary) => total + (typeof summary?.invalidReceiptCount === "number" ? summary.invalidReceiptCount : 0), 0);
+    .reduce((total, summary) => total + (typeof summary?.invalidReceiptCount === "number" ? summary.invalidReceiptCount : 0), rejectedEntries.length);
   const hasFailedAggregate = aggregateReceipts.some((summary) => summary.status === "failed");
   const hasPassedAggregate = aggregateReceipts.some((summary) => summary.status === "passed");
-  const status = hasFailedAggregate || failedHosts.length > 0
-    ? "failed"
-    : missingHosts.length > 0
-      ? "partial"
-      : hasPassedAggregate || hostReceipts.length > 0
-        ? "passed"
-        : "missing";
+  const status = hostReceipts.length === 0 && aggregateReceipts.length === 0 && rejectedEntries.length === 0
+    ? "missing"
+    : rejectedEntries.length > 0 || hasFailedAggregate || failedHosts.length > 0
+      ? "failed"
+      : missingHosts.length > 0
+        ? "partial"
+        : hasPassedAggregate || hostReceipts.length > 0
+          ? "passed"
+          : "missing";
 
   return {
     status,
@@ -9818,39 +9881,4 @@ async function canonicalPathForSafety(path: string): Promise<string> {
     if (parent === resolved) return resolved;
     return join(await canonicalPathForSafety(parent), basename(resolved));
   }
-}
-
-function frameCountFor(durationMs: number, fps: number): number {
-  if (!Number.isFinite(durationMs) || durationMs <= 0 || !Number.isFinite(fps) || fps <= 0) return 1;
-  return Math.max(1, Math.ceil((durationMs / 1000) * fps));
-}
-
-function frameTimestampMs(frameIndex: number, fps: number, durationMs: number): number {
-  const atMs = Math.round((frameIndex * 1000) / fps);
-  return Math.max(0, Math.min(atMs, Math.max(0, durationMs - 1)));
-}
-
-function stripFrameTimestampMs(frameIndex: number, frameCount: number, startMs: number, endMs: number): number {
-  if (frameCount <= 1) return Math.round(startMs);
-  return Math.round(startMs + ((endMs - startMs) * frameIndex) / (frameCount - 1));
-}
-
-function sequenceFrameIndexForAtMs(atMs: number, durationMs: number, fps: number): number {
-  const frameCount = frameCountFor(durationMs, fps);
-  if (!Number.isFinite(atMs) || atMs <= 0) return 0;
-  const clampedAtMs = Math.min(atMs, Math.max(0, durationMs - 1));
-  const frameIndex = Math.round((clampedAtMs / 1000) * fps);
-  return Math.max(0, Math.min(frameIndex, frameCount - 1));
-}
-
-function frameFileName(frameIndex: number): string {
-  return `${String(frameIndex + 1).padStart(6, "0")}.png`;
-}
-
-function invalidArgs(message: string): MotionDebugResult {
-  return {
-    ok: false,
-    error: { code: "invalid_args", message },
-    warnings: []
-  };
 }

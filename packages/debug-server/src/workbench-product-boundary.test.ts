@@ -112,15 +112,26 @@ describe("human Workbench path selection", () => {
     expect(historyController).not.toContain('el("span", "output-path", output.path)');
 
     const docsController = visibleControllers.find((controller) => controller.name === "docs.js")!.source;
-    expect(docsController).toContain("if (!session.state.connected) showDisconnectedDocs()");
+    expect(docsController).toContain("if (!session.state.connected) showDisconnectedDocsAfterTeardown()");
     expect(docsController).not.toContain("if (!session.state.connected) void loadIndex()");
+    expect(docsController).toContain("resolveIndexedDocumentationLink");
+    expect(docsController).toContain("documentationLinkResolver");
+    expect(docsController).toContain('closest("a[data-doc-page-id]")');
+    expect(docsController).not.toMatch(/location\.(assign|replace|href)\s*=/);
+
+    const uiSmoke = await readFile(new URL("../../../scripts/workbench-ui-clickthrough.ts", import.meta.url), "utf8");
+    expect(uiSmoke).toContain('browser: { executable: portablePathIdentity("browser-executable", executablePath)');
+    expect(uiSmoke).toContain('revealCalls: revealCalls.map((path) => portablePathIdentity("revealed-local-artifact", path))');
+    expect(uiSmoke).toContain("assertPortableReportPaths(report");
+    expect(uiSmoke).not.toContain("browser: { executablePath, version: browser.version() }");
   });
 
-  it("shows token-free MCP setup commands and configures only an allowlisted agent", async () => {
+  it("shows token-free MCP setup commands and configures only an allowlisted agent at write_local", async () => {
     const configured: Array<{ provider: string; command: string; args: string[] }> = [];
     const server = await startMotionDebugServer({
       port: 0,
       capabilityToken: TOKEN,
+      grantedTier: "write_local",
       connectionConfigurator: async (provider, bridge) => {
         configured.push({ provider, command: bridge.command, args: bridge.args });
         return { provider, configured: true, alreadyConfigured: false };
@@ -173,6 +184,32 @@ describe("human Workbench path selection", () => {
       expect(configured).toHaveLength(1);
       expect(configured[0]).toMatchObject({ provider: "codex", command: process.execPath });
       expect(configured[0].args[0]).toMatch(/shellx-motion-mcp\.mjs$/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses provider configuration below write_local without invoking the configurator", async () => {
+    const configured: string[] = [];
+    const server = await startMotionDebugServer({
+      port: 0,
+      capabilityToken: TOKEN,
+      grantedTier: "read_motion",
+      connectionConfigurator: async (provider) => {
+        configured.push(provider);
+        return { provider, configured: true, alreadyConfigured: false };
+      }
+    });
+    try {
+      const response = await authed(new URL("/workbench/connections/configure", server.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "codex" })
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: "permission_denied", message: expect.stringContaining("write_local") } });
+      expect(configured).toEqual([]);
     } finally {
       await server.close();
     }

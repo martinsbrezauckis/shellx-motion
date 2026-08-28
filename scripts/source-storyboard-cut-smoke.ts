@@ -6,31 +6,34 @@
  *  class sweep this smoke `stat`ed its receipts and never read their STATUS — the opposite
  * face of the same defect as its siblings' hard-coded `passed`: those rejected an honest `warning`,
  * this one would have accepted an honest `failed`. Both receipts are now judged, and judged the same
- * way: `passed`, or `warning` together with an advisory this run can legitimately produce (the
- * native preview lane case-folds the storyboard's lowercase text; the storyboard frames hold still).
+ * way: `passed`, or `warning` together with an advisory this Browser-preview plus FFmpeg run can
+ * legitimately produce (a font fallback or the storyboard frames' intentional stillness).
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../packages/cli/src/main";
+import { verifyAttestedArtifactHandleReference, type AttestedArtifactHandleReference } from "../packages/core/src/index";
 import {
   assertReceiptSucceeded,
   FONT_FALLBACK_ADVISORY,
   MOTION_DENSITY_ADVISORY,
-  NATIVE_CASE_FOLD_ADVISORY,
   readDeliveredMedia
 } from "./render-smoke-status";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const outRoot = join(repoRoot, ".scratch", "source-storyboard-cut-smoke");
+const outRoot = join(await preparePrivateRepoScratch(repoRoot), "source-storyboard-cut-smoke");
 const sourceImportDir = join(outRoot, "source-import");
 const sourceCutDir = join(outRoot, "source-cut");
 const receiptsRoot = join(outRoot, "host-receipts");
 
+await assertPrivateRepoScratchPath(repoRoot, outRoot);
 await rm(outRoot, { recursive: true, force: true });
-await mkdir(outRoot, { recursive: true });
+await mkdir(outRoot, { recursive: true, mode: 0o700 });
+assert.equal(Number((await stat(outRoot)).mode) & 0o777, 0o700, "source storyboard output root must remain private under umask 0002");
 
 const imported = await runCli([
   "debug",
@@ -111,6 +114,7 @@ assert(readObjectField(render, "frameLane") === "browser", `expected browser fra
 assert(hasArtifact(artifacts, "scripted_video", "available"), "scripted_video artifact should be available.");
 assert(hasArtifact(artifacts, "motion_package", "available"), "motion_package artifact should be available.");
 assert(hasArtifact(artifacts, "rendered_media", "available"), "rendered_media artifact should be available.");
+assert(hasArtifact(artifacts, "artifact_handle", "available"), "artifact_handle should be available.");
 assert(hasArtifact(artifacts, "cut_plan", "available"), "cut_plan artifact should be available.");
 assert(hasArtifact(artifacts, "source_to_cut_receipt", "available"), "source_to_cut_receipt artifact should be available.");
 
@@ -120,18 +124,29 @@ assert(mp4Bytes.subarray(4, 8).toString("ascii") === "ftyp", "source storyboard 
 
 const renderReceipt = readJsonObject(await readFile(renderReceiptPath, "utf8"), "render receipt");
 const connectorReceipt = readJsonObject(await readFile(connectorReceiptPath, "utf8"), "connector receipt");
+const cutPlan = readJsonObject(await readFile(cutPlanPath, "utf8"), "cut plan");
 
 // The render receipt covers the ffmpeg lane over browser frames.
 const renderSuccess = assertReceiptSucceeded(renderReceipt, {
   label: "Source storyboard render",
   expectedAdvisories: [FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
 });
-// The connector receipt aggregates the native preview pass on top of it, so it can additionally
-// carry the native lane's case-folding advisory — and nothing beyond these three.
+// The connector receipt covers the same Browser-preview and FFmpeg work. It may carry only the
+// named font fallback or intentionally still-frame advisory.
 const connectorSuccess = assertReceiptSucceeded(connectorReceipt, {
   label: "Source storyboard connector",
-  expectedAdvisories: [NATIVE_CASE_FOLD_ADVISORY, FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
+  expectedAdvisories: [FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
 });
+assert(readObjectField(cutPlan, "schema") === "shellx-motion/cut-import-plan@1", "cut import plan schema mismatch.");
+assert(readObjectField(cutPlan, "mode") === "rendered_media", `expected rendered_media mode, got ${String(readObjectField(cutPlan, "mode"))}`);
+const operations = readArray(readObjectField(cutPlan, "operations"), "cutPlan.operations");
+const firstOperation = readObject(operations[0], "cutPlan.operations[0]");
+const renderedMediaPlan = readObject(readObjectField(firstOperation, "renderedMedia"), "operation.renderedMedia");
+assert(readObjectField(renderedMediaPlan, "dryRun") === false, "cut plan must reference a real rendered artifact.");
+const handleRef = readObject(readObjectField(renderedMediaPlan, "handle"), "operation.renderedMedia.handle");
+const handle = readJsonObject(await readFile(join(sourceCutDir, readString(readObjectField(handleRef, "rootRelativePath"), "handle.rootRelativePath")), "utf8"), "artifact handle");
+assert(join(sourceCutDir, readString(readObjectField(handle, "rootRelativePath"), "artifactHandle.rootRelativePath")) === renderOutputPath, "artifact handle media path mismatch.");
+const verifiedArtifact = await verifyAttestedArtifactHandleReference(sourceCutDir, handleRef as unknown as AttestedArtifactHandleReference, { requiredReceiptRoles: ["render", "connector"] });
 
 const packageDir = readString(connector.packageDir, "packageDir");
 const scriptCompileReceipt = readJsonObject(await readFile(join(packageDir, "receipts", "script-compile.receipt.json"), "utf8"), "script compile receipt");
@@ -140,35 +155,24 @@ const storyboardSummary = readObject(readObjectField(compileOutput, "storyboard"
 assert(readObjectField(storyboardSummary, "reviewRequired") === true, "compiled package should preserve reviewRequired storyboard metadata.");
 assert(readObjectField(storyboardSummary, "sourceRefCount") === 3, "compiled package should preserve per-frame source refs.");
 
-const qualityScratchRoot = join(outRoot, "quality-scratch");
+// This is deliberately after F/H/C acceptance: quality evidence is separate
+// from the P2B connector receipt and remains useful product evidence.
 const quality = await runCli([
   "quality-check",
   renderOutputPath,
-  "--at-ms",
-  "1200",
-  "--expect-width",
-  "640",
-  "--expect-height",
-  "360",
-  "--min-bright-pixels",
-  "1000",
-  "--min-edge-pixels",
-  "300",
-  "--min-non-transparent-pixels",
-  "1000",
-  "--preview-package",
-  packageDir,
-  "--preview-lane",
-  "browser",
-  "--max-changed-pixels",
-  "230400",
-  "--max-mean-diff",
-  "4",
-  "--min-psnr-db",
-  "33"
-], { scratchRoot: qualityScratchRoot });
-
-assert(quality.ok, `Source storyboard quality gate failed: ${JSON.stringify(quality, null, 2)}`);
+  "--at-ms", "1200",
+  "--expect-width", "640",
+  "--expect-height", "360",
+  "--min-bright-pixels", "1000",
+  "--min-edge-pixels", "300",
+  "--min-non-transparent-pixels", "1000",
+  "--preview-package", packageDir,
+  "--preview-lane", "browser",
+  "--max-changed-pixels", "230400",
+  "--max-mean-diff", "4",
+  "--min-psnr-db", "33"
+], { scratchRoot: join(outRoot, "quality-scratch") });
+assert(quality.ok, `Source storyboard post-delivery quality check failed: ${JSON.stringify(quality, null, 2)}`);
 
 console.log(JSON.stringify({
   ok: true,
@@ -200,9 +204,12 @@ console.log(JSON.stringify({
       matchedAdvisories: renderSuccess.matchedAdvisories
     }
   },
-  quality: {
-    ok: quality.ok,
-    command: quality.command
+  quality: { ok: quality.ok, command: quality.command, relation: "separate post-delivery check" },
+  attestation: {
+    id: readObjectField(handle, "id"),
+    descriptorPath: verifiedArtifact.descriptorPath,
+    mediaPath: verifiedArtifact.path,
+    probe: verifiedArtifact.probe
   }
 }, null, 2));
 

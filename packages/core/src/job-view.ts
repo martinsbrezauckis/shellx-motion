@@ -21,6 +21,8 @@
 import { MotionJobLeaseDirectory, type MotionJobLeaseRecord } from "./job-lease";
 import { MotionJobRegistry, type MotionJobRecord } from "./job-registry";
 import { projectJobState, type JobLifecycle, type JobOutcome, type JobState } from "./generated/job-status";
+import type { MotionJobFrameLane } from "./job-frame-lane";
+import { motionJobOwnerKey } from "./job-id-file";
 
 /** One job, however it is currently stored. Shaped by the contract, not by the storage. */
 export interface MotionJobStatus {
@@ -28,6 +30,8 @@ export interface MotionJobStatus {
   jobId: string;
   callerId: string;
   lane: string;
+  /** Optional rasterizer selected within this final-video job's delivery lane. */
+  frameLane?: MotionJobFrameLane;
   operation: string;
   lifecycle: JobLifecycle;
   /** Present if and only if lifecycle is "ended". */
@@ -41,11 +45,17 @@ export interface MotionJobStatus {
   queueWaitMs?: number;
   /** The process holding this job, present only while it is live. */
   pid?: number;
+  /** Accepted stop intent, or null; state remains pending/running until the worker has actually settled. */
+  cancelRequested: { requestedBy: string; reason?: string; requestedAtMs: number } | null;
   error?: MotionJobRecord["error"];
   cancellation?: MotionJobRecord["cancellation"];
   skip?: MotionJobRecord["skip"];
   warnings: string[];
   receiptPath?: string;
+  receiptId?: string;
+  /** Compact link to producer evidence retained in the exact final receipt. */
+  producerEvidence?: { frameLane: MotionJobFrameLane; schema?: string };
+  lineage?: MotionJobRecord["lineage"];
   /**
    * How long to wait before asking again. Absent once the job has ended, which is the machine-
    * readable way of saying "stop polling" — an agent that polls a terminal job forever is the
@@ -85,9 +95,12 @@ export class MotionJobView {
   async get(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<MotionJobQueryResult> {
     const live = await this.leases.readVisibleLease(input);
     if (live.ok) return { ok: true, job: statusFromLease(live.lease) };
-    if (live.code === "job_not_visible") return { ok: false, code: "job_not_visible" };
     const ended = await this.records.read(input);
-    return ended.ok ? { ok: true, job: statusFromRecord(ended.record) } : { ok: false, code: ended.code };
+    if (ended.ok) return { ok: true, job: statusFromRecord(ended.record) };
+    // Another caller may now have reused this textual id while this caller's earlier terminal
+    // record remains readable.  Prefer that owned terminal record above; otherwise preserve the
+    // historical visibility result for the live job without exposing its contents.
+    return live.code === "job_not_visible" ? { ok: false, code: "job_not_visible" } : { ok: false, code: ended.code };
   }
 
   /**
@@ -101,12 +114,12 @@ export class MotionJobView {
       this.leases.readVisibleLeases(input),
       this.records.list(input)
     ]);
-    const liveIds = new Set(live.map((lease) => lease.jobId));
+    const liveIds = new Set(live.map((lease) => motionJobOwnerKey(lease.callerId, lease.jobId)));
     const jobs = [
       ...live.sort((left, right) => left.startedAtMs - right.startedAtMs).map(statusFromLease),
       // A record for a job that is live again under a reused id would otherwise appear twice, once
       // running and once ended, which reads as two jobs.
-      ...ended.filter((record) => !liveIds.has(record.jobId)).map(statusFromRecord)
+      ...ended.filter((record) => !liveIds.has(motionJobOwnerKey(record.callerId, record.jobId))).map(statusFromRecord)
     ];
     return input.limit === undefined ? jobs : jobs.slice(0, Math.max(0, input.limit));
   }
@@ -120,6 +133,7 @@ function statusFromLease(lease: MotionJobLeaseRecord): MotionJobStatus {
     jobId: lease.jobId,
     callerId: lease.callerId,
     lane: lease.lane,
+    ...(lease.frameLane ? { frameLane: lease.frameLane } : {}),
     operation: lease.operation,
     lifecycle,
     outcome: null,
@@ -130,6 +144,7 @@ function statusFromLease(lease: MotionJobLeaseRecord): MotionJobStatus {
     ...(lease.admittedAtMs !== undefined ? { startedAtMs: lease.admittedAtMs } : {}),
     ...(lease.admittedAtMs !== undefined ? { queueWaitMs: Math.max(0, lease.admittedAtMs - lease.startedAtMs) } : {}),
     pid: lease.pid,
+    cancelRequested: lease.cancelRequested ?? null,
     warnings: [],
     pollAfterMs: DEFAULT_POLL_AFTER_MS
   };
@@ -142,6 +157,7 @@ function statusFromRecord(record: MotionJobRecord): MotionJobStatus {
     jobId: record.jobId,
     callerId: record.callerId,
     lane: record.lane,
+    ...(record.frameLane ? { frameLane: record.frameLane } : {}),
     operation: record.operation,
     lifecycle: "ended",
     outcome: record.outcome,
@@ -151,10 +167,14 @@ function statusFromRecord(record: MotionJobRecord): MotionJobStatus {
     endedAtMs: record.endedAtMs,
     durationMs: record.durationMs,
     queueWaitMs: record.queueWaitMs,
+    cancelRequested: null,
     ...(record.error ? { error: record.error } : {}),
     ...(record.cancellation ? { cancellation: record.cancellation } : {}),
     ...(record.skip ? { skip: record.skip } : {}),
     warnings: record.warnings,
-    ...(record.receiptPath ? { receiptPath: record.receiptPath } : {})
+    ...(record.receiptPath ? { receiptPath: record.receiptPath } : {}),
+    ...(record.receiptId ? { receiptId: record.receiptId } : {}),
+    ...(record.producerEvidence ? { producerEvidence: record.producerEvidence } : {}),
+    ...(record.lineage ? { lineage: record.lineage } : {})
   };
 }

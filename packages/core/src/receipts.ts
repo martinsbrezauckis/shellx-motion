@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import type { LocalMotionJobEvidence } from "./job-governor";
+import type { RenderEncoderReason } from "./render-encoder-probe";
 import { escalateReceiptStatusForWarnings, receiptStatusForWarnings } from "./receipt-status";
+import type { RenderAudioMasterEvidence } from "./audio-types";
 import type {
   MotionAudioDucking,
   MotionKeyframe,
@@ -12,7 +14,6 @@ import type {
   ReceiptActorTransport,
   RenderLoudnessSummary
 } from "./types";
-
 export function hashBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
@@ -257,20 +258,6 @@ export interface MotionToolIdentity {
   version?: string;
 }
 
-/**
- * Why a particular video encoder ran for a final render. Recorded on the
- * render receipt so an verifier can tell hardware from software encodes and understand fallbacks:
- *   - "probe-selected-hardware": a hardware encoder was proved usable by the per-machine probe and ran.
- *   - "hardware-fallback": a probe-selected hardware encoder failed at encode time; software ran instead.
- *   - "forced-software": software was forced (SHELLX_MOTION_FORCE_SOFTWARE_ENCODE / option) for reproducibility.
- *   - "software-default": software ran because no usable hardware candidate was selected.
- */
-export type RenderEncoderReason =
-  | "probe-selected-hardware"
-  | "hardware-fallback"
-  | "forced-software"
-  | "software-default";
-
 export interface PreviewReceiptInput {
   id: string;
   packageId: string;
@@ -319,7 +306,7 @@ export function previewReceiptStatus(input: { warnings: string[]; quality?: Prev
   return receiptStatusForWarnings({ warnings: input.warnings });
 }
 
-export interface RenderReceiptInput {
+export interface RenderReceiptInput<TFrameTransport = never> {
   id: string;
   packageId: string;
   lane: string;
@@ -346,7 +333,7 @@ export interface RenderReceiptInput {
      * a cached probe reused from the shared encode-policy cache. Absent when the probe was run
      * ad hoc without the centralized policy.
      */
-    encoderProbe?: { usableHardwareEncoders: string[]; selectedHardwareEncoder: string | null; provenance?: "fresh-probe" | "cached" };
+    encoderProbe?: import("./render-encoder-probe").RenderEncoderProbeEvidence;
     /** Present only when a hardware encode failed and software took over — the attempted encoder + reason. */
     encoderFallback?: { attemptedEncoder: string; reason: string };
     color?: {
@@ -373,6 +360,7 @@ export interface RenderReceiptInput {
         muted?: boolean;
         fadeInMs?: number;
         fadeOutMs?: number;
+        fadeCurve?: "linear" | "equal-power";
         normalizeLoudness?: boolean;
         playbackRate?: number;
         ducking?: MotionAudioDucking;
@@ -388,14 +376,20 @@ export interface RenderReceiptInput {
       muted?: boolean;
       fadeInMs?: number;
       fadeOutMs?: number;
+      fadeCurve?: "linear" | "equal-power";
       normalizeLoudness?: boolean;
       playbackRate?: number;
       ducking?: MotionAudioDucking;
       volumeKeyframes?: MotionKeyframe[];
       /** EBU R128 loudness normalization evidence (two-pass measured values). */
       loudness?: RenderLoudnessSummary;
+      /** Document-level post-mix controls plus optional delivered-program proof. */
+      master?: RenderAudioMasterEvidence;
     };
     resources?: LocalMotionJobEvidence;
+    resourcePreflight?: import("./materialized-frame-preflight").MaterializedFrameSequencePreflight;
+    /** Bounded renderer-owned transport evidence, when the final video was encoded through image2pipe. */
+    frameTransport?: TFrameTransport;
     /**
      * Which external tools produced this artifact. `ffmpeg` is always present on an ffmpeg-lane
      * receipt; `ffprobe` appears once a validation pass has actually read the media back (review
@@ -416,7 +410,7 @@ export interface RenderReceiptInput {
  * becomes `warning`; a `passed` receipt cannot carry warnings while a
  * preview receipt could not, and the connector aggregating the same warning said `warning`).
  */
-export function createRenderReceipt(input: RenderReceiptInput): OperationReceipt {
+export function createRenderReceipt<TFrameTransport = never>(input: RenderReceiptInput<TFrameTransport>): OperationReceipt {
   return {
     schema: "shellx-motion/receipt@1",
     id: input.id,

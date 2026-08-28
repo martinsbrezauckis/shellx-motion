@@ -90,6 +90,8 @@ export const SUPPORTED_KEYFRAME_TARGET_LIST: MotionKeyframeTarget[] = [
   "effects.grayscale",
   "effects.glow.radius",
   "effects.glow.color",
+  "pathReveal.start",
+  "pathReveal.end",
   "gradient.angle",
   "environment.intensity",
   "environment.wind",
@@ -168,6 +170,7 @@ export const NON_NEGATIVE_KEYFRAME_TARGETS = new Set<MotionKeyframeTarget>([
   "effects.grayscale",
   "effects.glow.radius"
 ]);
+export const UNIT_INTERVAL_KEYFRAME_TARGETS = new Set<MotionKeyframeTarget>(["pathReveal.start", "pathReveal.end"]);
 export const PAN_KEYFRAME_TARGETS = new Set<MotionKeyframeTarget>(["pan"]);
 export const BLEND_MODE_KEYFRAME_TARGETS = new Set<MotionKeyframeTarget>(["blendMode"]);
 export const POSITIVE_KEYFRAME_TARGETS = new Set<MotionKeyframeTarget>(["playbackRate", "style.fontSize", "style.fontWeight", "style.lineHeight", "crop.width", "crop.height"]);

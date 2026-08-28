@@ -1,0 +1,40 @@
+{
+  "schema": "shellx-motion/color-alpha-conformance@1",
+  "contract": "shellx-motion/color-alpha@1",
+  "authoredColorInputs": [
+    { "label": "opaque hex", "value": "#336699", "accepted": true },
+    { "label": "straight-alpha hex", "value": "#33669980", "accepted": true },
+    { "label": "rgba", "value": "rgba(51, 102, 153, 0.5)", "accepted": true },
+    { "label": "hsl", "value": "hsl(210 50% 40%)", "accepted": true },
+    { "label": "Display P3", "value": "color(display-p3 1 0 0)", "accepted": false },
+    { "label": "Rec.2020", "value": "color(rec2020 1 0 0)", "accepted": false },
+    { "label": "Rec.2100 PQ", "value": "color(rec2100-pq 1 0 0)", "accepted": false }
+  ],
+  "lanes": {
+    "native": {
+      "alphaBoundary": "straight-rgba-png",
+      "filterDomain": "temporary-premultiplied-encoded-srgb",
+      "blendDomain": "encoded-srgb"
+    },
+    "browser": {
+      "alphaBoundary": "browser-managed-before-png-capture",
+      "filterDomain": "chromium-managed",
+      "blendDomain": "chromium-managed"
+    },
+    "gpu": {
+      "alphaBoundary": "straight-rgba-stream",
+      "filterDomain": "premultiplied-encoded-srgb",
+      "blendDomain": "premultiplied-encoded-srgb"
+    },
+    "ffmpeg": {
+      "alphaBoundary": "png-or-raw-rgba-frame-input",
+      "filterDomain": "not-a-frame-producer",
+      "blendDomain": "not-a-frame-producer",
+      "delivery": {
+        "profile": "sdr-bt709",
+        "conversion": "rgb-full-to-yuv-limited",
+        "readback": "ffprobe-observed-tags"
+      }
+    }
+  }
+}

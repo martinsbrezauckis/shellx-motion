@@ -11,6 +11,7 @@ import {
   waitForWindowsJobObjectStatus,
   windowsJobObjectContainmentEvidence,
   WindowsJobObjectPlanError,
+  createOwnedUnixProcessGroup,
   type LocalMotionJobErrorCode,
   type LocalMotionJobEvidence,
   type LocalMotionProcessContainmentEvidence,
@@ -20,6 +21,7 @@ import {
 } from "@shellx-motion/core";
 
 import { antigravityAdapter } from "./antigravity";
+import { terminateAgentProcessTree, type AgentProcessTerminationMode } from "./agent-process-control";
 
 export {
   antigravityAdapter,
@@ -593,8 +595,6 @@ interface RunAgentChildOptions {
   maxProcessTreeRssBytes: number;
 }
 
-type AgentProcessTerminationMode = "windows-job-object" | "windows-taskkill-fallback" | "unix-process-group" | "direct-child";
-
 async function runAgentChild(command: AgentCommand, options: RunAgentChildOptions): Promise<AgentProcessResult> {
   if (process.platform === "win32") return runWindowsContainedAgentChild(command, options);
   const mode: AgentProcessTerminationMode = process.platform === "linux" || process.platform === "darwin"
@@ -764,6 +764,9 @@ function runSpawnedAgentChild(
       return;
     }
     if (child.pid) watchProcess(child.pid);
+    const ownedUnixProcessGroup = terminationMode() === "unix-process-group"
+      ? createOwnedUnixProcessGroup(child.pid)
+      : undefined;
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -771,13 +774,14 @@ function runSpawnedAgentChild(
     let outputOverflow = false;
     let outputBytes = 0;
     let killTimer: NodeJS.Timeout | null = null;
+    let groupSettlement: Promise<void> | null = null;
     const timeoutMs = command.timeoutMs ?? DEFAULT_AGENT_COMMAND_TIMEOUT_MS;
     const maxOutputBytes = positiveInteger(command.maxOutputBytes, DEFAULT_AGENT_OUTPUT_MAX_BYTES);
     const terminate = () => {
-      terminateAgentProcessTree(child, false, terminationMode());
+      terminateAgentProcessTree(child, false, terminationMode(), ownedUnixProcessGroup);
       if (!killTimer) {
         killTimer = setTimeout(() => {
-          if (!settled) terminateAgentProcessTree(child, true, terminationMode());
+          if (!settled) terminateAgentProcessTree(child, true, terminationMode(), ownedUnixProcessGroup);
         }, 100);
         killTimer.unref?.();
       }
@@ -803,6 +807,24 @@ function runSpawnedAgentChild(
       signal.removeEventListener("abort", abortChild);
       resolveResult(result);
     };
+    const settleAfterContainedGroupExit = (result: AgentProcessResult) => {
+      if (groupSettlement) return;
+      if (!ownedUnixProcessGroup || ownedUnixProcessGroup.presence() === "gone") {
+        finish(result);
+        return;
+      }
+      // The agent leader has closed already. Force any orphaned same-group helper immediately;
+      // PPID traversal cannot account for its RSS after reparenting.
+      terminateAgentProcessTree(child, true, terminationMode(), ownedUnixProcessGroup);
+      groupSettlement = ownedUnixProcessGroup.waitForExit(1_500).then((gone) => {
+        finish(gone ? result : {
+          exitCode: 1,
+          stdout: result.stdout,
+          stderr: appendStderr(result.stderr, "Motion could not confirm contained Unix process-group cleanup."),
+          ...(result.outputOverflow ? { outputOverflow: true } : {})
+        });
+      });
+    };
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -826,10 +848,10 @@ function runSpawnedAgentChild(
       stderr = appendStderr(stderr, error.message);
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
-      finish({ exitCode: error.code === "ENOENT" ? 127 : 1, stdout, stderr: appendStderr(stderr, error.message) });
+      settleAfterContainedGroupExit({ exitCode: error.code === "ENOENT" ? 127 : 1, stdout, stderr: appendStderr(stderr, error.message) });
     });
     child.on("close", (code) => {
-      finish({
+      settleAfterContainedGroupExit({
         exitCode: outputOverflow ? AGENT_OUTPUT_OVERFLOW_EXIT_CODE : timedOut ? AGENT_TIMEOUT_EXIT_CODE : code ?? 1,
         stdout,
         stderr,
@@ -844,35 +866,6 @@ function runSpawnedAgentChild(
     }
     child.stdin.end();
   });
-}
-
-function terminateAgentProcessTree(
-  child: { pid?: number; kill(signal?: NodeJS.Signals | number): boolean },
-  force: boolean,
-  mode: AgentProcessTerminationMode
-): void {
-  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
-  if (mode === "windows-taskkill-fallback" && child.pid) {
-    try {
-      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
-        shell: false,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      killer.unref();
-      return;
-    } catch {
-      // Fall through to the direct child signal when taskkill itself cannot start.
-    }
-  } else if (mode === "unix-process-group" && child.pid) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // The command group may already have exited.
-    }
-  }
-  try { child.kill(signal); } catch { /* already exited */ }
 }
 
 async function resolveNativeWindowsAgentExecutable(executable: string, environment: NodeJS.ProcessEnv): Promise<string> {

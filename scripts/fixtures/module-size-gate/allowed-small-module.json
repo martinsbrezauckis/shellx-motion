@@ -1,0 +1,6 @@
+{
+  "relativePath": "packages/renderer-browser/src/new-small-module.ts",
+  "lines": 350,
+  "expectedExit": 0,
+  "expectedOutput": "PASS packages/renderer-browser/src/new-small-module.ts: 350/350"
+}

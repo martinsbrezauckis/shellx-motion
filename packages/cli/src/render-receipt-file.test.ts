@@ -6,13 +6,14 @@
  * all — the receipt existed only as transient stdout JSON. Every lane is asserted separately
  * because each resolves its receipt path differently.
  */
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { OperationReceipt } from "@shellx-motion/core";
 import { writeTinyNativePackage } from "./main.fixtures-packages";
 import { runCli as runCliRaw, type RunCliOptions } from "./main";
-import { renderReceiptPathForOutput } from "./render-receipt-file";
+import { renderReceiptPathForOutput, writeRenderReceiptFile } from "./render-receipt-file";
 
 const runCli = (argv: string[], options: RunCliOptions = {}) => runCliRaw(argv, { trustedLocalTier: true, ...options });
 
@@ -40,6 +41,21 @@ async function readReceiptFile(receiptPath: string): Promise<Record<string, unkn
     throw new Error(`No render receipt at ${receiptPath}. Directory contains: ${listing.join(", ")}`);
   }
   return JSON.parse(raw) as Record<string, unknown>;
+}
+
+function testReceipt(id: string): OperationReceipt {
+  return {
+    schema: "shellx-motion/receipt@1",
+    id,
+    operation: "render.final",
+    status: "passed",
+    packageId: PACKAGE_ID,
+    inputHashes: {},
+    createdAt: "2026-08-12T00:00:00.000Z",
+    lane: "ffmpeg",
+    output: {},
+    warnings: []
+  };
 }
 
 describe("render writes its receipt to disk", () => {
@@ -109,5 +125,50 @@ describe("renderReceiptPathForOutput", () => {
       .toBe(join(outRoot, "pkg_a-render.receipt.json"));
     expect(renderReceiptPathForOutput("pkg_a", join(outRoot, "still.png"), "image"))
       .toBe(join(outRoot, "pkg_a-render.receipt.json"));
+  });
+});
+
+describe("render receipt publication", () => {
+  it.skipIf(process.platform === "win32")("never follows a pre-created receipt symlink", async () => {
+    const root = await tempRoot("receipt-symlink");
+    const receiptPath = join(root, "pkg-render.receipt.json");
+    const sentinelPath = join(root, "sentinel.json");
+    await writeFile(sentinelPath, "keep this target", "utf8");
+    await symlink(sentinelPath, receiptPath, "file");
+
+    await expect(writeRenderReceiptFile(testReceipt("symlink-attempt"), receiptPath))
+      .rejects.toMatchObject({ code: "derived_output_exists" });
+
+    expect(await readFile(sentinelPath, "utf8")).toBe("keep this target");
+    expect((await lstat(receiptPath)).isSymbolicLink()).toBe(true);
+  });
+
+  it("requires explicit replacement authority for an existing regular receipt", async () => {
+    const root = await tempRoot("receipt-force");
+    const receiptPath = join(root, "pkg-render.receipt.json");
+    await writeFile(receiptPath, "old attestation", "utf8");
+
+    await expect(writeRenderReceiptFile(testReceipt("without-force"), receiptPath))
+      .rejects.toMatchObject({ code: "derived_output_exists" });
+    expect(await readFile(receiptPath, "utf8")).toBe("old attestation");
+
+    await writeRenderReceiptFile(testReceipt("with-force"), receiptPath, { force: true });
+    expect(await readReceiptFile(receiptPath)).toMatchObject({ id: "with-force" });
+  });
+
+  it("preserves a regular receipt substituted after forced staging", async () => {
+    const root = await tempRoot("receipt-force-swap");
+    const receiptPath = join(root, "pkg-render.receipt.json");
+    await writeFile(receiptPath, "observed receipt", "utf8");
+
+    await expect(writeRenderReceiptFile(testReceipt("forced-swap"), receiptPath, {
+      force: true,
+      afterStageVerified: async () => {
+        await rm(receiptPath);
+        await writeFile(receiptPath, "competing receipt", "utf8");
+      }
+    })).rejects.toMatchObject({ code: "derived_output_exists" });
+
+    expect(await readFile(receiptPath, "utf8")).toBe("competing receipt");
   });
 });

@@ -19,7 +19,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -57,12 +57,25 @@ async function workspace() {
   });
   const spawnHost = (callerId: string, jobId: string, holdMs: number, readyName: string) => {
     const readyPath = join(root, readyName);
+    const releasePath = join(root, `${readyName}.release`);
     const done = runTsx([
-      HOST_FIXTURE, leaseRoot, recordRoot, callerId, jobId, String(holdMs), join(root, "scratch"), readyPath
+      HOST_FIXTURE, leaseRoot, recordRoot, callerId, jobId, String(holdMs), join(root, "scratch"), readyPath, releasePath
     ]);
-    return { done, readyPath };
+    return { done, readyPath, release: () => writeFile(releasePath, "release") };
   };
   return { root, view, spawnHost, leases: new MotionJobLeaseDirectory({ leaseRoot }) };
+}
+
+async function waitForReady(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error(`Host fixture never signalled admission at ${path}.`);
 }
 
 /**
@@ -91,6 +104,7 @@ describe("two hosts sharing one machine", () => {
     const { view, spawnHost } = await workspace();
 
     const cut = spawnHost("cut:workspace-7", "cut:render-1", 2_500, "cut.ready");
+    await waitForReady(cut.readyPath);
     await waitFor(view, "cut:render-1", "cut:workspace-7", "running");
     const studio = spawnHost("design-studio:main", "ds:render-1", 400, "ds.ready");
     // Anchor on the studio job actually existing before asserting Cut cannot see it, so the
@@ -110,6 +124,9 @@ describe("two hosts sharing one machine", () => {
     const cutJobs = await view.list({ callerId: "cut:workspace-7" });
     expect(cutJobs.map((job) => job.jobId)).toEqual(["cut:render-1"]);
 
+    await cut.release();
+    await waitForReady(studio.readyPath);
+    await studio.release();
     await Promise.all([cut.done, studio.done]);
   }, 60_000);
 
@@ -118,7 +135,10 @@ describe("two hosts sharing one machine", () => {
     // that used to answer job_unknown for a job that had just succeeded.
     const { view, spawnHost } = await workspace();
 
-    const { done } = spawnHost("cut:workspace-7", "cut:render-2", 100, "cut.ready");
+    const host = spawnHost("cut:workspace-7", "cut:render-2", 100, "cut.ready");
+    await waitForReady(host.readyPath);
+    await host.release();
+    const { done } = host;
     const { stdout } = await done;
 
     const reported = JSON.parse(stdout) as { jobId: string; state: string };
@@ -138,8 +158,9 @@ describe("two hosts sharing one machine", () => {
     const { view, spawnHost, leases } = await workspace();
 
     const cut = spawnHost("cut:workspace-7", "cut:render-3", 1_500, "cut.ready");
+    await waitForReady(cut.readyPath);
     await waitFor(view, "cut:render-3", "cut:workspace-7", "running");
-    const studio = spawnHost("design-studio:main", "ds:render-3", 100, "ds.ready");
+    const studio = spawnHost("design-studio:main", "ds:render-3", 2_500, "ds.ready");
 
     // THE POINT: while Cut holds the machine's only rendering slot, Design Studio's job is visible
     // and honestly reports that it is WAITING, not working. Telling that caller "rendering..." for
@@ -152,7 +173,10 @@ describe("two hosts sharing one machine", () => {
     expect(admitted.length).toBeLessThanOrEqual(1);
 
     // Then it gets its turn.
+    await cut.release();
+    await waitForReady(studio.readyPath);
     await waitFor(view, "ds:render-3", "design-studio:main", "running");
+    await studio.release();
 
     await Promise.all([cut.done, studio.done]);
     // Both eventually succeed: the cap delays work, it does not fail it.

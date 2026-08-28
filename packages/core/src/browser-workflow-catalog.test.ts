@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -146,6 +146,33 @@ describe("browser workflow catalog", () => {
         "d".repeat(64),
         "e".repeat(64)
       ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a catalog symlink instead of updating its target", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-browser-workflow-catalog-symlink-"));
+    const catalogPath = join(tempRoot, "browser-workflows.catalog.json");
+    const outsideRoot = join(tempRoot, "outside");
+    const outsideCatalog = join(outsideRoot, "catalog.json");
+    try {
+      await mkdir(outsideRoot, { mode: 0o700 });
+      await symlink(outsideCatalog, catalogPath, "file");
+
+      await expect(upsertBrowserWorkflowCatalog({
+        catalogPath,
+        capture: {
+          packageId: "pkg_web",
+          workflowHash: "f".repeat(64),
+          atMs: 0,
+          outputSha256: "a".repeat(64),
+          outputPath: join(tempRoot, "frame.png"),
+          receiptPath: join(tempRoot, "capture.receipt.json"),
+          workflow: { stepCount: 0, networkPolicy: "blocked-unless-declared" }
+        }
+      })).rejects.toMatchObject({ code: "derived_output_exists" });
+      await expect(readFile(outsideCatalog, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

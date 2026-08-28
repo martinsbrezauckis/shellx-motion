@@ -1,10 +1,10 @@
 /**
  * Test config for the suites under `scripts/`, invoked EXPLICITLY by `pnpm run test:scripts`.
  *
- * Why it exists. `pnpm test` ends in `pnpm -r --if-present run test`, which runs each PACKAGE's own
- * test script from that package's directory. Nothing ran from the repository root, so the test files
- * under `scripts/` were collected by nothing — 27 tests that had never executed. `scripts/` holds the
- * release smokes and the build gates, which is the last place a silently-uncollected test belongs.
+ * Why it exists. `pnpm test` ends in a one-workspace-at-a-time recursive package test run, which
+ * runs each package's own suite from that package's directory. Nothing ran from the repository root,
+ * so the test files under `scripts/` were collected by nothing — 27 tests that had never executed.
+ * `scripts/` holds release smokes and build gates, the last place a silently-uncollected test belongs.
  *
  * WHY THE FILENAME IS NOT `vitest.config.ts`, WHICH IS THE WHOLE POINT OF THIS FILE. It was, briefly,
  * and that broke far more than it fixed: vitest walks UP from the working directory for a config, so

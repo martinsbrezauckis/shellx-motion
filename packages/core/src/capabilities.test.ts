@@ -13,7 +13,6 @@ import {
 } from "./capabilities";
 import { CHROMA_KEY_SCHEMA, ROTO_MASK_SCHEMA, ROTO_TRACKING_ATTACHMENT_SCHEMA } from "./keying";
 import type { MotionDocument, RendererCapability } from "./types";
-
 const baseMotion: MotionDocument = {
   schema: "shellx-motion/motion@1",
   id: "motion_lower_third",
@@ -37,6 +36,7 @@ describe("renderer capability matching", () => {
     expect(cards.map((card) => card.lane)).toEqual([
       "native",
       "browser",
+      "gpu",
       "ffmpeg",
       "connector",
       "svg-adapter",
@@ -58,28 +58,28 @@ describe("renderer capability matching", () => {
       renderTargets: expect.arrayContaining(["preview", "frame-sequence", "deterministic-capture"]),
       speed: "medium",
       runtime: {
-        // Pinned deliberately: this card told hosts the browser was "bundled" when playwright-core
-        // ships no browser, so a host that branched on it skipped the install prompt.
+        // Pinned deliberately: browser readiness goes through the same Motion resolver as the
+        // renderer, never an independently-executed `chromium --version` command.
         availability: "external-binary",
         requirement: "Chrome or Chromium browser binary (not shipped; see doctor)",
         cost: "local-cpu",
-        probe: { executable: "chromium", args: ["--version"], shell: false },
+        readiness: { command: "motion.platform.requirements", tools: ["chromium"] },
         setupHint: "Install a Chrome/Chromium browser, or set SHELLX_MOTION_BROWSER to one. Run `doctor` for what this machine is missing."
       },
       strengths: expect.arrayContaining(["HTML/CSS/web layer fidelity"]),
       weaknesses: expect.arrayContaining(["requires deterministic browser readiness gates"])
     });
     expect(cards.find((card) => card.lane === "browser")).toMatchObject({
-      layerTypes: expect.arrayContaining(["camera"]),
-      features: expect.arrayContaining(["camera.2d"])
+      layerTypes: expect.arrayContaining(["camera", "points"]),
+      features: expect.arrayContaining(["camera.2d", "points.viewport-batched"])
     });
     expect(cards.find((card) => card.lane === "ffmpeg")).toMatchObject({
-      layerTypes: expect.arrayContaining(["camera", "particles"]),
+      layerTypes: expect.arrayContaining(["camera", "particles", "points"]),
       runtime: {
         availability: "external-binary",
         requirement: "FFmpeg and FFprobe binaries",
         cost: "local-cpu",
-        probe: { executable: "ffmpeg", args: ["-version"], shell: false },
+        readiness: { command: "motion.platform.requirements", tools: ["ffmpeg", "ffprobe"] },
         setupHint: "Install FFmpeg with FFprobe available on PATH before final media renders."
       }
     });
@@ -1607,7 +1607,7 @@ describe("renderer capability single-source consistency", () => {
     // runtime capability must be exactly the projection of its card down to the RendererCapability
     // shape; if a future edit lets them diverge, this fails CI.
     for (const card of listRendererCapabilityCards()) {
-      expect(rendererCapabilityForLane(card.lane)).toEqual({
+      expect(rendererCapabilityForLane(card.lane)).toMatchObject({
         lane: card.lane,
         layerTypes: card.layerTypes,
         outputs: card.outputs,

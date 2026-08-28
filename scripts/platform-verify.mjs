@@ -2,9 +2,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { arch, hostname, platform, release } from "node:os";
 import { fileURLToPath } from "node:url";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
+import { validatePlatformVerificationReceipt } from "./platform-verification-schema.mjs";
 
 // Command requirement vocabulary (all optional, all declarative):
 //   requiresEnv       - host environment variables that must be set, else skip (or fail when required).
@@ -17,14 +19,20 @@ const COMMANDS = [
   { id: "typecheck", command: ["pnpm", "typecheck"], required: true, category: "core" },
   { id: "test", command: ["pnpm", "test"], required: true, category: "core" },
   { id: "debug:coverage", command: ["pnpm", "run", "debug:coverage"], required: true, category: "agent" },
-  { id: "agent:smoke", command: ["pnpm", "run", "agent:smoke"], required: true, category: "agent" },
+  // The current receipt-store reader retains a descriptor-relative directory chain through
+  // Linux /proc/self/fd. The prompt smoke ends by reading that store back, so other hosts must
+  // record applicability rather than turning a missing portable openat primitive into a false
+  // receipt_not_found failure.
+  { id: "agent:smoke", command: ["pnpm", "run", "agent:smoke"], required: true, category: "agent", platforms: ["linux"] },
   { id: "agent-unavailable:smoke", command: ["pnpm", "run", "agent-unavailable:smoke"], required: true, category: "agent" },
   { id: "debug-server:smoke", command: ["pnpm", "run", "debug-server:smoke"], required: true, category: "agent" },
-  { id: "debug-server-prompt:smoke", command: ["pnpm", "run", "debug-server-prompt:smoke"], required: true, category: "agent" },
+  { id: "debug-server-prompt:smoke", command: ["pnpm", "run", "debug-server-prompt:smoke"], required: true, category: "agent", platforms: ["linux"] },
   { id: "validate:fixtures", command: ["pnpm", "run", "validate:fixtures"], required: true, category: "package" },
   { id: "package-archive:smoke", command: ["pnpm", "run", "package-archive:smoke"], required: true, category: "package" },
-  { id: "canvas-package-preview:smoke", command: ["pnpm", "run", "canvas-package-preview:smoke"], required: true, category: "package" },
-  { id: "evidence-surfaces:smoke", command: ["pnpm", "run", "evidence-surfaces:smoke"], required: true, category: "agent" },
+  // These gates exercise descriptor-pinned closed-tree publication/receipt discovery, which is
+  // intentionally Linux-only in v0.2.x.
+  { id: "canvas-package-preview:smoke", command: ["pnpm", "run", "canvas-package-preview:smoke"], required: true, category: "package", platforms: ["linux"] },
+  { id: "evidence-surfaces:smoke", command: ["pnpm", "run", "evidence-surfaces:smoke"], required: true, category: "agent", platforms: ["linux"] },
   { id: "sandbox:probe", command: ["pnpm", "run", "sandbox:probe"], required: true, category: "resources" },
   { id: "tracking:smoke", command: ["pnpm", "run", "tracking:smoke"], required: true, category: "analysis" },
   { id: "render:smoke", command: ["pnpm", "run", "render:smoke"], required: true, category: "render" },
@@ -41,20 +49,21 @@ const COMMANDS = [
   { id: "render-jpeg:smoke", command: ["pnpm", "run", "render-jpeg:smoke"], required: true, category: "render" },
   { id: "browser:capture-smoke", command: ["pnpm", "run", "browser:capture-smoke"], required: true, category: "browser" },
   { id: "workbench:ui-smoke", command: ["pnpm", "run", "workbench:ui-smoke"], required: true, category: "browser" },
-  { id: "source-storyboard:smoke", command: ["pnpm", "run", "source-storyboard:smoke"], required: true, category: "browser" },
-  { id: "render-job-lifecycle:smoke", command: ["pnpm", "run", "render-job-lifecycle:smoke"], required: true, category: "render" },
+  { id: "source-storyboard:smoke", command: ["pnpm", "run", "source-storyboard:smoke"], required: true, category: "browser", platforms: ["linux"] },
+  { id: "render-job-lifecycle:smoke", command: ["pnpm", "run", "render-job-lifecycle:smoke"], required: true, category: "render", platforms: ["linux"] },
   { id: "render-batch:smoke", command: ["pnpm", "run", "render-batch:smoke"], required: true, category: "render" },
   // Comprehensive promoted-template product proof (~5 minutes). Extended tier so per-host iteration stays
   // fast; final candidate verification opts in with --include-extended and runs it once per candidate.
-  { id: "template-pack:proof", command: ["pnpm", "run", "template-pack:proof"], required: true, category: "template", tier: "extended" },
-  { id: "connector:smoke", command: ["pnpm", "run", "connector:smoke"], required: true, category: "connector" },
+  { id: "template-pack:proof", command: ["pnpm", "run", "template-pack:proof"], required: true, category: "template", tier: "extended", platforms: ["linux"] },
+  { id: "connector:smoke", command: ["pnpm", "run", "connector:smoke"], required: true, category: "connector", platforms: ["linux"] },
+  // P2A's exact-tree publication is Linux-only. Other declared hosts must record a verifiable
+  // applicability skip rather than silently omitting this real Browser-to-FFmpeg acceptance gate.
+  { id: "connector:template-cut-render-smoke", command: ["pnpm", "run", "connector:template-cut-render-smoke"], required: true, category: "connector", platforms: ["linux"] },
   { id: "connector:canvas-bridge-smoke", command: ["pnpm", "run", "connector:canvas-bridge-smoke"], required: false, category: "connector", requiresEnv: ["SHELLX_CANVAS_ROOT"] },
   { id: "connector:canvas-bridge-mp4-smoke", command: ["pnpm", "run", "connector:canvas-bridge-mp4-smoke"], required: false, category: "connector", requiresEnv: ["SHELLX_CANVAS_ROOT"] },
-  { id: "connector:canvas-mp4-smoke", command: ["pnpm", "run", "connector:canvas-mp4-smoke"], required: true, category: "connector" },
-  { id: "connector:script-cut-smoke", command: ["pnpm", "run", "connector:script-cut-smoke"], required: true, category: "connector" },
-  { id: "connector:template-cut-smoke", command: ["pnpm", "run", "connector:template-cut-smoke"], required: true, category: "connector" },
-  { id: "connector:template-cut-render-smoke", command: ["pnpm", "run", "connector:template-cut-render-smoke"], required: true, category: "connector" },
-  { id: "connector:canvas-cut-smoke", command: ["pnpm", "run", "connector:canvas-cut-smoke"], required: false, category: "connector", requiresEnv: ["SHELLX_CANVAS_ROOT"] }
+  { id: "connector:canvas-mp4-smoke", command: ["pnpm", "run", "connector:canvas-mp4-smoke"], required: true, category: "connector", platforms: ["linux"] },
+  { id: "connector:script-cut-smoke", command: ["pnpm", "run", "connector:script-cut-smoke"], required: true, category: "connector", platforms: ["linux"] },
+  { id: "connector:canvas-cut-smoke", command: ["pnpm", "run", "connector:canvas-cut-smoke"], required: false, category: "connector", requiresEnv: ["SHELLX_CANVAS_ROOT"], platforms: ["linux"] }
 ];
 
 const DEFAULT_REQUIRED_HOSTS = ["linux", "windows", "macos"];
@@ -65,6 +74,11 @@ const ENCODER_GATED_COMMANDS = new Map(
   COMMANDS
     .filter((command) => Array.isArray(command.requiresEncoders) && command.requiresEncoders.length > 0)
     .map((command) => [command.id, command.requiresEncoders])
+);
+const PLATFORM_GATED_COMMANDS = new Map(
+  COMMANDS
+    .filter((command) => Array.isArray(command.platforms) && command.platforms.length > 0)
+    .map((command) => [command.id, command.platforms])
 );
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const WINDOWS_EXECUTABLE_SUFFIXES = /\.(?:exe|com|cmd|bat)$/i;
@@ -77,6 +91,11 @@ const CANONICAL_HOST_PLATFORMS = {
 const args = process.argv.slice(2);
 const options = parseArgs(args);
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoScratchRoot = options.run ? await preparePrivateRepoScratch(repoRoot) : null;
+const commandOutputRoot = options.run && options.json
+  ? join(repoScratchRoot, "platform-verification", "command-output")
+  : null;
+if (commandOutputRoot) await assertPrivateRepoScratchPath(repoRoot, commandOutputRoot);
 const startedAt = new Date().toISOString();
 const receipt = options.verifyReceipts.length > 0
   ? verifyPlatformReceipts(options, repoRoot, startedAt)
@@ -86,16 +105,19 @@ if (!isAggregateReceipt(receipt) && options.run) {
   runCommands(receipt, options);
 } else if (!isAggregateReceipt(receipt)) {
   receipt.finishedAt = receipt.startedAt;
+  receipt.commandSummary = summarizeCommandStatuses(receipt.commands);
 }
+
+const presentedReceipt = options.shareable ? shareablePlatformEvidence(receipt) : receipt;
 
 if (options.out) {
   const outPath = resolve(options.out);
   mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeFileSync(outPath, `${JSON.stringify(presentedReceipt, null, 2)}\n`);
 }
 
 if (options.json) {
-  process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(presentedReceipt, null, 2)}\n`);
 } else {
   printHumanSummary(receipt, options);
 }
@@ -106,6 +128,7 @@ function parseArgs(values) {
   const parsed = {
     run: false,
     json: false,
+    shareable: false,
     out: null,
     only: null,
     verifyReceipts: [],
@@ -133,6 +156,8 @@ function parseArgs(values) {
       parsed.run = false;
     } else if (value === "--json") {
       parsed.json = true;
+    } else if (value === "--shareable") {
+      parsed.shareable = true;
     } else if (value === "--out") {
       parsed.out = requireValue(values, index, value);
       index += 1;
@@ -175,6 +200,9 @@ function parseArgs(values) {
     } else {
       throw new Error(`Unknown option: ${value}`);
     }
+  }
+  if (parsed.shareable && !parsed.json && !parsed.out) {
+    throw new Error("--shareable requires --json or --out so the redacted projection has an explicit destination.");
   }
   return parsed;
 }
@@ -591,7 +619,8 @@ function verifyPlatformReceipts(options, repoRoot, startedAt) {
       workspaceIdentityMismatchCount: identityMismatches.length,
       workspaceIdentityMismatchHosts: identityMismatches,
       // Accepted-but-visible: a required codec gate that this host never claimed. Not a pass, not a failure.
-      capabilitySkips: collectCapabilitySkips(receipts)
+      capabilitySkips: collectCapabilitySkips(receipts),
+      platformInapplicableSkips: collectPlatformInapplicableSkips(receipts)
     },
     receipts
   };
@@ -602,6 +631,16 @@ function collectCapabilitySkips(receipts) {
   for (const receipt of receipts) {
     for (const entry of receipt.requiredCommands?.capabilitySkipped ?? []) {
       skips.push({ hostId: receipt.hostId ?? null, command: entry.id, missingEncoders: entry.missingEncoders });
+    }
+  }
+  return skips;
+}
+
+function collectPlatformInapplicableSkips(receipts) {
+  const skips = [];
+  for (const receipt of receipts) {
+    for (const entry of receipt.requiredCommands?.platformInapplicableSkipped ?? []) {
+      skips.push({ hostId: receipt.hostId ?? null, command: entry.id, hostPlatform: entry.hostPlatform, platforms: entry.platforms });
     }
   }
   return skips;
@@ -662,28 +701,37 @@ function summarizePlatformReceipt(path, requiredCommandIds, options) {
   const resolvedPath = resolve(path);
   const failures = [];
   let record;
+  let sourceSha256 = null;
   try {
-    record = JSON.parse(readFileSync(resolvedPath, "utf8"));
+    const source = readFileSync(resolvedPath, "utf8");
+    sourceSha256 = createHash("sha256").update(source).digest("hex");
+    record = JSON.parse(source);
   } catch (error) {
     return {
       path: resolvedPath,
+      sourceSha256,
       hostId: null,
       schemaOk: false,
       status: "unreadable",
       dryRun: false,
       ok: false,
-      failures: [`receipt could not be read: ${error instanceof Error ? error.message : String(error)}`],
+      failures: ["receipt could not be read or parsed as JSON"],
       requiredCommands: { total: requiredCommandIds.length, passed: 0, missing: requiredCommandIds, failed: [] }
     };
   }
 
-  const schemaOk = record?.schema === "shellx-motion/platform-verification@1";
+  const schemaProblems = validatePlatformVerificationReceipt(record);
+  const completionProblems = completedReceiptProblems(record);
+  const schemaOk = schemaProblems.length === 0 && completionProblems.length === 0;
   const hostId = typeof record?.host?.id === "string" ? record.host.id : null;
   const hostPlatform = typeof record?.host?.platform === "string" ? record.host.platform : null;
   const expectedPlatform = hostId ? CANONICAL_HOST_PLATFORMS[hostId] ?? null : null;
   const status = typeof record?.status === "string" ? record.status : "unknown";
   const dryRun = record?.dryRun === true;
-  if (!schemaOk) failures.push("receipt schema is not shellx-motion/platform-verification@1");
+  if (!schemaOk) {
+    const problem = schemaProblems[0] ?? completionProblems[0];
+    failures.push(`receipt schema validation failed: ${problem.path || "/"} ${problem.message}`);
+  }
   if (!hostId) failures.push("receipt host id is missing");
   if (expectedPlatform && hostPlatform !== expectedPlatform) {
     failures.push(`receipt host platform mismatch: ${hostId} requires ${expectedPlatform}, got ${hostPlatform ?? "missing"}`);
@@ -698,6 +746,7 @@ function summarizePlatformReceipt(path, requiredCommandIds, options) {
   const missingCommands = [];
   const failedCommands = [];
   const capabilitySkippedCommands = [];
+  const platformInapplicableSkippedCommands = [];
   for (const id of requiredCommandIds) {
     const command = commands.find((entry) => entry && entry.id === id);
     if (!command) {
@@ -705,10 +754,20 @@ function summarizePlatformReceipt(path, requiredCommandIds, options) {
       failures.push(`required command missing: ${id}`);
       continue;
     }
+    if (command.required !== true) {
+      failedCommands.push(id);
+      failures.push(`required command is not marked required: ${id}`);
+      continue;
+    }
     if (command.status === "passed") continue;
     const capabilitySkip = acceptCapabilitySkip(id, command, toolchain, options);
     if (capabilitySkip) {
       capabilitySkippedCommands.push(capabilitySkip);
+      continue;
+    }
+    const platformInapplicableSkip = acceptPlatformInapplicableSkip(id, command, hostPlatform, expectedPlatform);
+    if (platformInapplicableSkip) {
+      platformInapplicableSkippedCommands.push(platformInapplicableSkip);
       continue;
     }
     failedCommands.push(id);
@@ -720,6 +779,7 @@ function summarizePlatformReceipt(path, requiredCommandIds, options) {
 
   return {
     path: resolvedPath,
+    sourceSha256,
     hostId,
     hostPlatform,
     expectedPlatform,
@@ -731,12 +791,80 @@ function summarizePlatformReceipt(path, requiredCommandIds, options) {
     failures,
     requiredCommands: {
       total: requiredCommandIds.length,
-      passed: requiredCommandIds.length - missingCommands.length - failedCommands.length - capabilitySkippedCommands.length,
+      passed: requiredCommandIds.length - missingCommands.length - failedCommands.length - capabilitySkippedCommands.length - platformInapplicableSkippedCommands.length,
       missing: missingCommands,
       failed: failedCommands,
-      capabilitySkipped: capabilitySkippedCommands
+      capabilitySkipped: capabilitySkippedCommands,
+      platformInapplicableSkipped: platformInapplicableSkippedCommands
     }
   };
+}
+
+function completedReceiptProblems(record) {
+  const problems = [];
+  if (record?.status !== "passed" && record?.status !== "failed") {
+    problems.push({ path: "/status", message: "must be a terminal passed or failed receipt" });
+  }
+  const commands = Array.isArray(record?.commands) ? record.commands : [];
+  const seen = new Set();
+  for (let index = 0; index < commands.length; index += 1) {
+    const command = commands[index];
+    if (!command || typeof command !== "object" || Array.isArray(command)) continue;
+    if (typeof command.id === "string") {
+      if (seen.has(command.id)) problems.push({ path: `/commands/${index}/id`, message: "must be unique" });
+      seen.add(command.id);
+      const declared = COMMANDS.find((entry) => entry.id === command.id);
+      if (!declared) {
+        problems.push({ path: `/commands/${index}/id`, message: "must name a command declared by this build" });
+      } else if (!sameStringArray(command.command, declared.command)) {
+        problems.push({ path: `/commands/${index}/command`, message: "must match this build's declared command" });
+      }
+    }
+    if (!Number.isFinite(command.durationMs) || command.durationMs < 0) {
+      problems.push({ path: `/commands/${index}/durationMs`, message: "must be a non-negative completed duration" });
+    }
+    if (command.status === "passed") {
+      if (!Number.isInteger(command.exitCode) || command.exitCode !== 0) {
+        problems.push({ path: `/commands/${index}/exitCode`, message: "must be zero for a passed command" });
+      }
+    } else if (command.status === "failed") {
+      if (!Number.isInteger(command.exitCode) || command.exitCode === 0) {
+        problems.push({ path: `/commands/${index}/exitCode`, message: "must be non-zero for a failed command" });
+      }
+    } else if (command.status === "skipped") {
+      if (typeof command.skipKind !== "string" || !command.skipKind || typeof command.skipReason !== "string" || !command.skipReason) {
+        problems.push({ path: `/commands/${index}`, message: "a skipped command must retain skipKind and skipReason" });
+      }
+    } else {
+      problems.push({ path: `/commands/${index}/status`, message: "must be passed, failed, or skipped in a completed receipt" });
+    }
+  }
+  const expected = summarizeCommandStatuses(commands);
+  if (!sameCommandSummary(record?.commandSummary, expected)) {
+    problems.push({ path: "/commandSummary", message: "must exactly reconcile the completed command list" });
+  }
+  return problems;
+}
+
+function sameStringArray(left, right) {
+  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameCommandSummary(left, right) {
+  return left && typeof left === "object" && !Array.isArray(left)
+    && left.total === right.total && left.passed === right.passed && left.failed === right.failed && left.skipped === right.skipped
+    && sameIntegerMap(left.skippedByKind, right.skippedByKind);
+}
+
+function sameIntegerMap(left, right) {
+  if (!left || typeof left !== "object" || Array.isArray(left) || !right || typeof right !== "object" || Array.isArray(right)) return false;
+  const leftEntries = Object.entries(left).sort(([a], [b]) => compareCodeUnits(a, b));
+  const rightEntries = Object.entries(right).sort(([a], [b]) => compareCodeUnits(a, b));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function compareCodeUnits(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**
@@ -759,6 +887,173 @@ function acceptCapabilitySkip(id, command, toolchain, options) {
     missingEncoders,
     reason: typeof command.skipReason === "string" ? safeHumanText(command.skipReason).slice(0, 300) : ""
   };
+}
+
+/**
+ * Accept an inapplicable required command only when this build declares its platform restriction
+ * and the receipt host is a canonical, non-applicable host. A receipt cannot self-exempt a Linux
+ * requirement by spelling the skip kind itself.
+ */
+function acceptPlatformInapplicableSkip(id, command, hostPlatform, expectedPlatform) {
+  const platforms = PLATFORM_GATED_COMMANDS.get(id);
+  if (!platforms) return null;
+  if (command.status !== "skipped" || command.skipKind !== "platform-inapplicable") return null;
+  if (!hostPlatform || !expectedPlatform || hostPlatform !== expectedPlatform || platforms.includes(hostPlatform)) return null;
+  return {
+    id,
+    hostPlatform,
+    platforms: [...platforms],
+    reason: typeof command.skipReason === "string" ? safeHumanText(command.skipReason).slice(0, 300) : ""
+  };
+}
+
+/**
+ * Public-safe projection. It is intentionally a different schema and cannot be fed back into the
+ * native qualification gate: paths, host-local identity, raw command text, and diagnostic tails
+ * remain private operator evidence, while hashes and bounded outcome facts remain shareable.
+ */
+function shareablePlatformEvidence(receipt) {
+  const sourceSha256 = createHash("sha256").update(JSON.stringify(receipt)).digest("hex");
+  return {
+    schema: "shellx-motion/platform-verification-shareable@1",
+    source: { schema: receipt.schema, sha256: sourceSha256 },
+    status: receipt.status,
+    evidence: isAggregateReceipt(receipt)
+      ? shareableAggregateEvidence(receipt)
+      : shareableHostEvidence(receipt),
+  };
+}
+
+function shareableHostEvidence(receipt) {
+  return {
+    dryRun: receipt.dryRun === true,
+    host: {
+      id: logicalPlatformId(receipt.host?.platform),
+      platform: receipt.host?.platform ?? "unknown",
+      arch: receipt.host?.arch ?? "unknown",
+      node: receipt.host?.node ?? "unknown",
+    },
+    toolchain: shareableToolchainEvidence(summarizeExactToolchain(receipt.toolchain)),
+    startedAt: receipt.startedAt,
+    finishedAt: receipt.finishedAt,
+    commandSummary: receipt.commandSummary,
+    commands: (Array.isArray(receipt.commands) ? receipt.commands : []).map(shareableCommandEvidence),
+  };
+}
+
+function shareableAggregateEvidence(receipt) {
+  return {
+    startedAt: receipt.startedAt,
+    finishedAt: receipt.finishedAt,
+    exactToolchainRequired: receipt.exactToolchainRequired === true,
+    bundledCodecsRequired: receipt.bundledCodecsRequired === true,
+    modernCodecsRequired: receipt.modernCodecsRequired === true,
+    extendedTierRequired: receipt.extendedTierRequired === true,
+    summary: {
+      requiredHostCount: receipt.summary?.requiredHostCount ?? 0,
+      satisfiedHostCount: receipt.summary?.satisfiedHostCount ?? 0,
+      missingHostCount: Array.isArray(receipt.summary?.missingHosts) ? receipt.summary.missingHosts.length : 0,
+      failedHostCount: Array.isArray(receipt.summary?.failedHosts) ? receipt.summary.failedHosts.length : 0,
+      invalidReceiptCount: receipt.summary?.invalidReceiptCount ?? 0,
+      duplicateHostCount: receipt.summary?.duplicateHostCount ?? 0,
+      workspaceIdentityMismatchCount: receipt.summary?.workspaceIdentityMismatchCount ?? 0,
+      capabilitySkipCount: Array.isArray(receipt.summary?.capabilitySkips) ? receipt.summary.capabilitySkips.length : 0,
+      platformInapplicableSkipCount: Array.isArray(receipt.summary?.platformInapplicableSkips) ? receipt.summary.platformInapplicableSkips.length : 0,
+    },
+    receipts: (Array.isArray(receipt.receipts) ? receipt.receipts : []).map((entry) => ({
+      sourceSha256: entry.sourceSha256 ?? null,
+      host: logicalPlatformId(entry.hostPlatform),
+      status: entry.status,
+      dryRun: entry.dryRun === true,
+      schemaOk: entry.schemaOk === true,
+      ok: entry.ok === true,
+      failureCount: Array.isArray(entry.failures) ? entry.failures.length : 0,
+      toolchain: shareableToolchainEvidence(entry.toolchain),
+      requiredCommands: shareableRequiredCommandEvidence(entry.requiredCommands),
+    })),
+  };
+}
+
+function shareableRequiredCommandEvidence(value) {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    total: Number.isInteger(record.total) ? record.total : 0,
+    passed: Number.isInteger(record.passed) ? record.passed : 0,
+    missing: stringArray(record.missing),
+    failed: stringArray(record.failed),
+    capabilitySkipped: (Array.isArray(record.capabilitySkipped) ? record.capabilitySkipped : []).map((entry) => ({
+      id: typeof entry?.id === "string" ? entry.id : "unknown",
+      missingEncoders: stringArray(entry?.missingEncoders),
+    })),
+    platformInapplicableSkipped: (Array.isArray(record.platformInapplicableSkipped) ? record.platformInapplicableSkipped : []).map((entry) => ({
+      id: typeof entry?.id === "string" ? entry.id : "unknown",
+      hostPlatform: typeof entry?.hostPlatform === "string" ? entry.hostPlatform : "unknown",
+      platforms: stringArray(entry?.platforms),
+    })),
+  };
+}
+
+function shareableToolchainEvidence(value) {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const workspace = record.workspace && typeof record.workspace === "object" && !Array.isArray(record.workspace)
+    ? record.workspace
+    : {};
+  return {
+    status: fixedEvidenceStatus(record.status),
+    exact: record.exact === true,
+    bundledCodecs: record.bundledCodecs === true,
+    workspace: {
+      status: fixedEvidenceStatus(workspace.status),
+      exact: workspace.exact === true,
+      commit: fixedHex(workspace.commit, [40, 64]),
+      trackedDirty: typeof workspace.trackedDirty === "boolean" ? workspace.trackedDirty : null,
+      lockfileSha256: fixedHex(workspace.lockfileSha256, [64]),
+    },
+    nodeSha256: fixedHex(record.nodeSha256, [64]),
+    ffmpegSha256: fixedHex(record.ffmpegSha256, [64]),
+    ffprobeSha256: fixedHex(record.ffprobeSha256, [64]),
+    encoderCapabilities: fixedEncoderCapabilities(record.encoderCapabilities),
+  };
+}
+
+function fixedEvidenceStatus(value) {
+  return ["passed", "failed", "missing", "invalid", "planned", "partial"].includes(value) ? value : "invalid";
+}
+
+function fixedHex(value, lengths) {
+  return typeof value === "string" && lengths.includes(value.length) && /^[a-f0-9]+$/i.test(value) ? value : null;
+}
+
+function fixedEncoderCapabilities(value) {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(["h264", "vp9", "prores", "hevc", "av1"]
+    .filter((key) => typeof record[key] === "boolean")
+    .map((key) => [key, record[key]]));
+}
+
+function stringArray(value) {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+}
+
+function shareableCommandEvidence(command) {
+  return {
+    id: command?.id ?? "unknown",
+    required: command?.required === true,
+    category: command?.category ?? "unknown",
+    status: command?.status ?? "unknown",
+    durationMs: Number.isFinite(command?.durationMs) ? command.durationMs : 0,
+    ...(Number.isInteger(command?.exitCode) ? { exitCode: command.exitCode } : {}),
+    ...(typeof command?.signal === "string" || command?.signal === null ? { signal: command.signal } : {}),
+    ...(typeof command?.skipKind === "string" ? { skipKind: command.skipKind } : {}),
+    ...(Array.isArray(command?.missingEncoders) ? { missingEncoders: command.missingEncoders } : {}),
+  };
+}
+
+function logicalPlatformId(value) {
+  if (value === "win32") return "windows";
+  if (value === "darwin") return "macos";
+  if (value === "linux") return "linux";
+  return "other";
 }
 
 function isAggregateReceipt(receipt) {
@@ -866,6 +1161,14 @@ function runCommands(receipt, options) {
  *          null means "run it"; otherwise the resolved terminal status with a recorded, visible reason.
  */
 function evaluateCommandGate(command, receipt, options) {
+  const platforms = Array.isArray(command.platforms) ? command.platforms : [];
+  if (platforms.length > 0 && !platforms.includes(receipt.host.platform)) {
+    return {
+      status: "skipped",
+      skipKind: "platform-inapplicable",
+      reason: `Command applies only to host platform(s): ${platforms.join(", ")}; this receipt is ${receipt.host.platform}.`
+    };
+  }
   const missingEnv = missingRequiredEnv(command);
   if (missingEnv.length > 0) {
     return {
@@ -939,8 +1242,8 @@ function spawnErrorExitCode(error) {
 }
 
 function commandOutputFiles(receipt, command) {
-  const outputDir = resolve(receipt.repoRoot, ".scratch", "platform-verification", "command-output", safePathSegment(receipt.host.id));
-  mkdirSync(outputDir, { recursive: true });
+  const outputDir = join(commandOutputRoot ?? resolve(receipt.repoRoot, ".scratch", "platform-verification", "command-output"), safePathSegment(receipt.host.id));
+  mkdirSync(outputDir, { recursive: true, mode: 0o700 });
   const baseName = safePathSegment(command.id);
   return {
     stdout: resolve(outputDir, `${baseName}.stdout.log`),
@@ -1005,6 +1308,9 @@ function printHumanSummary(receipt, options) {
     for (const skip of receipt.summary.capabilitySkips ?? []) {
       writeHumanLine(`skipped  ${safeHumanText(skip.hostId ?? "unknown")}: ${safeHumanText(skip.command)} [capability-absent: ${safeHumanList(skip.missingEncoders)}]`);
     }
+    for (const skip of receipt.summary.platformInapplicableSkips ?? []) {
+      writeHumanLine(`skipped  ${safeHumanText(skip.hostId ?? "unknown")}: ${safeHumanText(skip.command)} [platform-inapplicable: ${safeHumanText(skip.hostPlatform)} not in ${safeHumanList(skip.platforms)}]`);
+    }
     if (options.out) writeHumanLine(`Receipt: ${safeHumanText(resolve(options.out))}`);
     return;
   }
@@ -1037,6 +1343,7 @@ Options:
   --dry-run              Print the planned host verification receipt (default)
   --run                  Execute the verification commands sequentially
   --json                 Print machine-readable JSON
+  --shareable            Emit a redacted, non-replayable shareable projection with --json/--out
   --out <path>           Write the receipt JSON to a file
   --host-id <id>         Override host id (default: SHELLX_MOTION_HOST_ID or hostname)
   --required-hosts <ids> Required host ids for matrix evidence (default: linux,windows,macos; use "none" to omit)

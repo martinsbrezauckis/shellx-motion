@@ -4,12 +4,10 @@
  * Extracted from index.test.ts rather than appended to it: that file sits on a 24,200-line
  * non-growth cap, and raising legacy caps is not the normal path.
  *
- * What these guard: the Debug API kept its own frames-directory policy,
- * `readdir(path).length === 0`, while the CLI used core's ownership-aware `prepareFramesDir`. Two
- * guards for one job, and the stricter one refused the exact directory state MOTION ITSELF produces
- * when a render dies — so an agent whose render was killed by the RSS ceiling could not retry at the
- * same `framesDir`, which is precisely when it needs to retry with a cheaper package. It also
- * deleted that directory two lines later, so it never protected anything.
+ * What these guard: a caller-supplied non-empty frames directory is unowned input. Filenames and
+ * PNG signatures are not proof that Motion created its contents, so the Debug API must preserve
+ * every existing entry and refuse before browser frame rendering. A caller can explicitly choose a
+ * new or empty directory instead; this wire surface deliberately has no destructive force option.
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +22,7 @@ describe("motion.render.final frames directory", () => {
     const framesDir = join(outDir, "frames");
     const sentinelPath = join(framesDir, "keep.txt");
     try {
-      await mkdir(framesDir, { recursive: true });
+      await mkdir(framesDir, { recursive: true, mode: 0o700 });
       await writeFile(sentinelPath, "do not delete", "utf8");
 
       const result = await dispatchDebugCommand(
@@ -33,6 +31,7 @@ describe("motion.render.final frames directory", () => {
           packageRoot: "../../fixtures/packages/keyframed-lower-third",
           outputPath,
           framesDir,
+          keepFrames: true,
           preset: "mp4-h264"
         },
         {
@@ -44,10 +43,9 @@ describe("motion.render.final frames directory", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("invalid_args");
-        // The refusal NAMES the offending entry, so a caller can act without listing the directory
-        // itself. It previously said only "framesDir must be empty or absent before render", which
-        // was also the message a caller got for a directory holding nothing but Motion's own frames.
-        expect(result.error.message).toContain("keep.txt");
+        expect(result.error.message).toContain("(1 existing entry)");
+        // The refusal communicates the safe next action without disclosing caller-owned names.
+        expect(result.error.message).not.toContain("keep.txt");
         expect(result.error.message).toContain("Nothing was written or deleted");
         // This surface has no --force, so the suggestion must not name one.
         expect(result.error.message).not.toContain("--force");
@@ -59,17 +57,16 @@ describe("motion.render.final frames directory", () => {
     }
   });
 
-  it("accepts a frames directory holding only frames Motion itself wrote", async () => {
-    // The defect this guards: the old guard was an emptiness test, so a
-    // render killed by the RSS ceiling left its own frames behind and every retry at the same
-    // framesDir was refused — exactly when an agent most needs to retry with a cheaper package.
+  it("refuses and preserves PNG-shaped caller content instead of treating it as Motion-owned", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-render-ffmpeg-frames-owned-"));
     const outputPath = join(outDir, "final.mp4");
     const framesDir = join(outDir, "frames");
+    const framePath = join(framesDir, "000001.png");
+    const frameBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let browserCalls = 0;
     try {
       await mkdir(framesDir, { recursive: true });
-      // A PNG-signature file named the way Motion names frames: the evidence the guard reads.
-      await writeFile(join(framesDir, "000001.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      await writeFile(framePath, frameBytes);
 
       const result = await dispatchDebugCommand(
         "motion.render.final",
@@ -77,20 +74,21 @@ describe("motion.render.final frames directory", () => {
           packageRoot: "../../fixtures/packages/keyframed-lower-third",
           outputPath,
           framesDir,
+          keepFrames: true,
           preset: "mp4-h264"
         },
         {
           tier: "render_motion",
           ffmpegRunner: async () => ({ exitCode: 0, stdout: "ffmpeg version test", stderr: "" }),
-          // Stubbed so the test exercises the GUARD, not a real 120-frame browser render.
           browserFrameRenderer: async (pkg, options) => {
+            browserCalls += 1;
             await mkdir(options.outDir, { recursive: true });
-            const framePath = options.outputPath ?? join(options.outDir, "frame.png");
-            await writeFile(framePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+            const renderedFramePath = options.outputPath ?? join(options.outDir, "frame.png");
+            await writeFile(renderedFramePath, frameBytes);
             return {
               ok: true as const,
               output: {
-                path: framePath,
+                path: renderedFramePath,
                 sha256: "a".repeat(64),
                 format: "png" as const,
                 width: pkg.motion.width,
@@ -105,11 +103,9 @@ describe("motion.render.final frames directory", () => {
         }
       );
 
-      // Whatever else the fake runner does, it must NOT be refused for the directory's contents.
-      if (!result.ok) {
-        expect(result.error.code).not.toBe("invalid_args");
-        expect(JSON.stringify(result.error)).not.toContain("did not write");
-      }
+      expect(result).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+      expect(browserCalls).toBe(0);
+      expect(await readFile(framePath)).toEqual(frameBytes);
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }

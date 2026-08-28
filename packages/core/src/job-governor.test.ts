@@ -152,6 +152,39 @@ describe("local Motion job governor", () => {
     expect(governor.snapshot().activeJobs).toBe(0);
   });
 
+  it.each([
+    ["caller cancellation", true, { name: "AbortError" }],
+    ["wall-clock deadline", false, { code: "job_deadline_exceeded", evidence: { state: "deadline_exceeded" } }]
+  ] as Array<[string, boolean, Record<string, unknown>]>)
+  ("releases the terminal slot after %s so a later governed operation can run", async (_label, callerCancels, expectedFailure) => {
+    const controller = new AbortController();
+    const governor = new LocalMotionJobGovernor({ ...POLICY, maxWallClockMs: 100 }, {
+      freeScratchBytes: async () => 1_000,
+      leases: null
+    });
+    let entered!: () => void;
+    const enteredOperation = new Promise<void>((resolve) => { entered = resolve; });
+    const terminal = governor.run({
+      lane: "ffmpeg",
+      operation: "render.terminal-cleanup",
+      scratchRoot: ".scratch/terminal-cleanup",
+      ...(callerCancels ? { signal: controller.signal } : {})
+    }, async ({ signal }) => {
+      entered();
+      await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    });
+    await enteredOperation;
+    if (callerCancels) controller.abort();
+    await expect(terminal).rejects.toMatchObject(expectedFailure);
+    expect(governor.snapshot()).toMatchObject({ activeJobs: 0, queuedJobs: 0 });
+    await expect(governor.run({
+      lane: "quality",
+      operation: "quality.after-terminal-cleanup",
+      scratchRoot: ".scratch/terminal-cleanup"
+    }, async () => _label)).resolves.toMatchObject({ value: _label });
+    expect(governor.snapshot()).toMatchObject({ activeJobs: 0, queuedJobs: 0 });
+  });
+
   it("aborts a watched process tree above the RSS budget", async () => {
     const governor = new LocalMotionJobGovernor(POLICY, {
       freeScratchBytes: async () => 1_000,
@@ -215,6 +248,61 @@ describe("local Motion job governor", () => {
     });
   });
 
+  it("records Playwright's default Chromium sandbox opt-out with its explicit reason", async () => {
+    const governor = new LocalMotionJobGovernor(POLICY, { freeScratchBytes: async () => 1_000 });
+    const result = await governor.run({ lane: "browser", operation: "preview.frame", scratchRoot: ".scratch/test" }, async ({ reportSandbox }) => {
+      reportSandbox({
+        schema: "shellx-motion/runtime-sandbox@1",
+        provider: "chromium",
+        status: "disabled",
+        scope: "browser-process",
+        reasonCode: "playwright_default_no_sandbox",
+      });
+      return "ok";
+    });
+
+    expect(result.evidence.sandbox).toEqual({
+      schema: "shellx-motion/runtime-sandbox@1",
+      provider: "chromium",
+      status: "disabled",
+      scope: "browser-process",
+      reasonCode: "playwright_default_no_sandbox",
+    });
+  });
+
+  it("records a concrete Linux Bubblewrap profile only with its complete enforcement evidence", async () => {
+    const governor = new LocalMotionJobGovernor(POLICY, { freeScratchBytes: async () => 1_000 });
+    const result = await governor.run({ lane: "browser", operation: "preview.frame", scratchRoot: ".scratch/test" }, async ({ reportSandbox }) => {
+      reportSandbox({
+        schema: "shellx-motion/runtime-sandbox@1",
+        provider: "linux-bubblewrap",
+        status: "enforced",
+        scope: "browser-process",
+        launcher: { path: "/opt/shellx-motion/enforced-untrusted-browser-launcher.mjs", sha256: "b".repeat(64) },
+        interpreter: { path: "/usr/bin/node", sha256: "c".repeat(64) },
+        executable: { path: "/usr/bin/bwrap", sha256: "a".repeat(64), version: "bubblewrap 0.9.0" },
+        policy: {
+          network: "denied",
+          packageFilesystem: "read-only",
+          writableFilesystem: "isolated-tmpfs-root-and-browser-profile",
+          process: "new-pid-namespace",
+          capabilities: "dropped",
+          seccomp: "not-configured",
+        },
+      });
+      return "ok";
+    });
+
+    expect(result.evidence.sandbox).toMatchObject({
+      provider: "linux-bubblewrap",
+      status: "enforced",
+      launcher: { path: "/opt/shellx-motion/enforced-untrusted-browser-launcher.mjs", sha256: "b".repeat(64) },
+      interpreter: { path: "/usr/bin/node", sha256: "c".repeat(64) },
+      executable: { path: "/usr/bin/bwrap", sha256: "a".repeat(64) },
+      policy: { network: "denied", packageFilesystem: "read-only", writableFilesystem: "isolated-tmpfs-root-and-browser-profile" },
+    });
+  });
+
   it("rejects invalid or duplicate runtime sandbox reports", async () => {
     const governor = new LocalMotionJobGovernor(POLICY, { freeScratchBytes: async () => 1_000 });
     await expect(governor.run({ lane: "browser", operation: "preview.frame", scratchRoot: ".scratch/test" }, async ({ reportSandbox }) => {
@@ -240,7 +328,7 @@ describe("local Motion job governor", () => {
         status: "disabled",
         scope: "browser-process",
       });
-    })).rejects.toThrow("requires the trusted host opt-out reason");
+    })).rejects.toThrow("requires an explicit truthful reason");
   });
 
   it("rejects invalid or duplicate containment reports before they can rewrite evidence", async () => {

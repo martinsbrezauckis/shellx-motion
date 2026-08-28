@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ShellX Motion · Local Effects</title>
+    <link rel="stylesheet" href="/engine-room.css">
+    <link rel="stylesheet" href="/workbench-nav.css">
+  </head>
+  <body>
+    <div class="app-shell" id="appShell" data-state="disconnected">
+      <header class="command-bar">
+        <div class="brand" aria-label="ShellX Motion"><span>ShellX</span><strong>Motion</strong><span class="brand-sub">Local effects</span></div>
+        <div class="command-spacer"></div>
+        <div class="command-actions"><span class="session-state" id="sessionState"><i></i>Disconnected</span><span class="tier-chip" id="tierChip" hidden></span><button class="quiet-button" id="sessionButton" type="button">Connect</button></div>
+      </header>
+      <main class="er-main"><div class="er-page">
+        <div class="er-page-head"><h1>Local effects</h1><button class="primary-button" id="installButton" type="button" disabled>Install from file…</button></div>
+        <p class="er-page-lead">Install the fixed Afterimage Stack intrinsic from a local manifest. The system picker selects the file; this page never accepts or displays filesystem paths.</p>
+        <section class="panel"><div class="panel-head"><h2>Installed modules</h2><button class="quiet-button compact" id="refreshButton" type="button" disabled>Refresh</button></div><div class="panel-body"><div class="operation-list" id="moduleList"><div class="empty-copy">Connect through Start Motion to manage local effects.</div></div></div></section>
+        <section class="panel" id="pendingPanel" hidden><div class="panel-head"><h2>Confirm installation</h2></div><div class="panel-body"><p id="pendingSummary"></p><p class="connection-note">Confirm installs the exact bytes selected above. The confirmation can be used once.</p><button class="primary-button" id="confirmButton" type="button">Confirm install</button><button class="quiet-button" id="cancelButton" type="button">Cancel</button></div></section>
+        <section class="panel" id="detailPanel" hidden><div class="panel-head"><h2>Module details</h2></div><div class="panel-body"><dl class="property-list" id="detailList"></dl></div></section>
+      </div></main>
+      <div class="status-bar" role="status" aria-live="polite"><span id="statusMessage">Start Motion to manage local effects.</span><span id="statusDetail">Operator session required</span></div>
+    </div>
+    <dialog id="connectDialog"><form method="dialog" id="connectForm"><label for="capabilityToken">Local access key<input id="capabilityToken" type="password" autocomplete="off" required minlength="32"></label><p id="connectError" hidden></p><button type="button" data-close-dialog="connectDialog">Cancel</button><button type="submit">Connect</button></form></dialog>
+    <script type="module" src="/effect-modules.js"></script><script type="module" src="/workbench-nav.js"></script>
+  </body>
+</html>

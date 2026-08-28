@@ -86,8 +86,11 @@ describe("caller-supplied receiptsRoot fence", () => {
     // A caller cannot widen this set, so the refusal has to route to whoever can.
     expect(result?.ok).toBe(false);
     if (!result || result.ok) return;
-    expect(result.error.detail).toMatchObject({ argument: "receiptsRoot", resolvedBy: "host_operator" });
-    expect(JSON.stringify(result.error.detail)).toContain(hostReceiptsRoot);
+    expect(result.error.detail).toMatchObject({
+      argument: "receiptsRoot",
+      trustedRoots: expect.arrayContaining([hostReceiptsRoot]),
+      resolvedBy: "host_operator",
+    });
   });
 
   it("refuses at the boundary when the host declared no receipt root at all", async () => {

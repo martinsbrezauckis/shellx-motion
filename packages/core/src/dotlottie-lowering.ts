@@ -22,15 +22,23 @@ export function lowerSelectedDotLottieToMotion(input: AdapterDiagnosticInput & {
   const motion = background ? { ...lowered.motion, background } : lowered.motion;
   const motionSha256 = hashBuffer(Buffer.from(`${JSON.stringify(motion, null, 2)}\n`, "utf8"));
   const previousOutput = readRecord(lowered.receipt.output);
+  const previousGpuPrecomposition = readRecord(previousOutput.lottieGpuPrecomposition);
+  const gpuPrecomposition = previousGpuPrecomposition.outputMotionSha256 ? { ...previousGpuPrecomposition, outputMotionSha256: motionSha256 } : undefined;
+  const diagnostics = gpuPrecomposition ? {
+    ...lowered.diagnostics,
+    receipt: { ...lowered.diagnostics.receipt, output: { ...readRecord(lowered.diagnostics.receipt.output), lottieGpuPrecomposition: gpuPrecomposition } }
+  } : lowered.diagnostics;
   return {
     ...lowered,
     motion,
+    diagnostics,
     receipt: {
       ...lowered.receipt,
       id: `adapter-lowering-lottie-${motionSha256.slice(0, 16)}`,
       output: {
         ...previousOutput,
         motionSha256,
+        ...(gpuPrecomposition ? { lottieGpuPrecomposition: gpuPrecomposition } : {}),
         ...(background ? { dotLottieBackground: { source: input.animation.background, motion: background } } : {}),
         ...(input.appliedTheme ? { dotLottieTheme: input.appliedTheme } : {})
       }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, open, unlink } from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { link, lstat, open, realpath, unlink } from "node:fs/promises";
+import { basename, dirname, extname, join, parse, relative, resolve, sep } from "node:path";
 import {
   attestArtifactReceipt,
   canonicalJsonSha256,
@@ -26,36 +26,183 @@ export function connectorArtifactStagingPath(outputPath: string): string {
   return join(dirname(outputPath), `.${basename(outputPath)}.${randomUUID()}.stage${extension}`);
 }
 
-export async function publishConnectorArtifact(stagingPath: string, outputPath: string): Promise<void> {
+export interface ConnectorArtifactPublicationOptions {
+  /** Canvas may stage beneath its private sibling reservation instead of directly beside output. */
+  privateStagingRoot?: string;
+  /** Canvas pins the reservation stage it created, rejecting a retarget before a public link. */
+  expectedPrivateStagingRoot?: ConnectorArtifactPathIdentity;
+  /** Bounded fault seam for pathname-retarget regression coverage. Production callers omit it. */
+  afterOutputLinked?: () => Promise<void>;
+}
+
+export interface ConnectorArtifactPathIdentity {
+  dev: number;
+  ino: number;
+}
+
+/**
+ * Snapshot the only parent identity a later staging cleanup may trust. Streaming renderers call
+ * this before handing a random stage path to the producer, so a retarget during rendering causes
+ * cleanup to leave the replacement alone.
+ */
+export async function captureConnectorArtifactStagingTopology(
+  stagingPath: string,
+  outputPath: string,
+  options: Pick<ConnectorArtifactPublicationOptions, "privateStagingRoot" | "expectedPrivateStagingRoot"> = {}
+): Promise<{ stagingParent: ConnectorArtifactPathIdentity }> {
   const staging = resolve(stagingPath);
   const output = resolve(outputPath);
-  if (dirname(staging) !== dirname(output)) throw new Error("connector artifact staging and output paths must share a directory");
+  const outputParent = dirname(output);
+  const privateStagingRoot = options.privateStagingRoot ? resolve(options.privateStagingRoot) : undefined;
+  const usesPrivateSiblingStage = privateStagingRoot !== undefined
+    && isPathInsideOrEqual(outputParent, privateStagingRoot)
+    && isPathInsideOrEqual(privateStagingRoot, staging);
+  if (dirname(staging) !== outputParent && !usesPrivateSiblingStage) {
+    throw new Error("connector artifact staging must share the output directory or its declared private sibling reservation");
+  }
+  // Publication is deliberately not a security boundary against the account that owns this
+  // directory. It does, however, reject a caller-selected topology in which another POSIX
+  // principal could rename the stage, public output, or a Canvas reservation directory between
+  // pathname operations. The matching Canvas admission happens earlier, before bridge intake.
+  await assertSafeConnectorArtifactDirectory(outputParent, "connector artifact output parent");
+  if (options.expectedPrivateStagingRoot) {
+    if (!privateStagingRoot) throw new Error("connector artifact expected private staging identity requires a private sibling reservation");
+    const actualPrivateStagingRoot = await assertSafeConnectorArtifactDirectory(privateStagingRoot, "connector artifact private staging reservation");
+    if (actualPrivateStagingRoot.dev !== options.expectedPrivateStagingRoot.dev
+      || actualPrivateStagingRoot.ino !== options.expectedPrivateStagingRoot.ino) {
+      throw new Error("connector artifact private staging reservation changed before publication");
+    }
+  }
+  return { stagingParent: await assertSafeConnectorArtifactDirectory(dirname(staging), "connector artifact staging parent") };
+}
+
+export async function publishConnectorArtifact(
+  stagingPath: string,
+  outputPath: string,
+  options: ConnectorArtifactPublicationOptions = {}
+): Promise<void> {
+  const staging = resolve(stagingPath);
+  const output = resolve(outputPath);
+  const topology = await captureConnectorArtifactStagingTopology(staging, output, options);
   const before = await lstat(staging);
   if (!before.isFile() || before.isSymbolicLink()) throw new Error("connector artifact staging path must be a regular non-symlink file");
   const file = await openConnectorStagingNoFollow(staging);
-  let createdOutput = false;
-  let publishedOk = false;
   try {
     const opened = await file.stat();
     if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw new Error("connector artifact staging file changed before publication");
     await file.sync();
     await link(staging, output);
-    createdOutput = true;
+    await options.afterOutputLinked?.();
     const published = await lstat(output);
     if (!published.isFile() || published.isSymbolicLink() || published.dev !== opened.dev || published.ino !== opened.ino) {
-      await unlink(output).catch(() => undefined);
-      createdOutput = false;
       throw new Error("connector artifact publication did not preserve the staged file identity");
     }
-    publishedOk = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`connector artifact output already exists: ${output}`);
     throw error;
   } finally {
     await file.close();
-    await unlink(staging).catch(() => undefined);
-    if (createdOutput && !publishedOk) await unlink(output).catch(() => undefined);
+    // Node has no atomic "unlink only this inode" operation. The safe-parent admission above
+    // excludes a different principal from retargeting this topology; these identity checks also
+    // refuse cleanup after an observed in-process/test retarget. A mismatch intentionally leaves
+    // an owned stage orphan rather than deleting a host replacement by pathname.
+    await removeOwnedConnectorStaging(staging, before, topology.stagingParent);
   }
+}
+
+/**
+ * Retire a failed producer stage only when the parent observed before producer handoff remains
+ * the same and the current leaf is a regular file. An absent leaf under that unchanged parent is
+ * already clean; false means an uncertain or residual pathname that must be retained.
+ */
+export async function discardConnectorArtifactStaging(
+  stagingPath: string,
+  topology: { stagingParent: ConnectorArtifactPathIdentity }
+): Promise<boolean> {
+  const staging = resolve(stagingPath);
+  if (!await connectorArtifactParentMatches(dirname(staging), topology.stagingParent)) return false;
+  const before = await lstat(staging).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!before) return true;
+  if (!before.isFile() || before.isSymbolicLink()) return false;
+  await removeOwnedConnectorStaging(staging, before, topology.stagingParent);
+  return await lstat(staging).then(() => false).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT");
+}
+
+/**
+ * Require a canonical directory topology in which a non-owner cannot rename entries underneath
+ * a caller-selected output path. POSIX ACLs, Windows ACLs, a privileged administrator, and the
+ * current account remain the host trust boundary; there is no portable Node primitive that can
+ * atomically link and conditionally unlink in a directory controlled by such a principal.
+ */
+async function assertSafeConnectorArtifactDirectory(path: string, label: string): Promise<ConnectorArtifactPathIdentity> {
+  const directory = resolve(path);
+  const root = parse(directory).root;
+  let current = root;
+  let finalFacts: Awaited<ReturnType<typeof lstat>> | undefined;
+  for (const part of directory.slice(root.length).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    const facts = await lstat(current);
+    if (!facts.isDirectory() || facts.isSymbolicLink() || await realpath(current) !== current || hasUnsafeConnectorArtifactParentAuthority(facts)) {
+      throw new Error(`${label} must be canonical, non-symlink, and protected from unrelated rename authority`);
+    }
+    finalFacts = facts;
+  }
+  if (!finalFacts) {
+    const facts = await lstat(root);
+    if (!facts.isDirectory() || facts.isSymbolicLink() || await realpath(root) !== root || hasUnsafeConnectorArtifactParentAuthority(facts)) {
+      throw new Error(`${label} must be canonical, non-symlink, and protected from unrelated rename authority`);
+    }
+    finalFacts = facts;
+  }
+  return { dev: Number(finalFacts.dev), ino: Number(finalFacts.ino) };
+}
+
+function hasUnsafeConnectorArtifactParentAuthority(facts: Awaited<ReturnType<typeof lstat>>): boolean {
+  // Node does not expose a comparable owner/mode authority model on Windows; native ACLs there
+  // are the host boundary. POSIX rejects another directory owner and non-sticky shared writable
+  // directories, while retaining standard sticky roots such as /tmp for per-user temp children.
+  if (typeof process.getuid !== "function") return false;
+  const currentUid = process.getuid();
+  if (facts.uid !== currentUid && facts.uid !== 0) return true;
+  const isGroupOrWorldWritable = (Number(facts.mode) & 0o022) !== 0;
+  const isSticky = (Number(facts.mode) & 0o1000) !== 0;
+  return isGroupOrWorldWritable && !isSticky;
+}
+
+async function removeOwnedConnectorStaging(
+  staging: string,
+  expectedStaging: ConnectorArtifactPathIdentity,
+  expectedParent: ConnectorArtifactPathIdentity
+): Promise<void> {
+  if (!await connectorArtifactParentMatches(dirname(staging), expectedParent)) return;
+  const currentStaging = await lstat(staging).catch(() => null);
+  if (!currentStaging
+    || !currentStaging.isFile()
+    || currentStaging.isSymbolicLink()
+    || Number(currentStaging.dev) !== expectedStaging.dev
+    || Number(currentStaging.ino) !== expectedStaging.ino) return;
+  await unlink(staging).catch(() => undefined);
+}
+
+async function connectorArtifactParentMatches(path: string, expected: ConnectorArtifactPathIdentity): Promise<boolean> {
+  const current = await lstat(path).catch(() => null);
+  return !!current
+    && current.isDirectory()
+    && !current.isSymbolicLink()
+    && Number(current.dev) === expected.dev
+    && Number(current.ino) === expected.ino;
+}
+
+function isPathInsideOrEqual(parent: string, candidate: string): boolean {
+  const relativePath = relative(parent, candidate);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsoluteRelative(relativePath));
+}
+
+function isAbsoluteRelative(path: string): boolean {
+  return path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(path);
 }
 
 async function openConnectorStagingNoFollow(path: string) {
@@ -114,6 +261,8 @@ export async function finalizeConnectorArtifactHandle(input: {
   preset: string;
   mediaType: string;
   createdAt: string;
+  /** Route-specific ceiling; accepted delivery may tighten Core's general artifact limit. */
+  maxBytes?: number;
   qualityEvidence?: Record<string, unknown>;
 }): Promise<FinalizedConnectorArtifactHandle> {
   const receipts = await Promise.all([
@@ -130,11 +279,13 @@ export async function finalizeConnectorArtifactHandle(input: {
     mediaType: input.mediaType,
     receipts,
     createdAt: input.createdAt,
+    ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
     probe: false,
     ...(input.qualityEvidence ? { qualityEvidence: input.qualityEvidence } : {})
   });
   await verifyAttestedArtifactHandle(input.root, handle, {
     requiredReceiptRoles: ["render", "connector"],
+    ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
     probe: false
   });
   await writeAttestedArtifactHandle(input.descriptorPath, handle);

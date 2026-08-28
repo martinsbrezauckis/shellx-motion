@@ -4,7 +4,7 @@
  * Source: schemas/job-status.json
  * Regenerate: pnpm docs:job-status   ·   Verify: pnpm docs:check
  *
- * The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Nothing else states the contract.
+ * The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.
  */
 
 /** Answers 'can this still change on its own?'. Three values. This set is frozen: adding to it is a breaking change. */
@@ -20,7 +20,7 @@ export type JobState = "pending" | "running" | "succeeded" | "failed" | "cancell
 export type JobQueryErrorCode = "job_unknown" | "job_expired" | "job_not_visible";
 
 /** Why a job failed. Retryability is a property of the code, declared once, not per throw site. */
-export type JobErrorCode = "job_queue_timeout" | "job_deadline_exceeded" | "job_rss_limit_exceeded" | "job_scratch_budget_failed" | "job_queue_full" | "job_abandoned" | "job_scratch_path_unsafe" | "job_input_budget_exceeded" | "unsupported_preset" | "capability_unavailable" | "invalid_args" | "output_dir_not_empty" | "frame_lane_refused" | "quality_gate_failed";
+export type JobErrorCode = "job_queue_timeout" | "job_deadline_exceeded" | "job_rss_limit_exceeded" | "job_scratch_budget_failed" | "job_queue_full" | "job_abandoned" | "job_scratch_path_unsafe" | "job_input_budget_exceeded" | "unsupported_preset" | "capability_unavailable" | "invalid_args" | "unsafe_input_path" | "derived_output_busy" | "derived_output_exists" | "derived_output_stage_invalid" | "output_dir_not_empty" | "frame_lane_refused" | "quality_gate_failed" | "cache_integrity_failed" | "cache_busy" | "segment_store_busy" | "segment_checkpoint_invalid" | "segment_source_changed" | "segmented_final_unsupported" | "segmented_final_failed";
 
 /** What a caller should do about a non-retryable failure. */
 export type JobRemedyKind = "change_input" | "free_resources" | "wait" | "grant_permission" | "none";
@@ -39,7 +39,7 @@ export const JOB_STATES: readonly JobState[] = Object.freeze(["pending", "runnin
 export const NON_TERMINAL_JOB_STATES: readonly JobState[] = Object.freeze(["pending", "running"]);
 
 const TERMINAL_LIFECYCLES: ReadonlySet<string> = new Set(["ended"]);
-const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set(["job_queue_timeout", "job_deadline_exceeded", "job_rss_limit_exceeded", "job_scratch_budget_failed", "job_queue_full", "job_abandoned"]);
+const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set(["job_queue_timeout", "job_deadline_exceeded", "job_rss_limit_exceeded", "job_scratch_budget_failed", "job_queue_full", "job_abandoned", "derived_output_busy", "cache_busy", "segment_store_busy", "segmented_final_failed"]);
 const REMEDY_BY_ERROR_CODE: Readonly<Record<JobErrorCode, JobRemedyKind>> = Object.freeze({
   "job_queue_timeout": "wait",
   "job_deadline_exceeded": "change_input",
@@ -52,9 +52,20 @@ const REMEDY_BY_ERROR_CODE: Readonly<Record<JobErrorCode, JobRemedyKind>> = Obje
   "unsupported_preset": "change_input",
   "capability_unavailable": "grant_permission",
   "invalid_args": "change_input",
+  "unsafe_input_path": "change_input",
+  "derived_output_busy": "wait",
+  "derived_output_exists": "change_input",
+  "derived_output_stage_invalid": "change_input",
   "output_dir_not_empty": "change_input",
   "frame_lane_refused": "change_input",
-  "quality_gate_failed": "change_input"
+  "quality_gate_failed": "change_input",
+  "cache_integrity_failed": "change_input",
+  "cache_busy": "wait",
+  "segment_store_busy": "wait",
+  "segment_checkpoint_invalid": "change_input",
+  "segment_source_changed": "change_input",
+  "segmented_final_unsupported": "change_input",
+  "segmented_final_failed": "wait"
 });
 const OUTCOME_BY_RECEIPT_STATUS: Readonly<Record<string, JobOutcome>> = Object.freeze({
   "passed": "succeeded",
@@ -116,7 +127,7 @@ export const RESERVED_NON_RECEIPT_STATUS_WORDS: readonly string[] = Object.freez
 export const JOB_STATUS_CONTRACT = Object.freeze({
   "schema": "shellx-motion/job-status-contract@1",
   "title": "ShellX Motion job status contract",
-  "summary": "The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Nothing else states the contract.",
+  "summary": "The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.",
   "designPrinciple": "A state earns its existence only if it changes what the caller does next. Anything that changes only latency or detail is a field, not a state.",
   "axes": {
     "lifecycle": "Answers 'can this still change on its own?'. Three values. This set is frozen: adding to it is a breaking change.",
@@ -309,92 +320,14 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
       "agentGuidance": "Re-query as the owning caller, or ask the host. Deliberately distinct from job_unknown: an agent told 'unknown' for a job that exists will conclude Motion lost it."
     }
   ],
-  "errorCodes": [
-    {
-      "code": "job_queue_timeout",
-      "retryable": true,
-      "remedy": "wait",
-      "meaning": "The job waited for a concurrency slot longer than its queue deadline allowed."
-    },
-    {
-      "code": "job_deadline_exceeded",
-      "retryable": true,
-      "remedy": "change_input",
-      "meaning": "The job ran longer than its deadline. Retrying an unchanged job will usually hit the same deadline; a smaller job will not."
-    },
-    {
-      "code": "job_rss_limit_exceeded",
-      "retryable": true,
-      "remedy": "free_resources",
-      "meaning": "The worker's resident memory crossed the governor's ceiling and it was stopped to protect the machine."
-    },
-    {
-      "code": "job_scratch_budget_failed",
-      "retryable": true,
-      "remedy": "free_resources",
-      "meaning": "Scratch space for intermediate frames could not be reserved."
-    },
-    {
-      "code": "job_queue_full",
-      "retryable": true,
-      "remedy": "wait",
-      "meaning": "The queue was at capacity when the job was submitted, so it was never admitted."
-    },
-    {
-      "code": "job_abandoned",
-      "retryable": true,
-      "remedy": "none",
-      "meaning": "The process that owned this job disappeared without writing a terminal record. Recorded by the reaper, not by the worker."
-    },
-    {
-      "code": "job_scratch_path_unsafe",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The requested scratch location resolved outside the permitted roots."
-    },
-    {
-      "code": "job_input_budget_exceeded",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The declared inputs exceed what this host will admit; retrying identical inputs cannot help."
-    },
-    {
-      "code": "unsupported_preset",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The requested export preset does not exist on this build."
-    },
-    {
-      "code": "capability_unavailable",
-      "retryable": false,
-      "remedy": "grant_permission",
-      "meaning": "The operation needs a capability this caller's permission tier does not carry."
-    },
-    {
-      "code": "invalid_args",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The request did not satisfy the command's argument contract."
-    },
-    {
-      "code": "output_dir_not_empty",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The output directory already holds files, and overwriting was not requested."
-    },
-    {
-      "code": "frame_lane_refused",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The chosen frame lane cannot draw this package faithfully; a different lane can."
-    },
-    {
-      "code": "quality_gate_failed",
-      "retryable": false,
-      "remedy": "change_input",
-      "meaning": "The delivered artifact did not satisfy the quality manifest it was rendered against."
-    }
-  ],
+  "errorCodes": [{"code":"job_queue_timeout","retryable":true,"remedy":"wait","meaning":"The job waited for a concurrency slot longer than its queue deadline allowed."},{"code":"job_deadline_exceeded","retryable":true,"remedy":"change_input","meaning":"The job ran longer than its deadline. Retrying an unchanged job will usually hit the same deadline; a smaller job will not."},{"code":"job_rss_limit_exceeded","retryable":true,"remedy":"free_resources","meaning":"The worker's resident memory crossed the governor's ceiling and it was stopped to protect the machine."},{"code":"job_scratch_budget_failed","retryable":true,"remedy":"free_resources","meaning":"Scratch space for intermediate frames could not be reserved."},{"code":"job_queue_full","retryable":true,"remedy":"wait","meaning":"The queue was at capacity when the job was submitted, so it was never admitted."},{"code":"job_abandoned","retryable":true,"remedy":"none","meaning":"The process that owned this job disappeared without writing a terminal record. Recorded by the reaper, not by the worker."},{"code":"job_scratch_path_unsafe","retryable":false,"remedy":"change_input","meaning":"The requested scratch location resolved outside the permitted roots."},{"code":"job_input_budget_exceeded","retryable":false,"remedy":"change_input","meaning":"The declared inputs exceed what this host will admit; retrying identical inputs cannot help."},{"code":"unsupported_preset","retryable":false,"remedy":"change_input","meaning":"The requested export preset does not exist on this build."},{"code":"capability_unavailable","retryable":false,"remedy":"grant_permission","meaning":"The operation needs a capability this caller's permission tier does not carry."},{"code":"invalid_args","retryable":false,"remedy":"change_input","meaning":"The request did not satisfy the command's argument contract."},{"code":"unsafe_input_path","retryable":false,"remedy":"change_input","meaning":"A final audio input was not a regular package-local WAV, FLAC, MP3, Ogg, or Opus file; M4A/MP4/MOV/Matroska/WebM and reference-capable inputs are refused before FFmpeg starts."},{"code":"derived_output_busy","retryable":true,"remedy":"wait","meaning":"Another final render holds the exact output path's private publication reservation."},{"code":"derived_output_exists","retryable":false,"remedy":"change_input","meaning":"The requested final path already exists; it was preserved rather than overwritten."},{"code":"derived_output_stage_invalid","retryable":false,"remedy":"change_input","meaning":"Private staged output changed or contained an unexpected file before publication."},{"code":"output_dir_not_empty","retryable":false,"remedy":"change_input","meaning":"The output directory already holds files, and overwriting was not requested."},{"code":"frame_lane_refused","retryable":false,"remedy":"change_input","meaning":"The chosen frame lane cannot draw this package faithfully; a different lane can."},{"code":"quality_gate_failed","retryable":false,"remedy":"change_input","meaning":"The delivered artifact did not satisfy the quality manifest it was rendered against."},{"code":"cache_integrity_failed","retryable":false,"remedy":"change_input","meaning":"An opt-in attested-reuse output, descriptor, receipt, or current input did not prove the exact requested identity, so Motion refused to overwrite or rerender it."},{"code":"cache_busy","retryable":true,"remedy":"wait","meaning":"An exact opt-in attested-reuse fill holds its root-local exclusive lock. A stale lock needs host inspection; Motion never breaks it automatically."},{"code":"segment_store_busy","retryable":true,"remedy":"wait","meaning":"Another durable segmented render owns the checkpoint store deterministically derived from this output path. Motion never breaks this lock automatically."},{"code":"segment_checkpoint_invalid","retryable":false,"remedy":"change_input","meaning":"A retained segmented checkpoint, source fingerprint, concat proof, or no-clobber publication proof was invalid, so Motion did not publish the requested output."},{"code":"segment_source_changed","retryable":false,"remedy":"change_input","meaning":"The package changed while durable segmented checkpoints were being produced. Start a fresh render from stable package bytes."},{"code":"segmented_final_unsupported","retryable":false,"remedy":"change_input","meaning":"The selected segmented delivery mode does not support this renderer, preset, workflow, script, or quality contract."},{"code":"segmented_final_failed","retryable":true,"remedy":"wait","meaning":"Segmented delivery stopped without a completed no-clobber publication. Only verified checkpoints, if any, remain for an explicit resume."}],
+  "unknownErrorCodes": {
+    "policy": "preserve",
+    "pattern": "^[a-z][a-z0-9_.:-]{0,95}$",
+    "maxLength": 96,
+    "meaning": "A newer capability may return or raise a typed code an older consumer does not enumerate. Motion preserves that bounded code, message, retryable flag, optional retryAfterMs, remedy and suggestedAction through events and terminal job state rather than collapsing it to invalid_args or connector_failed. Exception stacks, details and path-bearing text are never terminal job metadata.",
+    "agentGuidance": "Treat the code as an opaque category. Branch on the explicit retryable flag and optional remedy/retryAfterMs fields; never infer policy from an unknown code name or parse its human message."
+  },
   "remedyKinds": [
     {
       "kind": "change_input",
@@ -514,10 +447,10 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
   ],
   "rulings": [
     {
-      "question": "Should render ever gain an opt-in asynchronous mode?",
-      "ruling": "Open. Render blocks, and there is no --async flag to opt out of that.",
-      "because": "Blocking is what ships, and it keeps every existing script and connector working. The cost is real: a caller that wants to start a render and return immediately cannot, and a render in flight is observable only from a second process, through the job registry. An opt-in flag is the reversible way to close that gap if it ever needs closing, which is why the option is recorded here instead of dropped. Treat it as an open question, not a commitment: do not build against a flag that does not exist.",
-      "status": "provisional-pending-maintainer"
+      "question": "What is Motion's shipped asynchronous render route?",
+      "ruling": "The persistent local coordinator accepts `motion.job.submit` and returns a durable jobId before expensive work starts; `motion.render.final` and the CLI `render` command remain blocking compatibility calls.",
+      "because": "The coordinator owns the submitted worker's AbortSignal, terminal record, and ordered event stream, so its `motion.job.get/list/events/cancel/retry` controls describe the same submitted work. Submission is intentionally limited to ordinary streamed or closed segmented final-video delivery; stills, image sequences, workflows, quality-manifest routes, retained frames, dry runs, and other materialized compatibility paths stay blocking under `motion.render.final`. This is the shipped asynchronous route, not a promise of a future `--async` flag.",
+      "status": "settled"
     },
     {
       "question": "Where does the runtime job registry live?",

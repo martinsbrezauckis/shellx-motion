@@ -2,6 +2,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # Package tarballs from `pnpm pack` — build output, never tracked. The install
 # verifier writes its own into .scratch/, but a bare `pnpm pack` drops one in the
@@ -19,3 +21,4 @@ artifacts/
 # Agent tooling scratch directories, recreated by the local runtime.
 .agents/
 .codex/
+.c6c-b1b-test-*/

@@ -1,8 +1,19 @@
-import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ffmpegLooksAbsent, ffmpegMissingMessage, ffmpegRequirement, ffmpegSuggestedAction, type MotionToolRequirement } from "./tool-requirements.js";
+import {
+  FFMPEG_TIMEOUT_EXIT_CODE,
+  appendFfmpegProcessOutput,
+  nativeWindowsJobObjectRequired,
+  portableFfmpegContainmentEvidence,
+  redactFfmpegDiagnostic,
+  summarizeFfmpegDiagnostic,
+  unavailableWindowsContainment,
+  windowsTaskkillFallbackEvidence,
+  type FfmpegProcessTerminationMode
+} from "./ffmpeg-process-control.js";
+import { runSpawnedFfmpegChild } from "./ffmpeg-process-lifecycle.js";
 import {
   motionPlatformRequirements,
   motionToolIdentity,
@@ -16,7 +27,10 @@ import {
 } from "./platform-requirements.js";
 import {
   assertLocalMotionFrameCountBudget,
+  assertMotionAudioMasterDuration,
   createRenderReceipt,
+  evaluateMotionAudioMasterLoudness,
+  normalizeMotionAudioMaster,
   defaultLocalMotionJobGovernor,
   FFMPEG_EXPORT_PRESETS,
   hashBuffer,
@@ -40,6 +54,7 @@ import {
   // The Chrome/Chromium resolver the browser renderer launches through. Shared so the readiness
   // probe answers about the exact executable a render would use.
   resolveMotionBrowserExecutable,
+  motionBrowserExecutableVerificationProblem,
   // Browser caches the resolver refused to execute out of, so a failed probe can say WHY instead of
   // reporting a bare "no browser found" on a machine that has one.
   untrustedMotionBrowserCaches,
@@ -53,20 +68,112 @@ import {
   type WindowsJobObjectLaunchPlan,
   type WindowsJobObjectStatus,
   type MotionAudioDucking,
+  type MotionAudioFadeCurve,
+  type MotionAudioMasterBus,
   type MotionKeyframe,
   type OperationReceipt,
   type RenderEncoderReason,
+  type RenderEncoderProbeEvidence,
+  type RenderAudioMasterEvidence,
   type RenderLoudnessSummary,
   type RenderLoudnessTrack,
-  childEnvironment
+  acquireDerivedOutputPublication,
+  DerivedOutputPublication,
+  DerivedOutputPublicationError,
+  isPublicationCommitUncertain,
+  type PublicationCommitUncertainEvidence
 } from "@shellx-motion/core";
+import { probeMotionBrowserVersion } from "@shellx-motion/renderer-browser";
+export type { CreateImageSequenceReceiptInput } from "./render-resource-preflight";
+import type { CreateImageSequenceReceiptInput, RenderResourcePreflightInput } from "./render-resource-preflight";
+import {
+  buildFinalLoudnessSummary,
+  collectFinalRenderInputHashes,
+  finalReceiptAudioOutput,
+  gradeFinalDeliveredColor,
+  measureFinalLoudnessInputs,
+  measureFinalProgramLoudness,
+  resolveFinalAudioInputs
+} from "./final-encode-shared.js";
+import {
+  assertQualityFfmpegMediaInput,
+  assertSelfContainedFfmpegMediaInputs,
+  qualityFfmpegMediaInputArgs,
+  selfContainedFfmpegMediaInputArgs,
+  snapshotSelfContainedFfmpegMediaInput,
+  type FfmpegMediaInputSnapshot
+} from "./ffmpeg-media-input-fence.js";
+import {
+  assertSafeFfmpegInputPath,
+  assertSafeFfmpegOutputPath,
+  effectiveEncodeInputRoots,
+  encodePathSafetyError,
+  localFileInputArgs
+} from "./ffmpeg-path-safety.js";
 
 // Centralized hardware-encode policy and probe cache. Re-exported so all five product render paths
 // (CLI, debug-api, and the four Canvas/Cut connectors) import `encodeImageSequenceWithPolicy` and the
 // cache helpers from the same renderer-ffmpeg entry that owns `encodeImageSequence` and the probes.
 export * from "./encode-policy.js";
+export { redactAbortedFinalOutputEvidence } from "./final-receipt-failure.js";
+export {
+  assertQualityFfmpegMediaInput,
+  assertSelfContainedFfmpegMediaInputs,
+  FfmpegMediaInputRefusal,
+  MAX_FFMPEG_MEDIA_INPUT_SNAPSHOT_BYTES,
+  MAX_TRACKING_VIDEO_INPUT_SNAPSHOT_BYTES,
+  qualityFfmpegMediaInputArgs,
+  selfContainedFfmpegMediaInputArgs,
+  trackingFfmpegMediaInputArgs
+} from "./ffmpeg-media-input-fence.js";
+export { snapshotSelfContainedFfmpegMediaInput } from "./ffmpeg-media-input-fence.js";
+export type { FfmpegMediaInputSnapshot } from "./ffmpeg-media-input-fence.js";
+/** Host-owned, visual-only exact-time video preview provider. Final staging and PCM remain separate. */
+export { createGpuPreviewVideoFrameProvider } from "./gpu-video-preview-provider.js";
+export type {
+  CreateGpuPreviewVideoFrameProviderOptions,
+  FfmpegGpuPreviewVideoFrameProvider,
+  GpuPreviewFfmpegRunner,
+  GpuPreviewVideoDecodedFrameEvidence,
+  GpuPreviewVideoProviderDetailedEvidence
+} from "./gpu-video-preview-provider.js";
+// The sole public streamed-final adapter and its pure pre-execution planners. The lower-level
+// streaming foundation and encode policy remain package-private implementation details.
+export { planFinalVideoFrameTransport } from "./final-video-frame-transport.js";
+export type {
+  FinalVideoFrameTransportPlan,
+  FinalVideoFrameTransportPlanInput,
+  FinalVideoFrameTransportReason
+} from "./final-video-frame-transport.js";
+export { planStreamingFinalCommand } from "./streaming-final-command-plan.js";
+export { renderStreamingFinal } from "./streaming-final-adapter.js";
+/** Recompute strict GPU receipt bindings before a connector projects renderer evidence. */
+export { gpuFinalReceiptInputHashes } from "./gpu-final-receipt-provenance.js";
+export { preliminaryGpuAudio } from "./streaming-final-gpu-audio.js";
+export type {
+  PlanStreamingFinalCommandInput,
+  RenderStreamingFinalInput,
+  RenderStreamingFinalResult,
+  StreamingFinalCommandPlanResult,
+  StreamingFinalEncoderHandoffEvidence,
+  StreamingFinalFrameTransportEvidence,
+  StreamingFinalNativeProducerEvidence,
+  StreamingFinalProducerEvidence,
+  StreamingFinalToolPolicy
+} from "./streaming-final-adapter-types.js";
+/** Closed public durable-segment final delivery; raw segment stores and concat controls stay private. */
+export { renderSegmentedFinal } from "./segmented-final.js";
+export type {
+  RenderSegmentedFinalInput,
+  RenderSegmentedFinalResult,
+  SegmentedFinalErrorCode,
+  SegmentedFinalFrameTransportEvidence,
+  SegmentedGpuToolPolicy,
+  SegmentedFinalOptions,
+  SegmentedFinalPublicFailure,
+  SegmentedFinalToolPolicy
+} from "./segmented-final.js";
 
-const DEFAULT_FFMPEG_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 /**
  * Budget for a tool IDENTITY probe (`-version` / `--version`), as opposed to an encode.
  *
@@ -77,8 +184,6 @@ const DEFAULT_FFMPEG_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
  * {@link createToolIdentityProbeRunner}.
  */
 const DEFAULT_TOOL_IDENTITY_PROBE_TIMEOUT_MS = 15 * 1000;
-const FFMPEG_TIMEOUT_EXIT_CODE = 124;
-const MAX_FFMPEG_OUTPUT_CHARS = 1_000_000;
 const AUDIO_CUBIC_BEZIER_SAMPLE_SEGMENTS = 8;
 // EBU R128 loudness normalization targets applied by loudnorm (both passes).
 const LOUDNORM_TARGET_I = -16;
@@ -355,7 +460,13 @@ export type MotionExportPresetSpec = FfmpegExportPresetSpec | ImageSequenceExpor
 
 export type EncodeResult =
   | { ok: true; receipt: OperationReceipt; command: FfmpegCommand }
-  | { ok: false; error: { code: "ffmpeg_failed" | "ffmpeg_encoder_probe_failed" | "encoder_unavailable" | "frame_quality_failed" | "invalid_output_path" | "unsafe_input_path" | LocalMotionJobErrorCode; message: string }; command: FfmpegCommand };
+  | {
+      ok: false;
+      error: { code: "ffmpeg_failed" | "ffmpeg_encoder_probe_failed" | "encoder_unavailable" | "frame_quality_failed" | "audio_master_quality_failed" | "audio_master_unavailable" | "audio_master_invalid" | "invalid_output_path" | "unsafe_input_path" | "derived_output_busy" | "derived_output_exists" | "derived_output_unsafe_parent" | "derived_output_stage_invalid" | "derived_output_publish_failed" | "publication_commit_uncertain" | LocalMotionJobErrorCode; message: string; possiblyCommitted?: true; publicPaths?: readonly string[]; expectedPublication?: PublicationCommitUncertainEvidence };
+      command: FfmpegCommand;
+      /** Present when encoding produced a nonconforming final file that must remain receipted. */
+      receipt?: OperationReceipt;
+    };
 
 /**
  * First-pass EBU R128 measurement of a source track, used to drive the second
@@ -373,6 +484,10 @@ export interface LoudnormMeasurement {
 
 export interface FfmpegAudioInput {
   path: string;
+  /** Original caller-visible path retained when `path` is a private admitted snapshot. */
+  receiptPath?: string;
+  /** Hash of the private admitted bytes; this, never a later live-path read, binds the receipt. */
+  snapshotSha256?: string;
   /**
    * Source motion layer id (when known). Used only to resolve a sidechain
    * ducking track's triggerLayerIds to concrete FFmpeg input indices; it does
@@ -395,6 +510,7 @@ export interface FfmpegAudioInput {
   muted?: boolean;
   fadeInMs?: number;
   fadeOutMs?: number;
+  fadeCurve?: MotionAudioFadeCurve;
   normalizeLoudness?: boolean;
   playbackRate?: number;
   ducking?: MotionAudioDucking;
@@ -402,7 +518,7 @@ export interface FfmpegAudioInput {
   panKeyframes?: MotionKeyframe[];
 }
 
-export interface EncodeImageSequenceInput {
+export interface EncodeImageSequenceInput extends RenderResourcePreflightInput {
   packageId: string;
   framesDir: string;
   fps: number;
@@ -410,10 +526,13 @@ export interface EncodeImageSequenceInput {
   height: number;
   durationMs: number;
   outputPath: string;
+  /** Existing identity-bound publication for an outer quality/publish transaction. */
+  outputPublication?: DerivedOutputPublication;
   preset?: FfmpegExportPreset;
   audioPath?: string;
   audio?: FfmpegAudioInput;
   audioTracks?: FfmpegAudioInput[];
+  audioMaster?: MotionAudioMasterBus;
   inputRoots?: string[];
   outputRoots?: string[];
   quality?: FrameSequenceQualityPolicy;
@@ -494,20 +613,6 @@ export interface ResolvedHardwareProbe {
 
 /** Resolves the hardware usability probe for a render, potentially from a shared cache. */
 export type HardwareProbeResolver = (input: HardwareProbeResolverInput) => Promise<ResolvedHardwareProbe>;
-
-export interface CreateImageSequenceReceiptInput {
-  packageId: string;
-  framesDir: string;
-  fps: number;
-  width: number;
-  height: number;
-  durationMs: number;
-  frameCount: number;
-  framePattern?: string;
-  framePaths?: string[];
-  warnings?: string[];
-  now?: () => string;
-}
 
 export interface CreateStillFrameReceiptInput {
   packageId: string;
@@ -823,6 +928,84 @@ function firstAvailable(available: string[], preferred: string[]): string | null
 }
 
 export async function encodeImageSequence(input: EncodeImageSequenceInput): Promise<EncodeResult> {
+  const outputPathError = ffmpegPresetOutputPathError(resolveExportPreset(input.preset).preset, input.outputPath);
+  if (outputPathError) {
+    return { ok: false, command: { executable: resolveFfmpegExecutable(), args: [], shell: false }, error: { code: "invalid_output_path", message: outputPathError } };
+  }
+  const rawAudioInputs = resolveFinalAudioInputs(input);
+  const pathSafetyError = encodePathSafetyError(input, rawAudioInputs);
+  if (pathSafetyError) {
+    return { ok: false, command: { executable: resolveFfmpegExecutable(), args: [], shell: false }, error: { code: "unsafe_input_path", message: pathSafetyError } };
+  }
+  let publication = input.outputPublication;
+  const ownsPublication = publication === undefined;
+  if (publication !== undefined && (!(publication instanceof DerivedOutputPublication)
+    || publication.kind !== "file"
+    || publication.outputPath !== resolve(input.outputPath))) {
+    return { ok: false, command: { executable: resolveFfmpegExecutable(), args: [], shell: false }, error: { code: "derived_output_stage_invalid", message: "Final output publication must be an identity-bound Motion reservation." } };
+  }
+  if (!publication) {
+    try {
+      publication = await acquireDerivedOutputPublication({ outputPath: input.outputPath, kind: "file" });
+    } catch (error) {
+      const code = error instanceof DerivedOutputPublicationError ? error.code : "derived_output_publish_failed";
+      return { ok: false, command: { executable: resolveFfmpegExecutable(), args: [], shell: false }, error: { code, message: error instanceof Error ? error.message : String(error) } };
+    }
+  }
+  let snapshots: FfmpegMediaInputSnapshot[] = [];
+  let published = false;
+  try {
+    snapshots = await Promise.all(rawAudioInputs.map(async (audio) =>
+      await snapshotSelfContainedFfmpegMediaInput(audio.path, effectiveEncodeInputRoots(input), "final-audio")
+    ));
+    const admittedAudioInputs = rawAudioInputs.map((audio, index) => ({
+      ...audio,
+      path: snapshots[index]!.path,
+      receiptPath: audio.receiptPath ?? audio.path,
+      snapshotSha256: snapshots[index]!.sha256
+    }));
+    const result = await encodeImageSequenceFromAdmitted({
+      ...input,
+      outputPath: publication.stagingPath,
+      outputRoots: [publication.rootPath],
+      outputPublication: undefined,
+      audioPath: undefined,
+      audio: undefined,
+      audioTracks: admittedAudioInputs,
+      // The frame sequence and each private copy are the only FFmpeg inputs for the encode.
+      inputRoots: [input.framesDir, ...(input.inputRoots ?? []), ...snapshots.map((snapshot) => snapshot.root)]
+    });
+    if (!ownsPublication) return result;
+    if (result.ok) {
+      await publication.publishFile(await publication.verifyFile());
+      published = true;
+    }
+    remapEncodedPublicationPaths(result, publication.stagingPath, input.outputPath);
+    return result;
+  } catch (error) {
+    const uncertainty = isPublicationCommitUncertain(error) ? error : undefined;
+    const code = uncertainty?.code ?? (error instanceof DerivedOutputPublicationError ? error.code : "unsafe_input_path");
+    return { ok: false, command: { executable: resolveFfmpegExecutable(), args: [], shell: false }, error: {
+      code, message: error instanceof Error ? error.message : String(error),
+      ...(uncertainty ? { possiblyCommitted: true as const, publicPaths: [uncertainty.evidence.publicPath], expectedPublication: uncertainty.evidence } : {})
+    } };
+  } finally {
+    await Promise.all(snapshots.map(async (snapshot) => await snapshot.release()));
+    if (ownsPublication && !published) await publication.abort();
+  }
+}
+
+function remapEncodedPublicationPaths(result: EncodeResult, stagingPath: string, outputPath: string): void {
+  result.command.args = result.command.args.map((arg) => arg === stagingPath ? outputPath : arg);
+  if (!result.receipt) return;
+  const receiptOutput = result.receipt.output;
+  if (receiptOutput && typeof receiptOutput === "object" && !Array.isArray(receiptOutput)) {
+    result.receipt.output = Object.fromEntries([...Object.entries(receiptOutput), ["path", outputPath]]);
+  }
+  result.receipt.artifacts = result.receipt.artifacts?.map((artifact) => artifact.path === stagingPath ? { ...artifact, path: outputPath } : artifact);
+}
+
+async function encodeImageSequenceFromAdmitted(input: EncodeImageSequenceInput): Promise<EncodeResult> {
   const runner = input.runner ?? spawnRunner;
   const frameCount = frameCountFor(input.durationMs, input.fps);
   try {
@@ -841,7 +1024,28 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
     join(input.framesDir, `${String(index + 1).padStart(6, "0")}.png`)
   );
   const preset = resolveExportPreset(input.preset);
-  const audioInputs = resolveAudioInputs(input);
+  let audioMaster: MotionAudioMasterBus | undefined;
+  try {
+    audioMaster = normalizeRendererAudioMaster(input.audioMaster);
+    if (audioMaster) assertMotionAudioMasterDuration(audioMaster, input.durationMs);
+  } catch (error) {
+    return {
+      ok: false,
+      command: { executable: resolveFfmpegExecutable(), args: [], shell: false },
+      error: { code: "audio_master_invalid", message: error instanceof Error ? error.message : String(error) }
+    };
+  }
+  const audioInputs = resolveFinalAudioInputs(input);
+  if (audioMaster && (audioInputs.length === 0 || !preset.audioCodec)) {
+    return {
+      ok: false,
+      command: { executable: resolveFfmpegExecutable(), args: [], shell: false },
+      error: {
+        code: "audio_master_unavailable",
+        message: "Document audio master requires a final-video preset and at least one resolved audio input."
+      }
+    };
+  }
   const compatibilityWarnings = audioWarningsForExportPreset(preset.preset, audioInputs.length);
   const pathSafetyError = encodePathSafetyError(input, audioInputs);
   if (pathSafetyError) {
@@ -983,7 +1187,9 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
   const loudnessNormalizationRequested = Boolean(preset.audioCodec)
     && audioInputs.some((audio) => audio.normalizeLoudness === true);
   const loudness = loudnessNormalizationRequested
-    ? await measureLoudnessInputs(audioInputs, { runner, inputRoots: effectiveEncodeInputRoots(input) })
+    ? await measureFinalLoudnessInputs(audioInputs, {
+        measure: (path) => measureAudioLevels(path, { runner, inputRoots: effectiveEncodeInputRoots(input), admittedFinalAudio: true })
+      })
     : { inputs: audioInputs, tracks: [] as RenderLoudnessTrack[] };
   const renderAudioInputs = loudness.inputs;
 
@@ -992,6 +1198,7 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
   const buildAttemptCommand = (opts: { videoEncoder?: string; hardwareOutputArgs?: string[] }): FfmpegCommand =>
     buildEncodeImageSequenceCommand({
       ...input,
+      ...(audioMaster ? { audioMaster } : {}),
       // Feed the measured inputs back through the encode (audioTracks takes precedence over
       // audio/audioPath in resolveAudioInputs, so this is safe for every input shape).
       ...(renderAudioInputs.length > 0 ? { audioTracks: renderAudioInputs } : {}),
@@ -1069,16 +1276,92 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
   // their existing receipt shape with no encoder fields.
   const emitEncoderEvidence = Boolean(preset.encoderPolicy) || hardwareSystemEngaged;
 
-  // Measure the final mixed output so the receipt records achieved program
-  // loudness (not just the target). Only when normalization was requested.
-  const loudnessSummary = loudnessNormalizationRequested
-    ? buildLoudnessSummary(loudness.tracks, await measureProgramLoudness(input.outputPath, { runner }))
+  // Measure the delivered program whenever either per-track normalization or a
+  // document master is configured. A master loudness target is verified here,
+  // after the exact muxed file exists; source-track measurements cannot prove
+  // the final program.
+  const programLoudness = (loudnessNormalizationRequested || audioMaster?.loudness)
+    ? await measureFinalProgramLoudness(input.outputPath, {
+        measure: (path) => measureAudioLevels(path, { runner, inputRoots: [dirname(input.outputPath)] })
+      })
     : undefined;
+  const loudnessSummary = loudnessNormalizationRequested
+    ? buildFinalLoudnessSummary(loudness.tracks, programLoudness ?? null)
+    : undefined;
+  const masterReadback = audioMaster?.loudness
+    ? (programLoudness === undefined || programLoudness === null
+      ? null
+      : {
+          integratedLufs: programLoudness.integratedLufs,
+          truePeakDbtp: programLoudness.truePeakDbtp,
+          loudnessRangeLu: programLoudness.lra
+        })
+    : undefined;
+  const masterEvaluation = audioMaster
+    ? evaluateMotionAudioMasterLoudness(audioMaster, masterReadback ?? null)
+    : { ok: true as const };
+  const masterEvidence: RenderAudioMasterEvidence | undefined = audioMaster
+    ? {
+      controls: structuredClone(audioMaster),
+      ...(audioMaster.loudness ? { readback: masterReadback ?? null, loudnessRealization: masterLoudnessRealization(audioMaster) } : {}),
+      ...(audioMaster.loudness
+        ? masterEvaluation.ok
+          ? { loudnessConformance: "passed" as const }
+          : { loudnessConformance: "failed" as const, loudnessFailure: masterEvaluation.message }
+        : {})
+      }
+    : undefined;
+  if (!masterEvaluation.ok) {
+    const failedOutputHash = await hashFile(input.outputPath);
+    const failedReceipt = createRenderReceipt({
+      id: `ffmpeg-render-${failedOutputHash.slice(0, 16)}`,
+      packageId: input.packageId,
+      lane: "ffmpeg",
+      status: "failed",
+      inputHashes: await collectFinalRenderInputHashes(frameSequenceHash, preset.audioCodec ? audioInputs : []),
+      output: {
+        path: input.outputPath,
+        sha256: failedOutputHash,
+        width: input.width,
+        height: input.height,
+        durationMs: input.durationMs,
+        codec: preset.codec,
+        container: preset.container,
+        preset: preset.preset,
+        ...(renderAudioInputs.length > 0 && preset.audioCodec
+          ? { audio: finalReceiptAudioOutput(renderAudioInputs, preset.audioCodec, loudnessSummary, masterEvidence) }
+          : {}),
+        ...(result.resources ? { resources: result.resources } : {}),
+        ...(input.resourcePreflight ? { resourcePreflight: input.resourcePreflight } : {}),
+        tools: { ffmpeg: motionToolIdentityFor("ffmpeg", input.ffmpegVersion ?? undefined) }
+      },
+      warnings: [
+        ...quality.warnings,
+        ...compatibilityWarnings,
+        ...probeWarnings,
+        ...encodeWarnings,
+        masterEvaluation.message,
+        ...(stderr ? [stderr] : [])
+      ]
+    });
+    failedReceipt.createdAt = input.now?.() ?? failedReceipt.createdAt;
+    failedReceipt.artifacts = [
+      { role: "rendered_media", path: input.outputPath, status: "failed", mediaType: preset.mimeType, primary: true }
+    ];
+    return {
+      ok: false,
+      command,
+      error: { code: "audio_master_quality_failed", message: masterEvaluation.message },
+      receipt: failedReceipt
+    };
+  }
 
   // Read the colour tags the delivered file actually carries, so the receipt reports observation
   // rather than only intent. See `gradeDeliveredColor`.
   const colorGrade = preset.color && input.verifyDeliveredColor !== false
-    ? await gradeDeliveredColor(input.outputPath, preset, { runner, inputRoots: [dirname(input.outputPath)] })
+    ? await gradeFinalDeliveredColor(input.outputPath, preset, {
+        probe: (path) => probeMedia(path, { runner, inputRoots: [dirname(input.outputPath)] })
+      })
     : null;
 
   const receipt = createRenderReceipt({
@@ -1086,7 +1369,7 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
     packageId: input.packageId,
     lane: "ffmpeg",
     status: "passed",
-    inputHashes: await collectRenderInputHashes(frameSequenceHash, preset.audioCodec ? audioInputs : []),
+    inputHashes: await collectFinalRenderInputHashes(frameSequenceHash, preset.audioCodec ? audioInputs : []),
     output: {
       path: input.outputPath,
       sha256: await hashFile(input.outputPath),
@@ -1118,9 +1401,10 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
         ? { color: { ...preset.color, ...(colorGrade ? { observed: colorGrade.observed } : {}) } }
         : {}),
       ...(renderAudioInputs.length > 0 && preset.audioCodec
-        ? { audio: receiptAudioOutput(renderAudioInputs, preset.audioCodec, loudnessSummary) }
+        ? { audio: finalReceiptAudioOutput(renderAudioInputs, preset.audioCodec, loudnessSummary, masterEvidence) }
         : {}),
       ...(result.resources ? { resources: result.resources } : {}),
+      ...(input.resourcePreflight ? { resourcePreflight: input.resourcePreflight } : {}),
       // WHICH FFmpeg produced this file (the tool-identity invariant). A receipt that attests to an encode
       // has to name the encoder build, or it cannot be reproduced: two FFmpeg versions pick
       // different filters, muxers and defaults from the same command line. Redacted by
@@ -1157,13 +1441,7 @@ export async function encodeImageSequence(input: EncodeImageSequenceInput): Prom
 function summarizeEncoderProbeEvidence(
   probe: Extract<FfmpegHardwareEncoderUsability, { ok: true }>,
   selectedEncoder: string | null
-): {
-  hardwareAvailable: boolean;
-  usableHardwareEncoders: FfmpegHardwareEncoder[];
-  selectedHardwareEncoder: string | null;
-  compiledHardwareEncoders: FfmpegHardwareEncoder[];
-  failedHardwareEncoders: Array<{ encoder: FfmpegHardwareEncoder; reason: string }>;
-} {
+): RenderEncoderProbeEvidence {
   return {
     hardwareAvailable: probe.usableEncoders.length > 0,
     usableHardwareEncoders: probe.usableEncoders,
@@ -1200,6 +1478,8 @@ export function buildEncodeImageSequenceCommand(input: {
   audioPath?: string;
   audio?: FfmpegAudioInput;
   audioTracks?: FfmpegAudioInput[];
+  /** Document-level, post-mix controls. It is ignored nowhere: an audio-less output refuses it. */
+  audioMaster?: MotionAudioMasterBus;
   /** Software encoder to swap into the preset template (software `encoderPolicy` selection). */
   videoEncoder?: string;
   /**
@@ -1213,10 +1493,15 @@ export function buildEncodeImageSequenceCommand(input: {
 }): FfmpegCommand {
   const frameCount = frameCountFor(input.durationMs, input.fps);
   const preset = resolveExportPreset(input.preset);
-  const audioInputs = resolveAudioInputs(input);
+  const audioInputs = resolveFinalAudioInputs(input);
   const audioEnabled = audioInputs.length > 0 && Boolean(preset.audioCodec);
+  const audioMaster = normalizeRendererAudioMaster(input.audioMaster);
+  if (audioMaster && !audioEnabled) {
+    throw new Error("Document audio master requires a final-video preset and at least one resolved audio input.");
+  }
+  if (audioMaster) assertMotionAudioMasterDuration(audioMaster, input.durationMs);
   const audioArgs = audioEnabled && preset.audioCodec
-    ? audioOutputArgs(audioInputs, preset.audioCodec, input.durationMs)
+    ? audioOutputArgs(audioInputs, preset.audioCodec, input.durationMs, audioMaster)
     : [];
   const inputRoots = effectiveEncodeInputRoots(input);
   assertSafeFfmpegInputPath(join(input.framesDir, "%06d.png"), inputRoots);
@@ -1782,7 +2067,8 @@ export async function createImageSequenceReceipt(input: CreateImageSequenceRecei
     fps: input.fps,
     codec: "png",
     container: "image-sequence",
-    preset: "png-sequence"
+    preset: "png-sequence",
+    ...(input.resourcePreflight ? { resourcePreflight: input.resourcePreflight } : {})
   };
   const receipt = createRenderReceipt({
     id: `png-sequence-render-${sequenceHash.slice(0, 16)}`,
@@ -1853,30 +2139,25 @@ function isJpegBuffer(buffer: Buffer): boolean {
   return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
 }
 
-function receiptAudioCodec(codec: string): string {
-  return codec.startsWith("lib") ? codec.slice(3) : codec;
-}
-
-function resolveAudioInputs(input: { audioTracks?: FfmpegAudioInput[]; audio?: FfmpegAudioInput; audioPath?: string }): FfmpegAudioInput[] {
-  if (input.audioTracks && input.audioTracks.length > 0) return input.audioTracks;
-  if (input.audio) return [input.audio];
-  return input.audioPath ? [{ path: input.audioPath }] : [];
-}
-
 function audioInputArgs(audio: FfmpegAudioInput): string[] {
   return [
     ...(audio.loop && audio.trimDurationMs === undefined ? ["-stream_loop", "-1"] : []),
-    ...localFileInputArgs(audio.path)
+    ...selfContainedFfmpegMediaInputArgs(audio.path)
   ];
 }
 
-function audioFilterArgs(audio: FfmpegAudioInput | undefined): string[] {
+/** Renderer entry points are public JavaScript boundaries, not TypeScript-only trust boundaries. */
+function normalizeRendererAudioMaster(value: unknown): MotionAudioMasterBus | undefined {
+  return normalizeMotionAudioMaster(value) ?? undefined;
+}
+
+function audioFilterArgs(audio: FfmpegAudioInput | undefined, master: MotionAudioMasterBus | undefined, durationMs: number): string[] {
   if (!audio) return [];
-  const filter = audioFilterChain(audio);
+  const filter = [audioFilterChain(audio), masterAudioFilterChain(master, durationMs), `apad=whole_dur=${formatSeconds(durationMs / 1000)}`].filter(Boolean).join(",");
   return filter ? ["-filter:a", filter] : [];
 }
 
-function audioOutputArgs(audioInputs: FfmpegAudioInput[], audioCodec: string, durationMs: number): string[] {
+function audioOutputArgs(audioInputs: FfmpegAudioInput[], audioCodec: string, durationMs: number, master?: MotionAudioMasterBus): string[] {
   if (audioInputs.length === 1) {
     return [
       "-map",
@@ -1885,7 +2166,7 @@ function audioOutputArgs(audioInputs: FfmpegAudioInput[], audioCodec: string, du
       "1:a:0",
       "-c:a",
       audioCodec,
-      ...audioFilterArgs(audioInputs[0]),
+      ...audioFilterArgs(audioInputs[0], master, durationMs),
       "-t",
       formatSeconds(durationMs / 1000)
     ];
@@ -1893,7 +2174,7 @@ function audioOutputArgs(audioInputs: FfmpegAudioInput[], audioCodec: string, du
 
   return [
     "-filter_complex",
-    buildAudioMixFilter(audioInputs),
+    buildAudioMixFilter(audioInputs, master, durationMs),
     "-map",
     "0:v:0",
     "-map",
@@ -2032,7 +2313,7 @@ function sidechainCompressFilter(ducking: MotionAudioDucking): string {
  * default "timed" ducking mode never reaches here (it is pre-lowered into
  * volume keyframes by the connector). Everything then feeds a single amix.
  */
-function buildAudioMixFilter(audioInputs: FfmpegAudioInput[]): string {
+function buildAudioMixFilter(audioInputs: FfmpegAudioInput[], master: MotionAudioMasterBus | undefined, durationMs: number): string {
   const segments: string[] = audioInputs.map((audio, index) => {
     const inputIndex = index + 1;
     return `[${inputIndex}:a]${audioFilterChain(audio, { labelPrefix: `mix${inputIndex}_pan` }) || "anull"}[a${inputIndex}]`;
@@ -2063,7 +2344,10 @@ function buildAudioMixFilter(audioInputs: FfmpegAudioInput[]): string {
   }
 
   const finalLabels = audioInputs.map((_, index) => `[${sidechain.finalLabelFor(index + 1)}]`).join("");
-  segments.push(`${finalLabels}amix=inputs=${audioInputs.length}:duration=longest:dropout_transition=0[mixeda]`);
+  const masterFilter = masterAudioFilterChain(master, durationMs);
+  const padFilter = `apad=whole_dur=${formatSeconds(durationMs / 1000)}`;
+  segments.push(`${finalLabels}amix=inputs=${audioInputs.length}:duration=longest:dropout_transition=0${masterFilter ? "[mixedraw]" : `,${padFilter}[mixeda]`}`);
+  if (masterFilter) segments.push(`[mixedraw]${masterFilter},${padFilter}[mixeda]`);
   return segments.join(";");
 }
 
@@ -2085,6 +2369,9 @@ function audioFilterChain(audio: FfmpegAudioInput, options: { labelPrefix?: stri
   if (playbackRate !== null && playbackRate !== 1) {
     filters.push(...audioTempoFilters(playbackRate));
   }
+  if (audio.durationMs !== undefined && Number.isFinite(audio.durationMs) && audio.durationMs > 0) {
+    filters.push(`atrim=duration=${formatSeconds(audio.durationMs / 1000)}`);
+  }
   if (audio.normalizeLoudness) {
     filters.push(loudnormFilter(audio.loudnormMeasured));
   }
@@ -2105,7 +2392,7 @@ function audioFilterChain(audio: FfmpegAudioInput, options: { labelPrefix?: stri
     filters.push(volumeAutomation);
   }
   if (audio.fadeInMs !== undefined && audio.fadeInMs > 0) {
-    filters.push(`afade=t=in:st=0:d=${formatSeconds(audio.fadeInMs / 1000)}`);
+    filters.push(audioFadeFilter("in", 0, audio.fadeInMs, audio.fadeCurve));
   }
   const fadeOut = audioFadeOutFilter(audio);
   if (fadeOut) {
@@ -2171,7 +2458,52 @@ function audioFadeOutFilter(audio: FfmpegAudioInput): string | null {
   if (durationMs === undefined || durationMs <= 0) return null;
   const fadeDurationMs = Math.min(audio.fadeOutMs, durationMs);
   const startMs = Math.max(0, durationMs - fadeDurationMs);
-  return `afade=t=out:st=${formatSeconds(startMs / 1000)}:d=${formatSeconds(fadeDurationMs / 1000)}`;
+  return audioFadeFilter("out", startMs, fadeDurationMs, audio.fadeCurve);
+}
+
+/** Apply the document-owned post-mix controls once, after all source audio is resolved. */
+function masterAudioFilterChain(master: MotionAudioMasterBus | undefined, durationMs: number): string {
+  if (!master) return "";
+  const filters: string[] = [];
+  if (master.volume !== undefined && master.volume !== 1) filters.push(`volume=${formatNumber(master.volume)}`);
+  if (master.fadeInMs !== undefined && master.fadeInMs > 0) {
+    filters.push(audioFadeFilter("in", 0, master.fadeInMs, master.fadeCurve));
+  }
+  if (master.fadeOutMs !== undefined && master.fadeOutMs > 0) {
+    const length = master.fadeOutMs;
+    filters.push(audioFadeFilter("out", Math.max(0, durationMs - length), length, master.fadeCurve));
+  }
+  if (master.loudness) {
+    const lra = master.loudness.maxLoudnessRangeLu ?? LOUDNORM_TARGET_LRA;
+    filters.push(`loudnorm=I=${formatNumber(master.loudness.integratedLufs)}:TP=${formatNumber(master.loudness.maxTruePeakDbtp)}:LRA=${formatNumber(lra)}:print_format=summary`);
+  }
+  return filters.join(",");
+}
+
+function masterLoudnessRealization(master: MotionAudioMasterBus): {
+  mode: "single-pass-loudnorm";
+  integratedLufs: number;
+  truePeakDbtp: number;
+  loudnessRangeLu: number;
+} {
+  const target = master.loudness;
+  if (!target) throw new Error("Audio master has no loudness target to realize.");
+  return {
+    mode: "single-pass-loudnorm",
+    integratedLufs: target.integratedLufs,
+    truePeakDbtp: target.maxTruePeakDbtp,
+    loudnessRangeLu: target.maxLoudnessRangeLu ?? LOUDNORM_TARGET_LRA,
+  };
+}
+
+function audioFadeFilter(
+  direction: "in" | "out",
+  startMs: number,
+  durationMs: number,
+  curve: MotionAudioFadeCurve | undefined
+): string {
+  return `afade=t=${direction}:st=${formatSeconds(startMs / 1000)}:d=${formatSeconds(durationMs / 1000)}`
+    + (curve === "equal-power" ? ":curve=qsin" : "");
 }
 
 function audioPanFilter(pan: number | undefined): string | null {
@@ -2287,237 +2619,13 @@ function audioLoopSampleSize(durationMs: number): number {
   return Math.max(1, Math.round((durationMs / 1000) * 48000));
 }
 
-/**
- * Assemble the render receipt's input evidence: the frame-sequence hash plus a content hash of every
- * audio input file actually muxed into the render.
- *
- * Previously the receipt hashed only the frames, so a changed music/voiceover file produced a
- * "passed" receipt indistinguishable on the input side from the original — the audio bytes were
- * echoed in `output.audio` but never attested. Each audio input is keyed by its ordinal role
- * (`audio:<index>`), matching its position in the resolved audio-input list and the order echoed in
- * `output.audio` (single input -> `output.audio.path`, multiple -> `output.audio.tracks[index]`).
- *
- * The audio bytes use the TOCTOU-hardened `hashFile` receipts helper (symlinks / mid-read mutation
- * rejected). Callers pass an empty list for presets that cannot mux audio (e.g. GIF), so ignored
- * audio is not falsely attested. Keys are sorted for byte-for-byte receipt determinism.
- *
- * @param frameSequenceHash Deterministic hash of the rendered frame sequence.
- * @param audioInputs Audio inputs actually muxed into the output, in mux order.
- * @returns Map of input role -> sha256 hex, keys sorted ascending.
- */
-async function collectRenderInputHashes(
-  frameSequenceHash: string,
-  audioInputs: FfmpegAudioInput[]
-): Promise<Record<string, string>> {
-  const hashes = new Map<string, string>();
-  hashes.set("frames", frameSequenceHash);
-  for (const [index, audio] of audioInputs.entries()) {
-    hashes.set(`audio:${index}`, await hashFile(audio.path));
-  }
-  return Object.fromEntries([...hashes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-}
-
-function receiptAudioOutput(audioInputs: FfmpegAudioInput[], codec: string, loudness?: RenderLoudnessSummary): {
-  path?: string;
-  codec: string;
-  mix?: "amix";
-  loudness?: RenderLoudnessSummary;
-  tracks?: Array<{
-    path: string;
-    startMs?: number;
-    durationMs?: number;
-    trimStartMs?: number;
-    trimDurationMs?: number;
-    loop?: boolean;
-    volume?: number;
-    muted?: boolean;
-    pan?: number;
-    fadeInMs?: number;
-    fadeOutMs?: number;
-    normalizeLoudness?: boolean;
-    playbackRate?: number;
-    ducking?: MotionAudioDucking;
-    volumeKeyframes?: MotionKeyframe[];
-    panKeyframes?: MotionKeyframe[];
-  }>;
-  startMs?: number;
-  durationMs?: number;
-  trimStartMs?: number;
-  trimDurationMs?: number;
-  loop?: boolean;
-  volume?: number;
-  muted?: boolean;
-  pan?: number;
-  fadeInMs?: number;
-  fadeOutMs?: number;
-  normalizeLoudness?: boolean;
-  playbackRate?: number;
-  ducking?: MotionAudioDucking;
-  volumeKeyframes?: MotionKeyframe[];
-  panKeyframes?: MotionKeyframe[];
-} {
-  if (audioInputs.length > 1) {
-    return {
-      codec: receiptAudioCodec(codec),
-      mix: "amix",
-      ...(loudness ? { loudness } : {}),
-      tracks: audioInputs.map(receiptAudioTrack)
-    };
-  }
-  const audio = audioInputs[0];
-  return {
-    path: audio.path,
-    codec: receiptAudioCodec(codec),
-    ...(loudness ? { loudness } : {}),
-    ...(audio.startMs !== undefined ? { startMs: audio.startMs } : {}),
-    ...(audio.durationMs !== undefined ? { durationMs: audio.durationMs } : {}),
-    ...(audio.trimStartMs !== undefined ? { trimStartMs: audio.trimStartMs } : {}),
-    ...(audio.trimDurationMs !== undefined ? { trimDurationMs: audio.trimDurationMs } : {}),
-    ...(audio.loop !== undefined ? { loop: audio.loop } : {}),
-    ...(audio.volume !== undefined ? { volume: audio.volume } : {}),
-    ...(audio.pan !== undefined ? { pan: audio.pan } : {}),
-    ...(audio.muted !== undefined ? { muted: audio.muted } : {}),
-    ...(audio.fadeInMs !== undefined ? { fadeInMs: audio.fadeInMs } : {}),
-    ...(audio.fadeOutMs !== undefined ? { fadeOutMs: audio.fadeOutMs } : {}),
-    ...(audio.normalizeLoudness !== undefined ? { normalizeLoudness: audio.normalizeLoudness } : {}),
-    ...(audio.playbackRate !== undefined ? { playbackRate: audio.playbackRate } : {}),
-    ...(audio.ducking !== undefined ? { ducking: audio.ducking } : {}),
-    ...(audio.volumeKeyframes !== undefined ? { volumeKeyframes: audio.volumeKeyframes } : {}),
-    ...(audio.panKeyframes !== undefined ? { panKeyframes: audio.panKeyframes } : {})
-  };
-}
-
-function receiptAudioTrack(audio: FfmpegAudioInput): {
-  path: string;
-  startMs?: number;
-  durationMs?: number;
-  trimStartMs?: number;
-  trimDurationMs?: number;
-  loop?: boolean;
-  volume?: number;
-  muted?: boolean;
-  pan?: number;
-  fadeInMs?: number;
-  fadeOutMs?: number;
-  normalizeLoudness?: boolean;
-  playbackRate?: number;
-  ducking?: MotionAudioDucking;
-  volumeKeyframes?: MotionKeyframe[];
-  panKeyframes?: MotionKeyframe[];
-} {
-  return {
-    path: audio.path,
-    ...(audio.startMs !== undefined ? { startMs: audio.startMs } : {}),
-    ...(audio.durationMs !== undefined ? { durationMs: audio.durationMs } : {}),
-    ...(audio.trimStartMs !== undefined ? { trimStartMs: audio.trimStartMs } : {}),
-    ...(audio.trimDurationMs !== undefined ? { trimDurationMs: audio.trimDurationMs } : {}),
-    ...(audio.loop !== undefined ? { loop: audio.loop } : {}),
-    ...(audio.volume !== undefined ? { volume: audio.volume } : {}),
-    ...(audio.pan !== undefined ? { pan: audio.pan } : {}),
-    ...(audio.muted !== undefined ? { muted: audio.muted } : {}),
-    ...(audio.fadeInMs !== undefined ? { fadeInMs: audio.fadeInMs } : {}),
-    ...(audio.fadeOutMs !== undefined ? { fadeOutMs: audio.fadeOutMs } : {}),
-    ...(audio.normalizeLoudness !== undefined ? { normalizeLoudness: audio.normalizeLoudness } : {}),
-    ...(audio.playbackRate !== undefined ? { playbackRate: audio.playbackRate } : {}),
-    ...(audio.ducking !== undefined ? { ducking: audio.ducking } : {}),
-    ...(audio.volumeKeyframes !== undefined ? { volumeKeyframes: audio.volumeKeyframes } : {}),
-    ...(audio.panKeyframes !== undefined ? { panKeyframes: audio.panKeyframes } : {})
-  };
-}
-
-/** Order the colour tags are reported in, so a warning reads the same on every host. */
-const COLOR_TAG_ORDER: readonly FfmpegColorTag[] = ["primaries", "transfer", "matrix", "range"];
-
-/**
- * Read the colour tags off the DELIVERED file and grade them against what the preset declared.
- *
- * WHY THIS EXISTS. The receipt's `output.color` block was a pure restatement of intent — it repeated
- * the preset's `FfmpegColorProfile` whether or not the encode produced a file carrying those tags.
- * measured during cross-host verification: a Windows FFmpeg 8.x build delivered HEVC and AV1 with `transfer` and
- * `primaries` absent while the receipt asserted bt709 for both. Nothing in Motion noticed; it took a
- * second machine and a hand-run ffprobe. A receipt that attests to colour management the file does
- * not have is the declaration-vs-reality defect class in its purest form, and the fix is to make the
- * claim checkable on the host that produced it.
- *
- * FAILURE DIRECTION. Deliberately inert when the readback cannot be trusted:
- *   * probe throws / exits non-zero / returns unparsable output -> `null`, no observation, no warning;
- *   * probe succeeds but reports NO colour tag at all -> `null`, because "ffprobe told us nothing"
- *     and "the file carries nothing" are indistinguishable in that case, and inventing a warning
- *     from an ambiguous reading is exactly the noise this codebase spent the success-status invariant removing.
- * A warning is raised only from a positive reading: at least one tag WAS reported, so the probe
- * demonstrably had colour facts for this file, and a declared tag is still missing or different.
- * That is precisely the Windows shape (matrix + range present, transfer + primaries absent).
- *
- * Tags the container cannot signal at all are declared per-preset in `colorTagsNotSignaled` and are
- * excluded, so a MOV/ProRes render does not warn forever about a `color_range` field MOV has no
- * place to put.
- */
-async function gradeDeliveredColor(
-  path: string,
-  preset: FfmpegExportPresetSpec,
-  options: { runner?: FfmpegRunner; inputRoots?: string[] }
-): Promise<{ observed: FfmpegObservedColor; warning?: string } | null> {
-  const declared = preset.color;
-  if (!declared) return null;
-
-  let probed: ProbeMediaResult;
-  try {
-    probed = await probeMedia(path, options);
-  } catch {
-    // The encode succeeded and the file exists; a readback failure is not a render failure and must
-    // not manufacture a colour claim in either direction.
-    return null;
-  }
-
-  const observed: FfmpegObservedColor = {
-    primaries: probed.color.primaries,
-    transfer: probed.color.transfer,
-    // `matrix` in the declared profile is ffprobe's `color_space`; same field, two vocabularies.
-    matrix: probed.color.space,
-    range: probed.color.range
-  };
-  // NO early return for an all-null reading. previously a file whose every colour tag was
-  // absent returned `null` here, which the receipt renders as "not measured" -- the same shape as a
-  // readback that never ran. That merges two states the integration contract
-  // deliberately separates (a null FIELD means "measured and absent"; an absent `observed` BLOCK
-  // means "not measured"), and it did so in the worst direction. A partly tagged delivery got an
-  // honest `warning`, while a completely untagged one -- strictly worse for the consumer, because
-  // nothing at all tells a player how to interpret the pixels -- silently stayed `passed`.
-  //
-  // The probe SUCCEEDED here: `probeMedia` throwing is handled above and is the real "not measured"
-  // case. A successful probe reporting no colour tags is a measurement, and it is reported as one.
-  // Containers that genuinely cannot signal a tag are still excluded via `colorTagsNotSignaled`
-  // below, so this cannot manufacture a warning a container had no way to satisfy.
-
-  const notSignaled = new Set(preset.colorTagsNotSignaled ?? []);
-  const missing: FfmpegColorTag[] = [];
-  const mismatched: string[] = [];
-  for (const tag of COLOR_TAG_ORDER) {
-    if (notSignaled.has(tag)) continue;
-    const expected = declared[tag];
-    const actual = observed[tag];
-    if (actual === null) missing.push(tag);
-    else if (actual !== expected) mismatched.push(`${tag} is ${actual}, declared ${expected}`);
-  }
-  if (missing.length === 0 && mismatched.length === 0) return { observed };
-
-  const parts: string[] = [];
-  if (missing.length > 0) parts.push(`missing ${missing.join(", ")}`);
-  if (mismatched.length > 0) parts.push(mismatched.join("; "));
-  return {
-    observed,
-    warning: `Delivered ${preset.preset} colour does not match the ${declared.profile} profile the preset declares: `
-      + `${parts.join("; ")}. The delivered file is what a player sees; output.color.observed records it. `
-      + `This is usually an FFmpeg build that does not carry every colour tag through to this container.`
-  };
-}
-
-export async function probeMedia(path: string, options: { runner?: FfmpegRunner; inputRoots?: string[] } = {}): Promise<ProbeMediaResult> {
+export async function probeMedia(path: string, options: { runner?: FfmpegRunner; inputRoots?: string[]; admittedQualityInput?: boolean } = {}): Promise<ProbeMediaResult> {
   const runner = options.runner ?? spawnRunner;
-  assertSafeFfmpegInputPath(path, options.inputRoots);
+  if (options.admittedQualityInput) await assertQualityFfmpegMediaInput(path, options.inputRoots ?? []);
+  else assertSafeFfmpegInputPath(path, options.inputRoots);
   const command: FfmpegCommand = {
     executable: resolveFfprobeExecutable(),
-    args: ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", "-protocol_whitelist", "file", path],
+    args: ["-v", "error", "-print_format", "json", "-show_streams", "-show_format", ...(options.admittedQualityInput ? qualityFfmpegMediaInputArgs(path) : localFileInputArgs(path))],
     shell: false
   };
   const result = await runner(command);
@@ -2538,6 +2646,7 @@ export async function probeMedia(path: string, options: { runner?: FfmpegRunner;
       width?: number;
       height?: number;
       avg_frame_rate?: string;
+      nb_frames?: string | number;
       channels?: number;
       channel_layout?: string;
       sample_rate?: string | number;
@@ -2563,14 +2672,15 @@ export async function probeMedia(path: string, options: { runner?: FfmpegRunner;
       bitRate: parseOptionalNumber(candidate.bit_rate),
       durationMs: parseOptionalDurationMs(candidate.duration ?? parsed.format?.duration)
     }));
+  const durationMs = parseOptionalDurationMs(stream.duration ?? parsed.format?.duration) ?? 0;
   return {
     ok: true,
     path,
     codec: stream.codec_name ?? "unknown",
     width: stream.width ?? 0,
     height: stream.height ?? 0,
-    durationMs: parseOptionalDurationMs(stream.duration ?? parsed.format?.duration) ?? 0,
-    fps: parseFps(stream.avg_frame_rate ?? "0/1"),
+    durationMs,
+    fps: deliveredFps(stream, durationMs),
     container: parsed.format?.format_name ?? "unknown",
     color: {
       pixelFormat: stream.pix_fmt ?? null,
@@ -2588,10 +2698,15 @@ export async function probeMedia(path: string, options: { runner?: FfmpegRunner;
   };
 }
 
-export function frameExtractionInputArgs(media: Pick<ProbeMediaResult, "codec" | "alpha">, path: string): string[] {
+export function frameExtractionInputArgs(
+  media: Pick<ProbeMediaResult, "codec" | "alpha">,
+  path: string,
+  options: { admittedQualityInput?: boolean } = {}
+): string[] {
+  const inputArgs = options.admittedQualityInput ? qualityFfmpegMediaInputArgs(path) : ["-i", path];
   return media.codec === "vp9" && media.alpha.present && media.alpha.decoder === "libvpx-vp9"
-    ? ["-c:v", "libvpx-vp9", "-i", path]
-    : ["-i", path];
+    ? ["-c:v", "libvpx-vp9", ...inputArgs]
+    : inputArgs;
 }
 
 export function frameExtractionPngOutputArgs(media: Pick<ProbeMediaResult, "alpha">, path: string): string[] {
@@ -2625,7 +2740,7 @@ export function frameExtractionArgs(
   media: Pick<ProbeMediaResult, "codec" | "alpha">,
   inputPath: string,
   outputPath: string,
-  options: { frameIndex?: number } = {}
+  options: { frameIndex?: number; admittedQualityInput?: boolean } = {}
 ): string[] {
   const filters: string[] = [];
   if (options.frameIndex !== undefined && Number.isFinite(options.frameIndex) && options.frameIndex >= 0) {
@@ -2637,7 +2752,7 @@ export function frameExtractionArgs(
   // output frame-rate logic when a select filter is present.
   const frameGate = filters.length > 1 ? ["-fps_mode", "passthrough"] : [];
   return [
-    ...frameExtractionInputArgs(media, inputPath),
+    ...frameExtractionInputArgs(media, inputPath, options),
     "-vf",
     filters.join(","),
     ...frameGate,
@@ -2648,15 +2763,19 @@ export function frameExtractionArgs(
   ];
 }
 
-export async function measureAudioLevels(path: string, options: { runner?: FfmpegRunner; inputRoots?: string[] } = {}): Promise<AudioLevelResult> {
+export async function measureAudioLevels(path: string, options: { runner?: FfmpegRunner; inputRoots?: string[]; admittedFinalAudio?: boolean; admittedQualityInput?: boolean } = {}): Promise<AudioLevelResult> {
   const runner = options.runner ?? spawnRunner;
-  assertSafeFfmpegInputPath(path, options.inputRoots);
+  if (options.admittedFinalAudio) await assertSelfContainedFfmpegMediaInputs([path], options.inputRoots ?? []);
+  else if (options.admittedQualityInput) await assertQualityFfmpegMediaInput(path, options.inputRoots ?? []);
+  else assertSafeFfmpegInputPath(path, options.inputRoots);
   const command: FfmpegCommand = {
     executable: resolveFfmpegExecutable(),
     args: [
       "-hide_banner",
       "-nostats",
-      ...localFileInputArgs(path),
+      ...(options.admittedFinalAudio
+        ? selfContainedFfmpegMediaInputArgs(path)
+        : options.admittedQualityInput ? qualityFfmpegMediaInputArgs(path) : localFileInputArgs(path)),
       "-vn",
       "-sn",
       "-dn",
@@ -2695,6 +2814,84 @@ export async function measureAudioLevels(path: string, options: { runner?: Ffmpe
       && loudness.truePeak !== null
       && loudness.threshold !== null
   };
+}
+
+/** A bounded decoded-RMS envelope for data-only procedural relationships.
+ *
+ * This deliberately runs a fixed FFmpeg filter graph rather than accepting a
+ * caller supplied filter, script, or importer.  The returned samples are
+ * source-local; the authoring layer is responsible for mapping them into the
+ * document timeline and for refusing retimed sources it cannot prove.
+ */
+export async function sampleAudioEnvelope(
+  path: string,
+  options: { sampleEveryMs: number; durationMs: number; runner: FfmpegRunner; inputRoots?: string[] }
+): Promise<{ samples: Array<{ atMs: number; value: number }>; input: Pick<FfmpegMediaInputSnapshot, "sha256" | "byteLength">; resources?: LocalMotionJobEvidence }> {
+  const { sampleEveryMs, durationMs } = options;
+  if (!Number.isFinite(sampleEveryMs) || sampleEveryMs < 16 || sampleEveryMs > 1_000) {
+    throw new Error("Audio envelope sampleEveryMs must be a finite number from 16 to 1000.");
+  }
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new Error("Audio envelope durationMs must be a positive finite number.");
+  }
+  // This is also a decode-time budget: `-t` below is derived only from this
+  // validated duration, and no call can ask FFmpeg to scan an unbounded source.
+  const sampleCount = Math.ceil(durationMs / sampleEveryMs);
+  if (sampleCount > 4_096) {
+    throw new Error("Audio envelope would exceed 4096 samples; increase sampleEveryMs or use a shorter source layer.");
+  }
+  const snapshot = await snapshotSelfContainedFfmpegMediaInput(path, options.inputRoots ?? [], "final-audio");
+  try {
+    const samplesPerWindow = Math.max(1, Math.round(sampleEveryMs * 48));
+    const command: FfmpegCommand = {
+      executable: resolveFfmpegExecutable(),
+      args: [
+        "-hide_banner",
+        "-nostats",
+        ...selfContainedFfmpegMediaInputArgs(snapshot.path),
+        "-t",
+        formatSeconds(durationMs / 1000),
+        "-vn",
+        "-sn",
+        "-dn",
+        "-af",
+        `aresample=48000,asetnsamples=n=${samplesPerWindow}:p=1,astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level`,
+        "-f",
+        "null",
+        "-"
+      ],
+      shell: false
+    };
+    const result = await options.runner(command);
+    if (result.exitCode !== 0) {
+      throw new Error(summarizeStderr(result.stderr || result.stdout || "ffmpeg audio envelope sampling failed"));
+    }
+    const values = parseAudioEnvelopeRms(`${result.stdout}\n${result.stderr}`);
+    if (values.length === 0) throw new Error("FFmpeg did not emit usable RMS envelope samples.");
+    return {
+      samples: values.slice(0, sampleCount).map((value, index) => ({
+        atMs: Math.min(durationMs, index * sampleEveryMs),
+        value
+      })),
+      input: { sha256: snapshot.sha256, byteLength: snapshot.byteLength },
+      ...(result.resources ? { resources: result.resources } : {})
+    };
+  } finally {
+    await snapshot.release();
+  }
+}
+
+function parseAudioEnvelopeRms(output: string): number[] {
+  const values: number[] = [];
+  for (const match of output.matchAll(/lavfi\.astats\.Overall\.RMS_level\s*=\s*(-?(?:\d+(?:\.\d+)?|inf))/gi)) {
+    const token = match[1].toLowerCase();
+    const value = token === "-inf" ? 0 : Number(token);
+    if (!Number.isFinite(value)) continue;
+    // RMS dBFS to an amplitude scalar. The core graph accepts only finite
+    // bounded numbers; clamp floating-point overrun instead of leaking it.
+    values.push(Math.min(1, Math.max(0, Math.pow(10, value / 20))));
+  }
+  return values;
 }
 
 function parseLoudnormSummary(output: string): {
@@ -2746,105 +2943,6 @@ function parseLastDb(output: string, pattern: RegExp): number | null {
     parsed = raw === "-inf" ? Number.NEGATIVE_INFINITY : Number(raw);
   }
   return parsed;
-}
-
-/** True only when every value needed to drive a two-pass loudnorm apply is finite. */
-function hasFiniteLoudnessMeasurement(level: AudioLevelResult): boolean {
-  return [level.integratedLoudnessLufs, level.truePeakDbtp, level.loudnessRangeLu, level.loudnessThresholdLufs, level.targetOffsetLu]
-    .every((value) => typeof value === "number" && Number.isFinite(value));
-}
-
-interface LoudnessMeasurementResult {
-  /** Audio inputs, with a first-pass measurement attached to each two-pass track. */
-  inputs: FfmpegAudioInput[];
-  /** Per-track loudness evidence for the render receipt. */
-  tracks: RenderLoudnessTrack[];
-}
-
-/**
- * First pass of two-pass EBU R128 loudness normalization: measure every track
- * that requests `normalizeLoudness`, attach the measured values so the encode
- * applies them, and emit per-track receipt evidence. A track whose measurement
- * is unavailable or non-finite is left untouched (single-pass fallback) with an
- * honest note; other tracks are passed through unchanged.
- */
-async function measureLoudnessInputs(
-  audioInputs: FfmpegAudioInput[],
-  options: { runner: FfmpegRunner; inputRoots?: string[] }
-): Promise<LoudnessMeasurementResult> {
-  const inputs: FfmpegAudioInput[] = [];
-  const tracks: RenderLoudnessTrack[] = [];
-  for (const audio of audioInputs) {
-    if (!audio.normalizeLoudness) {
-      inputs.push(audio);
-      continue;
-    }
-    let measured: LoudnormMeasurement | undefined;
-    let note: string | undefined;
-    try {
-      const level = await measureAudioLevels(audio.path, options);
-      if (hasFiniteLoudnessMeasurement(level)) {
-        measured = {
-          integratedLufs: level.integratedLoudnessLufs as number,
-          truePeakDbtp: level.truePeakDbtp as number,
-          lra: level.loudnessRangeLu as number,
-          thresholdLufs: level.loudnessThresholdLufs as number,
-          offsetLu: level.targetOffsetLu as number
-        };
-      } else {
-        note = "Loudness measurement incomplete; applied single-pass loudnorm.";
-      }
-    } catch (error) {
-      note = `Loudness measurement failed (${error instanceof Error ? error.message : String(error)}); applied single-pass loudnorm.`;
-    }
-    inputs.push(measured ? { ...audio, loudnormMeasured: measured } : audio);
-    tracks.push({
-      path: audio.path,
-      ...(audio.layerId ? { layerId: audio.layerId } : {}),
-      integratedLufs: measured?.integratedLufs ?? null,
-      truePeakDbtp: measured?.truePeakDbtp ?? null,
-      lra: measured?.lra ?? null,
-      thresholdLufs: measured?.thresholdLufs ?? null,
-      offsetLu: measured?.offsetLu ?? null,
-      mode: measured ? "two-pass" : "single-pass-fallback",
-      ...(note ? { note } : {})
-    });
-  }
-  return { inputs, tracks };
-}
-
-/**
- * Second measurement over the final mixed output, so the receipt records the
- * program's *achieved* integrated loudness / true peak / LRA (not just the
- * target). Returns null if the output cannot be measured.
- */
-async function measureProgramLoudness(
-  outputPath: string,
-  options: { runner: FfmpegRunner }
-): Promise<RenderLoudnessSummary["output"]> {
-  try {
-    const level = await measureAudioLevels(outputPath, { runner: options.runner, inputRoots: [dirname(outputPath)] });
-    return {
-      integratedLufs: level.integratedLoudnessLufs,
-      truePeakDbtp: level.truePeakDbtp,
-      lra: level.loudnessRangeLu
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Fold per-track loudness measurements + program output into a receipt summary. */
-function buildLoudnessSummary(tracks: RenderLoudnessTrack[], output: RenderLoudnessSummary["output"]): RenderLoudnessSummary {
-  const allTwoPass = tracks.every((track) => track.mode === "two-pass");
-  const allFallback = tracks.every((track) => track.mode === "single-pass-fallback");
-  return {
-    measurement: "ebu-r128",
-    target: { integratedLufs: LOUDNORM_TARGET_I, truePeakDbtp: LOUDNORM_TARGET_TP, lra: LOUDNORM_TARGET_LRA },
-    mode: allTwoPass ? "two-pass" : allFallback ? "single-pass-fallback" : "mixed",
-    tracks,
-    output
-  };
 }
 
 export {
@@ -2903,7 +3001,12 @@ export {
  *   answer is already final and negative, and a caller must report it rather than resolving on to
  *   a different binary.
  */
-export function resolveMotionToolLocation(tool: MotionToolName): { executable: string; source: MotionToolSource; problem?: string } {
+export function resolveMotionToolLocation(tool: MotionToolName): {
+  executable: string;
+  source: MotionToolSource;
+  problem?: string;
+  autoDiscoveredCache?: true;
+} {
   if (tool === "chromium") return resolveMotionBrowserExecutable();
   const override = readExecutableEnv(tool === "ffmpeg" ? "SHELLX_MOTION_FFMPEG" : "SHELLX_MOTION_FFPROBE");
   if (override) return { executable: override, source: "override" };
@@ -2969,11 +3072,28 @@ export function resolveFfprobeExecutable(): string {
  *   {@link createToolIdentityProbeRunner} for why it is not the encode runner.
  */
 export async function probeMotionTool(tool: MotionToolName, runner?: FfmpegRunner): Promise<MotionToolProbeResult> {
-  const { executable, source, problem } = resolveMotionToolLocation(tool);
+  const location = resolveMotionToolLocation(tool);
+  const { executable, source, problem } = location;
   const base = { tool, source, resolvedFrom: executable } as const;
   // No `detail`: it exists to carry the RAW error a spawn produced, and no spawn happened. Copying
   // the problem sentence into it would only republish the same text with its path redacted out.
   if (problem) return { ...base, status: "broken", problem };
+  if (tool === "chromium") {
+    const verificationProblem = motionBrowserExecutableVerificationProblem(location);
+    // A cache can change after resolution and before the process boundary revalidation. Preserve
+    // both facts in the shared doctor/requirements result: the exact selected candidate failed its
+    // second trust check, and any cache component the fresh scan refused. Without the notes this
+    // early return silently contradicts the documented diagnostic path and sends an operator back
+    // to the cache Motion is deliberately declining to execute from.
+    if (verificationProblem) {
+      return {
+        ...base,
+        status: "broken",
+        problem: verificationProblem,
+        ...browserCacheRefusalNotes(tool)
+      };
+    }
+  }
   const probe = runner ?? createToolIdentityProbeRunner(tool);
   const failure = (raw: string): MotionToolProbeResult => ({
     ...base,
@@ -2981,9 +3101,23 @@ export async function probeMotionTool(tool: MotionToolName, runner?: FfmpegRunne
     detail: raw,
     ...browserCacheRefusalNotes(tool)
   });
+  if (!runner && tool === "chromium" && process.platform === "win32") {
+    const browser = await probeMotionBrowserVersion(executable, { timeoutMs: resolveToolIdentityProbeTimeoutMs() });
+    if (browser.ok) return { ...base, status: "ready", version: `Chromium ${browser.version}` };
+    if (browser.reason === "timed_out") {
+      return failure(`chromium identity probe timed out after ${resolveToolIdentityProbeTimeoutMs()}ms.`);
+    }
+    if (browser.reason === "cleanup_failed") {
+      return failure("chromium identity probe could not close its headless browser process.");
+    }
+    return failure("chromium headless identity probe failed to return a version.");
+  }
   try {
     const result = await probe({ executable, args: TOOL_VERSION_ARGS[tool], shell: false });
     if (result.exitCode === 0) return { ...base, status: "ready", version: firstLine(result.stdout) };
+    if (!runner && result.exitCode === FFMPEG_TIMEOUT_EXIT_CODE) {
+      return failure(`${tool} identity probe timed out after ${resolveToolIdentityProbeTimeoutMs()}ms.`);
+    }
     return failure(summarizeStderr(result.stderr || result.stdout || `${tool} is not available`));
   } catch (error) {
     return failure(error instanceof Error ? error.message : String(error));
@@ -3149,21 +3283,12 @@ interface RunFfmpegChildOptions {
   maxProcessTreeRssBytes: number;
 }
 
-type FfmpegProcessTerminationMode = "windows-job-object" | "windows-taskkill-fallback" | "unix-process-group" | "direct-child";
-
 async function runFfmpegChild(command: FfmpegCommand, options: RunFfmpegChildOptions): Promise<FfmpegProcessResult> {
   if (process.platform === "win32") return runWindowsContainedFfmpegChild(command, options);
   const mode: FfmpegProcessTerminationMode = process.platform === "linux" || process.platform === "darwin"
     ? "unix-process-group"
     : "direct-child";
-  options.reportProcessContainment({
-    schema: "shellx-motion/process-containment@1",
-    mode,
-    status: mode === "unix-process-group" ? "enforced" : "unavailable",
-    killTree: mode === "unix-process-group",
-    memoryLimit: mode === "unix-process-group" ? "rss-monitor" : "none",
-    ...(mode === "direct-child" ? { reasonCode: "unsupported_platform" as const } : {}),
-  });
+  options.reportProcessContainment(portableFfmpegContainmentEvidence(mode));
   return runSpawnedFfmpegChild(command, options.signal, options.watchProcess, () => mode);
 }
 
@@ -3265,127 +3390,6 @@ async function runWindowsContainedFfmpegChild(command: FfmpegCommand, options: R
 }
 
 /**
- * Spawn one shell-free child and collect its output.
- *
- * @param limits.timeoutMs Wall-clock budget. Defaults to the ENCODE budget
- *   (`SHELLX_MOTION_FFMPEG_TIMEOUT_MS` / ten minutes); the identity probe passes its own, far
- *   shorter one. Zero disables the timer.
- * @param limits.label What the timeout message calls this command. "FFmpeg command" by default,
- *   because that is what every governed caller is; a Chromium version probe is not.
- */
-function runSpawnedFfmpegChild(
-  command: FfmpegCommand,
-  signal: AbortSignal,
-  watchProcess: (pid: number) => void,
-  terminationMode: () => FfmpegProcessTerminationMode,
-  limits: { timeoutMs?: number; label?: string } = {}
-): Promise<FfmpegProcessResult> {
-  return new Promise((resolveResult) => {
-    let child;
-    try {
-      child = spawn(command.executable, command.args, {
-        // Without an explicit `env`, Node hands the child the operator's entire
-        // environment, SHELLX_MOTION_DEBUG_TOKEN included. FFmpeg needs none of it.
-        env: childEnvironment(),
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        // Unix descendants inherit a process group. The Windows Job helper owns its native job;
-        // the compatibility path remains a normal descendant tree for taskkill /T.
-        detached: process.platform !== "win32",
-        windowsHide: true
-      });
-    } catch (error) {
-      const spawnError = error as NodeJS.ErrnoException;
-      resolveResult({ exitCode: spawnError.code === "ENOENT" ? 127 : 1, stdout: "", stderr: spawnError.message });
-      return;
-    }
-    if (child.pid) watchProcess(child.pid);
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    let killTimer: NodeJS.Timeout | null = null;
-    const timeoutMs = limits.timeoutMs ?? resolveFfmpegTimeoutMs();
-    const timeoutTimer = timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true;
-          stderr = appendProcessOutput(stderr, `\n${limits.label ?? "FFmpeg command"} timed out after ${timeoutMs}ms.`);
-          terminateFfmpegProcessTree(child, false, terminationMode());
-          killTimer = setTimeout(() => {
-            if (!settled) terminateFfmpegProcessTree(child, true, terminationMode());
-          }, 100);
-          killTimer.unref?.();
-        }, timeoutMs)
-      : null;
-    timeoutTimer?.unref?.();
-    const finish = (result: FfmpegProcessResult) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (killTimer) clearTimeout(killTimer);
-      signal.removeEventListener("abort", abortChild);
-      resolveResult(result);
-    };
-    const abortChild = () => {
-      stderr = appendProcessOutput(stderr, `\n${signal.reason instanceof Error ? signal.reason.message : "FFmpeg job cancelled."}`);
-      terminateFfmpegProcessTree(child, false, terminationMode());
-      if (!killTimer) {
-        killTimer = setTimeout(() => {
-          if (!settled) terminateFfmpegProcessTree(child, true, terminationMode());
-        }, 250);
-        killTimer.unref?.();
-      }
-    };
-    signal.addEventListener("abort", abortChild, { once: true });
-    if (signal.aborted) abortChild();
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout = appendProcessOutput(stdout, chunk); });
-    child.stderr.on("data", (chunk) => { stderr = appendProcessOutput(stderr, chunk); });
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      finish({ exitCode: error.code === "ENOENT" ? 127 : 1, stdout, stderr: appendProcessOutput(stderr, error.message) });
-    });
-    child.on("close", (code) => {
-      finish({ exitCode: timedOut ? FFMPEG_TIMEOUT_EXIT_CODE : code ?? 1, stdout, stderr });
-    });
-  });
-}
-
-function terminateFfmpegProcessTree(
-  child: { pid?: number; kill(signal?: NodeJS.Signals | number): boolean },
-  force: boolean,
-  mode: FfmpegProcessTerminationMode
-): void {
-  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
-  if (mode === "windows-taskkill-fallback" && child.pid) {
-    try {
-      const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", ...(force ? ["/F"] : [])], {
-        shell: false,
-        stdio: "ignore",
-        windowsHide: true
-      });
-      killer.unref();
-      return;
-    } catch {
-      // Fall through to the direct child signal when taskkill itself cannot start.
-    }
-  } else if (mode === "unix-process-group" && child.pid) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // The group may already be gone or the host may not expose process-group signalling.
-    }
-  }
-  try { child.kill(signal); } catch { /* already exited */ }
-}
-
-function nativeWindowsJobObjectRequired(): boolean {
-  return /^(?:1|true|yes)$/i.test(process.env.SHELLX_MOTION_REQUIRE_NATIVE_WINDOWS_JOB_OBJECT?.trim() ?? "");
-}
-
-/**
  * Software-encode override. When set (1/true/yes) the final render always
  * uses the software encoder even if a hardware candidate is probe-verified — for reproducibility
  * contexts where the exact libx264/libx265 bitstream matters. An explicit `forceSoftwareEncode`
@@ -3393,34 +3397,6 @@ function nativeWindowsJobObjectRequired(): boolean {
  */
 function envForceSoftwareEncode(): boolean {
   return /^(?:1|true|yes)$/i.test(process.env.SHELLX_MOTION_FORCE_SOFTWARE_ENCODE?.trim() ?? "");
-}
-
-function unavailableWindowsContainment(
-  reasonCode: "native_helper_missing" | "native_setup_failed"
-): LocalMotionProcessContainmentEvidence {
-  return {
-    schema: "shellx-motion/process-containment@1",
-    mode: "direct-child",
-    status: "unavailable",
-    killTree: false,
-    memoryLimit: "none",
-    reasonCode,
-  };
-}
-
-function windowsTaskkillFallbackEvidence(
-  reasonCode: "native_helper_missing" | "native_setup_failed",
-  helperSha256?: string
-): LocalMotionProcessContainmentEvidence {
-  return {
-    schema: "shellx-motion/process-containment@1",
-    mode: "windows-taskkill-fallback",
-    status: "fallback",
-    killTree: true,
-    memoryLimit: "rss-monitor",
-    reasonCode,
-    ...(helperSha256 ? { launcher: { kind: "powershell-csharp" as const, sha256: helperSha256 } } : {}),
-  };
 }
 
 const FFMPEG_RESOURCE_LIMIT_EXIT_CODE = 125;
@@ -3438,18 +3414,6 @@ function ffmpegJobOperation(args: string[]): string {
   if (args.includes("loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json")) return "ffmpeg.audio.measure";
   if (args.includes("-show_streams") || args.includes("-show_format")) return "ffmpeg.probe";
   return "ffmpeg.render";
-}
-
-function resolveFfmpegTimeoutMs(): number {
-  const raw = process.env.SHELLX_MOTION_FFMPEG_TIMEOUT_MS?.trim();
-  if (!raw) return DEFAULT_FFMPEG_COMMAND_TIMEOUT_MS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : DEFAULT_FFMPEG_COMMAND_TIMEOUT_MS;
-}
-
-function appendProcessOutput(current: string, chunk: string): string {
-  const next = current + chunk;
-  return next.length > MAX_FFMPEG_OUTPUT_CHARS ? next.slice(-MAX_FFMPEG_OUTPUT_CHARS) : next;
 }
 
 function readExecutableEnv(name: "SHELLX_MOTION_FFMPEG" | "SHELLX_MOTION_FFPROBE"): string | null {
@@ -3480,70 +3444,6 @@ function readDirectoryNames(path: string): string[] {
   }
 }
 
-function encodePathSafetyError(
-  input: { framesDir: string; outputPath: string; inputRoots?: string[]; outputRoots?: string[] },
-  audioInputs: FfmpegAudioInput[]
-): string | null {
-  const inputRoots = effectiveEncodeInputRoots(input);
-  for (const path of [join(input.framesDir, "%06d.png"), ...audioInputs.map((audio) => audio.path)]) {
-    const error = ffmpegPathSafetyError(path, "input", inputRoots);
-    if (error) return error;
-  }
-  return ffmpegPathSafetyError(input.outputPath, "output", input.outputRoots);
-}
-
-function effectiveEncodeInputRoots(input: { framesDir: string; inputRoots?: string[] }): string[] {
-  const explicitRoots = trustedInputRoots(input.inputRoots ?? []);
-  return explicitRoots.length > 0 ? explicitRoots : [input.framesDir];
-}
-
-function assertSafeFfmpegInputPath(path: string, inputRoots?: string[]): void {
-  const error = ffmpegPathSafetyError(path, "input", inputRoots);
-  if (error) throw new Error(error);
-}
-
-function assertSafeFfmpegOutputPath(path: string, outputRoots?: string[]): void {
-  const error = ffmpegPathSafetyError(path, "output", outputRoots);
-  if (error) throw new Error(error);
-}
-
-function localFileInputArgs(path: string): string[] {
-  return ["-protocol_whitelist", "file", "-i", path];
-}
-
-function ffmpegPathSafetyError(path: string, role: "input" | "output", trustedRoots?: string[]): string | null {
-  const trimmed = path.trim();
-  if (!trimmed) return `Unsafe FFmpeg ${role} path: path operands must not be blank.`;
-  if (trimmed.startsWith("-")) return `Unsafe FFmpeg ${role} path: path operands must not start with '-'.`;
-  if (hasProtocolScheme(trimmed)) return `Unsafe FFmpeg ${role} path: protocol URLs are not allowed.`;
-  if (trustedRoots && trustedInputRoots(trustedRoots).length > 0 && !isPathInsideAnyRoot(trimmed, trustedRoots)) {
-    return `Unsafe FFmpeg ${role} path: path must be inside a trusted ${role} root.`;
-  }
-  return null;
-}
-
-function hasProtocolScheme(path: string): boolean {
-  if (/^[A-Za-z]:[\\/]/.test(path)) return false;
-  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path);
-}
-
-function isPathInsideAnyRoot(path: string, roots: string[]): boolean {
-  const resolvedPath = resolve(path);
-  return trustedInputRoots(roots).some((root) => isPathInsideOrEqual(root, resolvedPath));
-}
-
-function trustedInputRoots(roots: string[]): string[] {
-  return roots
-    .map((root) => root.trim())
-    .filter(Boolean)
-    .map((root) => resolve(root));
-}
-
-function isPathInsideOrEqual(parent: string, candidate: string): boolean {
-  const relation = relative(resolve(parent), resolve(candidate));
-  return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
-}
-
 /**
  * Routine lines ffmpeg prints on every successful encode.
  *
@@ -3570,7 +3470,11 @@ const ROUTINE_ENCODE_STDERR = [
   // one graph) does not, so the graph-only spelling left every GIF render leaking its own
   // stream-mapping line into `warnings`. Both spellings are the same block of the same banner.
   /^\s+\S+(?: \(graph \d+\))? -> Stream #\d/,
-  /^\s*Duration:/,
+  // FFmpeg's Matroska stream metadata uses uppercase tag names on some builds, e.g.
+  // `DURATION : 00:00:01.500000000` and `ENCODER : Lavc60.31.102 ffv1`. They describe a
+  // successfully discovered stream; they are not encoder diagnostics. Keep these label matches
+  // case-insensitive so the same clean segmented final is not receipt-warning only on that host.
+  /^\s*Duration\s*:/i,
   /^\s*Metadata:/,
   /^\s*Side data:/,
   /^\s*cpb:/,
@@ -3586,7 +3490,7 @@ const ROUTINE_ENCODE_STDERR = [
   // leading `\s*`; the rest is anchored to the exact HRD field sequence so a genuine bitrate or
   // buffering diagnostic, which is prose, cannot match.
   /^\s*CPB properties: bitrate max\/min\/avg: [\d/]+ buffer size: \d+ vbv_delay: \S+$/,
-  /^\s*encoder\s*:/,
+  /^\s*encoder\s*:/i,
   /^Press \[q\]/,
   // Progress and the muxing-overhead summary. ffmpeg merges these onto one line when the
   // terminal is not a TTY, which is exactly how they reach us.
@@ -3672,7 +3576,10 @@ const ROUTINE_ENCODE_STDERR = [
  */
 export function summarizeSuccessfulEncodeStderr(stderr: string): string {
   const flagged = stderr
-    .split(/\r?\n/)
+    // FFmpeg updates progress with a bare carriage return. Treat it as a record boundary too, or
+    // a genuine diagnostic following the progress entry remains on the same string and is dropped
+    // by the anchored routine-progress filter.
+    .split(/\r\n?|\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0)
     .filter((line) => !ROUTINE_ENCODE_STDERR.some((pattern) => pattern.test(line)))
@@ -3690,14 +3597,11 @@ export function summarizeSuccessfulEncodeStderr(stderr: string): string {
 }
 
 function summarizeStderr(stderr: string): string {
-  return redact(stderr.trim().split(/\r?\n/).filter(Boolean).slice(-2).join(" "));
+  return summarizeFfmpegDiagnostic(stderr);
 }
 
 function redact(value: string): string {
-  return value.replace(/\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*=([^\s]+)/g, (match) => {
-    const [key] = match.split("=");
-    return `${key}=[redacted]`;
-  });
+  return redactFfmpegDiagnostic(value);
 }
 
 function firstLine(value: string): string {
@@ -3708,6 +3612,14 @@ function parseFps(value: string): number {
   const parts = value.split("/").map(Number);
   const fps = parts.length === 2 ? (parts[1] > 0 ? parts[0] / parts[1] : 0) : parts[0];
   return Number.isFinite(fps) && fps > 0 ? fps : 0;
+}
+
+function deliveredFps(stream: { avg_frame_rate?: string; nb_frames?: string | number }, durationMs: number): number {
+  const frameCount = parseOptionalNumber(stream.nb_frames);
+  if (frameCount !== null && Number.isSafeInteger(frameCount) && frameCount > 0 && durationMs > 0) {
+    return frameCount / (durationMs / 1_000);
+  }
+  return parseFps(stream.avg_frame_rate ?? "0/1");
 }
 
 function parseOptionalNumber(value: string | number | undefined): number | null {

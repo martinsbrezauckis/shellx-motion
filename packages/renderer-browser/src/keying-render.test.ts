@@ -145,7 +145,7 @@ describe("browser keying and roto rendering", () => {
 
 async function writeKeyedImagePackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-keyed-image-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writePackage(root, {
     id: "motion-keyed-image",
     assets: ["assets/subject.png"],
@@ -174,7 +174,7 @@ async function writeKeyedImagePackage(): Promise<string> {
 
 async function writeKeyedVideoPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-keyed-video-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   const sourcePath = join(root, "assets", "source.png");
   await writeFile(sourcePath, makeRgbaPngFixture(80, 60, keyedSubjectPixels()));
   await execFileAsync(process.env.SHELLX_MOTION_FFMPEG?.trim() || "ffmpeg", [

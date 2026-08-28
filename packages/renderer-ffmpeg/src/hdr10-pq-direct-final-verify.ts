@@ -1,0 +1,48 @@
+import { canonicalJson, canonicalJsonSha256, type MotionPackage } from "@shellx-motion/core";
+import { GPU_PAGE_SCENE3D_GLTF_PBR_HDR10_CATALOG, GPU_PAGE_SCENE3D_GLTF_PBR_HDR10_PIPELINE_IDENTITY, resolveGpuScene3dGltfPbrHdr10Route, type GpuScene3dGltfPbrHdr10RouteResolution } from "@shellx-motion/renderer-browser/internal/scene3d-gltf-pbr-hdr10-streaming";
+import { HDR10_PQ_CONVERSION_CONTRACT } from "./hdr10-pq-conversion-contract.js";
+import { HDR10_PQ_C1_FFMPEG_ARGS } from "./hdr10-pq-ffmpeg-command.js";
+import { HDR10_PQ_DIRECT_FINAL_MAX_FFPROBE_BYTES, HDR10_PQ_DIRECT_FINAL_MAX_OUTPUT_BYTES, HDR10_PQ_DIRECT_FINAL_MAX_PROCESS_TREE_RSS_BYTES, HDR10_PQ_DIRECT_FINAL_OUTPUT_FILE, HDR10_PQ_DIRECT_FINAL_RECEIPT_FILE, HDR10_PQ_DIRECT_FINAL_SCHEMA, HDR10_PQ_DIRECT_FINAL_TIMEOUT_MS, type Hdr10PqDirectFinalReceipt, verifyHdr10PqDirectFinalReceiptStructure } from "./hdr10-pq-direct-final-contract.js";
+import { createHdr10PqDirectFinalDeadline, isHdr10PqDirectFinalJob, type Hdr10PqDirectFinalJob } from "./hdr10-pq-direct-final-job.js";
+import { HDR10_PQ_FFPROBE_PIPE_ARGS, HDR10_PQ_FFPROBE_QUERY, verifyHdr10PqFfprobeObservation } from "./hdr10-pq-ffprobe.js";
+import { assertHdr10PqExactBundleChildren, assertHdr10PqPinnedStagedFileCurrent, closeHdr10PqPinnedStagedFile, hashHdr10PqPinnedStagedFile, openHdr10PqPinnedStagedFile, readHdr10PqPinnedStagedFile, type Hdr10PqPinnedStagedFile } from "./hdr10-pq-staged-file.js";
+import { resolveFfprobeExecutable, type FfmpegCommand } from "./index.js";
+import { startStreamingFfmpegProcess, type StreamingFfmpegProcess, type StreamingFfmpegProcessFactory } from "./streaming-process.js";
+import { join } from "node:path";
+
+type Services = { readonly resolveRoute: typeof resolveGpuScene3dGltfPbrHdr10Route; readonly startProcess: StreamingFfmpegProcessFactory; };
+const PRODUCTION: Services = Object.freeze({ resolveRoute: resolveGpuScene3dGltfPbrHdr10Route, startProcess: startStreamingFfmpegProcess });
+export type Hdr10PqTrustedHostConsistency = { readonly ok: true; readonly authority: "trusted-host-receipt-not-cryptographically-authenticated"; readonly receipt: Hdr10PqDirectFinalReceipt } | { readonly ok: false; readonly message: string; };
+
+/**
+ * Checks trusted-host semantic consistency only: current route, pinned output, canonical receipt,
+ * and current FFprobe facts. It is metadata, never mutation authority or cryptographic/execution proof.
+ */
+export async function inspectHdr10PqPublishedDirectFinalTrustedHostConsistency(pkg: MotionPackage, outputDirectory: string, job: Hdr10PqDirectFinalJob): Promise<Hdr10PqTrustedHostConsistency> { return await verify(pkg, outputDirectory, job, PRODUCTION); }
+/** Test-only relative-module seam; it is not a package or host export. */
+export async function inspectHdr10PqPublishedDirectFinalTrustedHostConsistencyForTest(pkg: MotionPackage, outputDirectory: string, job: Hdr10PqDirectFinalJob, services: Services): Promise<Hdr10PqTrustedHostConsistency> { return await verify(pkg, outputDirectory, job, services); }
+
+async function verify(pkg: MotionPackage, outputDirectory: string, job: Hdr10PqDirectFinalJob, services: Services): Promise<Hdr10PqTrustedHostConsistency> {
+  if (!isHdr10PqDirectFinalJob(job)) return { ok: false, message: "HDR10 published direct-final verification refused." };
+  const deadline = createHdr10PqDirectFinalDeadline(job.signal);
+  let output: Hdr10PqPinnedStagedFile | undefined, receiptFile: Hdr10PqPinnedStagedFile | undefined, probe: StreamingFfmpegProcess | undefined;
+  try {
+    if (deadline.signal.aborted) throw new Error("HDR10 published verification was cancelled before route resolution.");
+    const route = await services.resolveRoute(pkg); if (route.kind !== "present") throw new Error("HDR10 published verification requires a current authenticated route.");
+    receiptFile = await openHdr10PqPinnedStagedFile(join(outputDirectory, HDR10_PQ_DIRECT_FINAL_RECEIPT_FILE), 64 * 1024); const receipt = parseReceipt(await readHdr10PqPinnedStagedFile(receiptFile));
+    output = await openHdr10PqPinnedStagedFile(join(outputDirectory, HDR10_PQ_DIRECT_FINAL_OUTPUT_FILE), HDR10_PQ_DIRECT_FINAL_MAX_OUTPUT_BYTES); const outputSha256 = await hashHdr10PqPinnedStagedFile(output);
+    if (receipt.output.sha256 !== outputSha256 || receipt.output.byteLength !== output.byteLength || !matchesRoute(receipt, route) || !matchesFixedContracts(receipt)) throw new Error("HDR10 published receipt does not cross-bind the current route, fixed contracts, and pinned output.");
+    probe = await services.startProcess({ command: ffprobeCommand(), signal: deadline.signal, scratchRoot: job.scratchRoot, maxProcessTreeRssBytes: job.maxProcessTreeRssBytes, watchProcess: job.watchProcess, reportProcessContainment: job.reportProcessContainment }); const result = await probePinned(probe, output, deadline.signal); probe = undefined;
+    if (result.exitCode !== 0 || Buffer.byteLength(result.stdout, "utf8") > HDR10_PQ_DIRECT_FINAL_MAX_FFPROBE_BYTES) throw new Error("HDR10 published FFprobe did not terminate within its fixed ceiling.");
+    let observed: unknown; try { observed = JSON.parse(result.stdout); } catch { throw new Error("HDR10 published FFprobe returned invalid JSON."); }
+    const observation = verifyHdr10PqFfprobeObservation(observed); if (!observation || receipt.probe.observedJsonSha256 !== canonicalJsonSha256(observed) || receipt.probe.observedStreamSha256 !== observation.streamSha256 || receipt.probe.validationFingerprint !== observation.fingerprint) throw new Error("HDR10 published FFprobe facts do not match the receipt.");
+    await assertHdr10PqExactBundleChildren(outputDirectory, output, receiptFile); return { ok: true, authority: "trusted-host-receipt-not-cryptographically-authenticated", receipt };
+  } catch { return { ok: false, message: "HDR10 published direct-final verification refused." }; }
+  finally { deadline.close(); await probe?.abort(new Error("HDR10 published verification did not complete.")).catch(() => undefined); await closeHdr10PqPinnedStagedFile(output); await closeHdr10PqPinnedStagedFile(receiptFile); }
+}
+
+function parseReceipt(bytes: Buffer): Hdr10PqDirectFinalReceipt { let value: unknown; try { value = JSON.parse(bytes.toString("utf8")); } catch { throw new Error("HDR10 published receipt is not JSON."); } if (!Buffer.from(canonicalJson(value), "utf8").equals(bytes)) throw new Error("HDR10 published receipt is not canonical."); return verifyHdr10PqDirectFinalReceiptStructure(value); }
+function matchesRoute(receipt: Hdr10PqDirectFinalReceipt, route: Extract<GpuScene3dGltfPbrHdr10RouteResolution, { kind: "present" }>): boolean { const hdr = route.hdrRoute, sdr = route.sdrRoute; return receipt.packageId === hdr.packageId && receipt.route.fingerprint === hdr.fingerprint && canonicalJson(receipt.route.sourceInputHashes) === canonicalJson(hdr.inputHashes) && receipt.route.sceneStateSha256 === hdr.staticPlan.inheritedSdr.sceneStateSha256 && receipt.route.staticFingerprint === hdr.staticPlan.fingerprint && receipt.route.sdrStaticFingerprint === sdr.renderPlan.staticPlan.fingerprint && receipt.route.frameFingerprint === sdr.renderPlan.framePlan.fingerprint; }
+function matchesFixedContracts(receipt: Hdr10PqDirectFinalReceipt): boolean { return receipt.browser.catalogSha256 === GPU_PAGE_SCENE3D_GLTF_PBR_HDR10_CATALOG.sha256 && receipt.browser.pipelineSha256 === GPU_PAGE_SCENE3D_GLTF_PBR_HDR10_PIPELINE_IDENTITY.pipelineImplementationSha256 && receipt.browser.framesRendered === 90 && receipt.conversion.contractSha256 === canonicalJsonSha256(HDR10_PQ_CONVERSION_CONTRACT) && receipt.conversion.frameCount === 90 && receipt.conversion.generatedYuvFrameByteLength === 2_764_800 && receipt.command.c2TokenizedCommandSha256 === canonicalJsonSha256({ schema: HDR10_PQ_DIRECT_FINAL_SCHEMA, c1Args: HDR10_PQ_C1_FFMPEG_ARGS, maxOutputBytes: HDR10_PQ_DIRECT_FINAL_MAX_OUTPUT_BYTES }) && receipt.probe.querySha256 === canonicalJsonSha256(HDR10_PQ_FFPROBE_QUERY) && receipt.limits.maxOutputBytes === HDR10_PQ_DIRECT_FINAL_MAX_OUTPUT_BYTES && receipt.limits.timeoutMs === HDR10_PQ_DIRECT_FINAL_TIMEOUT_MS && receipt.limits.maxFfprobeBytes === HDR10_PQ_DIRECT_FINAL_MAX_FFPROBE_BYTES && receipt.limits.maximumProcessTreeRssBytes === HDR10_PQ_DIRECT_FINAL_MAX_PROCESS_TREE_RSS_BYTES && receipt.limits.governedProcessTreeRssBytes >= 64 * 1024 * 1024 && receipt.limits.governedProcessTreeRssBytes <= HDR10_PQ_DIRECT_FINAL_MAX_PROCESS_TREE_RSS_BYTES; }
+function ffprobeCommand(): FfmpegCommand { return { executable: resolveFfprobeExecutable(), shell: false, args: [...HDR10_PQ_FFPROBE_PIPE_ARGS] }; }
+async function probePinned(process: StreamingFfmpegProcess, file: Hdr10PqPinnedStagedFile, signal: AbortSignal) { const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, file.byteLength)); let offset = 0; while (offset < file.byteLength) { if (signal.aborted) throw new Error("HDR10 published verification was cancelled."); const { bytesRead } = await file.handle.read(buffer, 0, Math.min(buffer.length, file.byteLength - offset), offset); if (bytesRead < 1) throw new Error("HDR10 published output ended during FFprobe."); const ack = await process.write(buffer.subarray(0, bytesRead)); if (!ack || typeof ack.backpressured !== "boolean" || !Number.isSafeInteger(ack.bufferedInputBytes) || !Number.isSafeInteger(ack.inputHighWaterMarkBytes)) throw new Error("HDR10 published FFprobe pipe acknowledgement is invalid."); offset += bytesRead; } if (signal.aborted) throw new Error("HDR10 published verification was cancelled."); const result = await process.end(); if (signal.aborted) throw new Error("HDR10 published verification was cancelled."); await assertHdr10PqPinnedStagedFileCurrent(file); return result; }

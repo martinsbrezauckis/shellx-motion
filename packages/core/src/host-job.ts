@@ -24,17 +24,25 @@
  * Debug API render handlers.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
-import { LEASE_HEARTBEAT_INTERVAL_MS, MotionJobLeaseDirectory, UNATTRIBUTED_CALLER_ID } from "./job-lease";
+import { LEASE_HEARTBEAT_INTERVAL_MS, MotionJobLeaseDirectory, type MotionJobLeaseRun, UNATTRIBUTED_CALLER_ID } from "./job-lease";
 import { MotionJobRegistry, assertMotionJobId, mintMotionJobId, type MotionJobRecord } from "./job-registry";
-import type { JobErrorCode, JobOutcome, JobSkipCode } from "./generated/job-status";
+import type { JobOutcome, JobSkipCode } from "./generated/job-status";
+import type { MotionJobFrameLane } from "./job-frame-lane";
+import { motionJobFailure, type MotionJobFailureInput } from "./job-failure";
 
 export interface MotionHostJobInput {
   /** The id the host chose. Omit to have Motion mint one, which `jobId` then reports back. */
   jobId?: string;
   callerId?: string;
   lane: string;
+  /** Optional rasterizer inside a final-video delivery lane. */
+  frameLane?: MotionJobFrameLane;
   /** What the host asked for, in the receipt operation vocabulary — "render.final", not "ffmpeg.render". */
   operation: string;
+  /** Optional immutable lineage for a newly submitted retry. */
+  lineage?: MotionJobRecord["lineage"];
+  /** Internal observer used by a durable coordinator to append the real admission transition. */
+  onRunning?: () => Promise<void> | void;
   leases?: MotionJobLeaseDirectory | null;
   records?: MotionJobRegistry | null;
   now?: () => number;
@@ -62,8 +70,10 @@ export function currentMotionHostJob(): MotionHostJob | undefined {
 
 export interface MotionHostJobEnd {
   receiptPath?: string;
+  receiptId?: string;
+  producerEvidence?: { frameLane: MotionJobFrameLane; schema?: string };
   warnings?: string[];
-  error?: { code: JobErrorCode; message: string; retryable?: boolean };
+  error?: MotionJobFailureInput;
   cancellation?: { requestedBy: string; reason?: string };
   skip?: { code: JobSkipCode; reason?: string };
 }
@@ -89,9 +99,14 @@ export class MotionHostJob {
     readonly jobId: string,
     readonly callerId: string,
     private readonly lane: string,
+    private readonly frameLane: MotionJobFrameLane | undefined,
     private readonly operation: string,
+    private readonly lineage: MotionJobRecord["lineage"] | undefined,
+    private readonly onRunning: (() => Promise<void> | void) | undefined,
     private readonly startedAtMs: number,
     private readonly leases: MotionJobLeaseDirectory | null,
+    /** Capability for this exact live run; absent only when best-effort coordination degraded. */
+    private leaseRun: MotionJobLeaseRun | null,
     private readonly records: MotionJobRegistry | null,
     private readonly now: () => number
   ) {}
@@ -104,15 +119,15 @@ export class MotionHostJob {
     const callerId = input.callerId ?? UNATTRIBUTED_CALLER_ID;
     const leases = input.leases === undefined ? new MotionJobLeaseDirectory() : input.leases;
     const records = input.records === undefined ? new MotionJobRegistry() : input.records;
-    const job = new MotionHostJob(jobId, callerId, input.lane, input.operation, startedAtMs, leases, records, now);
     // Announced PENDING. A host job does not queue for the machine cap itself, but the governed
     // operations it performs do — and until one of them is admitted, nothing is being produced.
     // `markRunning()` promotes it the moment the first one starts. Reporting "running" from the
     // outset would tell a caller "rendering..." while its work sits in a queue.
-    await leases?.announce({ jobId, lane: input.lane, operation: input.operation, callerId, visibility: "host", admitted: false });
-    if (leases) {
+    const leaseRun = await leases?.announce({ jobId, lane: input.lane, ...(input.frameLane ? { frameLane: input.frameLane } : {}), operation: input.operation, callerId, visibility: "host", admitted: false }) ?? null;
+    const job = new MotionHostJob(jobId, callerId, input.lane, input.frameLane, input.operation, input.lineage, input.onRunning, startedAtMs, leases, leaseRun, records, now);
+    if (leases && leaseRun) {
       // Unref'd: refreshing a lease must never be the reason a process stays alive.
-      job.heartbeat = setInterval(() => { void leases.heartbeat(jobId); }, LEASE_HEARTBEAT_INTERVAL_MS);
+      job.heartbeat = setInterval(() => { void leases.heartbeat(leaseRun); }, LEASE_HEARTBEAT_INTERVAL_MS);
       job.heartbeat.unref?.();
     }
     return job;
@@ -127,10 +142,28 @@ export class MotionHostJob {
   async markRunning(): Promise<void> {
     if (this.ended || this.admittedAtMs !== undefined) return;
     this.admittedAtMs = this.now();
-    await this.leases?.announce({
-      jobId: this.jobId, lane: this.lane, operation: this.operation,
-      callerId: this.callerId, visibility: "host", admitted: true
-    });
+    if (!this.leaseRun) return;
+    this.leaseRun = await this.leases?.announce({
+      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation,
+      callerId: this.callerId, visibility: "host", admitted: true, run: this.leaseRun
+    }) ?? null;
+    await this.onRunning?.();
+  }
+
+  /**
+   * Publish accepted cancellation intent without changing the lifecycle early.
+   *
+   * The worker still owns the terminal transition. This is what prevents a query from claiming a
+   * job is cancelled while its encoder is still alive and unwinding.
+   */
+  async requestCancellation(input: { requestedBy: string; reason?: string }): Promise<void> {
+    if (this.ended || !this.leaseRun) return;
+    const cancellation = { requestedBy: input.requestedBy, ...(input.reason ? { reason: input.reason } : {}), requestedAtMs: this.now() };
+    this.leaseRun = await this.leases?.announce({
+      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation,
+      callerId: this.callerId, visibility: "host", admitted: this.admittedAtMs !== undefined,
+      cancelRequested: cancellation, run: this.leaseRun
+    }) ?? null;
   }
 
   async succeeded(detail: Pick<MotionHostJobEnd, "receiptPath" | "warnings"> = {}): Promise<void> {
@@ -165,6 +198,7 @@ export class MotionHostJob {
       jobId: this.jobId,
       callerId: this.callerId,
       lane: this.lane,
+      ...(this.frameLane ? { frameLane: this.frameLane } : {}),
       operation: this.operation,
       lifecycle: "ended",
       outcome,
@@ -179,18 +213,21 @@ export class MotionHostJob {
       // Present if and only if the outcome is "failed"; absent on cancelled, which is what stops an
       // agent's `if (job.error?.retryable) retry()` from restarting work a human stopped.
       ...(outcome === "failed" && detail.error
-        ? { error: { code: detail.error.code, message: detail.error.message, retryable: detail.error.retryable ?? false } }
+        ? { error: motionJobFailure(detail.error, { code: "invalid_args", message: detail.error.message }) }
         : {}),
       ...(outcome === "cancelled" ? { cancellation: detail.cancellation ?? { requestedBy: this.callerId } } : {}),
       ...(outcome === "skipped" && detail.skip ? { skip: detail.skip } : {}),
       warnings: detail.warnings ?? [],
-      ...(detail.receiptPath ? { receiptPath: detail.receiptPath } : {})
+      ...(detail.receiptPath ? { receiptPath: detail.receiptPath } : {}),
+      ...(detail.receiptId ? { receiptId: detail.receiptId } : {}),
+      ...(detail.producerEvidence ? { producerEvidence: detail.producerEvidence } : {}),
+      ...(this.lineage ? { lineage: this.lineage } : {})
     };
     try {
       await this.records?.record(record);
     } catch {
       // See above: losing the record must not fail the work it describes.
     }
-    await this.leases?.release(this.jobId);
+    if (this.leaseRun) await this.leases?.release(this.leaseRun);
   }
 }

@@ -2,8 +2,8 @@
 /**
  * Fail when a module that ships is reachable from nothing.
  *
- * Role: `scripts/source-modules.mjs` decides "shipping" from the FILENAME — anything not matching
- * `*.test.ts` / `*.fixture(s).ts` / `*.test-support.ts` / `test-support/**` ships by definition. The
+ * Role: `scripts/source-modules.mjs` decides "shipping" from a source convention — anything not
+ * matching its test patterns or explicit `unadopted/**` path ships by definition. The
  * packed-files gate then asserts the tarball matches an expectation derived from that same rule, so
  * it cannot ever catch a test-only module that simply is not named like one. An adversarial regression
  * demonstrated this exactly: three obviously test-only modules added as `mockData.ts`,
@@ -13,9 +13,9 @@
  *
  * The check here does not try to guess intent from a name. It asks a question a name cannot answer:
  * starting from what the package actually publishes, can this module be reached at all? A shipping
- * module reachable from no entry point is dead code or test scaffolding, and neither belongs in a
- * tarball — so the rule needs no allowlist, which is the point. An allowlist would reopen the same
- * hole one entry at a time.
+ * module reachable from no entry point is dead code, test scaffolding, or implementation that has
+ * not been adopted by a public entry point; none belongs in a tarball. The rule needs no file
+ * allowlist, which would reopen the same hole one entry at a time.
  *
  * Entry points come from `package.json` (`exports`, `main`, `module`, `types`, `bin`), mapped back
  * from `dist/x.js` to `src/x.ts` where a package publishes built output. That is the same mapping
@@ -156,9 +156,9 @@ if (orphans.length > 0) {
   for (const orphan of orphans) console.error(`  ${orphan}`);
   console.error("");
   console.error("Each of these is built and packed, but nothing a consumer can import leads to it.");
-  console.error("That means it is dead code, or it is test scaffolding whose filename does not say so");
-  console.error("— the case the filename convention cannot detect. Delete it, wire it to a real entry");
-  console.error("point, or rename it to the non-shipping convention so it stops being built.");
+  console.error("That means it is dead code, unnamed test scaffolding, or implementation not yet adopted.");
+  console.error("Delete it, wire it to a real entry point, or place retained pre-adoption work under");
+  console.error("the nonshipping unadopted/** convention so it stops being built and packed.");
   process.exit(1);
 }
 

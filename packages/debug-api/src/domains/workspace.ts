@@ -1,9 +1,11 @@
-import { hashBuffer, loadSchema, unreadableKeyframesRefusal, unrenderablePackageRefusal, validateDocument, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
+import { hashBuffer, isPublicationCommitUncertain, type MotionPackage, type OperationReceipt, type RetainedDirectoryAuthority } from "@shellx-motion/core";
 import { resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { nonNegativeIntegerArg, objectArg, stringArg, stringArrayArg } from "./args.js";
 import { dispatchWorkspacePackagePatch, type WorkspacePackagePatchServices } from "./workspace-package-patch.js";
+import { dispatchWorkspacePackageAssetImport, type WorkspacePackageAssetImportServices } from "./workspace-package-asset-import.js";
 import { dispatchWorkspaceSupportCommand, type WorkspaceSupportServices } from "./workspace-support.js";
+import { validateWorkspacePackage } from "./workspace-validation.js";
 import type { WorkspaceReceiptEntry } from "./workspace-types.js";
 
 export type { WorkspaceReceiptEntry } from "./workspace-types.js";
@@ -15,7 +17,7 @@ export interface WorkspacePackageBrowser {
   warnings: string[];
 }
 
-export interface WorkspaceDomainServices extends WorkspacePackagePatchServices, WorkspaceSupportServices {
+export interface WorkspaceDomainServices extends WorkspacePackagePatchServices, WorkspacePackageAssetImportServices, WorkspaceSupportServices {
   browsePackages?: (roots: string[]) => Promise<WorkspacePackageBrowser>;
   receiptsRoot?: string;
   listReceiptEntries?: (receiptsRoot: string) => Promise<WorkspaceReceiptEntry[]>;
@@ -27,25 +29,25 @@ export interface WorkspaceDomainServices extends WorkspacePackagePatchServices, 
   summarizeReceiptsPanel?: (entries: WorkspaceReceiptEntry[], limit: number) => Record<string, unknown>;
   archivePackage?: (input: { packageRoot: string; archivePath: string; receiptPath?: string }) => Promise<WorkspaceArchiveResult>;
   extractPackage?: (input: { archivePath: string; packageRoot: string; receiptPath?: string }) => Promise<WorkspaceExtractResult>;
-  writeReviewBundle?: (input: { packageRoot?: string; receiptsRoot?: string; artifactRoots?: string[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
+  writeReviewBundle?: (input: { packageRoot?: string; receiptsRoot?: string; artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
   /**
    * Extra directories the HOST approved for review-bundle artifact copying. Never read from args:
    * see `artifactRoots` on MotionDebugContext for why a caller must not supply its own approvals.
    */
   artifactRoots?: string[];
+  /** Startup-retained identities for long-lived host artifact roots. */
+  artifactRootAuthorities?: readonly RetainedDirectoryAuthority[];
   /** Creates a new, valid, renderable package. The cold-start path an agent needs to begin at all. */
   createPackage?: (input: {
     packageRoot: string; name?: string; width?: number; height?: number;
     fps?: number; durationMs?: number; background?: string; empty?: boolean;
   }) => Promise<Record<string, unknown>>;
-  /** Structural check without rendering: the Debug API equivalent of the CLI's `validate`. */
-  validatePackage?: (packageRoot: string) => Promise<Record<string, unknown>>;
   /**
-   * Loads a package for the renderability half of `motion.package.validate`.
+   * Loads the one package snapshot used for the complete `motion.package.validate` verdict and
+   * its receipt. The domain deliberately does not pair it with a separate summary loader.
    *
-   * Declared here rather than folded into `validatePackage`'s summary so the verdict is the
-   * domain's, computed from the document itself: a host cannot make an unrenderable package pass by
-   * omitting a field from the summary it returns.
+   * The verdict is computed from this document itself, so a host cannot make an unrenderable
+   * package pass by omitting a field from a separately supplied summary.
    */
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
 }
@@ -80,6 +82,8 @@ export async function dispatchWorkspaceCommand(
   args: unknown,
   services: WorkspaceDomainServices = {}
 ): Promise<MotionDebugResult | null> {
+  const packageAssetImportResult = await dispatchWorkspacePackageAssetImport(command, args, services);
+  if (packageAssetImportResult) return packageAssetImportResult;
   const packagePatchResult = await dispatchWorkspacePackagePatch(command, args, services);
   if (packagePatchResult) return packagePatchResult;
   const supportResult = await dispatchWorkspaceSupportCommand(command, args, services);
@@ -91,7 +95,7 @@ export async function dispatchWorkspaceCommand(
   if (command === "motion.package.extract") return extractPackage(args, services);
   if (command === "motion.review.html.bundle") return reviewHtmlBundle(args, services);
   if (command === "motion.package.create") return await createPackageResult(args, services);
-  if (command === "motion.package.validate") return await validatePackageResult(args, services);
+  if (command === "motion.package.validate") return validateWorkspacePackage(args, services);
   if (command !== "motion.packages.browse") return null;
 
   const record = objectArg(args);
@@ -188,6 +192,9 @@ async function reviewHtmlBundle(args: unknown, services: WorkspaceDomainServices
       ...(packageRoot ? { packageRoot } : {}),
       ...(receiptsRoot ? { receiptsRoot } : {}),
       ...(services.artifactRoots && services.artifactRoots.length > 0 ? { artifactRoots: services.artifactRoots } : {}),
+      ...(services.artifactRootAuthorities && services.artifactRootAuthorities.length > 0
+        ? { artifactRootAuthorities: services.artifactRootAuthorities }
+        : {}),
       outDir,
       ...(title ? { title } : {})
     });
@@ -326,6 +333,18 @@ function capabilityUnavailable(message: string): MotionDebugResult {
 }
 
 function commandFailure(code: string, error: unknown): MotionDebugResult {
+  if (isPublicationCommitUncertain(error)) {
+    return {
+      ok: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        detail: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence }
+      },
+      result: { possiblyCommitted: true, publicPaths: [error.evidence.publicPath], expected: error.evidence },
+      warnings: []
+    };
+  }
   return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] };
 }
 
@@ -365,147 +384,13 @@ async function createPackageResult(args: unknown, services: WorkspaceDomainServi
       warnings: []
     };
   } catch (error) {
+    if (isPublicationCommitUncertain(error)) return commandFailure("package_create_failed", error);
     // A non-empty directory and a bad dimension are both author mistakes with a clear fix, so the
     // message is surfaced verbatim rather than flattened into "package creation failed".
     return invalidArgsWithAction(
       error instanceof Error ? error.message : "Motion package could not be created.",
       "Choose an empty directory, or edit the existing package instead of creating one over it."
     );
-  }
-}
-
-/**
- * Structured schema errors are capped in the answer so one malformed document cannot flood a
- * transport response. Matches the CLI's cap so both doors truncate at the same point.
- */
-const MAX_REPORTED_SCHEMA_ERRORS = 50;
-
-/**
- * Structural check without rendering.
- *
- * Rendering to find out whether a document is well-formed costs minutes and conflates two very
- * different failures — a malformed package and a package that renders badly.
- */
-async function validatePackageResult(args: unknown, services: WorkspaceDomainServices): Promise<MotionDebugResult> {
-  if (!services.validatePackage) return capabilityUnavailable("Motion package validation is unavailable on this host.");
-  const packageRoot = stringArg(args, "packageRoot");
-  if (!packageRoot) {
-    return invalidArgsWithAction("motion.package.validate requires packageRoot.", "Pass the directory holding manifest.json and motion.json.");
-  }
-  try {
-    const summary = await services.validatePackage(packageRoot);
-    // A package no lane can render is not a valid package. Answering `valid: true` and then failing
-    // every preview and render is the worst answer this command can give: the caller is told the
-    // document is sound and is left with nothing to act on when it will not draw. The verdict comes
-    // from core's `unrenderablePackageRefusal`, which reads the renderer capability cards each
-    // lane's own runtime gate is projected from — so this refusal and the lanes' refusal agree by
-    // construction, not because two lists were kept in step by hand. The SDK's own `validate` calls
-    // the same function, so the MCP and in-process surfaces cannot disagree about one directory.
-    const motion = services.packageLoader ? (await services.packageLoader(packageRoot)).motion : null;
-    const refusal = motion ? unrenderablePackageRefusal(motion) : null;
-    if (refusal) {
-      return {
-        ok: false,
-        error: {
-          code: refusal.code,
-          message: refusal.message,
-          suggestedAction: refusal.suggestedAction
-        },
-        result: { valid: false, packageRoot, ...summary, unrenderableLayers: refusal.layers },
-        warnings: []
-      };
-    }
-    // A package whose keyframes the evaluator cannot read is not a valid package either, for exactly
-    // the same reason: it renders "successfully" and animates nothing, and the author is told the
-    // work landed. This is the defect that shipped a 15-second piece frozen for ~90% of its runtime
-    // from 309 keyframes written as `{ t, v }` — every one of them dropped in silence while this
-    // command answered `valid: true`. Same shared-check shape as the refusal above: the verdict is
-    // core's `unreadableKeyframesRefusal`, built on the very predicate the timeline evaluator gates
-    // on, so validate cannot pass what the evaluator will discard.
-    const keyframeRefusal = motion ? unreadableKeyframesRefusal(motion) : null;
-    if (keyframeRefusal) {
-      return {
-        ok: false,
-        error: {
-          code: keyframeRefusal.code,
-          message: keyframeRefusal.message,
-          suggestedAction: keyframeRefusal.suggestedAction
-        },
-        result: {
-          valid: false,
-          packageRoot,
-          ...summary,
-          unreadableKeyframeCount: keyframeRefusal.keyframeCount,
-          totalKeyframeCount: keyframeRefusal.totalKeyframeCount,
-          unreadableKeyframeTargetCount: keyframeRefusal.targetCount,
-          unreadableKeyframes: keyframeRefusal.keyframes,
-          unreadableKeyframesTruncated: keyframeRefusal.truncated
-        },
-        warnings: []
-      };
-    }
-    // The schema verdict is the catch-all behind the two specialised refusals, not in front of them.
-    //
-    // Until this block existed, the command whose entire job is validation never ran the validator.
-    // It loaded the package — `loadMotionPackage` reads shape, it does not validate — and returned
-    // metadata, so `motion.package.validate` could answer `valid: true` for a document
-    // `validateDocument` rejects outright.
-    // Every MUTATION path in this package (workspace-package-patch, timeline-package-edit,
-    // authoring-procedural) had always validated. Only this one did not, which converted
-    // "unchecked" into "checked and sound" — the one lie an agent has no way to detect.
-    //
-    // LAST, deliberately. The intuitive ordering — schema first, because the specialised checks read
-    // fields by name — was tried and is wrong: it makes the general checker SHADOW the specific one.
-    // A package storing keyframes as `{ t, v }` fails the schema too, so schema-first replaces
-    // "4 of 4 keyframes cannot be read by the timeline evaluator" plus the exact JSON pointers with
-    // "Motion document does not satisfy shellx-motion/motion@1: 2 error(s)." That is a strictly
-    // worse answer about the same defect: `unreadableKeyframesRefusal` EXISTS to diagnose malformed
-    // keyframes, so it is the check that handles that case best. The schema's job is what the other
-    // two do not cover — colours, ranges, enums, environment structure, timing — which is exactly
-    // the Grok case, where the layers render fine and the keyframes read fine and only an
-    // environment colour is wrong. Same reasoning is recorded in `packages/cli/src/package-refusals.ts`.
-    //
-    // Same `invalid_motion_document` code and same `schemaErrors` shape as
-    // `packageValidationRefusal` in the CLI, so an agent gets ONE answer whichever door it knocks on.
-    const schema = motion ? await validateDocument(await loadSchema("motion"), motion) : null;
-    if (schema && !schema.ok) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_motion_document",
-          message: `Motion document does not satisfy shellx-motion/motion@1: ${schema.errors.length} error(s).`,
-          suggestedAction: "Correct the paths listed in schemaErrors. Each path is a JSON pointer into motion.json."
-        },
-        result: {
-          valid: false,
-          packageRoot,
-          ...summary,
-          schemaErrorCount: schema.errors.length,
-          schemaErrors: schema.errors.slice(0, MAX_REPORTED_SCHEMA_ERRORS),
-          schemaErrorsTruncated: schema.errors.length > MAX_REPORTED_SCHEMA_ERRORS
-        },
-        warnings: []
-      };
-    }
-    return {
-      ok: true,
-      visibleState: { panel: "workspace", operation: "package.validate", packageRoot },
-      result: { ok: true, valid: true, packageRoot, ...summary },
-      warnings: []
-    };
-  } catch (error) {
-    // The loader's message names the offending field; that is the actionable part, so it is the
-    // message rather than a detail buried under a generic one.
-    return {
-      ok: false,
-      error: {
-        code: "invalid_args",
-        message: error instanceof Error ? error.message : "Motion package is not valid.",
-        suggestedAction: "Fix the named field in motion.json or manifest.json, then validate again."
-      },
-      result: { valid: false, packageRoot },
-      warnings: []
-    };
   }
 }
 

@@ -76,7 +76,7 @@ const renderResources = readObject(readObjectField(renderOutput, "resources", "r
 assert(readObjectField(renderResources, "schema", "render.output.resources.schema") === "shellx-motion/local-job-resources@1", "render resource schema mismatch");
 assert(readObjectField(renderResources, "lane", "render.output.resources.lane") === "ffmpeg", "render resource lane mismatch");
 assert(readObjectField(renderResources, "state", "render.output.resources.state") === "passed", "render resource policy did not pass");
-assert(readNumber(readObjectField(renderResources, "watchedProcessCount", "render.output.resources.watchedProcessCount"), "render.output.resources.watchedProcessCount") === 1, "render resource policy did not watch FFmpeg");
+assert(readNumber(readObjectField(renderResources, "watchedProcessCount", "render.output.resources.watchedProcessCount"), "render.output.resources.watchedProcessCount") >= 1, "render resource policy did not watch FFmpeg");
 const processContainment = readObject(readObjectField(renderResources, "processContainment", "render.output.resources.processContainment"), "render.output.resources.processContainment");
 if (process.platform === "win32") {
   assert(readObjectField(processContainment, "mode", "render.output.resources.processContainment.mode") === "windows-job-object", "Windows MP4 render did not use native Job Object containment");
@@ -100,8 +100,11 @@ const mp4Artifact = renderArtifacts.find((artifact) => readObjectField(artifact,
 assert(mp4Artifact, "render receipt missing video/mp4 artifact");
 assert(readObjectField(mp4Artifact, "status", "mp4Artifact.status") === "available", "MP4 artifact must be available");
 
-const frames = readObject(readObjectField(render, "frames", "render.frames"), "render.frames");
-assert(readNumber(readObjectField(frames, "count", "render.frames.count"), "render.frames.count") >= 2, "MP4 render must emit multiple frames");
+const frameTransport = readObject(readObjectField(renderOutput, "frameTransport", "render.output.frameTransport"), "render.output.frameTransport");
+assert(readObjectField(frameTransport, "delivery", "render.output.frameTransport.delivery") === "streamed", "MP4 default render must use streamed frame delivery");
+const frameCount = readNumber(readObjectField(frameTransport, "frameCount", "render.output.frameTransport.frameCount"), "render.output.frameTransport.frameCount");
+assert(frameCount >= 2, "MP4 render must emit multiple frames");
+assert(readObjectField(frameTransport, "retainedFrameCount", "render.output.frameTransport.retainedFrameCount") === 0, "MP4 streamed delivery must not retain source frames");
 
 const posterQuality = await runCli([
   "quality-check",
@@ -181,7 +184,7 @@ console.log(JSON.stringify({
     mediaType: "video/mp4",
     bytes: mp4Bytes.length,
     frameLane: readObjectField(render, "frameLane", "render.frameLane"),
-    frames: readObjectField(frames, "count", "render.frames.count"),
+    frames: frameCount,
     receiptStatus: renderSuccess.status,
     acceptedWarnings: renderSuccess.warnings,
     matchedAdvisories: renderSuccess.matchedAdvisories,

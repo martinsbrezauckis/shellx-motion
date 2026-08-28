@@ -1,7 +1,8 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 import { loadMotionPackage } from "./package";
 import {
   extractMotionPackageArchive,
@@ -13,12 +14,12 @@ const fixtureRoot = resolve("../../fixtures/packages/lower-third");
 
 describe("package archive", () => {
   it("writes a deterministic portable archive with all package files and a receipt", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-");
     const outDir = join(tempRoot, "exports");
     const firstArchivePath = join(outDir, "lower-third.shellxmotion");
     const secondArchivePath = join(outDir, "lower-third-copy.shellxmotion");
     try {
-      await mkdir(outDir, { recursive: true });
+      await mkdir(outDir, { recursive: true, mode: 0o700 });
 
       const first = await writeMotionPackageArchive({
         packageRoot: fixtureRoot,
@@ -75,8 +76,122 @@ describe("package archive", () => {
     }
   });
 
+  it("allows one concurrent writer to publish the archive and receipt pair without clobbering", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-publication-race-");
+    const archivePath = join(tempRoot, "exports", "lower-third.shellxmotion");
+    try {
+      const attempts = await Promise.allSettled([
+        writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, createdAt: "2026-07-02T05:00:00.000Z" }),
+        writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, createdAt: "2026-07-02T05:01:00.000Z" })
+      ]);
+      const winner = attempts.find((attempt): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof writeMotionPackageArchive>>> => attempt.status === "fulfilled");
+      const loser = attempts.find((attempt): attempt is PromiseRejectedResult => attempt.status === "rejected");
+
+      expect(winner).toBeDefined();
+      expect(loser).toMatchObject({ reason: { code: "package_archive_output_busy", message: "Package archive output is already being published." } });
+      await expect(readFile(archivePath)).resolves.toHaveLength(winner!.value.byteLength);
+      await expect(readFile(`${archivePath}.receipt.json`, "utf8")).resolves.toContain(`"createdAt": "${winner!.value.receipt.createdAt}"`);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing archive or receipt targets and never publishes their counterpart", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-existing-output-");
+    const archivePath = join(tempRoot, "exports", "occupied.shellxmotion");
+    const receiptPath = `${archivePath}.receipt.json`;
+    try {
+      await mkdir(dirname(archivePath), { recursive: true, mode: 0o700 });
+      await writeFile(archivePath, "caller archive", "utf8");
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath }))
+        .rejects.toMatchObject({ code: "package_archive_output_exists", message: "Package archive output already exists." });
+      await expect(readFile(archivePath, "utf8")).resolves.toBe("caller archive");
+      await expect(lstat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+      const secondArchivePath = join(tempRoot, "exports", "receipt-occupied.shellxmotion");
+      const secondReceiptPath = `${secondArchivePath}.receipt.json`;
+      await writeFile(secondReceiptPath, "caller receipt", "utf8");
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath: secondArchivePath }))
+        .rejects.toMatchObject({ code: "package_archive_output_exists", message: "Package archive output already exists." });
+      await expect(lstat(secondArchivePath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(secondReceiptPath, "utf8")).resolves.toBe("caller receipt");
+
+      if (process.platform !== "win32") {
+        const symlinkTarget = join(tempRoot, "caller-owned.shellxmotion");
+        const symlinkArchivePath = join(tempRoot, "exports", "linked.shellxmotion");
+        await writeFile(symlinkTarget, "caller target", "utf8");
+        await symlink(symlinkTarget, symlinkArchivePath);
+        await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath: symlinkArchivePath }))
+          .rejects.toMatchObject({ code: "package_archive_output_exists", message: "Package archive output already exists." });
+        await expect(readFile(symlinkTarget, "utf8")).resolves.toBe("caller target");
+      }
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses symlinked archive parents without staging outside them", async ({ skip }) => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-symlink-output-");
+    const outside = join(tempRoot, "outside");
+    const linkedParent = join(tempRoot, "linked-exports");
+    const archivePath = join(linkedParent, "lower-third.shellxmotion");
+    try {
+      await mkdir(outside);
+      try {
+        await symlink(outside, linkedParent, process.platform === "win32" ? "junction" : "dir");
+      } catch (error) {
+        if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+          skip("The standard Windows test account cannot create directory symbolic links.");
+          return;
+        }
+        throw error;
+      }
+
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath }))
+        .rejects.toMatchObject({
+          code: "package_archive_output_unsafe_parent",
+          message: "Package archive output parent is not a canonical non-symlink directory."
+        });
+      await expect(lstat(join(outside, "lower-third.shellxmotion"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lstat(join(outside, "lower-third.shellxmotion.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a conflicting archive and receipt path with a stable path-free error", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-path-conflict-");
+    const archivePath = join(tempRoot, "exports", "same.shellxmotion");
+    try {
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, receiptPath: archivePath }))
+        .rejects.toMatchObject({
+          code: "package_archive_output_paths_conflict",
+          message: "Package archive and receipt paths must differ."
+        });
+      await expect(lstat(archivePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses archive-write file-count, depth, aggregate, and per-file limits before creating an archive", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-write-limits-");
+    const archivePath = join(tempRoot, "exports", "blocked.shellxmotion");
+    try {
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, limits: { maxFiles: 2 } }))
+        .rejects.toThrow(/file limit/);
+      await expect(readFile(archivePath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, limits: { maxAggregateBytes: 32 } }))
+        .rejects.toThrow(/aggregate limit/);
+      await expect(writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath, limits: { maxFileBytes: 32 } }))
+        .rejects.toThrow(/per-file limit/);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("extracts a portable archive back into a loadable Motion package with receipt evidence", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-roundtrip-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-roundtrip-");
     const archivePath = join(tempRoot, "exports", "lower-third.shellxmotion");
     const extractedRoot = join(tempRoot, "imports", "lower-third");
     const receiptPath = join(tempRoot, "imports", "extract.receipt.json");
@@ -142,7 +257,7 @@ describe("package archive", () => {
   });
 
   it("rejects archive entries that would escape the target package root", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-unsafe-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-unsafe-");
     const archivePath = join(tempRoot, "unsafe.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
     try {
@@ -156,12 +271,12 @@ describe("package archive", () => {
   });
 
   it("extracts into an existing empty destination and commits only after validation", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-empty-destination-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-empty-destination-");
     const archivePath = join(tempRoot, "package.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
     try {
       await writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath });
-      await mkdir(extractedRoot);
+      await mkdir(extractedRoot, { mode: 0o700 });
 
       const result = await extractMotionPackageArchive({ archivePath, packageRoot: extractedRoot });
 
@@ -175,17 +290,17 @@ describe("package archive", () => {
   });
 
   it("does not overwrite a non-empty destination or leave staged files", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-nonempty-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-nonempty-");
     const archivePath = join(tempRoot, "package.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
     const markerPath = join(extractedRoot, "keep.txt");
     try {
       await writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath });
-      await mkdir(extractedRoot);
+      await mkdir(extractedRoot, { mode: 0o700 });
       await writeFile(markerPath, "user-owned", "utf8");
 
       await expect(extractMotionPackageArchive({ archivePath, packageRoot: extractedRoot }))
-        .rejects.toThrow("destination must be nonexistent or an empty directory");
+        .rejects.toThrow("Output directory is not empty");
 
       await expect(readFile(markerPath, "utf8")).resolves.toBe("user-owned");
       await expectNoPrivateStagingDirectories(tempRoot);
@@ -195,7 +310,7 @@ describe("package archive", () => {
   });
 
   it("cleans private staging and leaves no destination when package schema validation fails", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-invalid-schema-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-invalid-schema-");
     const archivePath = join(tempRoot, "invalid.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
     try {
@@ -214,8 +329,31 @@ describe("package archive", () => {
     }
   });
 
+  it("refuses an archive whose Motion document names a missing package asset", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-missing-layer-asset-");
+    const archivePath = join(tempRoot, "invalid-asset.shellxmotion");
+    const extractedRoot = join(tempRoot, "package");
+    try {
+      const manifest = JSON.parse(await readFile(join(fixtureRoot, "manifest.json"), "utf8"));
+      const motion = JSON.parse(await readFile(join(fixtureRoot, "motion.json"), "utf8"));
+      motion.layers[0].source = "assets/missing.png";
+      await writeFile(archivePath, createTestTar([
+        { path: "manifest.json", data: Buffer.from(JSON.stringify(manifest), "utf8") },
+        { path: "motion.json", data: Buffer.from(JSON.stringify(motion), "utf8") },
+      ]));
+
+      await expect(withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () =>
+        await extractMotionPackageArchive({ archivePath, packageRoot: extractedRoot })
+      )).rejects.toThrow("Extracted package asset reference is invalid at /motion/layers/0/source (missing).");
+      await expect(lstat(extractedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expectNoPrivateStagingDirectories(tempRoot);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("enforces archive, expanded, per-file, file-count, path, and JSON limits before commit", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-limits-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-limits-");
     const archivePath = join(tempRoot, "package.shellxmotion");
     try {
       await writeMotionPackageArchive({ packageRoot: fixtureRoot, archivePath });
@@ -243,7 +381,7 @@ describe("package archive", () => {
   });
 
   it("rejects case-folded duplicates, deep paths, and portable backslash escapes", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-path-policy-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-path-policy-");
     try {
       const cases: Array<{
         name: string;
@@ -293,8 +431,33 @@ describe("package archive", () => {
     }
   });
 
+  it.each([
+    ["absolute", "/escape.json", undefined, /escapes package root/],
+    ["empty component", "nested//escape.json", undefined, /escapes package root/],
+    ["dot component", "./escape.json", undefined, /escapes package root/],
+    ["parent component", "nested/../escape.json", undefined, /escapes package root/],
+    ["Windows device name", "aux.json", undefined, /portable package path/],
+    ["trailing dot", "nested/escape.", undefined, /portable package path/],
+    ["reserved character", "nested/escape:copy.json", undefined, /portable package path/],
+    ["non-NFC spelling", "cafe\u0301.json", undefined, /NFC normalization/],
+    ["non-regular tar entry", "ordinary.json", "5", /regular files only/]
+  ] as Array<[string, string, string | undefined, RegExp]>)
+  ("refuses %s archive containment vector without installing a destination", async (_label, path, type, message) => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-adversarial-");
+    const archivePath = join(tempRoot, "adversarial.shellxmotion");
+    const extractedRoot = join(tempRoot, "package");
+    try {
+      await writeFile(archivePath, createTestTar([{ path, data: Buffer.from("untrusted", "utf8"), ...(type ? { type } : {}) }]));
+      await expect(extractMotionPackageArchive({ archivePath, packageRoot: extractedRoot })).rejects.toThrow(message);
+      await expect(lstat(extractedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expectNoPrivateStagingDirectories(tempRoot);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects symlink destinations and receipts placed inside the package root", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-destination-policy-"));
+    const tempRoot = await testRoot("shellx-motion-package-archive-destination-policy-");
     const archivePath = join(tempRoot, "package.shellxmotion");
     const outsideRoot = join(tempRoot, "outside");
     const linkRoot = join(tempRoot, "package-link");
@@ -304,7 +467,7 @@ describe("package archive", () => {
       await symlink(outsideRoot, linkRoot, process.platform === "win32" ? "junction" : "dir");
 
       await expect(extractMotionPackageArchive({ archivePath, packageRoot: linkRoot }))
-        .rejects.toThrow("destination must be nonexistent or an empty directory");
+        .rejects.toThrow("Output path already exists and is not a directory");
       await expect(extractMotionPackageArchive({
         archivePath,
         packageRoot: join(tempRoot, "package"),
@@ -316,8 +479,8 @@ describe("package archive", () => {
     }
   });
 
-  it("rolls back the committed package if the external receipt cannot be installed", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-package-archive-receipt-rollback-"));
+  it("refuses an unavailable receipt parent before publishing the package", async () => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-receipt-rollback-");
     const archivePath = join(tempRoot, "package.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
     const receiptParent = join(tempRoot, "receipt-parent-is-a-file");
@@ -338,13 +501,18 @@ describe("package archive", () => {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
+
 });
 
 async function expectNoPrivateStagingDirectories(parent: string): Promise<void> {
-  expect((await readdir(parent)).filter((name) => name.startsWith(".shellx-motion-extract-"))).toEqual([]);
+  expect((await readdir(parent)).filter((name) => name.startsWith(".shellx-motion-stage-") || name.startsWith(".shellx-motion-final-"))).toEqual([]);
 }
 
-function createTestTar(entries: Array<{ path: string; data: Buffer }>): Buffer {
+async function testRoot(prefix: string): Promise<string> {
+  return await mkdtemp(join(process.platform === "win32" ? process.cwd() : tmpdir(), prefix));
+}
+
+function createTestTar(entries: Array<{ path: string; data: Buffer; type?: string }>): Buffer {
   const chunks: Buffer[] = [];
   for (const entry of entries) {
     const header = Buffer.alloc(512);
@@ -355,7 +523,7 @@ function createTestTar(entries: Array<{ path: string; data: Buffer }>): Buffer {
     writeOctal(header, 124, 12, entry.data.byteLength);
     writeOctal(header, 136, 12, 0);
     header.fill(0x20, 148, 156);
-    writeString(header, 156, 1, "0");
+    writeString(header, 156, 1, entry.type ?? "0");
     writeString(header, 257, 6, "ustar");
     writeString(header, 263, 2, "00");
     let checksum = 0;

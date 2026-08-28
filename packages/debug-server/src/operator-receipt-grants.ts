@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 /**
  * Receipt folders a human granted through the Workbench's native folder chooser.
  *
@@ -19,8 +21,19 @@
 /** Opaque-by-convention grant set. Construct with {@link createOperatorReceiptGrants}. */
 export type OperatorReceiptGrants = Set<string>;
 
+/** Session-scoped render roots selected by a person in the native Workbench chooser. */
+export interface OperatorRenderGrants {
+  packageRoots: Set<string>;
+  inputRoots: Set<string>;
+  outputRoots: Set<string>;
+}
+
 export function createOperatorReceiptGrants(): OperatorReceiptGrants {
   return new Set<string>();
+}
+
+export function createOperatorRenderGrants(): OperatorRenderGrants {
+  return { packageRoots: new Set<string>(), inputRoots: new Set<string>(), outputRoots: new Set<string>() };
 }
 
 /**
@@ -43,6 +56,32 @@ export function grantOperatorReceiptRoot(
 }
 
 /**
+ * A completed OS-picker selection is host intent. The request can ask the
+ * chooser to open, but cannot choose its result, so only this path can extend
+ * the session render authority.
+ */
+export function grantOperatorRenderRoot(
+  grants: OperatorRenderGrants,
+  purpose: string | null,
+  selectedPath: string
+): void {
+  switch (purpose) {
+    case "package-root":
+      grants.packageRoots.add(selectedPath);
+      grants.inputRoots.add(selectedPath);
+      return;
+    case "quality-manifest":
+      grants.inputRoots.add(dirname(selectedPath));
+      return;
+    case "render-output":
+      grants.outputRoots.add(dirname(selectedPath));
+      return;
+    default:
+      return;
+  }
+}
+
+/**
  * The dispatch context every transport shares, built in exactly one place.
  *
  * HTTP, MCP, and JSON-RPC all reach the same engine and must therefore agree on which directories
@@ -57,14 +96,18 @@ export function grantOperatorReceiptRoot(
  * @param security Server session state: the base context, the grants, and the artifact roots.
  * @param tier The tier resolved for THIS request, which is never above the server's granted ceiling.
  */
-export function dispatchContextBase<Context, Tier>(
-  security: { context: Context; operatorReceiptRoots: OperatorReceiptGrants; artifactRoots: string[] },
+export function dispatchContextBase<Context, Tier, Authority>(
+  security: { context: Context; operatorReceiptRoots: OperatorReceiptGrants; operatorRenderGrants: OperatorRenderGrants; artifactRoots: string[]; artifactRootAuthorities?: readonly Authority[] },
   tier: Tier
-): Context & { operatorReceiptRoots: string[]; artifactRoots: string[]; tier: Tier } {
+): Context & { operatorReceiptRoots: string[]; operatorRenderPackageRoots: string[]; operatorRenderInputRoots: string[]; operatorRenderOutputRoots: string[]; artifactRoots: string[]; artifactRootAuthorities?: readonly Authority[]; tier: Tier } {
   return {
     ...security.context,
     operatorReceiptRoots: [...security.operatorReceiptRoots],
+    operatorRenderPackageRoots: [...security.operatorRenderGrants.packageRoots],
+    operatorRenderInputRoots: [...security.operatorRenderGrants.inputRoots],
+    operatorRenderOutputRoots: [...security.operatorRenderGrants.outputRoots],
     artifactRoots: security.artifactRoots,
+    ...(security.artifactRootAuthorities ? { artifactRootAuthorities: security.artifactRootAuthorities } : {}),
     tier
   };
 }

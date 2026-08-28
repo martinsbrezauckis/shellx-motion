@@ -1,10 +1,29 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { compareCodeUnits, hashFile } from "@shellx-motion/core";
+import { compareCodeUnits, readBoundedStableFile } from "@shellx-motion/core";
 
 const MAX_FINGERPRINT_FILES = 4_096;
 const MAX_FINGERPRINT_BYTES = 536_870_912;
+
+export async function readBrowserPackageFile(
+  root: string,
+  path: string,
+  options: { label: string; maxBytes?: number; missingMessage?: string },
+) {
+  try {
+    return await readBoundedStableFile(path, {
+      label: options.label,
+      maxBytes: options.maxBytes ?? MAX_FINGERPRINT_BYTES,
+      withinRoot: root,
+    });
+  } catch (error) {
+    if (options.missingMessage && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(options.missingMessage);
+    }
+    throw error;
+  }
+}
 
 export async function canonicalPathForBrowserSafety(path: string): Promise<string> {
   try {
@@ -50,12 +69,12 @@ export async function browserPackageFingerprint(root: string): Promise<string> {
       if (fileCount > MAX_FINGERPRINT_FILES || totalBytes > MAX_FINGERPRINT_BYTES) {
         throw new Error("Browser render package exceeds the session fingerprint budget.");
       }
-      const fileHash = await hashFile(path);
+      const file = await readBrowserPackageFile(canonicalRoot, path, { label: `Browser render package entry ${relativePath}` });
       const after = await lstat(path);
-      if (!sameFile(metadata, after)) {
+      if (!sameFile(metadata, after) || file.byteLength !== metadata.size) {
         throw new Error(`Browser render package entry changed while fingerprinting: ${relativePath}`);
       }
-      records.push(`${relativePath}\0${metadata.size}\0${fileHash}`);
+      records.push(`${relativePath}\0${metadata.size}\0${file.sha256}`);
     }
   };
 

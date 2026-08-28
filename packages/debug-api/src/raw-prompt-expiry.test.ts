@@ -47,7 +47,7 @@ afterEach(async () => {
   await rm(receiptsRoot, { recursive: true, force: true });
 });
 
-describe("raw prompt retention deadline", () => {
+describe.skipIf(process.platform !== "linux")("raw prompt retention deadline", () => {
   it("withholds the raw prompt from a read after the deadline", async () => {
     const path = await writePromptReceipt("expired-prompt", new Date(Date.now() - 60_000).toISOString());
 

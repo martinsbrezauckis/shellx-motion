@@ -1,15 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createIntegrationEnvelope, loadMotionPackage } from "@shellx-motion/core";
-import { clearDefaultEncodePolicyCache, resolveFfmpegExecutable, type FfmpegCommand, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
 import { runCanvasMp4Export } from "./canvas-to-mp4";
-import {
-  ffprobeReadbackStdout,
-  isDeliveredColorReadback,
-  UNTAGGED_TRANSFER_DELIVERED_TAGS
-} from "./ffprobe-readback.test-support";
+import { failedStreamingRenderer, streamingTestMediaBytes, successfulStreamingRenderer } from "./streaming-final.test-support";
 
 const tempDirs: string[] = [];
 
@@ -21,11 +16,7 @@ const tempDirs: string[] = [];
 const STALE_FRAME_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("stale", "utf8")]);
 
 
-// Clear the shared encode-policy probe cache before each test so the per-host hardware probe
-// runs deterministically (and once) per render regardless of test order.
-beforeEach(clearDefaultEncodePolicyCache);
-
-describe("Canvas independent MP4 export connector", () => {
+describe.runIf(process.platform === "linux")("Canvas independent MP4 export connector", () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -224,7 +215,7 @@ describe("Canvas independent MP4 export connector", () => {
     });
   });
 
-  it("renders a real MP4 artifact and reuses its handle in the Cut import plan", async () => {
+  it("stages an attested final-render seam artifact and reuses its handle in the Cut import plan", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-real-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -232,28 +223,32 @@ describe("Canvas independent MP4 export connector", () => {
     const staleFrame = join(outDir, "frames", "pkg_canvas_motion_export_frame_intro", "000003.png");
     await mkdir(join(outDir, "frames", "pkg_canvas_motion_export_frame_intro"), { recursive: true });
     await writeFile(staleFrame, STALE_FRAME_BYTES);
-    const commands: FfmpegCommand[] = [];
-    const runner: FfmpegRunner = async (command) => {
-      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-      commands.push(command);
-      // The delivered-colour readback READS the artifact the encode just wrote; it must not be
-      // answered as another encode (which would rewrite that artifact). See
-      // ./ffprobe-readback.test-support.
-      if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-      await writeFile(command.args.at(-1) as string, fakeMp4Bytes("canvas export"));
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-
     const result = await runCanvasMp4Export({
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: runner,
+      streamingRenderer: successfulStreamingRenderer({
+        label: "canvas export",
+        status: "warning",
+        warnings: ["Rendered video is 1000ms; product review clips should be at least 1500ms."],
+        output: {
+          durationMs: 1000,
+          width: 640,
+          height: 360,
+          color: {
+            profile: "sdr-bt709",
+            primaries: "bt709",
+            transfer: "bt709",
+            matrix: "bt709",
+            range: "tv",
+            observed: { primaries: "bt709", transfer: "bt709", matrix: "bt709", range: "tv" }
+          }
+        }
+      }),
       now: () => "2026-06-30T04:30:00.000Z"
     });
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, unknown>;
     const exported = await readFile(result.render.outputPath);
-    const firstFrame = await readFile(join(outDir, "frames", "pkg_canvas_motion_export_frame_intro", "000001.png"));
     const cutPlan = JSON.parse(await readFile(result.cutPlanPath as string, "utf8")) as Record<string, any>;
 
     expect(result).toMatchObject({
@@ -277,26 +272,9 @@ describe("Canvas independent MP4 export connector", () => {
       },
       cutPlanPath: join(outDir, "cut-import-plan.json")
     });
-    // Two commands, not one: the encode, then the delivered-colour readback of the file it wrote
-    // (`verifyDeliveredColor`, default-on under the current contract). Asserted by shape rather than by count
-    // alone, so a future extra subprocess cannot slip in behind a bumped number.
-    expect(commands).toHaveLength(2);
-    expect(commands[0]).toMatchObject({
-      executable: resolveFfmpegExecutable(),
-      args: expect.arrayContaining(["-frames:v", "2"]),
-      shell: false
-    });
-    expect(commands[1]).toMatchObject({
-      executable: expect.stringContaining("ffprobe"),
-      args: expect.arrayContaining(["-show_streams"]),
-      shell: false
-    });
-    // The readback must read the file the encode just wrote — the staged artifact, before it is
-    // moved into place. Comparing to the encode's own output argument says that exactly.
-    expect(commands[1]?.args.at(-1)).toBe(commands[0]?.args.at(-1));
-    expect(exported).toEqual(fakeMp4Bytes("canvas export"));
-    expect(firstFrame.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
-    await expect(stat(staleFrame)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(exported).toEqual(streamingTestMediaBytes("canvas export", result.render.outputPath));
+    // Streamed final delivery does not own, inspect, or retain the caller's frame cache.
+    expect(await readFile(staleFrame)).toEqual(STALE_FRAME_BYTES);
     expect(renderReceipt).toMatchObject({
       operation: "render.final",
       // `warning`, not `passed`: this 1000ms export carries the review-length advisory, and since
@@ -314,9 +292,8 @@ describe("Canvas independent MP4 export connector", () => {
         width: 640,
         height: 360,
         frameLane: "browser",
-        // `color` is the preset's DECLARED intent (frozen — ShellX Cut reads it); `observed` is what
-        // ffprobe read back off the delivered file. A receipt that carries only the first is a claim
-        // about colour management nothing checked.
+        // This seam supplies the same declared/observed receipt shape that the renderer integration
+        // suite verifies against its actual process/readback boundary.
         color: {
           profile: "sdr-bt709",
           primaries: "bt709",
@@ -324,9 +301,13 @@ describe("Canvas independent MP4 export connector", () => {
           matrix: "bt709",
           range: "tv",
           observed: { primaries: "bt709", transfer: "bt709", matrix: "bt709", range: "tv" }
-        }
+        },
+        frameTransport: { delivery: "streamed", retainedFrameCount: 0 }
       }
     });
+    expect(renderReceipt.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "rendered_media", path: result.render.outputPath })
+    ]));
     expect(cutPlan).toMatchObject({
       schema: "shellx-motion/cut-import-plan@1",
       packageId: "pkg_canvas_motion_export_frame_intro",
@@ -338,13 +319,56 @@ describe("Canvas independent MP4 export connector", () => {
     });
   });
 
-  /**
-   * Run a successful Canvas MP4 export whose encode prints `stderr`, and return both receipts.
-   *
-   * The invariant these two cases protect is the same one the success-status invariant broke: a successful
-   * connector receipt stays `passed`. What CHANGES between them is whether the encoder actually
-   * said anything worth recording.
-   */
+  it("forwards Canvas-to-MP4 through the strict GPU final lane and binds its renderer evidence", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-gpu-"));
+    tempDirs.push(outDir);
+    const selectionPath = join(outDir, "frame-selection.json");
+    await writeFile(selectionPath, JSON.stringify(shapeTextFrameSelection(), null, 2), "utf8");
+    const result = await runCanvasMp4Export({ canvasSelectionPath: selectionPath, outDir, frameLane: "gpu", dryRunRender: false,
+      streamingRenderer: successfulStreamingRenderer("canvas gpu connector seam"), now: () => "2026-08-13T10:00:00.000Z" });
+    const connectorReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
+    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
+
+    expect(result.render).toMatchObject({ ok: true, dryRun: false, lane: "ffmpeg", frameLane: "gpu" });
+    expect(renderReceipt).toMatchObject({
+      status: "passed",
+      output: { frameLane: "gpu", frameTransport: { frameLane: "gpu", producer: { frameLane: "gpu" } } },
+      inputHashes: { "gpu-static-plan": expect.stringMatching(/^[a-f0-9]{64}$/) }
+    });
+    expect(connectorReceipt).toMatchObject({ output: { render: { frameLane: "gpu", gpu: { execution: "completed", evidence: {
+      schema: "shellx-motion/connector-gpu-final-evidence@1", receiptId: renderReceipt.id,
+      frameTransport: { frameLane: "gpu", producer: { frameLane: "gpu" } },
+      provenance: { "gpu-frame-sequence": expect.stringMatching(/^[a-f0-9]{64}$/) }
+    } } } } });
+  });
+
+  it("labels a Canvas GPU dry run as planned and refuses non-video GIF delivery", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-gpu-plan-"));
+    tempDirs.push(outDir);
+    const selectionPath = join(outDir, "frame-selection.json");
+    await writeFile(selectionPath, JSON.stringify(shapeTextFrameSelection(), null, 2), "utf8");
+    const planned = await runCanvasMp4Export({
+      canvasSelectionPath: selectionPath,
+      outDir,
+      frameLane: "gpu",
+      dryRunRender: true,
+      now: () => "2026-08-13T10:00:00.000Z"
+    });
+    const renderReceipt = JSON.parse(await readFile(planned.render.receiptPath, "utf8")) as Record<string, any>;
+    expect(planned.render).toMatchObject({ dryRun: true, frameLane: "gpu" });
+    expect(renderReceipt.output).toMatchObject({
+      frameLane: "gpu",
+      gpu: { status: "planned_not_executed", hardwareEvidence: "not_collected" }
+    });
+    await expect(runCanvasMp4Export({
+      canvasSelectionPath: selectionPath,
+      outDir: join(outDir, "gif"),
+      frameLane: "gpu",
+      preset: "gif"
+    })).rejects.toThrow("streamed final-video presets only");
+  });
+
+  /** Run a successful Canvas MP4 export with the renderer's bounded diagnostics. */
   async function exportWithEncodeStderr(stderr: string) {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-diagnostic-"));
     tempDirs.push(outDir);
@@ -355,13 +379,12 @@ describe("Canvas independent MP4 export connector", () => {
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        // Answer the delivered-colour readback as a READ, so it cannot rewrite the staged artifact.
-        if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-        await writeFile(command.args.at(-1) as string, fakeMp4Bytes("canvas export"));
-        return { exitCode: 0, stdout: "", stderr };
-      },
+      streamingRenderer: successfulStreamingRenderer({
+        label: "canvas diagnostic",
+        warnings: stderr.includes("Non-monotonous DTS")
+          ? [stderr.replace(/\b0x[0-9a-f]+\b/gi, "[address]")]
+          : []
+      }),
       now: () => "2026-07-03T04:30:00.000Z"
     });
     return {
@@ -371,10 +394,8 @@ describe("Canvas independent MP4 export connector", () => {
     };
   }
 
-  it("keeps successful connector receipts passed and silent when FFmpeg only prints routine statistics", async () => {
-    // These are libx264's ordinary end-of-encode statistics. Recording them as receipt warnings is
-    // what made every successful audio render look like it had complained about something and made
-    // `warnings.length > 0` useless as a signal (the success-status invariant).
+  it("keeps successful connector receipts passed and silent when the stream has no diagnostic", async () => {
+    // A silent staged seam preserves the success-status invariant: `warnings.length` remains useful.
     const { result, renderReceipt, exportReceipt } = await exportWithEncodeStderr(
       "[libx264 @ 0000020c04c68080] ref B L0: 98.0%  2.0%\n[libx264 @ 0000020c04c68080] kb/s:17.48"
     );
@@ -385,36 +406,29 @@ describe("Canvas independent MP4 export connector", () => {
     expect(exportReceipt).toMatchObject({ operation: "connector.canvas_to_mp4", status: "passed", warnings: [] });
   }, 45_000);
 
-  it("keeps successful connector receipts passed while still reporting a real diagnostic", async () => {
-    // The other half of the same rule: filtering routine chatter must not hide anything ffmpeg
-    // genuinely flagged. The encode succeeded, so status stays `passed` — and the diagnostic rides
-    // the warnings a reader actually looks at.
+  it("marks successful connector receipts warning when they retain a real stream diagnostic", async () => {
+    // The encode succeeds, but the retained renderer evidence is actionable and must move both
+    // receipts from `passed` to `warning`.
     const diagnostic = "[mp4 @ 0x55f] Non-monotonous DTS in output stream 0:0; previous: 1024, current: 512;";
-    // The receipt carries the diagnostic with its instance pointer NORMALISED. FFmpeg prefixes
-    // component messages with the live address, which changes every run, so two renders of the same
-    // package produced receipts differing only in noise — and byte-comparison of receipts is how a
-    // caller proves a re-render is identical. The warning is kept in full; only the unstable part is
-    // replaced. See `summarizeSuccessfulEncodeStderr`.
+    // The staged seam supplies a normalised bounded diagnostic; the renderer integration suite
+    // verifies normalisation from real process output.
     const asRecorded = diagnostic.replace(/\b0x[0-9a-f]+\b/gi, "[address]");
     const { result, renderReceipt, exportReceipt } = await exportWithEncodeStderr(diagnostic);
 
     expect(result.ok).toBe(true);
-    expect(renderReceipt.status).toBe("passed");
-    expect(exportReceipt.status).toBe("passed");
+    expect(renderReceipt.status).toBe("warning");
+    expect(exportReceipt.status).toBe("warning");
     expect(result.warnings).toContain(asRecorded);
     expect(renderReceipt.warnings).toContain(asRecorded);
     expect(exportReceipt.warnings).toContain(asRecorded);
-    // The point of the rule: the diagnostic still SURVIVES. Only the pointer is normalised.
+    // The diagnostic survives with only its pointer normalized, and its warning status makes that
+    // fact visible to a consumer that reads the receipt verdict rather than `warnings` directly.
     expect(asRecorded).toContain("Non-monotonous DTS in output stream 0:0");
   }, 45_000);
 
   it("escalates both receipts when the delivered file lacks the colour its preset promised", async () => {
-    // The third case of the same rule, and the one the two above cannot cover: this warning is not
-    // FFmpeg narrating itself, it is Motion reporting that the artifact does not carry the colour
-    // management the receipt declares. A file missing `transfer` and `primaries` is played
-    // differently from the one the preset promised, so it must not ride on a `passed` receipt or be
-    // absorbed as an ordinary advisory anywhere downstream. The fixture models an all-null FFprobe
-    // colour reading from a successful encode.
+    // The seam models a mismatched delivered-colour receipt; real readback coverage belongs to the
+    // renderer integration suite. The connector must still escalate both receipt surfaces.
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-colour-mismatch-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -424,14 +438,19 @@ describe("Canvas independent MP4 export connector", () => {
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        if (isDeliveredColorReadback(command)) {
-          return { exitCode: 0, stdout: ffprobeReadbackStdout(UNTAGGED_TRANSFER_DELIVERED_TAGS), stderr: "" };
+      streamingRenderer: successfulStreamingRenderer({
+        label: "canvas colour mismatch",
+        status: "warning",
+        warnings: ["Delivered colour does not match the sdr-bt709 profile the preset declares."],
+        output: {
+          color: {
+            profile: "sdr-bt709",
+            transfer: "bt709",
+            primaries: "bt709",
+            observed: { matrix: "bt709", range: "tv", transfer: null, primaries: null }
+          }
         }
-        await writeFile(command.args.at(-1) as string, fakeMp4Bytes("canvas export"));
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
+      }),
       now: () => "2026-08-03T04:30:00.000Z"
     });
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
@@ -455,7 +474,7 @@ describe("Canvas independent MP4 export connector", () => {
     });
   }, 45_000);
 
-  it("returns structured failed receipts when real Canvas MP4 FFmpeg encode fails", async () => {
+  it("returns structured failed receipts when the Canvas MP4 final-render seam fails", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-ffmpeg-fail-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -465,7 +484,7 @@ describe("Canvas independent MP4 export connector", () => {
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async () => ({ exitCode: 1, stdout: "", stderr: "encoder exploded" }),
+      streamingRenderer: failedStreamingRenderer("ffmpeg_failed", "encoder exploded"),
       now: () => "2026-07-03T02:00:00.000Z"
     });
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
@@ -506,41 +525,29 @@ describe("Canvas independent MP4 export connector", () => {
     });
   });
 
-  it("muxes Canvas audio layers into real independent MP4 exports", async () => {
+  it("passes Canvas audio layers into the staged independent-MP4 seam", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-audio-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
-    await mkdir(join(outDir, "assets"), { recursive: true });
+    await mkdir(join(outDir, "assets"), { recursive: true, mode: 0o700 });
     await writeFile(join(outDir, "assets", "voice.wav"), "fake wav bytes", "utf8");
     await writeFile(selectionPath, JSON.stringify(audioShapeTextFrameSelection(), null, 2), "utf8");
-    const commands: FfmpegCommand[] = [];
+    let audioInput: unknown;
 
     const result = await runCanvasMp4Export({
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        commands.push(command);
-        await writeFile(command.args.at(-1) as string, fakeMp4Bytes("canvas export audio"));
-        return { exitCode: 0, stdout: "", stderr: "" };
+      streamingRenderer: async (input) => {
+        audioInput = input.audio;
+        return await successfulStreamingRenderer("canvas export audio")(input);
       },
       now: () => "2026-07-01T23:30:00.000Z"
     });
 
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
     const audioPath = join(result.packageDir, "assets", "voice.wav");
-    const command = commands[0];
-    expect(command).toBeDefined();
-    if (!command) throw new Error("expected Canvas MP4 export to invoke FFmpeg");
-    expect(command.args).toEqual(expect.arrayContaining([
-      "-i",
-      audioPath,
-      "-map",
-      "1:a:0",
-      "-c:a",
-      "aac"
-    ]));
+    expect(audioInput).toMatchObject({ path: audioPath });
     expect(renderReceipt.output).toMatchObject({
       audio: {
         path: audioPath,
@@ -554,29 +561,24 @@ describe("Canvas independent MP4 export connector", () => {
     });
   });
 
-  it("rejects static real Canvas MP4 exports before invoking FFmpeg", async () => {
+  it("records a static Canvas MP4 quality refusal from the final-render seam", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-static-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
     await writeFile(selectionPath, JSON.stringify(staticShapeTextFrameSelection(), null, 2), "utf8");
-    let ffmpegInvoked = false;
-
     const result = await runCanvasMp4Export({
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        ffmpegInvoked = true;
-        await writeFile(command.args.at(-1) as string, "static output", "utf8");
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
+      streamingRenderer: failedStreamingRenderer(
+        "frame_quality_failed",
+        "Rendered frame sequence has 1 unique frame; expected at least 2."
+      ),
       now: () => "2026-06-30T04:45:00.000Z"
     });
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
     const exportReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
 
-    expect(ffmpegInvoked).toBe(false);
     expect(result).toMatchObject({
       ok: false,
       render: {
@@ -669,15 +671,12 @@ describe("Canvas independent MP4 export connector", () => {
   });
 });
 
-describe("Canvas MP4 output ownership", () => {
+describe.runIf(process.platform === "linux")("Canvas MP4 output ownership", () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it("never deletes a caller's files under <out>/frames", async () => {
-    // Reproduced before the fix: this lane opened with a bare
-    // `rm(framesDir, { recursive: true, force: true })` while its three sibling connectors called
-    // the guard, so files under `<out>/frames/<packageId>` were destroyed by a run reporting ok:true.
+  it("never deletes or treats a caller's files under <out>/frames as streaming retention", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-canvas-mp4-own-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -686,14 +685,15 @@ describe("Canvas MP4 output ownership", () => {
     await mkdir(framesDir, { recursive: true });
     await writeFile(join(framesDir, "keepme.txt"), "user data", "utf8");
 
-    await expect(runCanvasMp4Export({
+    const result = await runCanvasMp4Export({
       canvasSelectionPath: selectionPath,
       outDir,
       dryRunRender: false,
-      ffmpegRunner: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      streamingRenderer: successfulStreamingRenderer("frames are caller-owned"),
       now: () => "2026-08-02T00:00:00.000Z"
-    })).rejects.toMatchObject({ code: "output_dir_not_empty", path: framesDir });
+    });
 
+    expect(result.ok).toBe(true);
     expect(await readFile(join(framesDir, "keepme.txt"), "utf8")).toBe("user data");
   });
 
@@ -702,7 +702,7 @@ describe("Canvas MP4 output ownership", () => {
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
     await writeFile(selectionPath, JSON.stringify(shapeTextFrameSelection(), null, 2), "utf8");
-    await mkdir(join(outDir, "package"), { recursive: true });
+    await mkdir(join(outDir, "package"), { recursive: true, mode: 0o700 });
     await writeFile(join(outDir, "package", "manifest.json"), '{"mine":true}', "utf8");
 
     await expect(runCanvasMp4Export({ canvasSelectionPath: selectionPath, outDir, dryRunRender: true }))
@@ -716,7 +716,7 @@ describe("Canvas MP4 output ownership", () => {
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
     await writeFile(selectionPath, JSON.stringify(shapeTextFrameSelection(), null, 2), "utf8");
-    await mkdir(join(outDir, "package"), { recursive: true });
+    await mkdir(join(outDir, "package"), { recursive: true, mode: 0o700 });
     await writeFile(join(outDir, "package", "manifest.json"), '{"mine":true}', "utf8");
 
     const result = await runCanvasMp4Export({ canvasSelectionPath: selectionPath, outDir, dryRunRender: true, force: true });
@@ -767,10 +767,6 @@ function shapeTextFrameSelection(): unknown {
     ],
     imageEditorOutputs: []
   };
-}
-
-function fakeMp4Bytes(label: string): Buffer {
-  return Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom", "ascii"), Buffer.from(label)]);
 }
 
 function staticShapeTextFrameSelection(): unknown {

@@ -1,4 +1,15 @@
 /** Runtime identity guards for render artifacts and explicit Cut handoffs. */
+import { FFMPEG_EXPORT_PRESETS } from "@shellx-motion/core";
+
+/** Refuse retention where a render cannot produce final-video frame diagnostics. */
+export function renderKeepFramesRequestError(input: Record<string, unknown>): string {
+  if (input.keepFrames !== undefined && typeof input.keepFrames !== "boolean") return "SDK render keepFrames must be boolean.";
+  if (input.keepFrames === true && (typeof input.preset !== "string" || !FFMPEG_EXPORT_PRESETS.includes(input.preset as typeof FFMPEG_EXPORT_PRESETS[number]))) {
+    return "SDK render keepFrames: true requires a final-video FFmpeg preset.";
+  }
+  return "";
+}
+
 export function validRenderArtifact(
   value: unknown,
   render: Record<string, unknown>,
@@ -55,6 +66,58 @@ export function validRequestedCutHandoff(
   );
 }
 
+/** A remote render may disclose a retained-frame location only when its request explicitly asked for it. */
+export function validRequestedRenderFrames(
+  output: Record<string, unknown>,
+  requestInput: unknown,
+): boolean {
+  const request = plainRecord(requestInput);
+  if (request?.keepFrames !== true) return output.frames === undefined;
+  const frames = plainRecord(output.frames);
+  return Boolean(
+    frames
+    && Object.keys(frames).length === 2
+    && nonEmpty(frames.dir)
+    && typeof frames.count === "number"
+    && Number.isSafeInteger(frames.count)
+    && frames.count > 0,
+  );
+}
+
+/** A remote host may report a GPU post-render identity only for the completed GPU artifact it returned. */
+export function validRequestedGpuPostRenderReuse(output: Record<string, unknown>, requestInput: unknown): boolean {
+  const request = plainRecord(requestInput);
+  const identity = output.gpuPostRenderReuse;
+  if (request?.frameLane !== "gpu") return identity === undefined;
+  // A durable segmented receipt has its own complete checkpoint transport evidence. It is never
+  // eligible for the direct final-video post-render identity, which exists solely as evidence and
+  // must not become a cache/reuse capability through the public SDK response.
+  if (request.segmented !== undefined) return identity === undefined;
+  if (identity === undefined) return true;
+  const value = plainRecord(identity);
+  const source = plainRecord(value?.source);
+  const artifact = plainRecord(value?.artifact);
+  const staticScene = plainRecord(value?.staticScene);
+  const transport = plainRecord(value?.frameTransport);
+  const runtime = plainRecord(value?.runtime);
+  const video = value?.video === null ? null : plainRecord(value?.video);
+  const quality = plainRecord(value?.quality);
+  const outputArtifact = plainRecord(output.artifact);
+  return Boolean(
+    value && exactFields(value, ["schema", "mode", "source", "artifact", "loadedInputsSha256", "staticScene", "frameTransport", "runtime", "video", "quality", "identitySha256"])
+    && value.schema === "shellx-motion/gpu-post-render-reuse-identity@1" && value.mode === "post-render-only"
+    && sha256(value.loadedInputsSha256) && sha256(value.identitySha256)
+    && source && exactFields(source, ["receiptId", "receiptSha256"]) && nonEmpty(source.receiptId) && source.receiptId === output.receiptId && sha256(source.receiptSha256)
+    && artifact && exactFields(artifact, ["sha256", "byteLength", "authoritySha256"]) && sha256(artifact.sha256) && positive(artifact.byteLength) && sha256(artifact.authoritySha256)
+    && outputArtifact && artifact.sha256 === outputArtifact.sha256 && artifact.byteLength === outputArtifact.byteLength
+    && hashFields(staticScene, ["pipelineCatalogSha256", "staticPlanFingerprint", "documentFingerprint", "resourceReferencesSha256", "staticSceneSha256", "resourceBudgetSha256"])
+    && hashFields(transport, ["transportSha256", "frameSequenceSha256", "framePlanSequenceSha256"])
+    && hashFields(runtime, ["adapterFingerprint", "runtimeProfileSha256", "sessionResourcesSha256", "containmentProfileSha256"])
+    && (video === null || hashFields(video, ["stagingLedgerSha256", "pcmSha256"]))
+    && quality && exactFields(quality, ["closureSha256", "exactSourceInputsSha256"]) && sha256(quality.closureSha256) && (quality.exactSourceInputsSha256 === null || sha256(quality.exactSourceInputsSha256)),
+  );
+}
+
 function plainRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const prototype = Object.getPrototypeOf(value);
@@ -75,6 +138,14 @@ function positive(value: unknown): boolean {
 
 function sha256(value: unknown): boolean {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function hashFields(value: Record<string, unknown> | null, keys: string[]): boolean {
+  return Boolean(value && exactFields(value, keys) && keys.every((key) => sha256(value[key])));
+}
+
+function exactFields(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function validPackageLineage(value: unknown): boolean {

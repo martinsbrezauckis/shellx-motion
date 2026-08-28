@@ -1,0 +1,44 @@
+{
+  "schema": "shellx-motion/render-segment-store@1",
+  "planFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "plan": {
+    "schema": "shellx-motion/render-segment-plan@1",
+    "frameCount": 4,
+    "segmentFrames": 2,
+    "segmentCount": 2,
+    "ranges": [
+      { "index": 0, "startFrame": 0, "endFrameExclusive": 2, "frameCount": 2 },
+      { "index": 1, "startFrame": 2, "endFrameExclusive": 4, "frameCount": 2 }
+    ]
+  },
+  "package": {
+    "id": "segment-fixture",
+    "manifestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "frameLane": "browser",
+  "producer": {
+    "frameLane": "browser",
+    "scriptExecution": {
+      "schema": "shellx-motion/script-execution@1",
+      "detectedClass": "data-only",
+      "requestedMode": "none",
+      "activeMode": "data-only",
+      "resolverVersion": 1,
+      "sources": []
+    }
+  },
+  "timeline": {
+    "motionSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "durationMs": 1000,
+    "fps": 4,
+    "width": 640,
+    "height": 360
+  },
+  "intermediate": {
+    "container": "matroska",
+    "codec": "ffv1",
+    "extension": ".mkv"
+  },
+  "completed": []
+}

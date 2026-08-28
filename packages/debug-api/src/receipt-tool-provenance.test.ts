@@ -215,7 +215,7 @@ function browserFrames(framePaths: string[]) {
 }
 
 describe("motion.render.final — FFprobe provenance parity with the CLI", () => {
-  it("records output.tools.ffprobe after a quality manifest reads the encode back", async () => {
+  it("records output.tools.ffprobe after a quality manifest reads back a relative package-root render", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-ffprobe-provenance-"));
     const outputPath = join(outDir, "out.mp4");
     const manifestPath = join(outDir, "quality-manifest.json");
@@ -331,6 +331,14 @@ describe("motion.platform.requirements — answers about the host's own render r
       operation: "render.final",
       satisfied: true,
       blockedBy: []
+    });
+    // The platform command exposes GPU policy without opening a browser or
+    // accepting the old render receipts this suite happens to inspect.
+    expect((result.result as Record<string, unknown>).gpu).toMatchObject({
+      status: "requires-hardware-proof",
+      trustedChromium: { status: "present" },
+      adapterDeviceProof: { status: "not-tested", requiredCommand: "host-owned motion.platform.gpu.probe" },
+      audio: { gpuRaster: "none", finalVideo: "ffmpeg" }
     });
   }, 45_000);
 

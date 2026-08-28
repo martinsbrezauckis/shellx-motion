@@ -24,9 +24,13 @@
  * HTTPS redirect hop cannot be staged against a plain local HTTP test server.
  */
 export interface BrowserFrameNetworkState {
+  /** Host-derived, attested entry URL; present only for approved-agent-entry execution. */
+  approvedAgentEntryUrl?: string;
+  /** The one initial document navigation the pinned entry is allowed to make. */
+  approvedAgentEntryInitialNavigationPending?: boolean;
   /** Origins of remote requests refused because they were not host-approved. */
   blockedRequests: string[];
-  /** Full URLs of WebSocket connection attempts (all WebSocket egress is refused). */
+  /** Normalized `ws(s)://authority` values for refused WebSocket connection attempts. */
   blockedWebSocketRequests: string[];
   /** True when a file: request tried to read outside the package root. */
   blockedExternalFileRequest: boolean;
@@ -51,11 +55,44 @@ export interface BrowserFrameNetworkState {
    */
   blockedForeignPageRequests: string[];
   /**
+   * Resource kinds refused for an approved-agent-entry document after its single attested inline
+   * entry began. It never contains URLs: a script's URL may contain caller-controlled data.
+   */
+  blockedSecondaryCodeRequests?: Array<"script" | "worker" | "document">;
+  /** Replacement attempts of the one approved main document; no attacker URL enters receipts. */
+  blockedApprovedEntryNavigations?: Array<"top_level_document">;
+  /**
    * Reasons the response-stage redirect guard stopped being able to enforce anything mid-render
    * (its CDP session detached, or its page went away). Recorded so a render that lost its primary
    * redirect enforcement cannot still report `passed`.
    */
   redirectGuardFailures: string[];
+  /** Fixed, receipt-safe reasons a host-approved response was refused by byte/type/concurrency policy. */
+  blockedResponsePolicies?: Array<"content_type" | "declared_bytes" | "streamed_bytes" | "aggregate_bytes" | "concurrency" | "body_stream">;
+  /** Total decoded response bytes admitted for this frame. */
+  admittedResponseBytes?: number;
+  /** Responses currently crossing the bounded broker for this frame. */
+  activeResponseCount?: number;
+}
+
+export interface BrowserNetworkEvidence {
+  policy: "host-approved-origins";
+  allowPrivateNetwork: boolean;
+  resolutionTimeoutMs: number;
+  approvedOrigins: string[];
+  pins: Array<{ hostname: string; address: string; family: 4 | 6 }>;
+  responsePolicy: {
+    maxResponseBytes: number;
+    maxAggregateBytes: number;
+    maxConcurrentResponses: number;
+    contentTypes: "bounded-render-media";
+  };
+}
+
+export function assertBrowserRemoteResponsePolicy(state: BrowserFrameNetworkState): void {
+  const failures = [...new Set(state.blockedResponsePolicies ?? [])];
+  if (failures.length > 0) throw new Error(`Browser remote response policy refused the frame: ${failures.join(", ")}.`);
+  if ((state.activeResponseCount ?? 0) !== 0) throw new Error("Browser remote response policy still had in-flight responses at capture time.");
 }
 
 /**
@@ -70,4 +107,12 @@ export function remoteOrigin(source: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns only the scheme and authority for a refused WebSocket connection. The URL is page
+ * controlled, so userinfo, path, query, and fragment must never enter receipt evidence.
+ */
+export function blockedWebSocketAuthority(source: string): string {
+  return remoteOrigin(source) ?? "unparseable";
 }

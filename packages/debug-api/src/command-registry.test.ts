@@ -7,18 +7,34 @@ import {
   type MotionDebugCommandMetadata,
   type MotionDebugDomain
 } from "./command-registry.js";
+import { TIMELINE_SCENE3D_ANIMATION_COMMAND_DEFINITIONS } from "./command-registry-scene3d-animation.js";
 
 const DOMAINS: MotionDebugDomain[] = ["surface", "agent", "render", "timeline", "authoring", "integration", "workspace"];
+const SCENE3D_ANIMATION_COMMANDS = [
+  { command: "motion.timeline.scene3d-animation.inspect", domain: "timeline", permission: "read_motion", mutates: false },
+  { command: "motion.timeline.scene3d-animation.track.upsert", domain: "timeline", permission: "edit_motion", mutates: true },
+  { command: "motion.timeline.scene3d-animation.track.remove", domain: "timeline", permission: "edit_motion", mutates: true },
+  { command: "motion.timeline.scene3d-animation.keyframe.upsert", domain: "timeline", permission: "edit_motion", mutates: true },
+  { command: "motion.timeline.scene3d-animation.keyframe.delete", domain: "timeline", permission: "edit_motion", mutates: true },
+  { command: "motion.timeline.scene3d-animation.keyframe.move", domain: "timeline", permission: "edit_motion", mutates: true }
+] as const;
 
 describe("Motion debug command registry", () => {
   it("is the unique, immutable source for every command contract", () => {
     // Motion is always the callee, so commands that call outward into a host are not registered.
-    expect(DEBUG_COMMANDS).toHaveLength(169);
+    // The C5C1C leaf is composed into the published registry rather than copied into another
+    // metadata table. Assert its exact identity and contract instead of a global count that
+    // silently becomes stale as unrelated commands are added.
+    expect(TIMELINE_SCENE3D_ANIMATION_COMMAND_DEFINITIONS).toEqual(SCENE3D_ANIMATION_COMMANDS);
+    expect(DEBUG_COMMANDS.filter((command) => command.startsWith("motion.timeline.scene3d-animation.")))
+      .toEqual(SCENE3D_ANIMATION_COMMANDS.map((definition) => definition.command));
     expect(new Set(DEBUG_COMMANDS).size).toBe(DEBUG_COMMANDS.length);
     expect(Object.isFrozen(DEBUG_COMMANDS)).toBe(true);
 
     const contracts = buildDebugCommandContracts({});
     expect(contracts.map((contract) => contract.command)).toEqual(DEBUG_COMMANDS);
+    expect(contracts.filter((contract) => contract.command.startsWith("motion.timeline.scene3d-animation.")))
+      .toMatchObject(SCENE3D_ANIMATION_COMMANDS);
     for (const contract of contracts) {
       expect(debugCommandDefinition(contract.command)).toMatchObject(contract);
       expect(DOMAINS).toContain(contract.domain);
@@ -62,5 +78,6 @@ describe("Motion debug command registry", () => {
   it("classifies source authoring that writes artifacts as mutating", () => {
     expect(debugCommandDefinition("motion.source.import")).toMatchObject({ permission: "write_local", mutates: true });
     expect(debugCommandDefinition("motion.source.to_scripted_video")).toMatchObject({ permission: "write_local", mutates: true });
+    expect(debugCommandDefinition("motion.canvas.package")).toMatchObject({ permission: "write_local", mutates: true });
   });
 });

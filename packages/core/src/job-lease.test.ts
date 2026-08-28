@@ -32,11 +32,6 @@ async function leaseRoot(): Promise<string> {
   return join(dir, "leases");
 }
 
-/** The on-disk name for a job id. Derived, not literal: the encoding is job-id-file.ts's business. */
-function leaseFileName(jobId: string): string {
-  return `${motionJobFileKey(jobId)}.lease.json`;
-}
-
 /** A lease directory standing in for one independent Motion process. */
 function processView(root: string, pid: number, clock: { now: number }, alive: Set<number>): MotionJobLeaseDirectory {
   return new MotionJobLeaseDirectory({
@@ -79,11 +74,12 @@ describe("machine-wide admission", () => {
     const holder = processView(root, 201, clock, alive);
     const waiter = processView(root, 202, clock, alive);
 
-    await holder.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
+    const holderClaim = await holder.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
+    expect(holderClaim.run).not.toBeNull();
     clock.now += 1;
     expect((await waiter.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 })).admitted).toBe(false);
 
-    await holder.release("job-a");
+    await holder.release(holderClaim.run!);
     clock.now += 1;
 
     expect((await waiter.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 })).admitted).toBe(true);
@@ -101,8 +97,7 @@ describe("machine-wide admission", () => {
     await loser.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 });
 
     // A losing claim that left its lease behind would permanently shrink the machine's capacity.
-    const files = await readdir(root);
-    expect(files).toEqual([leaseFileName("job-a")]);
+    expect((await holder.readLiveLeases()).map((entry) => entry.jobId)).toEqual(["job-a"]);
   });
 
   it("reclaims a slot from a process that died without releasing", async () => {
@@ -121,7 +116,7 @@ describe("machine-wide admission", () => {
     clock.now += 1;
 
     expect((await survivor.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 })).admitted).toBe(true);
-    expect(await readdir(root)).toEqual([leaseFileName("job-b")]);
+    expect((await survivor.readLiveLeases()).map((entry) => entry.jobId)).toEqual(["job-b"]);
   });
 
   it("reclaims a slot from a live process that stopped heartbeating", async () => {
@@ -145,11 +140,12 @@ describe("machine-wide admission", () => {
     const holder = processView(root, 601, clock, alive);
     const other = processView(root, 602, clock, alive);
 
-    await holder.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
+    const holderClaim = await holder.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
+    expect(holderClaim.run).not.toBeNull();
     // A long render that keeps reporting in must not be evicted.
     for (let tick = 0; tick < 20; tick += 1) {
       clock.now += LEASE_STALE_AFTER_MS / 2;
-      await holder.heartbeat("job-a");
+      await holder.heartbeat(holderClaim.run!);
     }
 
     expect((await other.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 })).admitted).toBe(false);
@@ -172,7 +168,7 @@ describe("machine-wide admission", () => {
 
     // Exactly one wins, and it is the lowest jobId rather than whoever asked first.
     expect(results.filter((result) => result.admitted)).toHaveLength(1);
-    expect(await readdir(root)).toEqual([leaseFileName("job-c")]);
+    expect((await c.readLiveLeases()).map((entry) => entry.jobId)).toEqual(["job-c"]);
   });
 
   it("discards a corrupt lease rather than letting it consume a slot forever", async () => {
@@ -180,12 +176,89 @@ describe("machine-wide admission", () => {
     const clock = { now: 1_000 };
     const alive = new Set([801]);
     const view = processView(root, 801, clock, alive);
-    await view.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
-    await view.release("job-a");
+    const first = await view.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
+    expect(first.run).not.toBeNull();
+    await view.release(first.run!);
     await writeFile(join(root, "garbage.lease.json"), "{ not json", "utf8");
 
     expect((await view.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 })).admitted).toBe(true);
-    expect(await readdir(root)).toEqual([leaseFileName("job-b")]);
+    expect((await view.readLiveLeases()).map((entry) => entry.jobId)).toEqual(["job-b"]);
+  });
+});
+
+describe("per-run lease capabilities", () => {
+  it("keeps duplicate exact job ids as independent live admissions", async () => {
+    const root = await leaseRoot();
+    const clock = { now: 1_000 };
+    const alive = new Set([851, 852, 853]);
+    const firstProducer = processView(root, 851, clock, alive);
+    const secondProducer = processView(root, 852, clock, alive);
+    const thirdProducer = processView(root, 853, clock, alive);
+
+    const first = await firstProducer.claim({ jobId: "shared:render", lane: "ffmpeg", operation: "render.final", limit: 2, callerId: "cut:A" });
+    const second = await secondProducer.claim({ jobId: "shared:render", lane: "ffmpeg", operation: "render.final", limit: 2, callerId: "cut:B" });
+
+    expect(first.admitted).toBe(true);
+    expect(second.admitted).toBe(true);
+    expect(first.run?.runNonce).not.toBe(second.run?.runNonce);
+    expect((await firstProducer.readLiveLeases())
+      .filter((entry) => entry.jobId === "shared:render")
+      .map((entry) => ({ pid: entry.pid, callerId: entry.callerId })))
+      .toEqual(expect.arrayContaining([{ pid: 851, callerId: "cut:A" }, { pid: 852, callerId: "cut:B" }]));
+
+    // Two equal public handles still consume two real slots. A third producer cannot sneak past
+    // the cap just because a same-id run was overwritten or omitted from the order.
+    const third = await thirdProducer.claim({ jobId: "other:render", lane: "ffmpeg", operation: "render.final", limit: 2 });
+    expect(third).toMatchObject({ admitted: false, machineWide: true, observed: 3, rank: 2 });
+  });
+
+  it("does not recreate a released run when its heartbeat arrives late", async () => {
+    const root = await leaseRoot();
+    let clock = 1_000;
+    const leases = new MotionJobLeaseDirectory({ leaseRoot: root, now: () => clock, isProcessAlive: () => true });
+    const run = await leases.announce({ jobId: "late:heartbeat", lane: "ffmpeg", operation: "render.final" });
+    expect(run).not.toBeNull();
+
+    await leases.release(run!);
+    clock += 1;
+    await leases.heartbeat(run!);
+
+    expect((await leases.readLiveLeases()).filter((entry) => entry.jobId === "late:heartbeat")).toEqual([]);
+  });
+
+  it("does not let an old run heartbeat or release mutate its successor", async () => {
+    const root = await leaseRoot();
+    let clock = 1_000;
+    const leases = new MotionJobLeaseDirectory({ leaseRoot: root, now: () => clock, isProcessAlive: () => true });
+    const oldRun = await leases.announce({ jobId: "reused:render", lane: "ffmpeg", operation: "render.final", callerId: "cut:A", visibility: "host" });
+    expect(oldRun).not.toBeNull();
+    await leases.release(oldRun!);
+
+    clock = 2_000;
+    const successor = await leases.announce({ jobId: "reused:render", lane: "browser", operation: "preview.frame", callerId: "cut:B", visibility: "host", admitted: true });
+    expect(successor).not.toBeNull();
+    await leases.heartbeat(oldRun!);
+    await leases.release(oldRun!);
+
+    const visible = await leases.readVisibleLease({ jobId: "reused:render", callerId: "cut:B" });
+    expect(visible).toMatchObject({ ok: true, lease: { runNonce: successor!.runNonce, callerId: "cut:B", lane: "browser", admitted: true, heartbeatAtMs: 2_000 } });
+    expect((await leases.readVisibleLease({ jobId: "reused:render", callerId: "cut:A" })))
+      .toEqual({ ok: false, code: "job_not_visible" });
+  });
+
+  it("keeps bare job-id lifecycle calls away from nonce-protected runs", async () => {
+    const root = await leaseRoot();
+    let clock = 1_000;
+    const leases = new MotionJobLeaseDirectory({ leaseRoot: root, now: () => clock, isProcessAlive: () => true });
+    const run = await leases.announce({ jobId: "modern:run", lane: "ffmpeg", operation: "render.final", callerId: "cut:A", visibility: "host" });
+    expect(run).not.toBeNull();
+
+    clock = 2_000;
+    await leases.heartbeat("modern:run");
+    await leases.release("modern:run");
+
+    const visible = await leases.readVisibleLease({ jobId: "modern:run", callerId: "cut:A" });
+    expect(visible).toMatchObject({ ok: true, lease: { runNonce: run!.runNonce, heartbeatAtMs: 1_000 } });
   });
 });
 
@@ -217,7 +290,7 @@ describe("degrading safely", () => {
     await view.claim({ jobId: "job-a", lane: "ffmpeg", operation: "render.final", limit: 1 });
     const second = await view.claim({ jobId: "job-b", lane: "ffmpeg", operation: "render.final", limit: 1 });
 
-    expect(second).toEqual({ admitted: true, machineWide: false, observed: 0, rank: null });
+    expect(second).toMatchObject({ admitted: true, machineWide: false, observed: 0, rank: null, run: null });
   });
 });
 
@@ -369,8 +442,9 @@ describe("job id filename collisions", () => {
     const root = await leaseRoot();
     const leases = new MotionJobLeaseDirectory({ leaseRoot: root });
     await leases.announce({ jobId: "a:b", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", admitted: true });
-    await leases.announce({ jobId: "a-b", lane: "ffmpeg", operation: "render.final", callerId: "B", visibility: "host", admitted: true });
-    await leases.release("a-b");
+    const secondRun = await leases.announce({ jobId: "a-b", lane: "ffmpeg", operation: "render.final", callerId: "B", visibility: "host", admitted: true });
+    expect(secondRun).not.toBeNull();
+    await leases.release(secondRun!);
 
     const survivor = await leases.readVisibleLease({ jobId: "a:b", callerId: "A" });
     expect(survivor.ok).toBe(true);
@@ -391,9 +465,10 @@ describe("announce preserves request time across promotion", () => {
     const root = await leaseRoot();
     let clock = 1_000;
     const leases = new MotionJobLeaseDirectory({ leaseRoot: root, now: () => clock });
-    await leases.announce({ jobId: "q1", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host" });
+    const run = await leases.announce({ jobId: "q1", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host" });
+    expect(run).not.toBeNull();
     clock = 6_000;
-    await leases.announce({ jobId: "q1", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", admitted: true });
+    await leases.announce({ jobId: "q1", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", admitted: true, run: run! });
 
     const answer = await leases.readVisibleLease({ jobId: "q1", callerId: "A" });
     expect(answer.ok).toBe(true);

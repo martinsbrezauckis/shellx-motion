@@ -24,8 +24,11 @@
  *
  *   TRUST. A numeric sort alone still runs a planted `chromium-99999`. `PLAYWRIGHT_BROWSERS_PATH`
  *   is a THIRD-PARTY variable routinely aimed at a shared CI / Docker / NFS cache, so "a directory
- *   exists in the cache" says nothing about who created it. The root and each build directory must
- *   be controlled by this user or root — see `executable-trust.ts` for the rule and its reasoning.
+ *   exists in the cache" says nothing about who created it. Every root, build/layout component, and
+ *   executable leaf must be canonical, controlled by this user or root, and non-group/world-writable.
+ *   On win32 Node exposes no usable ACL ownership fact, so auto-discovered caches are refused
+ *   instead of being called trusted. Operators can use the explicit browser pin or a fixed system
+ *   installation without weakening this scanner.
  *
  *   CONTAINMENT. `existsSync` and `spawn` both follow symlinks, so a symlinked build directory runs
  *   whatever it points at. Every entry must resolve to a location still inside its cache root.
@@ -42,9 +45,10 @@
  * `./executable-trust`, `node:fs` / `node:path` / `node:process`. Sole caller:
  * `browser-executable.ts`.
  */
-import { readdirSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { resolvesInside, untrustedExecutableDirectoryReason } from "./executable-trust";
+import { resolvesInside, untrustedExecutableDirectoryReason, untrustedExecutableFileReason } from "./executable-trust";
+import { playwrightCacheRoots } from "./playwright-cache-roots";
 
 /**
  * Playwright's own name for a downloaded Chromium build: `chromium-<revision>`, revision an
@@ -90,7 +94,7 @@ export interface MotionBrowserCacheRefusal {
 
 /** One pass over Playwright's caches: what may be used, and what was declined. */
 export interface PlaywrightCacheScan {
-  /** Executable paths, in preference order. Existence is NOT checked — the caller decides. */
+  /** Existing, trusted executable paths, in preference order. */
   candidates: string[];
   refusals: MotionBrowserCacheRefusal[];
 }
@@ -103,15 +107,26 @@ export interface PlaywrightCacheScan {
  * cache root is not an error; it simply contributes nothing, and an untrusted one says so through
  * `refusals` rather than vanishing silently.
  */
-export function scanPlaywrightBrowserCache(): PlaywrightCacheScan {
+export function scanPlaywrightBrowserCache(
+  options: { platform?: NodeJS.Platform; currentUserHome?: string } = {}
+): PlaywrightCacheScan {
   const candidates: string[] = [];
   const refusals: MotionBrowserCacheRefusal[] = [];
+  const platform = options.platform ?? process.platform;
 
-  for (const { path: root, label: rootLabel } of playwrightCacheRoots()) {
+  for (const { path: root, label: rootLabel, trustedAncestor } of playwrightCacheRoots(options.currentUserHome)) {
     // A cache root that is simply not present on this machine — `~/Library/Caches/ms-playwright`
     // on Linux, say — is the ordinary case and must not be reported as a security refusal.
     if (!isExistingDirectory(root)) continue;
-    const rootReason = untrustedExecutableDirectoryReason(root);
+    if (platform === "win32") {
+      refusals.push({
+        path: root,
+        label: rootLabel,
+        reason: "its Windows access-control ownership cannot be verified by this runtime"
+      });
+      continue;
+    }
+    const rootReason = untrustedExecutableDirectoryReason(root, { trustedAncestor });
     if (rootReason) {
       refusals.push({ path: root, label: rootLabel, reason: rootReason });
       continue;
@@ -156,40 +171,41 @@ export function scanPlaywrightBrowserCache(): PlaywrightCacheScan {
     // `chromium-999` outrank `chromium-1200`.
     builds.sort((left, right) => right.build - left.build);
     for (const { name } of builds) {
-      // The LOGICAL path is emitted, not the resolved one: a candidate a caller reads should be the
-      // path they configured. Re-traversing the link at spawn time is safe because containment and
-      // trust were both proven above — only this user or root can change what it points at.
-      for (const layout of PLAYWRIGHT_BUILD_LAYOUTS) candidates.push(join(root, name, ...layout));
+      const buildRoot = join(root, name);
+      for (const layout of PLAYWRIGHT_BUILD_LAYOUTS) {
+        const executable = join(buildRoot, ...layout);
+        const executableLabel = `${layout[layout.length - 1]} in ${layout.slice(0, -1).join("/")} in ${name} in ${rootLabel}`;
+        let parent = buildRoot;
+        let rejected = false;
+        for (const component of layout.slice(0, -1)) {
+          parent = join(parent, component);
+          if (!isExistingDirectory(parent)) {
+            rejected = true;
+            break;
+          }
+          const parentReason = untrustedExecutableDirectoryReason(parent, { ancestors: false });
+          if (parentReason) {
+            refusals.push({
+              path: parent,
+              label: `${component} in ${name} in ${rootLabel}`,
+              reason: parentReason
+            });
+            rejected = true;
+            break;
+          }
+        }
+        if (rejected || !pathExists(executable)) continue;
+        const executableReason = untrustedExecutableFileReason(executable, { ancestors: false });
+        if (executableReason) {
+          refusals.push({ path: executable, label: executableLabel, reason: executableReason });
+          continue;
+        }
+        candidates.push(executable);
+      }
     }
   }
 
   return { candidates, refusals };
-}
-
-/**
- * Where Playwright keeps downloaded browsers, per its own documented precedence.
- *
- * Each root carries the name it was derived FROM as well as its path, because a refusal has to be
- * explainable in a report that must not print the path itself. The label identifies the same
- * directory by the variable or the convention that produced it, which is also the thing a user
- * would change.
- */
-function playwrightCacheRoots(): Array<{ path: string; label: string }> {
-  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  const home = process.env.HOME;
-  const localAppData = process.env.LOCALAPPDATA;
-  const roots = [
-    browsersPath && browsersPath !== "0"
-      ? { path: browsersPath, label: "the browser cache at PLAYWRIGHT_BROWSERS_PATH" }
-      : null,
-    home ? { path: join(home, ".cache", "ms-playwright"), label: "the Playwright cache under HOME/.cache" } : null,
-    home ? { path: join(home, "Library", "Caches", "ms-playwright"), label: "the Playwright cache under HOME/Library/Caches" } : null,
-    localAppData ? { path: join(localAppData, "ms-playwright"), label: "the Playwright cache under LOCALAPPDATA" } : null
-  ].filter((root): root is { path: string; label: string } => root !== null);
-  // De-duplicated by PATH: `PLAYWRIGHT_BROWSERS_PATH` pointed at the default location must not make
-  // the same directory contribute its builds twice.
-  const seen = new Set<string>();
-  return roots.filter((root) => (seen.has(root.path) ? false : (seen.add(root.path), true)));
 }
 
 /** Whether a cache root is present at all, before asking whether it is trustworthy. */
@@ -199,4 +215,11 @@ function isExistingDirectory(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch { return false; }
 }

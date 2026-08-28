@@ -6,7 +6,7 @@
  * received addressed nothing; and the lease was removed on completion, so every finished job
  * answered `job_unknown`. Both were invisible to unit tests that only ever looked at one store.
  */
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import {
   motionJobIdMintedAtMs,
   type MotionJobRecord
 } from "./job-registry";
+import { motionJobFileKey } from "./job-id-file";
 import { MotionJobView } from "./job-view";
 import { MotionHostJob, runInMotionHostJob } from "./host-job";
 
@@ -206,12 +207,32 @@ describe("a job stays answerable after it ends", () => {
     const { records, view } = await stores();
     await records.record(endedRecord({ jobId: "cut:render-9" }));
 
-    await records.amend("cut:render-9", { receiptPath: "/receipts/render-9.json", warnings: ["native text was case-folded"] });
+    await records.amend({
+      jobId: "cut:render-9",
+      callerId: "cut:workspace-7",
+      patch: { receiptPath: "/receipts/render-9.json", warnings: ["native text was case-folded"] }
+    });
 
     await expect(view.get({ jobId: "cut:render-9", callerId: "cut:workspace-7" })).resolves.toMatchObject({
       ok: true,
       job: { receiptPath: "/receipts/render-9.json", warnings: ["native text was case-folded"], outcome: "succeeded" }
     });
+  });
+
+  it("keeps the deprecated positional amend API for exactly one owner-qualified record", async () => {
+    const { records, view } = await stores();
+    const jobId = "cut:legacy-amend";
+    await records.record(endedRecord({ jobId, callerId: "cut:workspace-7" }));
+
+    await records.amend(jobId, { receiptPath: "/receipts/legacy-amend.json" });
+    await expect(view.get({ jobId, callerId: "cut:workspace-7" })).resolves.toMatchObject({
+      ok: true, job: { receiptPath: "/receipts/legacy-amend.json" }
+    });
+
+    await records.record(endedRecord({ jobId, callerId: "design-studio:main", endedAtMs: NOW - 500 }));
+    await records.amend(jobId, { warnings: ["must not cross owner boundary"] });
+    await expect(view.get({ jobId, callerId: "cut:workspace-7" })).resolves.toMatchObject({ ok: true, job: { warnings: [] } });
+    await expect(view.get({ jobId, callerId: "design-studio:main" })).resolves.toMatchObject({ ok: true, job: { warnings: [] } });
   });
 });
 
@@ -345,6 +366,20 @@ describe("live and ended read as one list", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ jobId: "cut:render-1", lifecycle: "pending" });
   });
+
+  it("does not dedupe a live caller's id against another caller's terminal id", async () => {
+    const { leases, records, view } = await stores();
+    const jobId = "host:shared-external-id";
+    await records.record(endedRecord({ jobId, callerId: "cut:workspace-7" }));
+    await leases.announce({ jobId, lane: "ffmpeg", operation: "render.final", callerId: "design-studio:main", visibility: "host" });
+
+    await expect(view.get({ jobId, callerId: "cut:workspace-7" })).resolves.toMatchObject({ ok: true, job: { lifecycle: "ended", callerId: "cut:workspace-7" } });
+    const jobs = await view.list({ callerId: "operator", scope: "all" });
+    expect(jobs.filter((job) => job.jobId === jobId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lifecycle: "pending", callerId: "design-studio:main" }),
+      expect.objectContaining({ lifecycle: "ended", callerId: "cut:workspace-7" })
+    ]));
+  });
 });
 
 describe("a poll never catches a job mid-write", () => {
@@ -354,14 +389,15 @@ describe("a poll never catches a job mid-write", () => {
     // unparseable lease is treated as corrupt and DELETED, so a torn read did not merely blip, it
     // destroyed the lease and dropped the job's slot. Writes are a temp file plus a rename now.
     const { leases, records, view } = await stores();
-    const job = await MotionHostJob.begin({
-      jobId: "cut:hammered", callerId: "cut:workspace-7", lane: "ffmpeg", operation: "render.final", leases, records
+    const run = await leases.announce({
+      jobId: "cut:hammered", callerId: "cut:workspace-7", lane: "ffmpeg", operation: "render.final", visibility: "host"
     });
+    expect(run).not.toBeNull();
 
     // Heartbeat continuously while reading continuously. Without atomic writes this loses the job.
     let writing = true;
     const writer = (async () => {
-      while (writing) await leases.heartbeat("cut:hammered");
+      while (writing) await leases.heartbeat(run!);
     })();
     const answers = [];
     for (let attempt = 0; attempt < 400; attempt += 1) {
@@ -371,26 +407,26 @@ describe("a poll never catches a job mid-write", () => {
     await writer;
 
     expect(answers.every((answer) => answer.ok)).toBe(true);
-    await job.succeeded();
+    await leases.release(run!);
   }, 45_000);
 
   it("leaves no temp files behind for a reader to mistake for a job", async () => {
     const { leases, records, root, view } = await stores();
-    const job = await MotionHostJob.begin({
-      jobId: "cut:tidy", callerId: "cut:workspace-7", lane: "ffmpeg", operation: "render.final", leases, records
+    const run = await leases.announce({
+      jobId: "cut:tidy", callerId: "cut:workspace-7", lane: "ffmpeg", operation: "render.final", visibility: "host"
     });
-    await leases.heartbeat("cut:tidy");
+    expect(run).not.toBeNull();
+    await leases.heartbeat(run!);
 
     expect((await readdir(join(root, "leases"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     expect(await view.list({ callerId: "cut:workspace-7" })).toHaveLength(1);
-    await job.succeeded();
-    expect((await readdir(join(root, "records"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    await leases.release(run!);
   });
 });
 
 describe("retention", () => {
   it("drops records past the age bound", async () => {
-    const clock = { now: 1_000_000 };
+    const clock = { now: 10 * JOB_RECORD_RETENTION_MS };
     const { records, root } = await stores(clock);
     await records.record(endedRecord({ jobId: "fresh", endedAtMs: clock.now - 1_000 }));
     await records.record(endedRecord({ jobId: "aged", endedAtMs: clock.now - JOB_RECORD_RETENTION_MS - 1 }));
@@ -452,6 +488,42 @@ describe("retention", () => {
  * the two being careful is what made this reachable.
  */
 describe("terminal records of colliding job ids", () => {
+  it("names terminal state by the caller and external id together without exposing the caller in paths", async () => {
+    const { records, root } = await stores();
+    const jobId = "host:shared-external-id";
+    const ownerA = "cut:workspace-a";
+    const ownerB = "design-studio:workspace-b";
+
+    await records.record(endedRecord({ jobId, callerId: ownerA, outcome: "failed", endedAtMs: NOW - 3_000 }));
+    await records.record(endedRecord({ jobId, callerId: ownerB, outcome: "succeeded", endedAtMs: NOW - 2_000 }));
+
+    await expect(records.read({ jobId, callerId: ownerA })).resolves.toMatchObject({ ok: true, record: { callerId: ownerA, outcome: "failed" } });
+    await expect(records.read({ jobId, callerId: ownerB })).resolves.toMatchObject({ ok: true, record: { callerId: ownerB, outcome: "succeeded" } });
+    expect((await records.list({ callerId: "operator", scope: "all" })).filter((record) => record.jobId === jobId)).toHaveLength(2);
+
+    // A reused id replaces only this owner's prior terminal state, never the other owner's.
+    await records.record(endedRecord({ jobId, callerId: ownerA, outcome: "succeeded", endedAtMs: NOW - 1_000 }));
+    await expect(records.read({ jobId, callerId: ownerA })).resolves.toMatchObject({ ok: true, record: { outcome: "succeeded" } });
+    await expect(records.read({ jobId, callerId: ownerB })).resolves.toMatchObject({ ok: true, record: { outcome: "succeeded", callerId: ownerB } });
+    const files = await readdir(join(root, "records"));
+    expect(files).toHaveLength(2);
+    expect(files.some((name) => name.includes(ownerA) || name.includes(ownerB))).toBe(false);
+  });
+
+  it("reads a legacy terminal record only for its stored owner", async () => {
+    const { records, root } = await stores();
+    const jobId = "legacy:shared-id";
+    const callerId = "cut:legacy-owner";
+    const record = endedRecord({ jobId, callerId, endedAtMs: NOW - 1_000 });
+    const recordRoot = join(root, "records");
+    await mkdir(recordRoot, { recursive: true });
+    await writeFile(join(recordRoot, `${motionJobFileKey(jobId)}--${record.endedAtMs}.job.json`), `${JSON.stringify(record)}\n`);
+
+    await expect(records.read({ jobId, callerId })).resolves.toMatchObject({ ok: true, record: { callerId } });
+    await expect(records.read({ jobId, callerId: "design-studio:other" })).resolves.toEqual({ ok: false, code: "job_unknown" });
+    await expect(records.read({ jobId, callerId: "design-studio:other", scope: "all" })).resolves.toEqual({ ok: false, code: "job_unknown" });
+  });
+
   it("does not delete another caller's record when ids fold to the same filename", async () => {
     const { records } = await stores();
     await records.record(endedRecord({ jobId: "a:b", callerId: "A", outcome: "succeeded" }));

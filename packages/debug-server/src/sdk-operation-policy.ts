@@ -9,9 +9,12 @@ export const SDK_OPERATION_TIER: Readonly<Record<MotionSdkOperation, MotionPermi
   compile: "write_local",
   preview: "render_motion",
   render: "render_motion",
+  renderCachePlan: "render_motion",
   status: "read_motion",
   cancel: "render_motion",
   timelineEdit: "edit_motion",
+  revisionTransactionPlan: "read_motion",
+  revisionTransaction: "edit_motion",
   trackingRequest: "write_local",
   trackingInspect: "read_motion",
   trackingApply: "edit_motion",
@@ -27,11 +30,15 @@ export const SDK_OPERATION_TIER: Readonly<Record<MotionSdkOperation, MotionPermi
   compositingSet: "edit_motion",
   compositingRemove: "edit_motion",
   gltfImport: "write_local",
+  cutoutRigBake: "edit_motion",
   proceduralInspect: "read_motion",
   proceduralSet: "edit_motion",
   proceduralSetEnabled: "edit_motion",
   proceduralBake: "edit_motion",
   proceduralDetach: "edit_motion",
+  proceduralAudioEnvelopeProduce: "edit_motion",
+  audioMasterSet: "edit_motion",
+  audioCrossfadeSet: "edit_motion",
 };
 
 const SDK_OPERATIONS = new Set<MotionSdkOperation>(Object.keys(SDK_OPERATION_TIER) as MotionSdkOperation[]);

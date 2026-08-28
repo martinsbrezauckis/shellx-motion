@@ -26,8 +26,8 @@
  * PIPELINE (per package, in workspace-dependency topological order)
  * ----------------------------------------------------------------
  *   1. Parse the package's own `tsconfig.json`, drop every non-shipping module from the emit set
- *      (tests, fixtures and test-support helpers — see `scripts/source-modules.mjs` for the
- *      naming convention that defines "non-shipping").
+ *      (tests, fixtures, test-support helpers, and explicitly unadopted implementation — see
+ *      `scripts/source-modules.mjs` for the convention that defines "non-shipping").
  *   2. Emit `dist/` with `ts.createProgram`, resolving `@shellx-motion/*` imports to the
  *      already-built `dist/*.d.ts` of the dependency (via generated `paths`), so each package
  *      is typechecked against exactly the declarations it will ship.
@@ -181,11 +181,9 @@ function emitPackage(pkg, paths) {
   );
   if (parsed.errors.length > 0) return parsed.errors;
 
-  // Tests, fixtures and test-support helpers are typechecked by `pnpm typecheck` and run by
-  // vitest straight off source; none of them is part of the shipped artifact. Excluding them
-  // here is what keeps them out of the tarball — `scripts/packed-files-gate.mjs` asserts the
-  // resulting manifest, and `scripts/shipping-imports-gate.mjs` proves no shipped module
-  // depends on one (which would otherwise become a runtime ERR_MODULE_NOT_FOUND).
+  // Nonshipping source is still typechecked from source, but is not part of the adopted artifact.
+  // Excluding it here keeps it out of tarballs; the packed-files gate asserts the manifest and the
+  // shipping-import gate proves no shipped module depends on an omitted module.
   const rootNames = parsed.fileNames.filter((file) => !isNonShippingSource(relative(pkg.dir, file)));
 
   const program = ts.createProgram({ rootNames, options: parsed.options });
@@ -309,6 +307,39 @@ function copyPackageRuntimeAssets(pkg, distDir) {
   cpSync(join(ROOT, "docs", "public"), target, { recursive: true });
 }
 
+/**
+ * Validate package-local executable assets that are deliberately packed beside dist rather than
+ * emitted by TypeScript. The enforced-untrusted shims are launched directly by renderer hosts,
+ * so a missing shebang mode would turn a supposedly enforced host policy into a launch failure.
+ */
+function assertExecutableRuntimeAssets(pkg) {
+  const launchers = pkg.name === "@shellx-motion/renderer-browser"
+    ? ["enforced-untrusted-browser-launcher.mjs"]
+    : pkg.name === "@shellx-motion/renderer-ffmpeg"
+      ? ["enforced-untrusted-ffmpeg-launcher.mjs"]
+      : [];
+  for (const name of launchers) assertExecutableRuntimeAsset(pkg, join(pkg.dir, "bin", name));
+}
+
+/**
+ * Assert that a repository-owned runtime launcher is present as a regular source file.
+ *
+ * Windows ships the `.mjs` shim as source but cannot express a meaningful POSIX executable bit.
+ * POSIX hosts execute the shim directly, so their source mode remains an integrity requirement.
+ *
+ * @param {{name: string}} pkg
+ * @param {string} launcher
+ * @param {NodeJS.Platform} platform
+ */
+export function assertExecutableRuntimeAsset(pkg, launcher, platform = process.platform) {
+  if (!existsSync(launcher)) throw new Error(`build: ${pkg.name} runtime launcher is missing: ${relative(ROOT, launcher)}`);
+  const facts = statSync(launcher);
+  const missingPosixExecutableBit = platform !== "win32" && (facts.mode & 0o111) === 0;
+  if (!facts.isFile() || missingPosixExecutableBit) {
+    throw new Error(`build: ${pkg.name} runtime launcher must be a source executable: ${relative(ROOT, launcher)}`);
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
   const only = args.includes("--package") ? args[args.indexOf("--package") + 1] : null;
@@ -331,6 +362,7 @@ function main() {
   const started = Date.now();
   for (const pkg of selected) {
     const packageStarted = Date.now();
+    assertExecutableRuntimeAssets(pkg);
     const diagnostics = emitPackage(pkg, paths);
     if (diagnostics.length > 0) {
       console.error(
@@ -372,4 +404,4 @@ function main() {
   console.log(`build: ${selected.length} package(s) in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

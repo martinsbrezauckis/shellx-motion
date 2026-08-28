@@ -1,10 +1,15 @@
 import { compareCodeUnits } from "./canonical-json";
 import { isSupportedMotionColorString } from "./color";
+import { evaluateMotionGradientColorKeyframes } from "./motion-gradient-color-keyframes";
 // The evaluator's readability gate lives in core/keyframe-readability so validate, the panels and
 // this file cannot drift about which keyframes animate. See that module's header for the history.
 import { assertReadableLayerKeyframes, readNumericKeyframes, readStringKeyframes, type NumericMotionKeyframe } from "./keyframe-readability";
 import { parseMotionPathViewBox, validateMotionPathData } from "./path-contract";
+import { assertMotionPathRevealLayer } from "./path-reveal";
 import { cloneMotionKeyframe, interpolateSpatialPosition } from "./spatial-path";
+import { assertGenericLayerStructuralTarget } from "./timeline-group-boundary";
+import { uniqueDuplicateLayerId } from "./timeline-layer-ids";
+import { executeLayerSplit } from "./timeline-split-executor";
 import {
   isSpringEasing,
   resolveSpringEasing,
@@ -31,6 +36,7 @@ import {
   SUPPORTED_KEYFRAME_TARGETS,
   SUPPORTED_KEYFRAME_TARGET_LIST,
   TEXT_ALIGN_KEYFRAME_VALUES,
+  UNIT_INTERVAL_KEYFRAME_TARGETS,
   VERTICAL_ALIGN_KEYFRAME_VALUES
 } from "./keyframe-targets";
 const STYLE_COLOR_PROPERTIES = new Set(["color", "fill", "stroke", "borderColor", "backgroundColor", "background"]);
@@ -357,6 +363,10 @@ export interface LayerTimingTrimResult {
   oldTiming: LayerTimingSnapshot;
   newTiming: LayerTimingSnapshot;
 }
+
+/** Document-aware trim entrypoint. Unlike {@link trimLayerTiming}, this refuses group-local children. */
+export { trimTimelineLayer } from "./timeline-group-boundary";
+export type { TimelineLayerTrim, TimelineLayerTrimResult } from "./timeline-group-boundary";
 
 export interface LayerSplitAtMs {
   layerId: string;
@@ -2250,6 +2260,9 @@ export function upsertLayerKeyframe(layer: MotionLayer, input: LayerKeyframeUpse
   if (!isSupportedKeyframeTarget(input.target)) throw new Error(`Unsupported keyframe target: ${input.target}`);
   if (!Number.isFinite(input.atMs) || input.atMs < 0) throw new Error("Keyframe atMs must be a non-negative finite number.");
   validateKeyframeTargetValue(input.target, input.value);
+  if (input.target === "pathReveal.start" || input.target === "pathReveal.end") {
+    assertMotionPathRevealLayer(layer);
+  }
   if (input.easing && !isSupportedEasing(input.easing)) throw new Error(`Unsupported keyframe easing: ${input.easing}`);
   assertLayerUnlocked(layer);
 
@@ -3144,6 +3157,9 @@ export function applyLayerGroupAnimationPreset(layers: MotionLayer[], input: Lay
 }
 
 export function trimLayerTiming(layer: MotionLayer, input: LayerTimingTrim): LayerTimingTrimResult {
+  if (layer.type === "group") {
+    throw new Error(`Cannot trim group layer ${layer.id} through trimLayerTiming; use trimMotionGroup.`);
+  }
   const hasStartMs = hasOwn(input, "startMs");
   const hasDurationMs = hasOwn(input, "durationMs");
   const hasTrimStartMs = hasOwn(input, "trimStartMs");
@@ -3204,114 +3220,10 @@ export function trimLayerTiming(layer: MotionLayer, input: LayerTimingTrim): Lay
 
 export function splitLayerAtMs(motion: MotionDocument, input: LayerSplitAtMs): LayerSplitAtMsResult {
   if (!isNonEmptyString(input.layerId)) throw new Error("Layer id is required.");
-  if (!isNonNegativeFinite(input.atMs)) throw new Error("Layer split atMs must be a non-negative finite number.");
-
-  const layerIndex = motion.layers.findIndex((layer) => layer.id === input.layerId);
-  if (layerIndex === -1) throw new Error(`Motion layer not found: ${input.layerId}.`);
-  const layer = motion.layers[layerIndex];
-  const layerEndMs = layer.startMs + layer.durationMs;
-  if (input.atMs <= layer.startMs || input.atMs >= layerEndMs) {
-    throw new Error("Layer split point must be inside the layer duration.");
-  }
-
-  const newLayerId = input.newLayerId?.trim() || uniqueSplitLayerId(motion, layer.id, input.atMs);
-  if (!isNonEmptyString(newLayerId)) throw new Error("New layer id is required.");
-  if (motion.layers.some((candidate) => candidate.id === newLayerId)) {
-    throw new Error(`Motion layer id already exists: ${newLayerId}.`);
-  }
-
-  const tracks = motion.tracks ?? [];
-  const sourceTrackIndexes = tracks
-    .map((track, index) => (track.id === layer.trackId || track.layerIds?.includes(layer.id) ? index : -1))
-    .filter((index) => index !== -1);
-  for (const trackIndex of sourceTrackIndexes) {
-    if (tracks[trackIndex].locked) throw new Error(`Source track is locked: ${tracks[trackIndex].id}.`);
-  }
-  assertLayerUnlocked(layer);
-  // Before rewriting a single track. A split assigns each keyframe to a half by comparing `atMs`
-  // against the split point, and a non-numeric `atMs` satisfies none of `<`, `>` or `===` — so an
-  // unreadable keyframe silently lands in neither half, and the patched document then validates
-  // clean because the command deleted the very errors validate exists to report. See
-  // assertReadableLayerKeyframes for the measurement.
-  assertReadableLayerKeyframes(layer, layerIndex, "Layer split");
-  assertArrayKeyframeTracks(layer, layerIndex, "Layer split");
-
-  const splitOffsetMs = input.atMs - layer.startMs;
-  const tailDurationMs = layerEndMs - input.atMs;
-  const oldTiming = layerTimingSnapshot(layer);
-  const sourceOffsetMs = sourceOffsetForLayerSplit(layer, splitOffsetMs);
-  const splitKeyframes = splitLayerKeyframes(layer.keyframes, input.atMs);
-  const splitTransitions = splitLayerTransitions(layer);
-
-  const originalLayer: MotionLayer = {
-    ...layer,
-    durationMs: splitOffsetMs,
-    ...(splitKeyframes.original ? { keyframes: splitKeyframes.original } : {})
-  };
-  if (!splitKeyframes.original) delete originalLayer.keyframes;
-  applyOriginalSourceTrim(originalLayer, layer, sourceOffsetMs);
-  if (splitTransitions.original) {
-    originalLayer.transitions = splitTransitions.original;
-  } else {
-    delete originalLayer.transitions;
-  }
-
-  const newLayer: MotionLayer = {
-    ...layer,
-    id: newLayerId,
-    startMs: input.atMs,
-    durationMs: tailDurationMs,
-    ...(splitKeyframes.split ? { keyframes: splitKeyframes.split } : {})
-  };
-  if (!splitKeyframes.split) delete newLayer.keyframes;
-  applySplitSourceTrim(newLayer, layer, sourceOffsetMs);
-  if (splitTransitions.split) {
-    newLayer.transitions = splitTransitions.split;
-  } else {
-    delete newLayer.transitions;
-  }
-
-  const nextLayers = [
-    ...motion.layers.slice(0, layerIndex),
-    originalLayer,
-    newLayer,
-    ...motion.layers.slice(layerIndex + 1)
-  ];
-  const changedPaths = [`/layers/${layer.id}/durationMs`];
-  if (originalLayer.trimDurationMs !== layer.trimDurationMs) changedPaths.push(`/layers/${layer.id}/trimDurationMs`);
-  changedPaths.push(`/layers/${newLayerId}`);
-
-  const nextTracks = motion.tracks?.map((track, trackIndex) => {
-    const layerIds = track.layerIds ? [...track.layerIds] : undefined;
-    if (!layerIds) return track;
-    const existingIndex = layerIds.indexOf(layer.id);
-    if (existingIndex === -1) return { ...track, layerIds };
-    layerIds.splice(existingIndex + 1, 0, newLayerId);
-    changedPaths.push(`/tracks/${trackIndex}/layerIds`);
-    return { ...track, layerIds };
-  });
-
-  return {
-    motion: {
-      ...motion,
-      layers: nextLayers,
-      ...(nextTracks ? { tracks: nextTracks } : {})
-    },
-    changedPaths,
-    action: "split",
-    layerId: layer.id,
-    newLayerId,
-    atMs: input.atMs,
-    splitOffsetMs,
-    sourceOffsetMs,
-    originalLayer,
-    newLayer,
-    oldTiming,
-    newTimings: {
-      original: layerTimingSnapshot(originalLayer),
-      split: layerTimingSnapshot(newLayer)
-    }
-  };
+  const layer = motion.layers.find((candidate) => candidate.id === input.layerId);
+  if (!layer) throw new Error(`Motion layer not found: ${input.layerId}.`);
+  assertGenericLayerStructuralTarget(motion, layer, "split", "splitMotionGroupAtMs");
+  return executeLayerSplit(motion, input);
 }
 
 export function createTimelineLayer(motion: MotionDocument, input: TimelineLayerCreate): TimelineLayerCreateResult {
@@ -3323,6 +3235,9 @@ export function createTimelineLayer(motion: MotionDocument, input: TimelineLayer
 
   layer.id = layer.id.trim();
   layer.type = layer.type.trim();
+  if (layer.type === "group" || layer.childLayerIds !== undefined) {
+    throw new Error("Cannot create a group through createTimelineLayer; use createMotionGroup with explicit owned children.");
+  }
   if (motion.layers.some((candidate) => candidate.id === layer.id)) {
     throw new Error(`Motion layer id already exists: ${layer.id}.`);
   }
@@ -3406,6 +3321,7 @@ export function deleteTimelineLayer(motion: MotionDocument, input: TimelineLayer
   const layerIndex = motion.layers.findIndex((layer) => layer.id === input.layerId);
   if (layerIndex === -1) throw new Error(`Motion layer not found: ${input.layerId}.`);
   const removed = motion.layers[layerIndex];
+  assertGenericLayerStructuralTarget(motion, removed, "delete", "deleteMotionGroup with an explicit cascade or unwrap disposition");
   const tracks = motion.tracks ?? [];
   const lockedTrackIds = new Set(tracks.filter((track) => track.locked).map((track) => track.id));
   const lockedTrackId = lockedTrackIdForLayer(tracks, removed, lockedTrackIds);
@@ -3453,6 +3369,7 @@ export function duplicateTimelineLayer(motion: MotionDocument, input: TimelineLa
   const layerIndex = motion.layers.findIndex((layer) => layer.id === input.layerId);
   if (layerIndex === -1) throw new Error(`Motion layer not found: ${input.layerId}.`);
   const sourceLayer = motion.layers[layerIndex];
+  assertGenericLayerStructuralTarget(motion, sourceLayer, "duplicate", "duplicateMotionGroupSubtree");
   const newLayerId = input.newLayerId?.trim() || uniqueDuplicateLayerId(motion, sourceLayer.id);
   if (!isNonEmptyString(newLayerId)) throw new Error("New layer id is required.");
   if (motion.layers.some((layer) => layer.id === newLayerId)) {
@@ -3521,6 +3438,7 @@ export function reorderTimelineLayer(motion: MotionDocument, input: TimelineLaye
   }
 
   const layer = motion.layers[oldIndex];
+  assertGenericLayerStructuralTarget(motion, layer, "reorder", "reorderMotionGroupRoot or reorderMotionGroupChild");
   const tracks = motion.tracks ?? [];
   const lockedTrackIds = new Set(tracks.filter((track) => track.locked).map((track) => track.id));
   const lockedTrackId = lockedTrackIdForLayer(tracks, layer, lockedTrackIds);
@@ -3581,6 +3499,9 @@ export function setTimelineLayerText(motion: MotionDocument, input: TimelineLaye
   const layer = motion.layers[layerIndex];
   if (layer.type !== "text" && layer.type !== "caption") {
     throw new Error(`Layer type does not support text: ${layer.type}.`);
+  }
+  if (layer.textRuns !== undefined) {
+    throw new Error(`Layer ${layerId} owns text content through text-runs@1; use motion.timeline.layer.text-runs.remove before motion.timeline.layer.text.set.`);
   }
 
   const tracks = motion.tracks ?? [];
@@ -3761,9 +3682,10 @@ export function setTimelineLayerEffect(motion: MotionDocument, input: TimelineLa
   const layerIndex = motion.layers.findIndex((layer) => layer.id === layerId);
   if (layerIndex === -1) throw new Error(`Motion layer not found: ${layerId}.`);
 
+  const layer = motion.layers[layerIndex];
+  if (layer.type === "adjustment") throw new Error("Fixed adjustment effects require createOrReplaceMotionFixedAdjustment; partial generic effect edits are unsupported.");
   const property = normalizeTimelineLayerEffectProperty(input.property);
   const newValue = validateTimelineLayerEffectValue(property, input.value);
-  const layer = motion.layers[layerIndex];
   const tracks = motion.tracks ?? [];
   const lockedTrackIds = new Set(tracks.filter((track) => track.locked).map((track) => track.id));
   const lockedTrackId = lockedTrackIdForLayer(tracks, layer, lockedTrackIds);
@@ -4369,21 +4291,30 @@ export function interpolateColor(keyframes: MotionKeyframe[] | undefined, atMs: 
     const current = sorted[index];
     const next = sorted[index + 1];
     if (atMs < current.atMs || atMs > next.atMs) continue;
-    const currentColor = parseInterpolableColor(current.value);
-    const nextColor = parseInterpolableColor(next.value);
-    if (!currentColor || !nextColor) return normalizeColorKeyframeValue(current.value);
     const span = next.atMs - current.atMs;
     const rawT = span <= 0 ? 1 : (atMs - current.atMs) / span;
     const easedT = resolveEasing(current.easing)(clamp(rawT, 0, 1));
-    return formatInterpolatedColor({
-      r: interpolateChannel(currentColor.r, nextColor.r, easedT),
-      g: interpolateChannel(currentColor.g, nextColor.g, easedT),
-      b: interpolateChannel(currentColor.b, nextColor.b, easedT),
-      a: interpolateChannel(currentColor.a, nextColor.a, easedT)
-    });
+    return interpolateGradientColorSegment(current.value, next.value, easedT);
   }
 
   return normalizeColorKeyframeValue(last.value);
+}
+
+/**
+ * Canonical one-segment color sampler shared by generic color keyframes and fixed-topology
+ * gradient color snapshots.  The latter supplies exact microsecond progress itself, so it must not
+ * round through the legacy millisecond-keyframe representation just to share color semantics.
+ */
+export function interpolateGradientColorSegment(left: string, right: string, progress: number): string | null {
+  const currentColor = parseInterpolableColor(left);
+  const nextColor = parseInterpolableColor(right);
+  if (!currentColor || !nextColor) return normalizeColorKeyframeValue(left);
+  return formatInterpolatedColor({
+    r: interpolateChannel(currentColor.r, nextColor.r, progress),
+    g: interpolateChannel(currentColor.g, nextColor.g, progress),
+    b: interpolateChannel(currentColor.b, nextColor.b, progress),
+    a: interpolateChannel(currentColor.a, nextColor.a, progress)
+  });
 }
 
 export function interpolateString(keyframes: MotionKeyframe[] | undefined, atMs: number): string | null {
@@ -4610,6 +4541,8 @@ export function effectiveLayerAtMs(layer: MotionLayer, atMs: number): MotionLaye
   const effectGlowRadius = interpolateNumber(keyframes["effects.glow.radius"], atMs);
   const effectGlowColor = interpolateColor(keyframes["effects.glow.color"], atMs);
   const gradientAngle = interpolateNumber(keyframes["gradient.angle"], atMs);
+  const pathRevealStart = interpolateNumber(keyframes["pathReveal.start"], atMs);
+  const pathRevealEnd = interpolateNumber(keyframes["pathReveal.end"], atMs);
   const transitionOpacity = transitionOpacityMultiplier(layer, atMs);
   const transformOpacity = typeof transform.opacity === "number" ? transform.opacity : undefined;
   const baseOpacity = opacity ?? (typeof layer.opacity === "number" ? layer.opacity : transformOpacity ?? 1);
@@ -4618,6 +4551,15 @@ export function effectiveLayerAtMs(layer: MotionLayer, atMs: number): MotionLaye
   const effects = { ...(layer.effects ?? {}) };
   const glow = layer.effects?.glow ? { ...layer.effects.glow } : undefined;
   const gradient = layer.gradient ? { ...layer.gradient, stops: layer.gradient.stops.map((stop) => ({ ...stop })) } : undefined;
+  if (gradient?.colorKeyframes) {
+    const atUs = atMs * 1_000;
+    if (!Number.isSafeInteger(atUs) || atUs < 0) {
+      throw new Error("Gradient color keyframe evaluation requires a non-negative safe integer microsecond playhead.");
+    }
+    const evaluated = evaluateMotionGradientColorKeyframes({ gradient, atUs });
+    if (!evaluated.ok) throw new Error(`Gradient color keyframe evaluation refused: ${evaluated.message}`);
+    gradient.stops = gradient.stops.map((stop, index) => ({ ...stop, color: evaluated.evaluation.colors[index]! }));
+  }
   const shader = layer.shader ? { ...layer.shader, uniforms: { ...(layer.shader.uniforms ?? {}) } } : undefined;
   if (shader?.uniforms) {
     for (const [target, frames] of Object.entries(keyframes)) {
@@ -4788,6 +4730,12 @@ export function effectiveLayerAtMs(layer: MotionLayer, atMs: number): MotionLaye
   if (glow && effectGlowColor !== null) glow.color = effectGlowColor;
   if (glow) effects.glow = glow;
   if (gradient && gradientAngle !== null) gradient.angle = gradientAngle;
+  const pathReveal = layer.pathReveal
+    ? {
+        start: pathRevealStart === null ? layer.pathReveal.start : clamp(pathRevealStart, 0, 1),
+        end: pathRevealEnd === null ? layer.pathReveal.end : clamp(pathRevealEnd, 0, 1)
+      }
+    : undefined;
 
   return {
     ...layer,
@@ -4802,6 +4750,7 @@ export function effectiveLayerAtMs(layer: MotionLayer, atMs: number): MotionLaye
     ...(mask ? { mask } : {}),
     ...(crop ? { crop } : {}),
     ...(gradient ? { gradient } : {}),
+    ...(pathReveal ? { pathReveal } : {}),
     ...(shader ? { shader } : {}),
     ...(environment ? { environment } : {}),
     ...((layer.effects !== undefined || effectBlur !== null || effectBrightness !== null || effectContrast !== null || effectSaturate !== null || effectGrayscale !== null || effectGlowRadius !== null || effectGlowColor !== null) ? { effects } : {})
@@ -5056,58 +5005,8 @@ function timelineDuration(motion: MotionDocument): number {
   return Math.max(sceneEnd, layerEnd, markerEnd);
 }
 
-function uniqueSplitLayerId(motion: MotionDocument, layerId: string, atMs: number): string {
-  const base = `${layerId}_split_${Math.round(atMs)}`.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "") || "layer_split";
-  const existing = new Set(motion.layers.map((layer) => layer.id));
-  if (!existing.has(base)) return base;
-  for (let index = 2; index < 10_000; index += 1) {
-    const candidate = `${base}_${index}`;
-    if (!existing.has(candidate)) return candidate;
-  }
-  throw new Error(`Unable to generate a unique split layer id for ${layerId}.`);
-}
-
-function uniqueDuplicateLayerId(motion: MotionDocument, layerId: string): string {
-  const base = `${layerId}_copy`.replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "") || "layer_copy";
-  const existing = new Set(motion.layers.map((layer) => layer.id));
-  if (!existing.has(base)) return base;
-  for (let index = 2; index < 10_000; index += 1) {
-    const candidate = `${base}_${index}`;
-    if (!existing.has(candidate)) return candidate;
-  }
-  throw new Error(`Unable to generate a unique duplicate layer id for ${layerId}.`);
-}
-
 function cloneMotionLayer(layer: MotionLayer): MotionLayer {
   return structuredClone(layer);
-}
-
-function sourceOffsetForLayerSplit(layer: MotionLayer, splitOffsetMs: number): number | undefined {
-  if (!isMediaTrimLayer(layer)) return undefined;
-  return splitOffsetMs * readPositiveNumber(layer.playbackRate, 1);
-}
-
-function isMediaTrimLayer(layer: MotionLayer): boolean {
-  return layer.type === "video"
-    || layer.type === "audio"
-    || typeof layer.trimStartMs === "number"
-    || typeof layer.trimDurationMs === "number";
-}
-
-function applyOriginalSourceTrim(target: MotionLayer, source: MotionLayer, sourceOffsetMs: number | undefined): void {
-  if (sourceOffsetMs === undefined) return;
-  if (typeof source.trimDurationMs === "number") {
-    target.trimDurationMs = Math.min(source.trimDurationMs, sourceOffsetMs);
-  }
-}
-
-function applySplitSourceTrim(target: MotionLayer, source: MotionLayer, sourceOffsetMs: number | undefined): void {
-  if (sourceOffsetMs === undefined) return;
-  const trimStartMs = readNumber(source.trimStartMs, 0) + sourceOffsetMs;
-  target.trimStartMs = trimStartMs;
-  if (typeof source.trimDurationMs === "number") {
-    target.trimDurationMs = Math.max(0, source.trimDurationMs - sourceOffsetMs);
-  }
 }
 
 function defaultAnimationPresetStartMs(layer: MotionLayer, preset: MotionAnimationPreset, durationMs: number): number {
@@ -5388,6 +5287,9 @@ function validateKeyframeTargetValue(target: MotionKeyframeTarget, value: Motion
   }
   if (POSITIVE_KEYFRAME_TARGETS.has(target) && value <= 0) {
     throw new Error(`${target} keyframe value must be a positive finite number.`);
+  }
+  if (UNIT_INTERVAL_KEYFRAME_TARGETS.has(target) && (value < 0 || value > 1)) {
+    throw new Error(`${target} keyframe value must be a finite number between 0 and 1.`);
   }
 }
 

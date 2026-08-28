@@ -2,7 +2,15 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { hashBuffer, inspectPngBuffer, inspectPngRegionBuffer, loadMotionPackage } from "@shellx-motion/core";
+import {
+  compileGpuScene2dPlan,
+  compileGpuSceneStaticPlan,
+  hashBuffer,
+  inspectPngBuffer,
+  inspectPngRegionBuffer,
+  loadMotionPackage,
+  matchRendererCapabilityCards
+} from "@shellx-motion/core";
 import { renderMotionBrowserFrame } from "@shellx-motion/renderer-browser";
 import { writeStaticLottiePackage } from "./authoring-lottie-package.js";
 
@@ -16,7 +24,7 @@ describe("atomic Lottie package authoring", () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-lottie-package-"));
     const outputRoot = join(root, "packages", "lottie-import");
     try {
-      await mkdir(dirname(outputRoot), { recursive: true });
+      await mkdir(dirname(outputRoot), { recursive: true, mode: 0o700 });
       const result = await writeStaticLottiePackage({
         sourcePath: fixturePath,
         outputRoot,
@@ -36,6 +44,8 @@ describe("atomic Lottie package authoring", () => {
 
       expect(preservedBytes.equals(sourceBytes)).toBe(true);
       expect(result.sourceSha256).toBe(hashBuffer(sourceBytes));
+      expect(result.loweringSourcePath).toBe(result.sourcePath);
+      expect(await readFile(result.loweringSourcePath)).toEqual(sourceBytes);
       expect(result.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
       expect(result.motionSha256).toBe(loweringReceipt.output.motionSha256);
       expect(reopened.manifest.id).toBe(`pkg_lottie_${result.sourceSha256.slice(0, 16)}`);
@@ -52,6 +62,8 @@ describe("atomic Lottie package authoring", () => {
         inputHashes: { source: result.sourceSha256 },
         output: { motionId: reopened.motion.id, motionSha256: result.motionSha256 }
       });
+      expect(loweringReceipt.output).not.toHaveProperty("lottieGpuPrecomposition");
+      expect(diagnosticsReceipt.output).not.toHaveProperty("lottieGpuPrecomposition");
       expect(manifestText).not.toContain(fixturePath);
       expect(JSON.stringify(diagnosticsReceipt)).not.toContain(fixturePath);
       expect(quality.ok).toBe(true);
@@ -165,44 +177,62 @@ describe("atomic Lottie package authoring", () => {
     }
   });
 
-  it("flattens one exact full-frame identity precomposition into installed editable layers", async () => {
+  it("routes transformed/clipped precompositions to the exact GPU group lowerer without flattening source bytes", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-lottie-precomp-"));
     const sourcePath = join(root, "precomp.json");
     const outputRoot = join(root, "package");
-    const identity = {
-      p: { a: 0, k: [50, 50] }, a: { a: 0, k: [50, 50] },
-      s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 }
-    };
-    const sourceBytes = Buffer.from(JSON.stringify({
-      v: "5.12.2", fr: 30, ip: 0, op: 30, w: 100, h: 100, nm: "Nested",
-      assets: [{
-        id: "scene", w: 100, h: 100,
-        layers: [{ ind: 1, ty: 1, nm: "Solid", sw: 20, sh: 20, sc: "#ffffff", ip: 0, op: 30, ks: identity }]
-      }],
-      layers: [{ ind: 1, ty: 0, nm: "Group", refId: "scene", ip: 5, op: 25, st: 0, sr: 1, ks: identity }]
-    }));
+      const identity = {
+        p: { a: 0, k: [50, 50] }, a: { a: 0, k: [50, 50] },
+        s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 }
+      };
+      const sourceBytes = Buffer.from(JSON.stringify({
+        v: "5.12.2", ddd: 0, fr: 10, ip: 0, op: 10, w: 100, h: 100, nm: "Nested",
+        assets: [
+          { id: "scene", w: 100, h: 100, layers: [{ ind: 1, ty: 1, nm: "Solid", sw: 20, sh: 20, sc: "#ffffff", ip: 0, op: 10, ks: identity }] },
+          { id: "sibling-image", w: 1, h: 1, u: "images/", p: "logo.png", e: 0 }
+        ],
+        layers: [{ ind: 1, ty: 0, nm: "Group", refId: "scene", ip: 2, op: 8, st: 0, sr: 1, ks: { ...identity, p: { a: 0, k: [55, 50] } } }]
+      }));
     try {
       await writeFile(sourcePath, sourceBytes);
       const result = await writeStaticLottiePackage({ sourcePath, outputRoot, inputRoots: [root], outputRoots: [root] });
       const manifest = JSON.parse(await readFile(result.manifestPath, "utf8")) as Record<string, any>;
-      const flattened = JSON.parse(await readFile(result.loweringSourcePath, "utf8")) as Record<string, any>;
+      const lowering = JSON.parse(await readFile(result.loweringReceiptPath, "utf8")) as Record<string, any>;
       const pkg = await loadMotionPackage(outputRoot);
-      const render = await renderMotionBrowserFrame(pkg, { atMs: 500, outDir: join(root, "render") });
-      const quality = inspectPngBuffer(await readFile(render.output.path));
+      const matches = matchRendererCapabilityCards(pkg.motion, { output: "png-frame", target: "preview" });
+      const staticPlan = compileGpuSceneStaticPlan(pkg.motion);
+      const framePlan = compileGpuScene2dPlan(pkg.motion, 500);
 
       expect(await readFile(result.sourcePath)).toEqual(sourceBytes);
+      expect(await readFile(result.loweringSourcePath)).toEqual(sourceBytes);
+      expect(result.loweringSourcePath).toBe(result.sourcePath);
       expect(result.precomposition).toMatchObject({
-        changed: true,
-        flattenedPrecompCount: 1,
-        flattenedLayerCount: 1,
-        maxDepth: 1,
+        changed: false,
+        flattenedPrecompCount: 0,
+        flattenedLayerCount: 0,
+        maxDepth: 0,
         policy: "full-frame-identity-static"
       });
       expect(manifest.data.adapter.precomposition).toEqual(result.precomposition);
-      expect(flattened.layers).toEqual([expect.objectContaining({ ty: 1, nm: "Group/Solid", ip: 5, op: 25 })]);
-      expect(pkg.motion.layers).toEqual([expect.objectContaining({ type: "shape", name: "Group/Solid", startMs: 167, durationMs: 667 })]);
-      expect(quality.ok).toBe(true);
-      if (quality.ok) expect(quality.nonTransparentPixels).toBeGreaterThan(300);
+      expect(manifest.compatibility).toEqual({ lanes: ["gpu"], hosts: ["shellx-motion"] });
+      expect(lowering.output.lottieGpuPrecomposition).toMatchObject({ sourceSha256: hashBuffer(sourceBytes), loweringFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/), outputMotionSha256: result.motionSha256 });
+      expect(pkg.motion.layers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "group", name: "Group", startMs: 200, durationMs: 600, childLayerIds: [expect.any(String)], mask: { type: "rect", inset: { right: 0, bottom: 0 } } }),
+        expect.objectContaining({ type: "shape", name: "Solid", startMs: 0, durationMs: 600 })
+      ]));
+      expect(matches.matches.find((match) => match.lane === "browser")).toMatchObject({
+        ok: false,
+        unsupported: [expect.objectContaining({ feature: "layer.type:group", reason: "Lane browser does not support group layers." })]
+      });
+      expect(matches.matches.find((match) => match.lane === "gpu")).toMatchObject({ ok: true, unsupported: [] });
+      expect(staticPlan).toMatchObject({ ok: true, plan: { maxima: { maxGroupCount: 1 } } });
+      expect(framePlan).toMatchObject({ ok: true, plan: { groupCount: 1, groupMaxDepth: 1 } });
+      if (!framePlan.ok) throw new Error(framePlan.failure.message);
+      expect(framePlan.plan.frame.draws).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: "groupStart" }),
+        expect.objectContaining({ kind: "rect" }),
+        expect.objectContaining({ kind: "groupEnd" })
+      ]));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLocalMotionSdk } from "./local.js";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support.js";
 
 const roots: string[] = [];
 
@@ -20,7 +21,10 @@ describe("local keying SDK", () => {
     const unkeyedRoot = join(root, "unkeyed");
     await writePackage(sourceRoot);
     const sourceMotion = await readFile(join(sourceRoot, "motion.json"), "utf8");
-    const sdk = createLocalMotionSdk();
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [root],
+      outputRoots: [root],
+    }));
 
     const inspected = await sdk.keyingInspect({ packageRoot: sourceRoot, layerId: "subject" });
     expect(inspected).toMatchObject({ ok: true, output: { state: { keying: null, roto: null } } });
@@ -53,7 +57,10 @@ describe("local keying SDK", () => {
     const detachedRoot = join(root, "detached");
     const removedRoot = join(root, "removed");
     await writePackage(sourceRoot);
-    const sdk = createLocalMotionSdk();
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [root],
+      outputRoots: [root],
+    }));
     const mask = {
       type: "roto",
       schema: ROTO_MASK_SCHEMA,
@@ -83,7 +90,7 @@ async function fixtureRoot(): Promise<string> {
 }
 
 async function writePackage(root: string): Promise<void> {
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets/subject.mp4"), "fixture-video", "utf8");
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1", id: "sdk-keying", name: "SDK keying", motion: "motion.json",

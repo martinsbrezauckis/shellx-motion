@@ -52,7 +52,13 @@
  * `shellx-motion doctor` (CLI), `motion.platform.requirements` (debug API + MCP), the SDK platform
  * client, and the workbench render dialog.
  */
-import type { MotionToolIdentity, MotionToolName, MotionToolSource } from "@shellx-motion/core";
+import {
+  defaultMotionHostRenderCapacity,
+  type MotionHostRenderCapacity,
+  type MotionToolIdentity,
+  type MotionToolName,
+  type MotionToolSource,
+} from "@shellx-motion/core";
 import {
   motionOperationReadinessList,
   motionToolRequiredForOperations,
@@ -151,6 +157,8 @@ export interface MotionPlatformRequirements {
   missingCount: number;
   tools: MotionToolReport[];
   operations: MotionOperationReadiness[];
+  /** Stable per-process capacity used by render admission and the local job governor. */
+  capacity: MotionHostRenderCapacity;
 }
 
 /** What one tool's probe reported. Supplied by the caller so this module never spawns a process. */
@@ -255,7 +263,10 @@ export function motionToolReport(probe: MotionToolProbeResult, platform: NodeJS.
  *
  * @param tools One report per probed tool, in a stable order.
  */
-export function motionPlatformRequirements(tools: MotionToolReport[]): MotionPlatformRequirements {
+export function motionPlatformRequirements(
+  tools: MotionToolReport[],
+  capacity: MotionHostRenderCapacity = defaultMotionHostRenderCapacity,
+): MotionPlatformRequirements {
   const ready = new Set(tools.filter((tool) => tool.status === "ready").map((tool) => tool.tool));
   const operations = motionOperationReadinessList(ready);
   return {
@@ -264,7 +275,8 @@ export function motionPlatformRequirements(tools: MotionToolReport[]): MotionPla
     satisfied: operations.every((operation) => operation.satisfied),
     missingCount: tools.filter((tool) => tool.status !== "ready").length,
     tools,
-    operations
+    operations,
+    capacity,
   };
 }
 
@@ -318,5 +330,13 @@ export function motionRequirementsReport(requirements: MotionPlatformRequirement
       lines.push(`       ${operation.alternative.tradeoff}`);
     }
   }
+  lines.push("");
+  lines.push("Adaptive render capacity:");
+  lines.push(`  per-job RSS  ${formatGib(requirements.capacity.jobs.maxProcessTreeRssBytes)} (${requirements.capacity.source})`);
+  lines.push(`  points/layer ${requirements.capacity.points.maxPointsPerLayer} (${requirements.capacity.points.tier})`);
   return lines.join("\n");
+}
+
+function formatGib(bytes: number): string {
+  return `${Number((bytes / (1024 ** 3)).toFixed(2))} GiB`;
 }

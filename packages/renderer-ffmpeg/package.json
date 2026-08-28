@@ -1,13 +1,19 @@
 {
   "name": "@shellx-motion/renderer-ffmpeg",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./frame-lane-warnings": "./src/frame-lane-warnings.ts",
+    "./internal/physics-visual-installed-final-video-policy": "./src/internal/physics-visual-installed-final-video-policy.ts",
+    "./internal/segmented-final-cli-publication": "./src/segmented-final-internal/segmented-final-cli-publication.ts",
+    "./internal/scene3d-gltf-pbr-hdr10-direct-final": "./src/hdr10-pq-direct-final.ts",
+    "./internal/scene3d-gltf-pbr-hdr10-direct-final-verifier": "./src/hdr10-pq-direct-final-verify.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "bin/enforced-untrusted-ffmpeg-launcher.mjs"
   ],
   "publishConfig": {
     "main": "./dist/index.js",
@@ -16,6 +22,18 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./frame-lane-warnings": {
+        "types": "./dist/frame-lane-warnings.d.ts",
+        "default": "./dist/frame-lane-warnings.js"
+      },
+      "./internal/physics-visual-installed-final-video-policy": {
+        "types": "./dist/internal/physics-visual-installed-final-video-policy.d.ts",
+        "default": "./dist/internal/physics-visual-installed-final-video-policy.js"
+      },
+      "./internal/segmented-final-cli-publication": {
+        "types": "./dist/segmented-final-internal/segmented-final-cli-publication.d.ts",
+        "default": "./dist/segmented-final-internal/segmented-final-cli-publication.js"
       }
     }
   },
@@ -25,6 +43,8 @@
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   },
   "dependencies": {
-    "@shellx-motion/core": "workspace:*"
+    "@shellx-motion/core": "workspace:*",
+    "@shellx-motion/renderer-browser": "workspace:*",
+    "@shellx-motion/renderer-native": "workspace:*"
   }
 }

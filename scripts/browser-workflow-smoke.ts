@@ -1,197 +1,162 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../packages/cli/src/main";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const outDir = join(repoRoot, ".scratch", "browser-workflow-smoke");
-const packageRoot = join(outDir, "interactive-package");
+const scratchRoot = await preparePrivateRepoScratch(repoRoot);
+const outDir = join(scratchRoot, "browser-workflow-smoke");
+const activePackageRoot = join(outDir, "active-package");
+const sourceDataPackageRoot = join(repoRoot, "fixtures", "packages", "lower-third");
+const dataPackageRoot = join(outDir, "data-only-package");
+const captureOutDir = join(outDir, "data-only-capture");
+const recordingCaptureOutDir = join(outDir, "data-only-recording");
 const workflowPath = join(outDir, "workflow.json");
+const recordingWorkflowPath = join(outDir, "recording-workflow.json");
 const catalogPath = join(outDir, "browser-workflows.catalog.json");
-const recordingManifestPath = join(outDir, "browser-recording.manifest.json");
+const recordingManifestPath = join(recordingCaptureOutDir, "browser-recording.manifest.json");
 const secretText = "SHELLX_MOTION_SECRET_DO_NOT_LEAK";
-const expectedStatusText = `Accepted ${secretText.length} chars`;
 
+await assertPrivateRepoScratchPath(repoRoot, outDir);
 await rm(outDir, { recursive: true, force: true });
-await mkdir(outDir, { recursive: true });
-await writeInteractivePackage(packageRoot);
-await writeJsonFile(workflowPath, {
+await mkdir(outDir, { recursive: true, mode: 0o700 });
+await writeActivePackage(activePackageRoot);
+await cp(sourceDataPackageRoot, dataPackageRoot, { recursive: true });
+await writeJson(workflowPath, {
   schema: "shellx-motion/browser-workflow@1",
-  viewport: { width: 640, height: 360, deviceScaleFactor: 1 },
+  viewport: { width: 1920, height: 1080, deviceScaleFactor: 1 },
   networkPolicy: "blocked-unless-declared",
   steps: [
-    { action: "click", selector: "#prompt" },
-    { action: "type", selector: "#prompt", text: secretText },
-    { action: "click", selector: "#apply" },
-    { action: "verify", selector: "#state", text: expectedStatusText }
+    { action: "click", selector: "body" },
+    { action: "type", selector: "body", text: secretText },
+    { action: "verify", selector: "body", text: "Anna" }
   ],
   cursor: { visible: false }
 });
+await writeJson(recordingWorkflowPath, {
+  schema: "shellx-motion/browser-workflow@1",
+  viewport: { width: 1920, height: 1080, deviceScaleFactor: 1 },
+  networkPolicy: "blocked-unless-declared",
+  steps: [{ action: "verify", selector: "body" }],
+  cursor: { visible: false }
+});
 
+// The shell CLI intentionally has no opaque host provenance authority. Keep that refusal in the
+// host ladder so an active package can never regain trust merely by being local or test-authored.
+const refused = await runCli(["capture-browser", activePackageRoot, "--out", join(outDir, "refused")]);
+assert(refused.ok === false, "active package capture unexpectedly succeeded without host provenance");
+const refusalError = readObject(readObjectField(refused, "error", "refused.error"), "refused.error");
+assert(readObjectField(refusalError, "code", "refused.error.code") === "script_provenance_unresolved", "active package capture returned the wrong refusal");
+
+// The same public command must still prove a real Chromium capture for ordinary data-only Motion.
 const result = await runCli([
   "capture-browser",
-  packageRoot,
+  dataPackageRoot,
   "--out",
-  outDir,
+  captureOutDir,
   "--at-ms",
   "500",
   "--workflow",
-  workflowPath,
-  "--recording-manifest",
-  recordingManifestPath,
-  "--recording-samples",
-  "2"
+  workflowPath
 ]);
-
-assert(result.ok, `Browser workflow smoke failed: ${JSON.stringify(result, null, 2)}`);
+assert(result.ok, `Data-only browser capture failed: ${JSON.stringify(result, null, 2)}`);
 assert(readObjectField(result, "command", "result.command") === "capture-browser", "unexpected command name");
 
 const outputPath = readString(readObjectField(result, "outputPath", "result.outputPath"), "result.outputPath");
 const receiptPath = readString(readObjectField(result, "receiptPath", "result.receiptPath"), "result.receiptPath");
 const workflowTracePath = readString(readObjectField(result, "workflowTracePath", "result.workflowTracePath"), "result.workflowTracePath");
-const resultRecordingManifestPath = readString(
-  readObjectField(result, "recordingManifestPath", "result.recordingManifestPath"),
-  "result.recordingManifestPath"
-);
 const artifacts = readArray(readObjectField(result, "artifacts", "result.artifacts"));
-const workflowTraceArtifact = artifacts.find((artifact) => readObjectField(artifact, "role", "artifact.role") === "browser_workflow_trace");
-const recordingManifestArtifact = artifacts.find((artifact) => readObjectField(artifact, "role", "artifact.role") === "browser_recording_manifest");
-
-assert(workflowTraceArtifact, "missing browser_workflow_trace artifact");
-assert(readObjectField(workflowTraceArtifact, "status", "browser_workflow_trace.status") === "available", "workflow trace artifact must be available");
-assert(recordingManifestArtifact, "missing browser_recording_manifest artifact");
-assert(readObjectField(recordingManifestArtifact, "status", "browser_recording_manifest.status") === "available", "recording manifest artifact must be available");
-assert(resultRecordingManifestPath === recordingManifestPath, "result recording manifest path mismatch");
-
+assertArtifact(artifacts, "browser_workflow_trace");
 await stat(outputPath);
 await stat(receiptPath);
 await stat(workflowTracePath);
-await stat(recordingManifestPath);
 
 const png = await readFile(outputPath);
-assert(png.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "browser workflow output is not a PNG");
-
-const receipt = readJsonObject(await readFile(receiptPath, "utf8"), "preview receipt");
+assert(png.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "browser capture output is not a PNG");
+const receipt = readJsonObject(await readFile(receiptPath, "utf8"), "capture receipt");
+const receiptOutput = readObject(readObjectField(receipt, "output", "receipt.output"), "receipt.output");
+assertDataOnlyScriptExecution(readObjectField(receiptOutput, "scriptExecution", "receipt.output.scriptExecution"));
 const trace = readJsonObject(await readFile(workflowTracePath, "utf8"), "workflow trace");
-const recordingManifest = readJsonObject(await readFile(recordingManifestPath, "utf8"), "recording manifest");
-const inputHashes = readObject(readObjectField(receipt, "inputHashes", "receipt.inputHashes"), "receipt.inputHashes");
-const workflowHash = readString(readObjectField(inputHashes, "workflow", "receipt.inputHashes.workflow"), "receipt.inputHashes.workflow");
-
 assert(readObjectField(trace, "schema", "trace.schema") === "shellx-motion/browser-workflow-trace@1", "workflow trace schema mismatch");
-assert(readObjectField(trace, "workflowHash", "trace.workflowHash") === workflowHash, "workflow trace hash mismatch");
-assert(readObjectField(trace, "stepCount", "trace.stepCount") === 4, "workflow trace should include click/type/click/verify steps");
-
-assert(readObjectField(recordingManifest, "schema", "recordingManifest.schema") === "shellx-motion/browser-recording-manifest@1", "recording manifest schema mismatch");
-assert(readObjectField(recordingManifest, "mode", "recordingManifest.mode") === "deterministic-browser-frame-samples", "recording manifest mode mismatch");
-assert(readObjectField(recordingManifest, "packageId", "recordingManifest.packageId") === "pkg_browser_workflow_redaction", "recording manifest package mismatch");
-assert(readObjectField(recordingManifest, "motionId", "recordingManifest.motionId") === "motion_browser_workflow_redaction", "recording manifest motion mismatch");
-assert(readObjectField(recordingManifest, "sampleCount", "recordingManifest.sampleCount") === 2, "recording manifest sample count mismatch");
-assert(readObjectField(recordingManifest, "durationMs", "recordingManifest.durationMs") === 2000, "recording manifest duration mismatch");
-assert(readObjectField(recordingManifest, "width", "recordingManifest.width") === 640, "recording manifest width mismatch");
-assert(readObjectField(recordingManifest, "height", "recordingManifest.height") === 360, "recording manifest height mismatch");
-const recordingWorkflow = readObject(readObjectField(recordingManifest, "workflow", "recordingManifest.workflow"), "recordingManifest.workflow");
-assert(readObjectField(recordingWorkflow, "hash", "recordingManifest.workflow.hash") === workflowHash, "recording manifest workflow hash mismatch");
-assert(readObjectField(recordingWorkflow, "tracePath", "recordingManifest.workflow.tracePath") === workflowTracePath, "recording manifest workflow trace path mismatch");
-const recordingFrames = readArray(readObjectField(recordingManifest, "frames", "recordingManifest.frames"));
-assert(recordingFrames.length === 2, `expected two recording manifest frames, got ${recordingFrames.length}`);
-const firstRecordingFrame = readObject(recordingFrames[0], "recordingManifest.frames[0]");
-const secondRecordingFrame = readObject(recordingFrames[1], "recordingManifest.frames[1]");
-assert(readObjectField(firstRecordingFrame, "index", "recordingManifest.frames[0].index") === 0, "first recording frame index mismatch");
-assert(readObjectField(firstRecordingFrame, "atMs", "recordingManifest.frames[0].atMs") === 0, "first recording frame timestamp mismatch");
-assert(readObjectField(secondRecordingFrame, "index", "recordingManifest.frames[1].index") === 1, "second recording frame index mismatch");
-assert(readObjectField(secondRecordingFrame, "atMs", "recordingManifest.frames[1].atMs") === 2000, "second recording frame timestamp mismatch");
-assert(readObjectField(firstRecordingFrame, "format", "recordingManifest.frames[0].format") === "png", "first recording frame format mismatch");
-assert(readObjectField(secondRecordingFrame, "format", "recordingManifest.frames[1].format") === "png", "second recording frame format mismatch");
-assert(readString(readObjectField(firstRecordingFrame, "sha256", "recordingManifest.frames[0].sha256"), "recordingManifest.frames[0].sha256").length === 64, "first recording frame hash mismatch");
-assert(readString(readObjectField(secondRecordingFrame, "sha256", "recordingManifest.frames[1].sha256"), "recordingManifest.frames[1].sha256").length === 64, "second recording frame hash mismatch");
-await stat(readString(readObjectField(firstRecordingFrame, "path", "recordingManifest.frames[0].path"), "recordingManifest.frames[0].path"));
-await stat(readString(readObjectField(secondRecordingFrame, "path", "recordingManifest.frames[1].path"), "recordingManifest.frames[1].path"));
-
 const traceSteps = readArray(readObjectField(trace, "steps", "trace.steps"));
-assert(traceSteps.length === 4, `expected four workflow trace steps, got ${traceSteps.length}`);
-const typeStep = readObject(traceSteps[1], "trace.steps[1]");
-const typeAction = readObject(readObjectField(typeStep, "action", "trace.steps[1].action"), "trace.steps[1].action");
-assert(readObjectField(typeStep, "status", "trace.steps[1].status") === "passed", "type step did not pass");
-assert(readObjectField(typeAction, "action", "trace.steps[1].action.action") === "type", "type step action mismatch");
-assert(readObjectField(typeAction, "selector", "trace.steps[1].action.selector") === "#prompt", "type step selector mismatch");
-assert(readObjectField(typeAction, "textLength", "trace.steps[1].action.textLength") === secretText.length, "type step text length mismatch");
-assert(!Object.hasOwn(typeAction, "text"), "type step leaked raw text");
+assert(traceSteps.length === 3, `expected three workflow steps, got ${traceSteps.length}`);
+const typeAction = readObject(readObjectField(readObject(traceSteps[1], "trace.steps[1]"), "action", "trace.steps[1].action"), "trace.steps[1].action");
+assert(readObjectField(typeAction, "action", "trace.steps[1].action.action") === "type", "type action mismatch");
+assert(readObjectField(typeAction, "textLength", "trace.steps[1].action.textLength") === secretText.length, "type textLength mismatch");
+const verifyAction = readObject(readObjectField(readObject(traceSteps[2], "trace.steps[2]"), "action", "trace.steps[2].action"), "trace.steps[2].action");
+assert(readObjectField(verifyAction, "hasText", "trace.steps[2].action.hasText") === true, "verify hasText mismatch");
+assert(!JSON.stringify({ result, receipt, trace }).includes(secretText), "browser workflow evidence leaked typed text");
 
-const verifyStep = readObject(traceSteps[3], "trace.steps[3]");
-const verifyAction = readObject(readObjectField(verifyStep, "action", "trace.steps[3].action"), "trace.steps[3].action");
-assert(readObjectField(verifyStep, "status", "trace.steps[3].status") === "passed", "verify step did not pass");
-assert(readObjectField(verifyAction, "action", "trace.steps[3].action.action") === "verify", "verify step action mismatch");
-assert(readObjectField(verifyAction, "selector", "trace.steps[3].action.selector") === "#state", "verify step selector mismatch");
-assert(readObjectField(verifyAction, "hasText", "trace.steps[3].action.hasText") === true, "verify step should preserve hasText metadata");
-assert(!Object.hasOwn(verifyAction, "text"), "verify step leaked raw text");
+const recordingResult = await runCli([
+  "capture-browser",
+  dataPackageRoot,
+  "--out",
+  recordingCaptureOutDir,
+  "--at-ms",
+  "500",
+  "--workflow",
+  recordingWorkflowPath,
+  "--recording-manifest",
+  recordingManifestPath,
+  "--recording-samples",
+  "2"
+]);
+assert(recordingResult.ok, `Data-only browser recording failed: ${JSON.stringify(recordingResult, null, 2)}`);
+assert(readObjectField(recordingResult, "recordingManifestPath", "recordingResult.recordingManifestPath") === recordingManifestPath, "recording manifest path mismatch");
+assertArtifact(readArray(readObjectField(recordingResult, "artifacts", "recordingResult.artifacts")), "browser_recording_manifest");
+await stat(recordingManifestPath);
 
-const serializedEvidence = JSON.stringify({ result, receipt, trace });
-assert(!serializedEvidence.includes(secretText), "browser workflow evidence leaked typed text");
-assert(!serializedEvidence.includes(expectedStatusText), "browser workflow evidence leaked verify text");
+const recording = readJsonObject(await readFile(recordingManifestPath, "utf8"), "recording manifest");
+assert(readObjectField(recording, "schema", "recording.schema") === "shellx-motion/browser-recording-manifest@1", "recording manifest schema mismatch");
+assert(readObjectField(recording, "mode", "recording.mode") === "deterministic-browser-frame-samples", "recording manifest mode mismatch");
+assert(readObjectField(recording, "packageId", "recording.packageId") === "pkg_lower_third", "recording package mismatch");
+assert(readObjectField(recording, "motionId", "recording.motionId") === "motion_lower_third", "recording motion mismatch");
+const frames = readArray(readObjectField(recording, "frames", "recording.frames"));
+assert(frames.length === 2, `expected two recording frames, got ${frames.length}`);
+for (const [index, value] of frames.entries()) {
+  const frame = readObject(value, `recording.frames[${index}]`);
+  assert(readObjectField(frame, "index", `recording.frames[${index}].index`) === index, "recording frame index mismatch");
+  assert(readObjectField(frame, "format", `recording.frames[${index}].format`) === "png", "recording frame format mismatch");
+  assert(/^[a-f0-9]{64}$/.test(readString(readObjectField(frame, "sha256", `recording.frames[${index}].sha256`), "recording frame hash")), "recording frame hash mismatch");
+  await stat(readString(readObjectField(frame, "path", `recording.frames[${index}].path`), "recording frame path"));
+}
 
 const catalogFirst = await captureWithCatalog("catalog-first");
 const catalogSecond = await captureWithCatalog("catalog-second");
-await writeInteractivePackage(packageRoot, { label: "Prompt Drift" });
+assert(readObjectField(catalogSecond, "workflowCatalogPath", "catalogSecond.workflowCatalogPath") === catalogPath, "workflow catalog path mismatch");
+await stat(catalogPath);
+await mutateDataOnlyPackageLabel();
 const catalogChanged = await captureWithCatalog("catalog-changed", true);
-const catalog = readJsonObject(await readFile(catalogPath, "utf8"), "browser workflow catalog");
-const catalogEntries = readArray(readObjectField(catalog, "entries", "catalog.entries"));
-const catalogEntry = readObject(catalogEntries[0], "catalog.entries[0]");
-const catalogHistory = readArray(readObjectField(catalogEntry, "history", "catalog.entries[0].history"));
 const firstDrift = readObject(readObjectField(catalogFirst, "workflowDrift", "catalogFirst.workflowDrift"), "catalogFirst.workflowDrift");
 const matchedDrift = readObject(readObjectField(catalogSecond, "workflowDrift", "catalogSecond.workflowDrift"), "catalogSecond.workflowDrift");
 const changedDrift = readObject(readObjectField(catalogChanged, "workflowDrift", "catalogChanged.workflowDrift"), "catalogChanged.workflowDrift");
-const catalogArtifacts = readArray(readObjectField(catalogSecond, "artifacts", "catalogSecond.artifacts"));
-const catalogArtifact = catalogArtifacts.find((artifact) => readObjectField(artifact, "role", "catalogArtifact.role") === "browser_workflow_catalog");
 const driftError = readObject(readObjectField(catalogChanged, "error", "catalogChanged.error"), "catalogChanged.error");
-
-assert(readObjectField(firstDrift, "status", "new.status") === "new", "first catalog capture should create a new baseline");
-assert(readObjectField(matchedDrift, "status", "matched.status") === "matched", "second catalog capture should match the baseline");
-assert(readObjectField(changedDrift, "status", "changed.status") === "changed", "mutated package should report catalog drift");
-assert(readObjectField(catalogChanged, "ok", "catalogChanged.ok") === false, "fail-on-drift should fail changed browser workflow captures");
-assert(readObjectField(driftError, "code", "catalogChanged.error.code") === "browser_workflow_drift_detected", "drift failure should use typed error code");
-assert(readObjectField(catalogArtifact, "status", "browser_workflow_catalog.status") === "available", "catalog artifact must be available");
-assert(catalogEntries.length === 1, `expected one catalog entry, got ${catalogEntries.length}`);
-assert(catalogHistory.length === 3, `expected three catalog snapshots, got ${catalogHistory.length}`);
-assert(readObjectField(catalogEntry, "workflowHash", "catalogEntry.workflowHash") === workflowHash, "catalog entry workflow hash mismatch");
-assert(!JSON.stringify({ catalogFirst, catalogSecond, catalogChanged, catalog }).includes(secretText), "browser workflow catalog evidence leaked typed text");
-assert(!JSON.stringify({ catalogFirst, catalogSecond, catalogChanged, catalog }).includes(expectedStatusText), "browser workflow catalog evidence leaked verify text");
+assert(readObjectField(firstDrift, "status", "new.status") === "new", "first catalog capture should create a baseline");
+assert(readObjectField(matchedDrift, "status", "matched.status") === "matched", "second catalog capture should match");
+assert(readObjectField(changedDrift, "status", "changed.status") === "changed", "mutated data-only package should report drift");
+assert(readObjectField(driftError, "code", "catalogChanged.error.code") === "browser_workflow_drift_detected", "drift refusal code mismatch");
+assert(!JSON.stringify({ catalogFirst, catalogSecond, catalogChanged }).includes(secretText), "browser workflow catalog evidence leaked typed text");
 
 console.log(JSON.stringify({
   ok: true,
   command: "browser:capture-smoke",
-  packageRoot,
-  workflowPath,
-  outputPath,
-  receiptPath,
-  workflowTracePath,
-  workflowHash,
-  recordingManifest: {
-    path: recordingManifestPath,
-    sampleCount: readObjectField(recordingManifest, "sampleCount", "recordingManifest.sampleCount"),
-    frameCount: recordingFrames.length
-  },
-  redaction: {
-    typedTextLength: secretText.length,
-    verifyHasText: true
-  },
+  activePackageRefusal: "script_provenance_unresolved",
+  dataOnlyCapture: { outputPath, receiptPath, workflowTracePath, recordingManifestPath, frameCount: frames.length },
   catalog: {
     path: catalogPath,
-    entryCount: catalogEntries.length,
-    historyCount: catalogHistory.length,
     firstStatus: readObjectField(firstDrift, "status", "firstDrift.status"),
     matchedStatus: readObjectField(matchedDrift, "status", "matchedDrift.status"),
-    changedStatus: readObjectField(changedDrift, "status", "changedDrift.status"),
-    failOnDriftCode: readObjectField(driftError, "code", "driftError.code")
-  },
-  artifacts
+    changedStatus: readObjectField(changedDrift, "status", "changedDrift.status")
+  }
 }, null, 2));
 
 async function captureWithCatalog(name: string, failOnDrift = false): Promise<object> {
   const args = [
     "capture-browser",
-    packageRoot,
+    dataPackageRoot,
     "--out",
     join(outDir, name),
     "--at-ms",
@@ -202,94 +167,56 @@ async function captureWithCatalog(name: string, failOnDrift = false): Promise<ob
     catalogPath
   ];
   if (failOnDrift) args.push("--fail-on-drift");
-  const capture = await runCli(args);
+  const capture = readObject(await runCli(args), name);
   assert(readObjectField(capture, "command", `${name}.command`) === "capture-browser", `${name} command mismatch`);
-  if (!failOnDrift) {
-    assert(readObjectField(capture, "ok", `${name}.ok`) === true, `${name} catalog capture failed: ${JSON.stringify(capture, null, 2)}`);
-  }
-  return readObject(capture, name);
+  if (!failOnDrift) assert(readObjectField(capture, "ok", `${name}.ok`) === true, `${name} catalog capture failed`);
+  return capture;
 }
 
-async function writeInteractivePackage(root: string, options: { label?: string } = {}): Promise<void> {
-  await mkdir(root, { recursive: true });
-  await writeJsonFile(join(root, "manifest.json"), {
-    schema: "shellx-motion/package-manifest@1",
-    id: "pkg_browser_workflow_redaction",
-    name: "Browser Workflow Redaction Fixture",
-    motion: "motion.json",
-    assets: ["card.html"],
-    sourceApp: "shellx-motion",
-    compatibility: {
-      lanes: ["browser"],
-      hosts: ["motion"]
-    }
+async function mutateDataOnlyPackageLabel(): Promise<void> {
+  const path = join(dataPackageRoot, "motion.json");
+  const motion = readJsonObject(await readFile(path, "utf8"), "data-only motion") as Record<string, unknown>;
+  const layers = readArray(motion.layers);
+  const title = readObject(layers[0], "data-only motion.layers[0]") as Record<string, unknown>;
+  title.text = "Anna Drift";
+  await writeJson(path, motion);
+}
+
+function assertArtifact(artifacts: unknown[], role: string): void {
+  const artifact = artifacts.find((value) => readObjectField(value, "role", "artifact.role") === role);
+  assert(artifact, `missing ${role} artifact`);
+  assert(readObjectField(artifact, "status", `${role}.status`) === "available", `${role} artifact is unavailable`);
+}
+
+async function writeActivePackage(root: string): Promise<void> {
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await writeJson(join(root, "manifest.json"), {
+    schema: "shellx-motion/package-manifest@1", id: "pkg_browser_active_refusal", name: "Active browser refusal fixture",
+    motion: "motion.json", assets: ["card.html"], sourceApp: "shellx-motion",
+    compatibility: { lanes: ["browser"], hosts: ["motion"] }
   });
-  await writeJsonFile(join(root, "motion.json"), {
-    schema: "shellx-motion/motion@1",
-    id: "motion_browser_workflow_redaction",
-    name: "Browser Workflow Redaction Fixture",
-    durationMs: 2000,
-    fps: 30,
-    width: 640,
-    height: 360,
-    background: "#0f172a",
-    layers: [
-      {
-        id: "interactive-card",
-        type: "web",
-        source: "card.html",
-        startMs: 0,
-        durationMs: 2000,
-        allowedOrigins: []
-      }
-    ],
-    assets: [],
-    provenance: { sourceApp: "shellx-motion", createdBy: "browser-workflow-smoke" }
+  await writeJson(join(root, "motion.json"), {
+    schema: "shellx-motion/motion@1", id: "motion_browser_active_refusal", name: "Active browser refusal fixture",
+    durationMs: 1_000, fps: 30, width: 640, height: 360, background: "#0f172a",
+    layers: [{ id: "active-card", type: "web", source: "card.html", startMs: 0, durationMs: 1_000, allowedOrigins: [] }],
+    assets: [], provenance: { sourceApp: "shellx-motion", createdBy: "browser-capture-smoke" }
   });
-  await writeFile(join(root, "card.html"), interactiveHtml(options), "utf8");
+  await writeFile(join(root, "card.html"), "<!doctype html><body>active<script>document.body.dataset.active='true'</script></body>\n", "utf8");
 }
 
-function interactiveHtml(options: { label?: string } = {}): string {
-  const label = options.label ?? "Prompt";
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Browser Workflow Redaction</title>
-    <style>
-      body { margin: 0; background: #0f172a; color: #f8fafc; font: 24px sans-serif; }
-      main { box-sizing: border-box; width: 640px; height: 360px; padding: 40px; display: grid; gap: 18px; align-content: center; }
-      label { display: grid; gap: 8px; }
-      input, button { width: 360px; font: inherit; padding: 12px 14px; border-radius: 6px; border: 0; }
-      button { background: #38bdf8; color: #082f49; font-weight: 700; }
-      #state { color: #bbf7d0; font-weight: 700; }
-    </style>
-  </head>
-  <body data-composition-id="interactive-card" data-start="0" data-duration="2000">
-    <main>
-      <label>${label} <input id="prompt" type="password" autocomplete="off"></label>
-      <button id="apply">Apply</button>
-      <div id="state">Ready</div>
-    </main>
-    <script>
-      document.querySelector("#apply").addEventListener("click", () => {
-        const length = document.querySelector("#prompt").value.length;
-        document.querySelector("#state").textContent = "Accepted " + length + " chars";
-      });
-    </script>
-  </body>
-</html>
-`;
-}
-
-async function writeJsonFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function assertDataOnlyScriptExecution(value: unknown): void {
+  const evidence = readObject(value, "scriptExecution");
+  assert(readObjectField(evidence, "detectedClass", "scriptExecution.detectedClass") === "data-only", "capture did not report data-only classification");
+  assert(readObjectField(evidence, "activeMode", "scriptExecution.activeMode") === "data-only", "capture did not retain the data-only execution mode");
+  assert.deepEqual(readObjectField(evidence, "sources", "scriptExecution.sources"), []);
+}
+
 function readJsonObject(text: string, label: string): object {
-  const parsed: unknown = JSON.parse(text);
-  return readObject(parsed, label);
+  return readObject(JSON.parse(text) as unknown, label);
 }
 
 function readObject(value: unknown, label: string): object {
@@ -298,8 +225,7 @@ function readObject(value: unknown, label: string): object {
 }
 
 function readObjectField(value: unknown, key: string, label: string): unknown {
-  const record = readObject(value, label);
-  return Reflect.get(record, key);
+  return Reflect.get(readObject(value, label), key);
 }
 
 function readArray(value: unknown): unknown[] {

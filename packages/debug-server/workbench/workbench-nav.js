@@ -1,6 +1,6 @@
 /**
  * workbench-nav.js — the persistent engine-room navigation, shared by every
- * workbench page (Inspector, History, Connections, Docs, About).
+ * workbench page (Inspector, History, Connections, Effects, Docs, About).
  *
  * Role: inject one consistent primary-navigation strip immediately below each
  * page's command bar, mark the current destination, and keep navigation always
@@ -14,7 +14,8 @@
  * to add the extra grid row, so existing pages need no layout edits of their own.
  *
  * Dependencies: workbench-nav.css (styling). No Debug API calls.
- * Primary callers: index.html, history.html, connections.html, docs.html, about.html.
+ * Primary callers: index.html, history.html, connections.html, effect-modules.html, docs.html,
+ * about.html.
  */
 (() => {
   "use strict";
@@ -28,6 +29,7 @@
     { id: "inspector", label: "Inspector", href: "/workbench", match: (path) => path === "/workbench" || path === "/workbench/" },
     { id: "history", label: "History", href: "/workbench/history", match: (path) => path.startsWith("/workbench/history") },
     { id: "connections", label: "Connections", href: "/workbench/connections", match: (path) => path.startsWith("/workbench/connections") },
+    { id: "effects", label: "Effects", href: "/workbench/effect-modules", match: (path) => path.startsWith("/workbench/effect-modules") },
     { id: "docs", label: "Docs", href: "/workbench/docs", match: (path) => path === "/workbench/docs" || path === "/workbench/docs/" },
     { id: "about", label: "About", href: "/workbench/about", match: (path) => path.startsWith("/workbench/about") }
   ];
@@ -37,6 +39,7 @@
     inspector: "M4 5h16M4 12h10M4 19h16",
     history: "M12 8v4l3 2M4 12a8 8 0 1 0 2-5.3M4 4v3h3",
     connections: "M8 12h8M6 8H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2M18 8h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2",
+    effects: "M5 5h14v14H5zM8 8h8M8 12h8M8 16h5",
     docs: "M6 3h9l4 4v14H6zM14 3v5h5",
     about: "M12 8h.01M11 12h1v5h1M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0z"
   };

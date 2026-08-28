@@ -4,10 +4,14 @@
   "name": "ShellX Tracked Callout Overlay",
   "motion": "motion.json",
   "template": "template.json",
-  "assets": ["assets/samples/device-inspection.svg"],
+  "assets": [
+    "assets/samples/device-inspection.svg",
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2"
+  ],
   "sourceApp": "shellx-motion",
   "compatibility": {
-    "lanes": ["browser", "ffmpeg"],
+    "lanes": ["browser", "ffmpeg", "gpu"],
     "hosts": ["shellx-motion", "shellx-canvas", "shellx-cut"]
   },
   "workflow": "template-pack-tracked-callout-overlay"

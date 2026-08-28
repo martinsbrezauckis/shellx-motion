@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "productVersion": "0.1.0",
+  "productVersion": "0.2.65",
   "sections": [
     {
       "id": "start-here",
@@ -12,20 +12,70 @@
           "file": "quickstart.md"
         },
         {
+          "id": "features",
+          "title": "Capabilities",
+          "file": "FEATURES.md"
+        },
+        {
           "id": "connections",
           "title": "Connect an agent",
           "file": "connections.md"
+        },
+        {
+          "id": "motion-validation",
+          "title": "Validate a Motion document",
+          "file": "MOTION_VALIDATION.md"
         }
       ]
     },
     {
-      "id": "using-motion",
-      "title": "Using ShellX Motion",
+      "id": "authoring-and-rendering",
+      "title": "Authoring and rendering",
       "pages": [
         {
-          "id": "agent-integration",
-          "title": "Agent integration",
-          "file": "agent-integration.md"
+          "id": "rendering",
+          "title": "Rendering lanes",
+          "file": "rendering.md"
+        },
+        {
+          "id": "shape-geometry",
+          "title": "Shape geometry",
+          "file": "shape-geometry.md"
+        },
+        {
+          "id": "groups-and-local-timelines",
+          "title": "Groups and local timelines",
+          "file": "groups-and-local-timelines.md"
+        },
+        {
+          "id": "path-reveals",
+          "title": "Path reveals",
+          "file": "path-reveals.md"
+        },
+        {
+          "id": "trails",
+          "title": "Particles and point trails",
+          "file": "trails.md"
+        },
+        {
+          "id": "cutout-rigging",
+          "title": "Cutout-rigging",
+          "file": "cutout-rigging.md"
+        },
+        {
+          "id": "transition-presets",
+          "title": "Transition presets",
+          "file": "transition-presets.md"
+        },
+        {
+          "id": "template-design-matrix",
+          "title": "Template design matrix",
+          "file": "TEMPLATE_DESIGN_MATRIX.md"
+        },
+        {
+          "id": "template-quality-bar",
+          "title": "Template quality bar",
+          "file": "TEMPLATE_QUALITY_BAR.md"
         },
         {
           "id": "templates",
@@ -34,9 +84,52 @@
           "audience": "agent"
         },
         {
-          "id": "rendering",
-          "title": "Rendering lanes",
-          "file": "rendering.md"
+          "id": "rendering-samples",
+          "title": "Rendering samples",
+          "file": "RENDERING_SAMPLES.md",
+          "audience": "agent"
+        },
+        {
+          "id": "agent-authored-scripts",
+          "title": "Agent-authored procedural scripts",
+          "file": "agent-authored-scripts.md",
+          "audience": "agent"
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "title": "Integration",
+      "pages": [
+        {
+          "id": "agent-integration",
+          "title": "Agent integration",
+          "file": "agent-integration.md"
+        },
+        {
+          "id": "debug-api",
+          "title": "Debug API",
+          "file": "DEBUG_API.md"
+        },
+        {
+          "id": "debug-api-commands",
+          "title": "Debug API command reference",
+          "file": "DEBUG_API_COMMANDS.md"
+        },
+        {
+          "id": "job-status",
+          "title": "Job status",
+          "file": "JOB_STATUS.md"
+        },
+        {
+          "id": "host-integration",
+          "title": "Host integration",
+          "file": "host-integration.md"
+        },
+        {
+          "id": "cut-job-integration-spec",
+          "title": "Cut job integration",
+          "file": "cut-job-integration-spec.md"
         },
         {
           "id": "cut-and-design-studio",
@@ -44,9 +137,9 @@
           "file": "cut-and-design-studio.md"
         },
         {
-          "id": "host-integration",
-          "title": "Host integration",
-          "file": "host-integration.md"
+          "id": "interchange-limits",
+          "title": "Interchange and archive limits",
+          "file": "interchange-limits.md"
         }
       ]
     },
@@ -60,6 +153,11 @@
           "file": "receipts-and-trust.md"
         },
         {
+          "id": "platform-verification",
+          "title": "Platform verification",
+          "file": "PLATFORM_VERIFICATION.md"
+        },
+        {
           "id": "security-model",
           "title": "Security model",
           "file": "security-model.md"
@@ -68,6 +166,11 @@
           "id": "binary-assets",
           "title": "Binary asset provenance",
           "file": "BINARY_ASSETS.md"
+        },
+        {
+          "id": "sbom",
+          "title": "Software bill of materials",
+          "file": "SBOM.md"
         }
       ]
     }

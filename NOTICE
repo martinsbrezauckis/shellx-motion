@@ -31,6 +31,20 @@ Bundled files (WOFF2 copies of five distinct binaries — weights 400, 600, 700,
   fixtures/packages/editable-lower-third/assets/fonts/
     inter-latin-400-normal.woff2
     inter-latin-700-normal.woff2
+  fixtures/packages/gpu-material-admitted/assets/fonts/
+    inter-latin-700-normal.woff2
+  fixtures/packages/gpu-g9-mixed-media-atlas/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-900-normal.woff2
+  fixtures/packages/gpu-g9-orbital-depth/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-900-normal.woff2
+  fixtures/packages/gpu-g9-particle-cathedral/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-900-normal.woff2
+  fixtures/packages/gpu-v25b1-scrub-signal/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-900-normal.woff2
 
   templates/shellx-product-pack/audio-launch/assets/fonts/
     inter-latin-600-normal.woff2
@@ -38,6 +52,20 @@ Bundled files (WOFF2 copies of five distinct binaries — weights 400, 600, 700,
     inter-latin-900-normal.woff2
   templates/shellx-product-pack/feature-announcement/assets/fonts/
     inter-latin-700-normal.woff2
+    inter-latin-900-normal.woff2
+
+  templates/shellx-product-pack/cinematic-fog-title/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-800-normal.woff2
+  templates/shellx-product-pack/cinematic-rain-launch/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-900-normal.woff2
+  templates/shellx-product-pack/editorial-liquid-surface/assets/fonts/
+    inter-latin-600-normal.woff2
+    inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+  templates/shellx-product-pack/keyed-subject-promo/assets/fonts/
+    inter-latin-600-normal.woff2
     inter-latin-900-normal.woff2
 
   templates/shellx-product-pack/kinetic-type/assets/fonts/
@@ -60,6 +88,9 @@ Bundled files (WOFF2 copies of five distinct binaries — weights 400, 600, 700,
 
   templates/shellx-product-pack/social-stat-card/assets/fonts/
     inter-latin-800-normal.woff2
+    inter-latin-900-normal.woff2
+  templates/shellx-product-pack/tracked-callout-overlay/assets/fonts/
+    inter-latin-600-normal.woff2
     inter-latin-900-normal.woff2
 Upstream project:
   Inter, by Rasmus Andersson and The Inter Project Authors
@@ -265,6 +296,13 @@ content is tracked in this repository. Runtime components stay outside the tree:
     redistributed here and needs no notice entry. Consumers who redistribute an
     installed tree, a bundle, or an installer that embeds it must carry
     Apache-2.0's own notice requirements for that copy.
+  - `@dimforge/rapier3d-deterministic-compat` 0.20.0 (Apache-2.0) is the exact
+    author-time simulation dependency of `@shellx-motion/debug-api`'s private
+    host adapter. Its npm distribution carries the deterministic-compatible
+    JavaScript/WASM runtime and its own `LICENSE`; none of those bytes are
+    tracked or copied into this repository. Consumers who redistribute an
+    installed tree, bundle, or installer that embeds Rapier must preserve its
+    Apache-2.0 license and any upstream notices included with that copy.
   - Chromium is located as an existing host executable at launch time; no
     browser binary ships in this repository.
   - FFmpeg and FFprobe are invoked as separate host processes. No FFmpeg binary

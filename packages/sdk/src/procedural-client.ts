@@ -5,6 +5,11 @@ import {
   type MotionProceduralGraph,
 } from "@shellx-motion/core";
 import { canonicalJson } from "./cache.js";
+import {
+  hasMatchingProceduralAudioEnvelopeEvidence,
+  proceduralAudioEnvelopeRequestProblem,
+} from "./procedural-audio-envelope-client.js";
+import { validProceduralMutationSemantics } from "./procedural-mutation-semantics.js";
 import { attributePreflightIssues } from "./procedural-preflight-context.js";
 import type { MotionSdkError, MotionSdkOperation } from "./types.js";
 
@@ -14,6 +19,7 @@ const OPERATIONS = new Set<MotionSdkOperation>([
   "proceduralSetEnabled",
   "proceduralBake",
   "proceduralDetach",
+  "proceduralAudioEnvelopeProduce",
 ]);
 
 export function isProceduralOperation(operation: MotionSdkOperation): boolean {
@@ -43,6 +49,10 @@ export function validateProceduralRequest(
   }
   if (operation === "proceduralDetach" && !safeId(input.relationshipId)) {
     return invalid("SDK proceduralDetach requires a safe relationshipId.");
+  }
+  if (operation === "proceduralAudioEnvelopeProduce") {
+    const problem = proceduralAudioEnvelopeRequestProblem(input);
+    if (problem) return invalid(problem);
   }
   if (operation === "proceduralBake") {
     if (input.relationshipIds !== undefined
@@ -101,10 +111,16 @@ export function validateProceduralOutput(
   if (operation === "proceduralBake" && !validBake(output.bake)) {
     return invalidTransport("SDK proceduralBake output requires bounded bake evidence.");
   }
+  if (operation === "proceduralAudioEnvelopeProduce" && !hasMatchingProceduralAudioEnvelopeEvidence(output.envelope, request)) {
+    return invalidTransport("SDK proceduralAudioEnvelopeProduce output requires matching bounded envelope evidence.");
+  }
   if (operation !== "proceduralBake" && output.bake !== undefined) {
     return invalidTransport(`SDK ${operation} output must not include bake evidence.`);
   }
-  if (!validMutationSemantics(operation, request, output)) {
+  if (operation !== "proceduralAudioEnvelopeProduce" && output.envelope !== undefined) {
+    return invalidTransport(`SDK ${operation} output must not include audio-envelope evidence.`);
+  }
+  if (!validProceduralMutationSemantics(operation, request, output)) {
     return invalidTransport(`SDK ${operation} output does not match the requested relationship mutation.`);
   }
   return null;
@@ -183,36 +199,6 @@ function validBake(value: unknown): boolean {
     && positiveInteger(bake.sampleCount)
     && bake.keyframeCount === Number(bake.sampleCount) * bake.relationshipIds.length
     && sha256(bake.fingerprint));
-}
-
-function validMutationSemantics(
-  operation: MotionSdkOperation,
-  request: Record<string, unknown>,
-  output: Record<string, unknown>,
-): boolean {
-  const state = plainRecord(output.state);
-  const graph = plainRecord(state?.graph);
-  const relationships = Array.isArray(graph?.relationships) ? graph.relationships : [];
-  if (operation === "proceduralSet") {
-    const requested = plainRecord(request.relationship);
-    const stored = relationships.find((item) => plainRecord(item)?.id === requested?.id);
-    return Boolean(requested && stored && sameCanonical(stored, requested));
-  }
-  if (operation === "proceduralSetEnabled") {
-    const stored = relationships.find((item) => plainRecord(item)?.id === request.relationshipId);
-    return plainRecord(stored)?.enabled === request.enabled;
-  }
-  if (operation === "proceduralDetach") {
-    return !relationships.some((item) => plainRecord(item)?.id === request.relationshipId);
-  }
-  if (operation === "proceduralBake") {
-    const bake = plainRecord(output.bake);
-    const ids = Array.isArray(bake?.relationshipIds) ? bake.relationshipIds : [];
-    const requested = Array.isArray(request.relationshipIds) ? request.relationshipIds : null;
-    return (!requested || sameCanonical(ids, [...new Set(requested)]))
-      && ids.every((id) => !relationships.some((item) => plainRecord(item)?.id === id));
-  }
-  return false;
 }
 
 /**
@@ -309,6 +295,7 @@ function sdkReceiptOperation(operation: MotionSdkOperation): string | null {
   if (operation === "proceduralSetEnabled") return "procedural.relationship.enabled.set";
   if (operation === "proceduralBake") return "procedural.relationship.bake";
   if (operation === "proceduralDetach") return "procedural.relationship.detach";
+  if (operation === "proceduralAudioEnvelopeProduce") return "procedural.audio-envelope.produce";
   return null;
 }
 

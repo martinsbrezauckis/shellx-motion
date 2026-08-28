@@ -10,7 +10,8 @@ export type MotionSdkProceduralOperation =
   | "procedural.relationship.set"
   | "procedural.relationship.enabled.set"
   | "procedural.relationship.bake"
-  | "procedural.relationship.detach";
+  | "procedural.relationship.detach"
+  | "procedural.audio-envelope.produce";
 
 export interface MotionSdkProceduralRelationshipSummary {
   id: string;
@@ -62,6 +63,15 @@ export interface MotionSdkProceduralDetachRequest extends MotionSdkProceduralMut
   relationshipId: string;
 }
 
+/** Decode one approved local source layer into a bounded data-only RMS envelope. */
+export interface MotionSdkProceduralAudioEnvelopeProduceRequest extends MotionSdkProceduralMutationRequest {
+  sourceLayerId: string;
+  envelopeId: string;
+  sampleEveryMs?: number;
+  /** v0.2 currently supports one mixed-channel envelope only. */
+  channel?: "mix";
+}
+
 export interface MotionSdkProceduralInspectResponse {
   packageRoot: string;
   package: MotionSdkPackageIdentity;
@@ -76,6 +86,15 @@ export interface MotionSdkProceduralBakeEvidence {
   fingerprint: string;
 }
 
+export interface MotionSdkProceduralAudioEnvelopeEvidence {
+  id: string;
+  sourceLayerId: string;
+  channel: "mix";
+  sampleEveryMs: number;
+  sampleCount: number;
+  samplesSha256: string;
+}
+
 export interface MotionSdkProceduralMutationResponse {
   packageRoot: string;
   package: MotionSdkPackageIdentity;
@@ -83,6 +102,7 @@ export interface MotionSdkProceduralMutationResponse {
   changedPaths: string[];
   state: MotionSdkProceduralState;
   bake?: MotionSdkProceduralBakeEvidence;
+  envelope?: MotionSdkProceduralAudioEnvelopeEvidence;
   receipt: MotionSdkPersistedReceipt<MotionSdkProceduralOperation>;
   receiptPath: string;
   warnings: string[];
@@ -95,6 +115,7 @@ declare module "./types.js" {
     proceduralSetEnabled: MotionSdkProceduralEnabledRequest;
     proceduralBake: MotionSdkProceduralBakeRequest;
     proceduralDetach: MotionSdkProceduralDetachRequest;
+    proceduralAudioEnvelopeProduce: MotionSdkProceduralAudioEnvelopeProduceRequest;
   }
 
   interface MotionSdkResponseMap {
@@ -103,6 +124,7 @@ declare module "./types.js" {
     proceduralSetEnabled: MotionSdkProceduralMutationResponse;
     proceduralBake: MotionSdkProceduralMutationResponse;
     proceduralDetach: MotionSdkProceduralMutationResponse;
+    proceduralAudioEnvelopeProduce: MotionSdkProceduralMutationResponse;
   }
 
   interface MotionSdkClient {
@@ -111,5 +133,6 @@ declare module "./types.js" {
     proceduralSetEnabled(input: MotionSdkProceduralEnabledRequest): Promise<MotionSdkResult<MotionSdkProceduralMutationResponse>>;
     proceduralBake(input: MotionSdkProceduralBakeRequest): Promise<MotionSdkResult<MotionSdkProceduralMutationResponse>>;
     proceduralDetach(input: MotionSdkProceduralDetachRequest): Promise<MotionSdkResult<MotionSdkProceduralMutationResponse>>;
+    proceduralAudioEnvelopeProduce(input: MotionSdkProceduralAudioEnvelopeProduceRequest): Promise<MotionSdkResult<MotionSdkProceduralMutationResponse>>;
   }
 }

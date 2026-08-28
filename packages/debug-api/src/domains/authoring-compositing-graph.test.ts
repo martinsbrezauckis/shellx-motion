@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withTestAuthoringRoots } from "../authoring-test-context.test-support.js";
 import { dispatchCompositingGraphAuthoringCommand } from "./authoring-compositing-graph.js";
 
 const roots: string[] = [];
@@ -21,7 +22,7 @@ describe("compositing graph authoring commands", () => {
     await writePackage(sourceRoot);
     const sourceText = await readFile(join(sourceRoot, "motion.json"), "utf8");
     const graph = unaryGraph(12);
-    const services = { packageLoader: loadMotionPackage };
+    const services = authoringServices(root);
 
     const set = await dispatchCompositingGraphAuthoringCommand(
       "motion.compositing.graph.set",
@@ -92,7 +93,7 @@ describe("compositing graph authoring commands", () => {
     const invalid = await dispatchCompositingGraphAuthoringCommand(
       "motion.compositing.graph.set",
       { packageRoot: sourceRoot, outDir: invalidRoot, graph },
-      { packageLoader: loadMotionPackage },
+      authoringServices(root),
     );
     expect(invalid).toMatchObject({
       ok: false,
@@ -100,12 +101,12 @@ describe("compositing graph authoring commands", () => {
     });
     expect(await stat(invalidRoot).catch(() => null)).toBeNull();
 
-    await mkdir(occupiedRoot);
+    await mkdir(occupiedRoot, { mode: 0o700 });
     await writeFile(join(occupiedRoot, "keep.txt"), "user-owned", "utf8");
     const occupied = await dispatchCompositingGraphAuthoringCommand(
       "motion.compositing.graph.set",
       { packageRoot: sourceRoot, outDir: occupiedRoot, graph: unaryGraph(4) },
-      { packageLoader: loadMotionPackage },
+      authoringServices(root),
     );
     expect(occupied).toMatchObject({ ok: false, error: { code: "output_not_empty" } });
     expect(await readFile(join(occupiedRoot, "keep.txt"), "utf8")).toBe("user-owned");
@@ -134,8 +135,15 @@ async function fixtureRoot(): Promise<string> {
   return root;
 }
 
+function authoringServices(root: string) {
+  return withTestAuthoringRoots({ packageLoader: loadMotionPackage }, {
+    inputRoots: [root],
+    outputRoots: [root],
+  });
+}
+
 async function writePackage(root: string): Promise<void> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",
     id: "compositing-fixture",

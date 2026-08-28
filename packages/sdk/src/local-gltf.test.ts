@@ -19,7 +19,7 @@ describe("local typed glTF SDK", () => {
     tempDirs.push(root);
     const sourcePath = join(root, "input", "triangle.gltf");
     const outDir = join(root, "packages", "triangle");
-    await mkdir(dirname(sourcePath), { recursive: true });
+    await mkdir(dirname(sourcePath), { recursive: true, mode: 0o700 });
     await writeFile(sourcePath, await readFile(fixturePath));
     const sdk = createLocalMotionSdk({
       authoringInputRoots: [root],
@@ -60,7 +60,7 @@ describe("local typed glTF SDK", () => {
     const renderSdk = createLocalMotionSdk({
       browserFrameRenderer: async (pkg, options) => {
         const path = options.outputPath ?? join(options.outDir, "frame.png");
-        await mkdir(dirname(path), { recursive: true });
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
         await writeFile(path, SAMPLE_PNG);
         const output = { path, sha256: await hashFile(path), format: "png" as const, width: pkg.motion.width, height: pkg.motion.height, atMs: options.atMs, browser: { name: "chromium", version: "test" }, viewport: { width: pkg.motion.width, height: pkg.motion.height, deviceScaleFactor: 1 } };
         return { ok: true, output, receipt: { schema: "shellx-motion/receipt@1", id: `gltf-edit-${options.atMs}`, operation: "preview.frame", status: "passed", packageId: pkg.manifest.id, inputHashes: {}, createdAt: "2026-07-15T00:00:00.000Z", lane: "test", output, warnings: [] } };
@@ -73,7 +73,10 @@ describe("local typed glTF SDK", () => {
         return { exitCode: 0, stdout: "", stderr: "" };
       },
     });
-    const rendered = await renderSdk.render({ packageRoot: outDir, artifactRoot: join(root, "render"), outputPath: join(root, "render", "edited.mp4"), preset: "mp4-h264" });
+    const renderRoot = join(root, "render");
+    await mkdir(join(renderRoot, ".shellx-motion", "receipts"), { recursive: true, mode: 0o700 });
+    await mkdir(join(renderRoot, ".shellx-motion", "scratch"), { recursive: true, mode: 0o700 });
+    const rendered = await renderSdk.render({ packageRoot: outDir, artifactRoot: renderRoot, outputPath: join(renderRoot, "edited.mp4"), preset: "mp4-h264" });
     expect(rendered).toMatchObject({ ok: true, output: { artifact: { packageLineage: { adapterId: "adapter.gltf", sourceSha256: result.output.sourceSha256 } } } });
     if (!rendered.ok || !rendered.output.artifact?.packageLineage) throw new Error("expected lineaged glTF render");
     expect(rendered.output.artifact.packageLineage.motionSha256).not.toBe(initialMotionSha256);

@@ -16,10 +16,6 @@
  * that is how a second process answers "what is my render doing" — so without this a test suite
  * leaves its jobs in the developer's own `motion job list`, and parallel test files can see each
  * other's work. See scripts/vitest-setup-job-stores.ts.
- *
- * NOTE for whoever owns the test ladder: the same hole remains open for `actions`, `adapters-cut`,
- * `adapters-html`, `adapters-otio`, `adapters-script`, `analysis-tracking` and `compositing-keying`,
- * which also have no config and also collect zero tests today.
  */
 import { defineConfig } from "vitest/config";
 

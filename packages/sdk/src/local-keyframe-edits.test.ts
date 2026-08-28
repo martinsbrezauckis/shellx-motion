@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLocalMotionSdk } from "./local";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support";
 
 const tempDirs: string[] = [];
 
@@ -26,8 +27,11 @@ describe("local Motion SDK keyframe edits", () => {
   it("applies receipt-backed range transforms for visible multi-keyframe editors", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-local-keyframe-range-"));
     tempDirs.push(root);
-    const sdk = createLocalMotionSdk();
     const source = resolve("../../fixtures/packages/editable-lower-third");
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [source, root],
+      outputRoots: [root],
+    }));
     const firstDir = join(root, "first");
     const first = await sdk.timelineEdit({
       packageRoot: source,
@@ -124,7 +128,10 @@ describe("local Motion SDK keyframe edits", () => {
     await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
     const outDir = join(root, "distributed");
 
-    const result = await createLocalMotionSdk().timelineEdit({
+    const result = await createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [root],
+      outputRoots: [root],
+    })).timelineEdit({
       packageRoot: source,
       outDir,
       edit: { kind: "keyframe.distribute", layerId: "title", target: "opacity", startMs: 0, endMs: 500 }

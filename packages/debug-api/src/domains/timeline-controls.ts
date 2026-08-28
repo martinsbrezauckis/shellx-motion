@@ -1,14 +1,13 @@
 /** Persist timeline UI controls without following package-controlled links. */
-import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { escalateReceiptStatusForWarnings, hashBuffer, hashPackageFile, resolvePackageAsset, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { nonNegativeNumberArg, positiveNumberArg, stringArg } from "./args.js";
 import { callerReceiptsRootRefusal, type ReceiptsRootPolicyServices } from "./receipts-root-policy.js";
-
-const MAX_TIMELINE_STATE_BYTES = 1024 * 1024;
+import { hasStableReceiptStoreCapability } from "../receipt-store-stable-reader.js";
+import { MAX_TIMELINE_STATE_BYTES, persistTimelineControlState, type TimelineControlPersistenceServices, type TrustedTimelineStateDirectory } from "./timeline-control-persistence.js";
 
 export interface TimelineRangeState {
   startMs: number;
@@ -38,11 +37,22 @@ export interface TimelineControlReadResult {
 }
 
 export interface TimelineControlServices extends ReceiptsRootPolicyServices {
+  /**
+   * The platform capability the host has admitted for durable timeline state.
+   *
+   * Production leaves this unset and therefore uses the actual runtime platform. Keeping it
+   * injectable lets the domain prove its refusal boundary without mutating global process state.
+   */
+  timelineControlPersistencePlatform?: NodeJS.Platform;
+  /** Host-only procfs test seam paired with `timelineControlPersistencePlatform`. */
+  timelineControlPersistenceProcSelfFdUsable?: () => boolean;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   readTimelineControls?: (pkg: MotionPackage) => Promise<TimelineControlReadResult>;
   writeTimelineControls?: (pkg: MotionPackage, state: TimelineControlState) => Promise<string>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
 }
+
+export type { TimelineControlPersistenceServices } from "./timeline-control-persistence.js";
 
 export async function dispatchTimelineControlCommand(
   command: MotionDebugCommand,
@@ -58,6 +68,16 @@ export async function dispatchTimelineControlCommand(
   const requestedReceiptsRoot = stringArg(args, "receiptsRoot") ?? undefined;
   const receiptsRoot = requestedReceiptsRoot ?? services.receiptsRoot;
   if (!packageRoot) return invalidArgs(`${command} requires packageRoot.`);
+  // Durable control state retains a no-follow directory descriptor through /proc before committing
+  // the state file. That primitive is intentionally implemented only on Linux. Refuse before any
+  // package load, control-state lookup, state-directory creation, or host receipt write, so a
+  // non-Linux request is a pure capability response rather than a partial durable mutation.
+  if (!hasStableReceiptStoreCapability(
+    services.timelineControlPersistencePlatform,
+    services.timelineControlPersistenceProcSelfFdUsable
+  )) {
+    return capabilityUnavailable("Timeline durable controls require Linux retained no-follow directory capability support.");
+  }
   if (!services.packageLoader || !services.readTimelineControls || !services.writeTimelineControls) {
     return capabilityUnavailable("Safe timeline control persistence is unavailable.");
   }
@@ -216,37 +236,15 @@ export async function readTimelineControlState(pkg: MotionPackage): Promise<Time
   }
 }
 
-export async function writeTimelineControlState(pkg: MotionPackage, state: TimelineControlState): Promise<string> {
+export async function writeTimelineControlState(
+  pkg: MotionPackage,
+  state: TimelineControlState,
+  services: TimelineControlPersistenceServices = {}
+): Promise<string> {
   const stateDir = await trustedStateDirectory(pkg, true);
   if (!stateDir) throw new Error("Timeline control state directory could not be created.");
-  const statePath = join(stateDir.path, "timeline-state.json");
-  const tempPath = join(stateDir.path, `.timeline-state.${randomUUID()}.tmp`);
-  const payload = `${JSON.stringify(state, null, 2)}\n`;
-  if (Buffer.byteLength(payload, "utf8") > MAX_TIMELINE_STATE_BYTES) throw new Error("Timeline control state exceeds the byte limit.");
-  let handle;
-  try {
-    handle = await open(tempPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
-    await handle.writeFile(payload, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-
-    const currentDir = await trustedStateDirectory(pkg, false);
-    if (!currentDir || currentDir.dev !== stateDir.dev || currentDir.ino !== stateDir.ino) {
-      throw new Error("Timeline control state directory changed before commit.");
-    }
-    try {
-      const existing = await lstat(statePath);
-      if (existing.isSymbolicLink() || !existing.isFile()) throw new Error("Timeline control state destination must be a regular file.");
-    } catch (error) {
-      if (errorCode(error) !== "ENOENT") throw error;
-    }
-    await rename(tempPath, statePath);
-    return timelineControlStatePath(pkg);
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-    await rm(tempPath, { force: true }).catch(() => {});
-  }
+  await persistTimelineControlState(stateDir, state, () => trustedStateDirectory(pkg, false), services);
+  return timelineControlStatePath(pkg);
 }
 
 export function visibleTimelineControlState(state: TimelineControlState, statePath: string): Record<string, unknown> {
@@ -263,13 +261,7 @@ export function visibleTimelineControlState(state: TimelineControlState, statePa
   };
 }
 
-interface TrustedStateDirectory {
-  path: string;
-  dev: number;
-  ino: number;
-}
-
-async function trustedStateDirectory(pkg: MotionPackage, create: boolean): Promise<TrustedStateDirectory | null> {
+async function trustedStateDirectory(pkg: MotionPackage, create: boolean): Promise<TrustedTimelineStateDirectory | null> {
   const packageRoot = await realpath(pkg.root);
   const path = join(packageRoot, ".shellx-motion");
   if (create) {

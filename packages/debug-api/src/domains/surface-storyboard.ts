@@ -4,6 +4,11 @@ import { hashBuffer } from "@shellx-motion/core";
 import { resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { objectArg, recordArg, stringArg } from "./args.js";
+import {
+  assertConfiguredAuthoringInputFile,
+  AuthoringRootPolicyError,
+  configuredAuthoringInputRoot
+} from "./authoring-root-policy.js";
 
 interface StoryboardPanelView {
   scriptId: string;
@@ -26,7 +31,10 @@ interface StoryboardGraphView {
 }
 
 export interface SurfaceStoryboardServices {
-  readJson?: (path: string) => Promise<unknown>;
+  /** The host-selected roots are required only when the caller names a storyboard path. */
+  authoringInputRoots?: string[];
+  /** The reader must retain the selected root through the open; inline storyboards do not use it. */
+  readJson?: (path: string, withinRoot?: string) => Promise<unknown>;
   buildStoryboardPanel?: (script: Record<string, unknown>, scriptPath?: string) => StoryboardPanelView;
   buildStoryboardGraph?: (script: Record<string, unknown>, scriptPath?: string) => StoryboardGraphView;
 }
@@ -102,14 +110,44 @@ async function loadStoryboard(
   if (!pathArg && !inline) return invalidArgs(`${command} requires scriptPath, script, or storyboard.`);
   if (inline) return { script: inline };
   if (!services.readJson) return capabilityUnavailable("Storyboard JSON reading is unavailable.");
+  if (!services.authoringInputRoots?.length) {
+    return capabilityUnavailable("Storyboard JSON reading requires configured host-approved authoring input roots.");
+  }
   try {
     const scriptPath = resolve(pathArg!);
-    const parsed = objectArg(await services.readJson(scriptPath));
+    await assertConfiguredAuthoringInputFile(scriptPath, services.authoringInputRoots, "Storyboard JSON");
+    const inputRoot = configuredAuthoringInputRoot(scriptPath, services.authoringInputRoots, "Storyboard JSON");
+    const parsed = objectArg(await services.readJson(scriptPath, inputRoot));
     if (!parsed) throw new Error("Scripted-video JSON must be an object.");
     return { script: parsed, scriptPath };
   } catch (error) {
-    return commandFailure(command === "motion.storyboard.panel" ? "storyboard_panel_failed" : "storyboard_graph_failed", error);
+    return storyboardReadFailure(command, error);
   }
+}
+
+/** Path reads never disclose the rejected path or host filesystem details to the caller. */
+function storyboardReadFailure(
+  command: "motion.storyboard.panel" | "motion.storyboard.graph",
+  error: unknown
+): MotionDebugResult {
+  if (error instanceof AuthoringRootPolicyError) {
+    return {
+      ok: false,
+      error: {
+        code: error.code,
+        message: "Storyboard JSON must be inside a host-approved authoring input root and may not traverse symbolic links."
+      },
+      warnings: []
+    };
+  }
+  return {
+    ok: false,
+    error: {
+      code: command === "motion.storyboard.panel" ? "storyboard_panel_failed" : "storyboard_graph_failed",
+      message: "Storyboard JSON could not be read from the approved authoring input root."
+    },
+    warnings: []
+  };
 }
 
 function validateStoryboard(loaded: LoadedStoryboard): void {

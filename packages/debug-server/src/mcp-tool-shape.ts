@@ -17,6 +17,7 @@ import {
   DEBUG_COMMAND_CONTRACTS,
   debugArgEnum,
   purposeForCall,
+  type MotionDebugArgPropertySchema,
   type MotionDebugCommand,
   type MotionDebugCommandContract
 } from "@shellx-motion/debug-api";
@@ -44,7 +45,7 @@ export function mcpToolForDebugContract(contract: MotionDebugCommandContract): R
     // Purpose first, mechanics after: the one text every MCP client shows was the one text that
     // said nothing about when to reach for the tool.
     description: [
-      purposeForCall(contract.command),
+      contract.purpose ?? purposeForCall(contract.command),
       `ShellX Motion debug command ${contract.command}.`,
       `permission=${contract.permission}.`,
       `mutates=${String(contract.mutates)}.`
@@ -125,12 +126,23 @@ export function publishedArgsSchema(contract: MotionDebugCommandContract): Motio
   const schema = contract.argsSchema;
   if (!schema?.properties) return schema;
   const properties: Record<string, unknown> = {};
-  for (const [name, property] of Object.entries(schema.properties)) {
-    const reference = (property as { enumRef?: string }).enumRef;
-    if (!reference) { properties[name] = property; continue; }
-    const resolved = debugArgEnum(reference);
-    const { enumRef: _dropped, ...rest } = property as unknown as Record<string, unknown>;
-    properties[name] = resolved ? { ...rest, enum: [...resolved.values] } : rest;
-  }
+  for (const [name, property] of Object.entries(schema.properties)) properties[name] = publishedPropertySchema(property);
   return { ...schema, properties } as MotionDebugCommandContract["argsSchema"];
+}
+
+/** Resolve enum indirections recursively so a nested data-only record is published verbatim. */
+function publishedPropertySchema(property: MotionDebugArgPropertySchema): Record<string, unknown> {
+  const { enumRef, properties, items, oneOf, ...rest } = property;
+  const resolved = typeof enumRef === "string" ? debugArgEnum(enumRef) : undefined;
+  const nested = properties && typeof properties === "object" && !Array.isArray(properties)
+    ? Object.fromEntries(Object.entries(properties)
+      .map(([name, child]) => [name, publishedPropertySchema(child)]))
+    : undefined;
+  return {
+    ...rest,
+    ...(resolved ? { enum: [...resolved.values] } : {}),
+    ...(nested ? { properties: nested } : {}),
+    ...(items ? { items: publishedPropertySchema(items) } : {}),
+    ...(oneOf ? { oneOf: oneOf.map((alternative) => publishedPropertySchema(alternative)) } : {})
+  };
 }

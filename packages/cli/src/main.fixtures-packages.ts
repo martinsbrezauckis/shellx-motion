@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 export async function writeTinyNativePackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-package-"));
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeFile(
     join(root, "manifest.json"),
     `${JSON.stringify({
@@ -67,7 +67,7 @@ export async function rewriteTinyNativePackageTitle(root: string, text: string):
 
 export async function writeTinyPackageWithAssetsAndBrand(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-assets-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "logo.png"), "pngbytes", "utf8");
   await writeFile(
     join(root, "manifest.json"),
@@ -216,7 +216,7 @@ export function htmlSnippetImportFixture(): string {
 
 export async function writeTemplateMediaPackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-media-package-"));
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "default-headshot.png"), "default image", "utf8");
   await writeFile(
     join(root, "manifest.json"),
@@ -283,7 +283,7 @@ export async function writeTemplateMediaPackage(): Promise<string> {
 
 export async function writeTinyPackageWithAudioLayer(audioOverrides: Record<string, unknown> = {}): Promise<string> {
   const root = await writeTinyNativePackage();
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "tone.wav"), "fake wav bytes", "utf8");
   await writeFile(
     join(root, "manifest.json"),
@@ -336,7 +336,7 @@ export async function writeTinyPackageWithAudioLayer(audioOverrides: Record<stri
 
 export async function writeTinyPackageWithVideoLayer(videoOverrides: Record<string, unknown> = {}): Promise<string> {
   const root = await writeTinyNativePackage();
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "clip.mp4"), "fake mp4 bytes with audio", "utf8");
   await writeFile(
     join(root, "manifest.json"),
@@ -384,7 +384,7 @@ export async function writeTinyPackageWithVideoLayer(videoOverrides: Record<stri
 
 export async function writeTinyPackageWithMediaLayers(): Promise<string> {
   const root = await writeTinyNativePackage();
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "product.png"), "product bytes", "utf8");
   await writeFile(join(root, "assets", "clip.mp4"), "clip bytes", "utf8");
   await writeFile(join(root, "card.html"), "<!doctype html><main>Media</main>\n", "utf8");
@@ -437,7 +437,7 @@ export async function writeTinyPackageWithMediaLayers(): Promise<string> {
 
 export async function writeTinyPackageWithTwoAudioLayers(): Promise<string> {
   const root = await writeTinyNativePackage();
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets", "music.wav"), "fake music wav bytes", "utf8");
   await writeFile(join(root, "assets", "voice.wav"), "fake voice wav bytes", "utf8");
   await writeFile(

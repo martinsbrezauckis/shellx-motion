@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { connectorArtifactOperationHash, connectorArtifactStagingPath, publishConnectorArtifact } from "./artifact-handle";
 
@@ -53,6 +53,32 @@ describe("connector artifact operation hashes", () => {
     await expect(publishConnectorArtifact(secondStaging, output)).rejects.toThrow("output already exists");
     await expect(readFile(output, "utf8")).resolves.toBe("first");
     await expect(stat(secondStaging)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("never deletes a host replacement after a linked output's parent and random stage name are retargeted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-artifact-retarget-"));
+    roots.push(root);
+    const parent = join(root, "publish");
+    const displacedParent = join(root, "displaced-publish");
+    await mkdir(parent, { mode: 0o700 });
+    const output = join(parent, "render.mp4");
+    const staging = connectorArtifactStagingPath(output);
+    await writeFile(staging, "motion-owned bytes", "utf8");
+
+    await expect(publishConnectorArtifact(staging, output, {
+      afterOutputLinked: async () => {
+        await rename(parent, displacedParent);
+        await mkdir(parent);
+        await writeFile(output, "host replacement", "utf8");
+        await writeFile(join(parent, basename(staging)), "host stage replacement", "utf8");
+      }
+    })).rejects.toThrow("did not preserve the staged file identity");
+
+    // The old cleanup unlinked both of these new pathnames after its identity check. A failed
+    // publication now leaves replacements and any private orphan alone, because neither can be
+    // safely removed by pathname after an ancestor retarget.
+    await expect(readFile(output, "utf8")).resolves.toBe("host replacement");
+    await expect(readFile(join(parent, basename(staging)), "utf8")).resolves.toBe("host stage replacement");
   });
 
   it("stamps the same operation identity regardless of the host locale", () => {

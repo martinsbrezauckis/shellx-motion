@@ -23,7 +23,7 @@
  *            build produces — `<name>.js`, `<name>.d.ts`, `<name>.js.map`
  *   other    every other `files` entry (e.g. core's `assets`, debug-server's `workbench`) is a
  *            hand-maintained shipped directory: its contents are listed from disk, but each
- *            entry must still pass the non-shipping convention
+ *            entry must still pass the non-shipping source convention
  *   always   `package.json`, plus `README*` / `LICENSE*` / `CHANGELOG*` when present, which npm
  *            includes regardless of `files`
  *
@@ -47,7 +47,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { isNonShippingSource, NON_SHIPPING_SOURCE_CONVENTION } from "./source-modules.mjs";
@@ -65,6 +65,7 @@ const OPTIONAL_METADATA = ["README.md", "README", "LICENSE", "LICENCE", "CHANGEL
 
 /** Extensions the build emits for one TypeScript module, in `dist/`. */
 const EMITTED_SUFFIXES = [".js", ".d.ts", ".js.map"];
+const NPM_PACK_DRY_RUN_ARGS = ["pack", "--dry-run", "--json"];
 
 /**
  * Every workspace package that has a manifest (`packages/fixtures` has none, and pnpm skips it
@@ -155,7 +156,7 @@ export function expectedPackedFiles(pkg) {
     if (statSync(target).isDirectory()) {
       for (const file of listRelativeFiles(target, pkg.dir)) {
         if (isNonShippingSource(file)) {
-          problems.push(`${pkg.name}: test scaffolding inside shipped directory ${entry}: ${file}`);
+          problems.push(`${pkg.name}: nonshipping source inside shipped directory ${entry}: ${file}`);
           continue;
         }
         expected.add(file);
@@ -182,7 +183,7 @@ export function comparePackedFiles(name, expected, actual, optional = new Set())
   const problems = [];
   for (const file of [...actualSet].sort()) {
     if (expected.has(file) || optional.has(file)) continue;
-    const why = isNonShippingSource(file) ? " (test scaffolding — must not ship)" : "";
+    const why = isNonShippingSource(file) ? " (nonshipping source — must not ship)" : "";
     problems.push(`${name}: unexpected file in tarball: ${file}${why}`);
   }
   for (const file of [...expected].sort()) {
@@ -192,17 +193,43 @@ export function comparePackedFiles(name, expected, actual, optional = new Set())
 }
 
 /**
+ * Build the direct, shell-free command that asks npm what a pack would contain.
+ *
+ * Windows exposes npm as `npm.cmd`, which `execFileSync` cannot execute without a shell. The
+ * Node distribution includes the same CLI as JavaScript beside its trusted Node executable, so
+ * invoke that entry through the current Node process instead. POSIX keeps the existing PATH-based
+ * `npm` invocation.
+ *
+ * @param {NodeJS.Platform} platform
+ * @param {string} nodeExecutable
+ * @param {(path: string) => boolean} pathExists
+ * @returns {{executable: string, args: string[]}}
+ */
+export function npmPackDryRunCommand(platform = process.platform, nodeExecutable = process.execPath, pathExists = existsSync) {
+  if (platform !== "win32") return { executable: "npm", args: [...NPM_PACK_DRY_RUN_ARGS] };
+  const npmCli = win32.join(win32.dirname(nodeExecutable), "node_modules", "npm", "bin", "npm-cli.js");
+  if (!pathExists(npmCli)) {
+    throw new Error(`packed-files: could not resolve npm's JavaScript entrypoint beside ${nodeExecutable}.`);
+  }
+  return { executable: nodeExecutable, args: [npmCli, ...NPM_PACK_DRY_RUN_ARGS] };
+}
+
+/**
  * Ask npm what a pack would contain, without writing a tarball.
  *
  * @param {string} packageDir
+ * @param {{platform?: NodeJS.Platform, nodeExecutable?: string, pathExists?: (path: string) => boolean, execFile?: typeof execFileSync}} [options]
  * @returns {string[]} packed paths relative to the package root
  */
-function npmPackDryRun(packageDir) {
+export function npmPackDryRun(packageDir, options = {}) {
+  const command = npmPackDryRunCommand(options.platform, options.nodeExecutable, options.pathExists);
   // stderr is captured rather than inherited: npm prints unrelated env-config warnings there that
   // would otherwise bury this gate's own output. It resurfaces on `error.stderr` if npm fails.
-  const stdout = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+  const execute = options.execFile ?? execFileSync;
+  const stdout = execute(command.executable, command.args, {
     cwd: packageDir,
     encoding: "utf8",
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"]
   });
   const [report] = JSON.parse(stdout);

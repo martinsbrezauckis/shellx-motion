@@ -50,11 +50,12 @@
  * release. The list is currently empty. Do not add to it to silence a new finding —
  * use the `locale-order-ok:` marker when the ordering really is human-facing, or fix it.
  *
- * SCOPE: `packages/<pkg>/src/**\/*.ts(x)` excluding tests and other non-shipping modules, plus
+ * SCOPE: governed non-test implementation under `packages/<pkg>/src/**\/*.ts(x)`, including
+ * retained unadopted implementation, plus
  * `scripts/**\/*.{ts,mjs}`. Browser assets under `packages/debug-server/workbench/**` are a
  * rendered UI surface, not shipped hashing code, and are out of scope.
  *
- * WIRING: `pnpm run source-hygiene:check`, therefore the first step of `pnpm test`. Parse only —
+ * WIRING: `pnpm run source-hygiene:public`, therefore the first step of public `pnpm test`. Parse only —
  * no build, no network, deterministic.
  *
  * USAGE
@@ -115,14 +116,14 @@ function listSources(dir, out = []) {
   return out;
 }
 
-/** Test and fixture scaffolding is not shipped and may exercise the very patterns banned here. */
+/** Test and fixture scaffolding may exercise the patterns banned in governed implementation. */
 function isExcluded(name) {
   return /\.test\.(tsx?|mjs)$/.test(name)
     || /\.fixture\.tsx?$/.test(name)
     || /\.test-support\.tsx?$/.test(name);
 }
 
-/** Every shipped source file the gate inspects, repo-relative and sorted for stable output. */
+/** Every governed non-test implementation source the gate inspects, repo-relative and sorted. */
 function gateSources() {
   const files = [];
   const packagesDir = join(ROOT, "packages");

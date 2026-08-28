@@ -29,12 +29,24 @@
  * Dependencies: node:fs and the generated job-status contract. Primary caller:
  * `LocalMotionJobGovernor` in job-governor.ts (writes) and the `motion.job.*` debug commands (read).
  */
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { UNATTRIBUTED_CALLER_ID, defaultMotionJobLeaseRoot } from "./job-lease";
-import { motionJobFileKey } from "./job-id-file";
-import type { JobErrorCode, JobOutcome, JobSkipCode } from "./generated/job-status";
+import { defaultMotionJobLeaseRoot } from "./job-lease";
+import { motionJobOwnerKey } from "./job-id-file";
+import { compareCodeUnits } from "./canonical-json";
+import type { JobOutcome, JobSkipCode } from "./generated/job-status";
+import type { MotionJobFailure } from "./job-failure";
+import type { MotionJobFrameLane } from "./job-frame-lane";
+import {
+  findUnambiguousMotionJobRecord,
+  hasExclusiveOwnedLegacyMotionJobRecord,
+  isCurrentMotionJobRecordFile,
+  listMotionJobRecordFiles,
+  pruneMotionJobRecords,
+  readMotionJobRecord,
+  removeOtherMotionJobRecords,
+  writeMotionJobRecord
+} from "./job-registry-storage";
 
 /** Retention, per the ruling in schemas/job-status.json: whichever bound binds first. */
 export const JOB_RECORD_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -54,6 +66,8 @@ export interface MotionJobRecord {
   jobId: string;
   callerId: string;
   lane: string;
+  /** Optional final-render rasterizer. Omitted by legacy and non-final host jobs. */
+  frameLane?: MotionJobFrameLane;
   operation: string;
   /** Always "ended". Present so a record and a live lease project into one shape without a branch. */
   lifecycle: "ended";
@@ -65,7 +79,7 @@ export interface MotionJobRecord {
   durationMs: number;
   queueWaitMs: number;
   /** Present if and only if outcome is "failed". The contract's load-bearing invariant. */
-  error?: { code: JobErrorCode; message: string; retryable: boolean };
+  error?: MotionJobFailure;
   /** Present if and only if outcome is "cancelled". */
   cancellation?: { requestedBy: string; reason?: string };
   /** Present if and only if outcome is "skipped". */
@@ -73,6 +87,12 @@ export interface MotionJobRecord {
   warnings: string[];
   /** Where the evidence for this job lives, when the operation wrote one. */
   receiptPath?: string;
+  /** Exact final receipt id, retained even when the host does not persist it to a path. */
+  receiptId?: string;
+  /** A compact reference to producer evidence already contained by the final receipt. */
+  producerEvidence?: { frameLane: MotionJobFrameLane; schema?: string };
+  /** A retry is a new run, never a mutation of the source job. */
+  lineage?: { priorJobId?: string; priorReceiptId?: string; retryAttempt?: number };
 }
 
 export interface MotionJobRegistryServices {
@@ -126,20 +146,6 @@ export function assertMotionJobId(jobId: string): string {
   return jobId;
 }
 
-/**
- * Write a record so a concurrent reader never sees it half-written.
- *
- * Same reasoning as the lease directory: `writeFile` truncates before it fills, and a reader
- * polling at the wrong moment gets a partial file. Renaming a fully-written sibling is atomic.
- */
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "w" });
-  await rename(temporary, path);
-}
-
-
-
 /** Per-user store of finished work, pruned by age and count. */
 export class MotionJobRegistry {
   private readonly root: string;
@@ -166,15 +172,14 @@ export class MotionJobRegistry {
   async record(record: MotionJobRecord): Promise<void> {
     if (this.degraded) return;
     try {
-      await mkdir(this.root, { recursive: true });
-      await writeJsonAtomic(this.recordPath(record.jobId, record.endedAtMs), record);
+      await writeMotionJobRecord(this.root, record);
     } catch {
       this.degraded = true;
       return;
     }
     // A jobId may legitimately be reused by a host that names its own jobs. Without this, the two
     // runs would sit side by side under different end times and both answer the same lookup.
-    await this.removeOtherFilesFor(record.jobId, record.endedAtMs);
+    await removeOtherMotionJobRecords(this.root, record);
     await this.prune();
   }
 
@@ -186,17 +191,31 @@ export class MotionJobRegistry {
    * resource layer, the layer that writes one amends the record afterwards. A no-op when the record
    * is gone, which is the honest result for a job whose evidence has already been pruned.
    */
-  async amend(jobId: string, patch: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings">): Promise<void> {
+  async amend(input: {
+    callerId: string;
+    jobId: string;
+    patch: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings">;
+  }): Promise<void>;
+  /** @deprecated Pass `{ callerId, jobId, patch }`; ambiguous external ids are refused. */
+  async amend(jobId: string, patch: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings">): Promise<void>;
+  async amend(
+    input: { callerId: string; jobId: string; patch: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings"> } | string,
+    positionalPatch?: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings">
+  ): Promise<void> {
     if (this.degraded) return;
-    const existing = await this.findRecord(jobId);
-    if (!existing) return;
+    const authenticated = typeof input !== "string";
+    const existing = authenticated
+      ? await this.findRecord({ jobId: input.jobId, callerId: input.callerId })
+      : await findUnambiguousMotionJobRecord(this.root, input);
+    const patch = authenticated ? input.patch : positionalPatch;
+    if (!existing || !patch || (authenticated && existing.callerId !== input.callerId)) return;
     const merged: MotionJobRecord = {
       ...existing,
       ...(patch.receiptPath ? { receiptPath: patch.receiptPath } : {}),
       ...(patch.warnings ? { warnings: [...existing.warnings, ...patch.warnings] } : {})
     };
     try {
-      await writeJsonAtomic(this.recordPath(jobId, merged.endedAtMs), merged);
+      await writeMotionJobRecord(this.root, merged);
     } catch {
       this.degraded = true;
     }
@@ -211,7 +230,7 @@ export class MotionJobRegistry {
   async read(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<
     { ok: true; record: MotionJobRecord } | { ok: false; code: "job_unknown" | "job_expired" | "job_not_visible" }
   > {
-    const record = await this.findRecord(input.jobId);
+    const record = await this.findRecord(input);
     if (!record) {
       const mintedAtMs = motionJobIdMintedAtMs(input.jobId);
       // Only an id whose age we can actually read may be called expired.
@@ -229,14 +248,23 @@ export class MotionJobRegistry {
    * asking for the last twenty jobs reads twenty files, not the whole retained history.
    */
   async list(input: { callerId: string; scope?: "own" | "all"; limit?: number }): Promise<MotionJobRecord[]> {
-    const files = (await this.listFiles()).sort((left, right) => right.endedAtMs - left.endedAtMs);
+    const files = (await listMotionJobRecordFiles(this.root)).sort((left, right) => right.endedAtMs - left.endedAtMs);
     const limit = Math.max(0, Math.min(input.limit ?? JOB_RECORD_RETENTION_COUNT, JOB_RECORD_RETENTION_COUNT));
     const visible: MotionJobRecord[] = [];
+    const seen = new Set<string>();
     for (const file of files) {
       if (visible.length >= limit) break;
-      const record = await this.readRecord(join(this.root, file.name));
+      const record = await readMotionJobRecord(this.root, file.name);
       if (!record) continue;
-      if (input.scope !== "all" && record.callerId !== input.callerId) continue;
+      const current = isCurrentMotionJobRecordFile(file.name, record);
+      // Old record paths were keyed by external job id alone.  They can only be read by their
+      // stored owner; `scope: all` is not an owner selector and must not turn them into a
+      // cross-owner compatibility leak.
+      if (!current && record.callerId !== input.callerId) continue;
+      if (current && input.scope !== "all" && record.callerId !== input.callerId) continue;
+      const identity = motionJobOwnerKey(record.callerId, record.jobId);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
       visible.push(record);
     }
     return visible;
@@ -254,23 +282,12 @@ export class MotionJobRegistry {
    */
   async prune(): Promise<void> {
     if (this.degraded) return;
-    const files = await this.listFiles();
-    const cutoff = this.now() - JOB_RECORD_RETENTION_MS;
-    const aged = files.filter((file) => file.endedAtMs < cutoff);
-    const fresh = files.filter((file) => file.endedAtMs >= cutoff)
-      .sort((left, right) => right.endedAtMs - left.endedAtMs);
-    const overflow = fresh.slice(JOB_RECORD_RETENTION_COUNT);
-    await Promise.all([...aged, ...overflow].map((file) =>
-      rm(join(this.root, file.name), { force: true }).catch(() => {})));
+    await pruneMotionJobRecords(this.root, this.now(), JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
   }
 
-  /** Every record file with its end time, read from the name alone. */
-  private async listFiles(): Promise<Array<{ name: string; endedAtMs: number }>> {
-    const entries = await readdir(this.root).catch(() => [] as string[]);
-    return entries.flatMap((name) => {
-      const parsed = /^(.+)--(\d+)\.job\.json$/.exec(name);
-      return parsed ? [{ name, endedAtMs: Number(parsed[2]) }] : [];
-    });
+  /** Internal compatibility guard for ownerless legacy event snapshots. */
+  async hasExclusiveOwnedLegacyEventRecord(input: { callerId: string; jobId: string }): Promise<boolean> {
+    return await hasExclusiveOwnedLegacyMotionJobRecord(this.root, input);
   }
 
   /**
@@ -280,60 +297,26 @@ export class MotionJobRegistry {
    * differ only in characters the filename encoding folds together (`a:b` and `a-b`) produce the
    * same prefix, and returning the wrong job's evidence would be worse than returning none.
    */
-  private async findRecord(jobId: string): Promise<MotionJobRecord | null> {
-    const prefix = `${motionJobFileKey(jobId)}--`;
-    const candidates = (await this.listFiles())
-      .filter((file) => file.name.startsWith(prefix))
-      .sort((left, right) => right.endedAtMs - left.endedAtMs);
+  private async findRecord(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<MotionJobRecord | null> {
+    const candidates = (await listMotionJobRecordFiles(this.root))
+      .sort((left, right) => right.endedAtMs - left.endedAtMs || compareCodeUnits(left.name, right.name));
+    let deniedCurrent: MotionJobRecord | null = null;
     for (const candidate of candidates) {
-      const record = await this.readRecord(join(this.root, candidate.name));
-      if (record?.jobId === jobId) return record;
+      const record = await readMotionJobRecord(this.root, candidate.name);
+      if (!record || record.jobId !== input.jobId) continue;
+      const current = isCurrentMotionJobRecordFile(candidate.name, record);
+      if (current && input.scope === "all") return record;
+      if (current && record.callerId === input.callerId) return record;
+      if (current) {
+        deniedCurrent ??= record;
+        continue;
+      }
+      // A pre-owner-namespace record is compatible only for the identity stored in the record.
+      // Its path alone has no authenticated owner information, so it is never considered for an
+      // `all` read of a different caller's tuple.
+      if (!current && record.callerId === input.callerId) return record;
     }
-    return null;
+    return deniedCurrent;
   }
 
-  /**
-   * Remove earlier files for a job that has just been rewritten under a new end time.
-   *
-   * Every candidate is read and its stored `jobId` checked before deletion. `findRecord` already
-   * verified contents on the READ path while this delete trusted the filename prefix alone, and
-   * that asymmetry was the whole defect: under the old folded encoding a second caller writing
-   * `a-b` prefix-matched and deleted the terminal record of a different caller's `a:b`, so a job
-   * that had genuinely succeeded answered `job_unknown` for good. The prefix is injective now;
-   * confirming before an irreversible delete is what keeps a future encoding change from
-   * re-opening it.
-   */
-  private async removeOtherFilesFor(jobId: string, keepEndedAtMs: number): Promise<void> {
-    const prefix = `${motionJobFileKey(jobId)}--`;
-    const candidates = (await this.listFiles()).filter((file) =>
-      file.name.startsWith(prefix) && file.endedAtMs !== keepEndedAtMs);
-    await Promise.all(candidates.map(async (file) => {
-      const path = join(this.root, file.name);
-      const record = await this.readRecord(path);
-      // An unreadable file under this job's own prefix is this job's own corrupt leftover; a
-      // readable one naming another job is not ours to delete.
-      if (record && record.jobId !== jobId) return;
-      await rm(path, { force: true }).catch(() => {});
-    }));
-  }
-
-  private recordPath(jobId: string, endedAtMs: number): string {
-    return join(this.root, `${motionJobFileKey(jobId)}--${Math.max(0, Math.floor(endedAtMs))}.job.json`);
-  }
-
-  private async readRecord(path: string): Promise<MotionJobRecord | null> {
-    try {
-      const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<MotionJobRecord>;
-      if (parsed?.schema !== "shellx-motion/job-record@1") return null;
-      if (typeof parsed.jobId !== "string" || typeof parsed.endedAtMs !== "number") return null;
-      if (typeof parsed.outcome !== "string") return null;
-      // Records written before owner attribution still describe real work; treat them as
-      // unattributed rather than dropping evidence a caller may be waiting on.
-      if (typeof parsed.callerId !== "string") parsed.callerId = UNATTRIBUTED_CALLER_ID;
-      if (!Array.isArray(parsed.warnings)) parsed.warnings = [];
-      return parsed as MotionJobRecord;
-    } catch {
-      return null;
-    }
-  }
 }

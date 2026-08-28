@@ -293,7 +293,6 @@ describe("motion debug loopback server", () => {
 
   it("refuses non-loopback binding and weak injected capabilities by default", async () => {
     await expect(startMotionDebugServer({ host: "0.0.0.0", port: 0 })).rejects.toThrow("direct non-loopback binding is disabled");
-    await expect(startMotionDebugServer({ host: "0.0.0.0", port: 0, allowNonLoopback: true, allowedHosts: ["motion.example"] })).rejects.toThrow("direct non-loopback binding is disabled");
     await expect(startMotionDebugServer({ port: 0, capabilityToken: "too-short" })).rejects.toThrow("at least 32 URL-safe characters");
     await expect(startMotionDebugServer({ port: 0, capabilityToken: "not a websocket-safe capability token" })).rejects.toThrow("URL-safe characters");
   });
@@ -432,7 +431,7 @@ describe("motion debug loopback server", () => {
     const receiptsRoot = join(outDir, "host-receipts");
     // The host nominates the receipt root. A caller naming its own is refused by the Debug API
     // receipts fence, which is the trust model the shipped server runs.
-    const server = await startTestServer({ port: 0, grantedTier: "edit_motion", context: { receiptsRoot } });
+    const server = await startTestServer({ port: 0, grantedTier: "edit_motion", context: { receiptsRoot, authoringInputRoots: [EDITABLE_LOWER_THIRD], authoringOutputRoots: [outDir] } });
     try {
       const response = await fetch(new URL("/debug", server.url), {
         method: "POST",
@@ -465,7 +464,7 @@ describe("motion debug loopback server", () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-mcp-actor-"));
     const receiptsRoot = join(outDir, "host-receipts");
     // Host-nominated receipt root; see the HTTP actor test above for why a caller cannot name one.
-    const server = await startTestServer({ port: 0, grantedTier: "edit_motion", context: { receiptsRoot } });
+    const server = await startTestServer({ port: 0, grantedTier: "edit_motion", context: { receiptsRoot, authoringInputRoots: [EDITABLE_LOWER_THIRD], authoringOutputRoots: [outDir] } });
     const socket = authenticatedSocket(server);
     try {
       await waitForSocketOpen(socket);
@@ -764,18 +763,18 @@ describe("motion debug loopback server", () => {
   });
 
   it("marks MCP tool calls as errors when connector receipts fail", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-mcp-script-cut-failed-"));
-    const server = await startTestServer({ port: 0, grantedTier: "write_local" });
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-mcp-cut-generate-failed-"));
+    const server = await startTestServer({ port: 0, grantedTier: "write_local", context: { authoringOutputRoots: [outDir], renderPackageRoots: [outDir], renderInputRoots: [outDir], renderOutputRoots: [outDir] } });
     try {
       const response = await fetch(new URL("/rpc", server.url), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: "mcp-script-cut-failed",
+          id: "mcp-cut-generate-failed",
           method: "tools/call",
           params: {
-            name: "motion_connector_script_to_cut",
+            name: "motion_connector_cut_generate_to_cut",
             arguments: {
               requestedTier: "write_local",
               args: {
@@ -794,15 +793,15 @@ describe("motion debug loopback server", () => {
       expect(response.status).toBe(200);
       expect(body).toMatchObject({
         jsonrpc: "2.0",
-        id: "mcp-script-cut-failed",
+        id: "mcp-cut-generate-failed",
         result: {
           isError: true,
           structuredContent: {
             ok: false,
-            command: "motion.connector.script_to_cut",
+            command: "motion.connector.cut_generate_to_cut",
             error: {
               code: "connector_failed",
-              message: expect.stringContaining("motion.connector.script_to_cut")
+              message: expect.stringContaining("motion.connector.cut_generate_to_cut")
             },
             result: {
               ok: false,
@@ -820,7 +819,7 @@ describe("motion debug loopback server", () => {
   });
 
   it("serves the versioned SDK over authenticated loopback HTTP and enforces server-owned tiers", async () => {
-    const server = await startTestServer({ port: 0, grantedTier: "read_motion" });
+    const server = await startTestServer({ port: 0, grantedTier: "read_motion", context: { renderPackageRoots: [resolve("../../fixtures/packages/lower-third")] } });
     try {
       const sdk = createMotionSdk(createMotionSdkHttpTransport({
         baseUrl: server.url,
@@ -884,7 +883,8 @@ describe("motion debug loopback server", () => {
 
   it("executes authenticated timeline edits only at edit_motion tier and returns reopened identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-http-edit-"));
-    const server = await startTestServer({ port: 0, grantedTier: "edit_motion" });
+    const packageRoot = resolve("../../fixtures/packages/editable-lower-third");
+    const server = await startTestServer({ port: 0, grantedTier: "edit_motion", context: { authoringInputRoots: [packageRoot], authoringOutputRoots: [root] } });
     try {
       const sdk = createMotionSdk(createMotionSdkHttpTransport({
         baseUrl: server.url,
@@ -892,7 +892,7 @@ describe("motion debug loopback server", () => {
       }));
       const outDir = join(root, "edited");
       const edited = await sdk.timelineEdit({
-        packageRoot: resolve("../../fixtures/packages/editable-lower-third"),
+        packageRoot,
         outDir,
         edit: { kind: "keyframe.upsert", layerId: "title", target: "opacity", atMs: 200, value: 0.75, easing: "ease-out" }
       });

@@ -30,6 +30,7 @@ import { startMotionDebugServer, type MotionDebugServerHandle } from "./index";
 
 const servers: MotionDebugServerHandle[] = [];
 const tempRoots: string[] = [];
+const TERMINAL_JOB_FIXTURE_NOW_MS = 1_785_681_431_004;
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
@@ -110,7 +111,7 @@ async function debugServer(context: Record<string, unknown> = {}) {
     port: 0,
     capabilityToken: TEST_CAPABILITY_TOKEN,
     grantedTier: "render_motion",
-    context
+    context: { renderPackageRoots: [STATIC_PACKAGE_ROOT, MOTION_PACKAGE_ROOT], ...context }
   });
   servers.push(handle);
   const dispatch = async (command: string, args: unknown = {}, requestedTier = "read_motion") => {
@@ -285,7 +286,10 @@ describe("motion.job.get — the render progress view", () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-workbench-jobs-"));
     tempRoots.push(root);
     const leases = new MotionJobLeaseDirectory({ leaseRoot: join(root, "leases") });
-    const records = new MotionJobRegistry({ recordRoot: join(root, "records") });
+    const records = new MotionJobRegistry({
+      recordRoot: join(root, "records"),
+      now: () => TERMINAL_JOB_FIXTURE_NOW_MS
+    });
     const { dispatch } = await debugServer({ jobView: new MotionJobView({ leases, records }), callerId: "workbench:contract" });
     return { leases, records, dispatch };
   }

@@ -9,7 +9,7 @@
  * receipts are accepted only alongside a named advisory.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../packages/cli/src/main";
@@ -18,19 +18,24 @@ import {
   assertReceiptSucceeded,
   FONT_FALLBACK_ADVISORY,
   MOTION_DENSITY_ADVISORY,
-  NATIVE_CASE_FOLD_ADVISORY,
   readDeliveredMedia
 } from "./render-smoke-status";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const sourceFixtureRoot = join(repoRoot, "fixtures/packages/editable-lower-third");
-const outDir = join(repoRoot, ".scratch", "connectors", "template-cut-render-smoke");
-const packageRoot = join(outDir, "source-package");
-const qualityScratchRoot = join(outDir, "quality-scratch");
+const scratchRoot = await preparePrivateRepoScratch(repoRoot);
+const outDir = join(scratchRoot, "connectors", "template-cut-render-smoke");
+const packageRoot = join(scratchRoot, "sources", "template-cut-render-smoke");
+const qualityScratchRoot = join(scratchRoot, "quality", "template-cut-render-smoke");
 
+await assertPrivateRepoScratchPath(repoRoot, outDir);
+await assertPrivateRepoScratchPath(repoRoot, packageRoot);
+await assertPrivateRepoScratchPath(repoRoot, qualityScratchRoot);
 await rm(outDir, { recursive: true, force: true });
-await mkdir(outDir, { recursive: true });
+await rm(packageRoot, { recursive: true, force: true });
+await rm(qualityScratchRoot, { recursive: true, force: true });
 await cp(sourceFixtureRoot, packageRoot, { recursive: true });
 await shortenTemplatePackage(packageRoot);
 
@@ -51,11 +56,13 @@ const result = await runCli([
 ]);
 
 assert(result.ok, `Template-to-Cut rendered-media smoke failed: ${JSON.stringify(result, null, 2)}`);
+assert.equal(Number((await stat(outDir)).mode) & 0o777, 0o700, "Template-to-Cut P2A delivery must publish a private 0700 root under umask 0002");
 
 const template = readObject(result.template, "result.template");
 const render = readObject(result.render, "result.render");
 const artifacts = readArray(result.artifacts);
 const renderedMedia = artifacts.find((artifact) => readObjectField(artifact, "role", "artifact.role") === "rendered_media");
+const artifactHandle = artifacts.find((artifact) => readObjectField(artifact, "role", "artifact.role") === "artifact_handle");
 const cutPlanArtifact = artifacts.find((artifact) => readObjectField(artifact, "role", "artifact.role") === "cut_plan");
 const packageDir = readString(result.packageDir, "packageDir");
 const renderOutputPath = readString(readObjectField(render, "outputPath", "render.outputPath"), "render.outputPath");
@@ -70,6 +77,7 @@ assert(readObjectField(render, "frameLane", "render.frameLane") === "browser", `
 assert(readObjectField(renderedMedia, "status", "rendered_media.status") === "available", "rendered_media artifact should be available.");
 assert(readObjectField(renderedMedia, "mediaType", "rendered_media.mediaType") === "video/mp4", "rendered_media artifact should be video/mp4.");
 assert(readObjectField(renderedMedia, "primary", "rendered_media.primary") === true, "rendered_media artifact should be primary.");
+assert(readObjectField(artifactHandle, "status", "artifact_handle.status") === "available", "artifact_handle should be available.");
 assert(readObjectField(cutPlanArtifact, "status", "cut_plan.status") === "available", "cut_plan artifact should be available.");
 
 await stat(packageDir);
@@ -87,12 +95,9 @@ const renderSuccess = assertReceiptSucceeded(renderReceipt, {
   label: "Template-to-Cut render",
   expectedAdvisories: [FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
 });
-// The connector receipt adds the `auto` preview pass on top of the render, and `auto` may resolve to
-// either lane depending on host capability — so the lane-specific text advisory of either lane is
-// admissible here, and nothing else is.
 const connectorSuccess = assertReceiptSucceeded(connectorReceipt, {
   label: "Template-to-Cut connector",
-  expectedAdvisories: [FONT_FALLBACK_ADVISORY, NATIVE_CASE_FOLD_ADVISORY, MOTION_DENSITY_ADVISORY]
+  expectedAdvisories: [FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
 });
 assert(readObjectField(cutPlan, "schema", "cutPlan.schema") === "shellx-motion/cut-import-plan@1", "cut import plan schema mismatch.");
 assert(readObjectField(cutPlan, "mode", "cutPlan.mode") === "rendered_media", `expected rendered_media mode, got ${String(readObjectField(cutPlan, "mode", "cutPlan.mode"))}`);

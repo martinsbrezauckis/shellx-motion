@@ -1,0 +1,18 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_gpu_g9_particle_cathedral",
+  "name": "Particle Cathedral — G9 GPU Film",
+  "motion": "motion.json",
+  "assets": [
+    "assets/fonts/inter-latin-600-normal.woff2",
+    "assets/fonts/inter-latin-900-normal.woff2",
+    "assets/fonts/LICENSE-Inter.txt"
+  ],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["gpu", "ffmpeg"],
+    "hosts": ["motion"]
+  },
+  "quality": { "maxFontFallbacks": 0 },
+  "workflow": "g9-advanced-gpu-film"
+}

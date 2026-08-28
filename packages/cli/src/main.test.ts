@@ -1,20 +1,25 @@
-import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir as mkdirRaw, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  hashPackageFile,
   integrationCapabilitiesForHost,
+  loadMotionPackage,
   MOTION_DOCUMENT_LIMITS,
   type OperationReceipt
 } from "@shellx-motion/core";
-import type { BrowserFrameRenderer } from "@shellx-motion/debug-api";
-import { clearDefaultEncodePolicyCache, resolveFfmpegExecutable, type FfmpegCommand, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
+import { dispatchDebugCommand, type BrowserFrameRenderer } from "@shellx-motion/debug-api";
+import { clearDefaultEncodePolicyCache, resolveFfmpegExecutable, type FfmpegCommand, type FfmpegProcessResult, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
 import {
   normalizeWindowsExtendedPath,
   renderFrameSequenceBudgetError,
   runCli as runCliRaw,
   type RunCliOptions
 } from "./main";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+import { withCliSourceWorkspaceAnchor } from "./debug-context-cli";
 // Shared test scaffolding split out of this monolith for the module-size gate. tempDirs/execFile
 // are singletons owned by main.test-support so afterEach and every fixture builder share one instance.
 import {
@@ -36,9 +41,9 @@ import {
   storyboardPanelScriptedVideo,
   STRUCTURED_4X2_PNG,
   tempDirs,
-  withEnv,
-  writePlatformReceipt
+  withEnv
 } from "./main.test-support";
+import { writePlatformReceipt } from "./platform-verification.test-support";
 import {
   htmlSnippetImportFixture,
   rewriteTinyNativePackageTitle,
@@ -63,6 +68,29 @@ import {
 const fixtureRoot = resolve("../../fixtures/packages/lower-third");
 const batchFixtureRoot = resolve("../../fixtures/packages/batch-card");
 const runCli = (argv: string[], options: RunCliOptions = {}) => runCliRaw(argv, { trustedLocalTier: true, ...options });
+const HTML_TYPOGRAPHY_WARNING = "Browser HTML/web/canvas typography is unverified: font provenance and fallback coverage are not attestable.";
+// These cases exercise Linux descriptor-relative receipt/state reads or the declared Linux-only
+// Browser-to-FFmpeg P2B connectors. Non-Linux hosts verify their fail-closed/platform-inapplicable
+// behavior in focused tests and record the corresponding platform skips in the host ladder.
+const itLinux = process.platform === "linux" ? it : it.skip;
+
+// Test-created admitted directories must not inherit the host's umask. Unsafe-parent cases opt
+// out explicitly with their asserted mode, so they remain meaningful authority regressions.
+const mkdir = (path: string, options: { recursive?: boolean; mode?: number } = {}) =>
+  mkdirRaw(path, { mode: 0o700, ...options });
+
+function browserColorAlphaContract() {
+  return expect.objectContaining({
+    sourceEncoding: "sdr-srgb-encoded",
+    rasterInput: "unprofiled-srgb-assumed",
+    embeddedProfiles: "unsupported-undefined",
+    alphaBoundary: "browser-managed-before-png-capture",
+    filterDomain: "chromium-managed",
+    blendDomain: "chromium-managed",
+    crossRendererConformance: false,
+    unsupported: ["hdr", "wide-gamut", "icc-profile-conversion", "ocio", "user-selectable-working-space"]
+  });
+}
 
 function isFfprobeCommand(command: FfmpegCommand): boolean {
   return basename(command.executable).toLowerCase().startsWith("ffprobe");
@@ -70,6 +98,101 @@ function isFfprobeCommand(command: FfmpegCommand): boolean {
 
 function isFfmpegCommand(command: FfmpegCommand): boolean {
   return basename(command.executable).toLowerCase().startsWith("ffmpeg");
+}
+
+function streamedVideoProbe(codecName = "h264", formatName = "mov,mp4"): FfmpegProcessResult {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      streams: [{
+        codec_type: "video",
+        codec_name: codecName,
+        width: 640,
+        height: 360,
+        avg_frame_rate: "10/1",
+        pix_fmt: "yuv420p",
+        color_space: "bt709",
+        color_transfer: "bt709",
+        color_primaries: "bt709",
+        color_range: "tv"
+      }],
+      format: { duration: "0.300000", format_name: formatName }
+    }),
+    stderr: ""
+  };
+}
+
+/**
+ * Image2pipe is a process contract, not a command-runner contract. Batch tests use this host-only
+ * seam to record the real stream command and write its attested output while their FfmpegRunner
+ * remains responsible only for probes and readback.
+ */
+function streamedBatchProcessFactory(
+  commands: FfmpegCommand[],
+  outputContents = "fake streamed batch"
+): NonNullable<RunCliOptions["streamingProcessFactory"]> {
+  return async (input) => {
+    commands.push(input.command);
+    input.reportProcessContainment({
+      schema: "shellx-motion/process-containment@1",
+      mode: "unix-process-group",
+      status: "enforced",
+      killTree: true,
+      memoryLimit: "rss-monitor"
+    });
+    const outputPath = input.command.args.at(-1);
+    if (!outputPath) throw new Error("streamed batch test command has no output path");
+    let resolveClosed!: (result: FfmpegProcessResult) => void;
+    const closed = new Promise<FfmpegProcessResult>((resolve) => { resolveClosed = resolve; });
+    let settled: FfmpegProcessResult | undefined;
+    const settle = (result: FfmpegProcessResult) => {
+      if (!settled) {
+        settled = result;
+        resolveClosed(result);
+      }
+      return settled;
+    };
+    return {
+      closed,
+      write: async () => ({ backpressured: false, bufferedInputBytes: 0, inputHighWaterMarkBytes: 16 * 1024 }),
+      end: async () => {
+        await mkdir(dirname(outputPath), { recursive: true });
+        await writeFile(outputPath, outputContents, "utf8");
+        return settle({ exitCode: 0, stdout: "", stderr: "" });
+      },
+      abort: async () => settle({ exitCode: 1, stdout: "", stderr: "aborted" })
+    };
+  };
+}
+
+function materializedBatchBrowserFrameRenderer(): BrowserFrameRenderer {
+  return async (pkg, options) => {
+    const outputPath = options.outputPath ?? join(options.outDir, `${pkg.manifest.id}-${options.atMs}.png`);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, CONTRAST_PNG);
+    const output = {
+      path: outputPath,
+      sha256: `${String(options.atMs).padStart(4, "0")}${"a".repeat(60)}`.slice(0, 64),
+      format: "png" as const,
+      width: pkg.motion.width,
+      height: pkg.motion.height,
+      atMs: options.atMs,
+      browser: { name: "chromium", version: "test" },
+      viewport: { width: pkg.motion.width, height: pkg.motion.height, deviceScaleFactor: 1 }
+    };
+    return {
+      ok: true,
+      output,
+      receipt: cliDebugReceipt({
+        id: `materialized-batch-frame-${options.atMs}`,
+        operation: "preview.frame",
+        status: "passed",
+        packageId: pkg.manifest.id,
+        lane: "browser",
+        output
+      })
+    };
+  };
 }
 
 // Isolate the shared encode-policy probe cache per test so each render observes a fresh probe.
@@ -152,7 +275,8 @@ describe("shellx-motion CLI", () => {
       commands: expect.arrayContaining([
         expect.objectContaining({ name: "actions", usage: "shellx-motion actions find|guide|plan <request>" }),
         expect.objectContaining({ name: "debug", usage: "shellx-motion debug <surface-command> [options]" }),
-        expect.objectContaining({ name: "connector", usage: "shellx-motion connector canvas-bridge-export|canvas-to-cut|canvas-to-mp4|script-to-cut|source-to-cut|cut-generate-to-cut|template-to-cut <input> --out <dir>" }),
+        expect.objectContaining({ name: "runtime-probe", usage: "shellx-motion runtime-probe" }),
+        expect.objectContaining({ name: "connector", usage: "shellx-motion connector catalog | describe <capability-id> | canvas-bridge-export|canvas-to-cut|canvas-to-mp4|script-to-cut|source-to-cut|cut-generate-to-cut|template-to-cut <input> --out <dir>", purpose: expect.stringContaining("Canvas/Script/Source-to-Cut P2B is Linux-only") }),
         expect.objectContaining({ name: "render-batch", usage: "shellx-motion render-batch <package> --out <dir>" }),
         expect.objectContaining({ name: "package-extract", usage: "shellx-motion package-extract <archive.shellxmotion> --out <package-dir>" })
       ]),
@@ -164,7 +288,7 @@ describe("shellx-motion CLI", () => {
         "shellx-motion actions plan \"render this lower third as mp4\"",
         "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --execute-agent-commands --receipts-root .scratch/receipts",
         "shellx-motion prompt run \"edit title and preview\" --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
-        "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero --dry-run-render"
+        "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero"
       ])
     });
   });
@@ -243,11 +367,26 @@ describe("shellx-motion CLI", () => {
     expect(renderFrameSequenceBudgetError(20_000, 3840, 2160)).toContain("pixel-frames");
   });
 
+  it("returns the same materialized browser preflight refusal for dry-run and execution", async () => {
+    const options: RunCliOptions = {
+      materializedFrameSequencePreflight: { jobPolicy: { maxProcessTreeRssBytes: 64 * 1024 * 1024 } }
+    };
+    const args = ["render", "../../fixtures/packages/lower-third", "--out", join(tmpdir(), "shellx-motion-preflight.mp4"), "--keep-frames"];
+
+    const [dryRun, execution] = await Promise.all([
+      runCliRaw([...args, "--dry-run"], options),
+      runCliRaw(args, options)
+    ]);
+
+    expect(dryRun).toMatchObject({ ok: false, error: { code: "render_resource_preflight_exceeded", resourcePreflight: { status: "refused" } } });
+    expect(execution).toMatchObject({ ok: false, error: { code: "render_resource_preflight_exceeded", resourcePreflight: { status: "refused" } } });
+  });
+
   /**
-   * The create-time bound and the render-time refusal are two copies of one budget.
+   * The create-time bound and the render-time refusal share Core's absolute sequence budget.
    *
    * `motion.package.create` refuses a document above `MOTION_DOCUMENT_LIMITS` (core), and this
-   * render refuses a frame sequence above its own constants (`renderFrameSequenceBudgetError`,
+   * render delegates its static refusal to the same Core authority (`renderFrameSequenceBudgetError`,
    * above). If those ever stop meaning the same thing, the cold-start command starts authoring
    * packages the very next render rejects — the failure the command-and-creation contract was about. Behavioural rather than
    * literal on purpose: it asserts at the boundary, so it fails whichever copy moves.
@@ -334,6 +473,26 @@ describe("shellx-motion CLI", () => {
     }
   });
 
+  it("ignores a stale INIT_CWD inherited from the source checkout parent", async () => {
+    const previousInitCwd = process.env.INIT_CWD;
+    process.env.INIT_CWD = resolve("../../..");
+    try {
+      const result = await runCli(["validate", "fixtures/packages/lower-third"]);
+
+      expect(result).toMatchObject({
+        ok: true,
+        command: "validate",
+        packageId: "pkg_lower_third"
+      });
+    } finally {
+      if (previousInitCwd === undefined) {
+        delete process.env.INIT_CWD;
+      } else {
+        process.env.INIT_CWD = previousInitCwd;
+      }
+    }
+  });
+
   it("prints action plans for natural prompt wording", async () => {
     const result = await runCli(["actions", "plan", "make the title blue and preview it"]);
 
@@ -377,7 +536,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes timeline panel debug commands through the CLI", async () => {
+  itLinux("routes timeline panel debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     tempDirs.push(packageRoot);
     const motionPath = join(packageRoot, "motion.json");
@@ -658,7 +817,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes preview panel debug commands through the CLI", async () => {
+  itLinux("routes preview panel debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     tempDirs.push(packageRoot);
 
@@ -785,6 +944,71 @@ describe("shellx-motion CLI", () => {
     ]);
   });
 
+  it("keeps schema-defined root alternatives visible in CLI action guides and plans", async () => {
+    const guide = await runCli(["actions", "guide", "list motion templates"]);
+    const plan = await runCli(["actions", "plan", "template plan"]);
+    const rootRequirement = {
+      requiredArgGroups: [{
+        mode: "anyOf",
+        alternatives: [["templateRoot"], ["packageRoot"], ["packageRoots"]]
+      }]
+    };
+
+    expect(guide).toMatchObject({ ok: true, command: "actions.guide" });
+    expect(plan).toMatchObject({ ok: true, command: "actions.plan" });
+    const guideCatalog = (guide.steps as Array<Record<string, unknown>>).find((step) => step.call === "motion.template.catalog");
+    const planCatalog = (plan.steps as Array<Record<string, unknown>>).find((step) => step.call === "motion.template.catalog");
+    const templatePlan = (plan.steps as Array<Record<string, unknown>>).find((step) => step.call === "motion.template.plan");
+    expect(guideCatalog).toMatchObject(rootRequirement);
+    expect(guideCatalog).not.toHaveProperty("requiredArgs");
+    expect(planCatalog).toMatchObject(rootRequirement);
+    expect(planCatalog).not.toHaveProperty("requiredArgs");
+    expect(templatePlan).toMatchObject({ requiredArgs: ["request"], ...rootRequirement });
+  });
+
+  it("returns package-patch and vector-import discovery with argument contracts and navigation", async () => {
+    for (const request of ["patch package", "apply JSON patch", "bulk edit package"]) {
+      await expect(runCli(["actions", "find", request])).resolves.toMatchObject({
+        ok: true,
+        command: "actions.find",
+        matched: true,
+        action: { id: "motion.package.patch", permission: "edit_motion" },
+        related: expect.any(Array)
+      });
+    }
+
+    const patch = await runCli(["actions", "guide", "apply JSON patch"]);
+    expect(patch).toMatchObject({
+      actionId: "motion.package.patch",
+      examples: [expect.objectContaining({ call: "motion.package.patch" })],
+      related: expect.arrayContaining([expect.objectContaining({ id: "motion.revision.transaction" })])
+    });
+    expect((patch.steps as Array<{ call: string; requiredArgs?: string[] }>)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ call: "motion.package.patch", requiredArgs: ["packageRoot", "outDir", "patch"] })
+    ]));
+
+    const lottie = await runCli(["actions", "guide", "import Lottie"]);
+    expect(lottie).toMatchObject({
+      actionId: "motion.lottie.import",
+      steps: [expect.objectContaining({
+        call: "motion.lottie.import",
+        permission: "write_local",
+        requiredArgs: ["sourcePath", "outDir"]
+      })],
+      examples: [expect.objectContaining({ call: "motion.lottie.import" })],
+      related: expect.arrayContaining([expect.objectContaining({ id: "motion.dotlottie.import" })])
+    });
+
+    await expect(runCli(["actions", "guide", "import dotLottie"])).resolves.toMatchObject({
+      actionId: "motion.dotlottie.import",
+      steps: [expect.objectContaining({
+        call: "motion.dotlottie.import",
+        permission: "write_local",
+        requiredArgs: ["sourcePath", "outDir"]
+      })]
+    });
+  });
+
   it("routes tracking lifecycle aliases through typed debug commands", async () => {
     const request = await runCli([
       "debug", "tracking-request", "--tier", "write_local",
@@ -805,7 +1029,7 @@ describe("shellx-motion CLI", () => {
     expect(verify).toMatchObject({ ok: false, command: "debug.tracking-verify", error: { code: "invalid_args", message: "motion.analysis.tracking.verify requires packageRoot." } });
   });
 
-  it("routes remaining registry debug aliases through the CLI", async () => {
+  itLinux("routes remaining registry debug aliases through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     const renderOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-render-final-"));
     const scriptOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-script-compile-"));
@@ -849,6 +1073,18 @@ describe("shellx-motion CLI", () => {
       join(renderOutDir, "final.mp4"),
       "--dry-run"
     ]);
+    const reuseDryRun = await runCli([
+      "debug",
+      "render-final",
+      "--tier",
+      "render_motion",
+      "--package",
+      packageRoot,
+      "--output",
+      join(renderOutDir, "reuse-dry-run.mp4"),
+      "--dry-run",
+      "--reuse-attested"
+    ]);
     const scriptCompile = await runCli([
       "debug",
       "script-compile",
@@ -863,7 +1099,7 @@ describe("shellx-motion CLI", () => {
       "debug",
       "canvas-package",
       "--tier",
-      "render_motion",
+      "write_local",
       "--canvas-selection",
       selectionPath,
       "--out",
@@ -954,6 +1190,11 @@ describe("shellx-motion CLI", () => {
       command: "debug.render-final",
       visibleState: { operation: "render.final", status: "planned" },
       result: { ok: true, dryRun: true, outputPath: join(renderOutDir, "final.mp4") }
+    });
+    expect(reuseDryRun).toMatchObject({
+      ok: false,
+      command: "debug.render-final",
+      error: { code: "invalid_args", message: "motion.render.final reuseAttested cannot be combined with dryRun." }
     });
     expect(scriptCompile).toMatchObject({
       ok: true,
@@ -1322,7 +1563,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes receipt list and read debug commands through the CLI", async () => {
+  itLinux("routes receipt list and read debug commands through the CLI", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-receipts-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const receipt = cliDebugReceipt({
@@ -1402,26 +1643,12 @@ describe("shellx-motion CLI", () => {
     }
   });
 
-  it("routes platform verification panel debug commands through the CLI", async () => {
+  itLinux("routes platform verification panel debug commands through the CLI", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-platform-panel-"));
     const receiptsRoot = join(tempRoot, "receipts");
     try {
       await mkdir(receiptsRoot, { recursive: true });
-      await writeFile(
-        join(receiptsRoot, "linux.platform.json"),
-        `${JSON.stringify({
-          schema: "shellx-motion/platform-verification@1",
-          status: "passed",
-          dryRun: false,
-          host: { id: "linux", hostname: "linux.example.test", platform: "linux", arch: "x64", release: "6.8.0", node: "v24.0.0" },
-          hostMatrix: { required: ["linux", "windows", "macos"], current: "linux", currentRequired: true, satisfied: ["linux"], missing: ["windows", "macos"], complete: false, status: "partial" },
-          repoRoot: "/workspace/ShellX Motion",
-          startedAt: "2026-07-03T10:00:00.000Z",
-          finishedAt: "2026-07-03T10:05:00.000Z",
-          commands: [{ id: "typecheck", command: ["pnpm", "typecheck"], required: true, category: "core", status: "passed" }]
-        }, null, 2)}\n`,
-        "utf8"
-      );
+      await writePlatformReceipt(receiptsRoot, "linux");
       await writeFile(
         join(receiptsRoot, "aggregate.platform.json"),
         `${JSON.stringify({
@@ -1477,7 +1704,7 @@ describe("shellx-motion CLI", () => {
     }
   });
 
-  it("routes render status and export preset debug commands through the CLI", async () => {
+  itLinux("routes render status and export preset debug commands through the CLI", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-render-status-"));
     const receiptsRoot = join(tempRoot, "receipts");
     const receipt = cliDebugReceipt({
@@ -1696,7 +1923,7 @@ describe("shellx-motion CLI", () => {
           cutConnectorCount: 5,
           independentExportCount: 1,
           renderedMediaCount: 6,
-          qualityGateCount: 3,
+          qualityGateCount: 1,
           warningCount: 0
         },
         result: {
@@ -1707,7 +1934,7 @@ describe("shellx-motion CLI", () => {
             cutConnectors: 5,
             independentExports: 1,
             renderedMedia: 6,
-            qualityGated: 3
+            qualityGated: 1
           },
           cards: expect.arrayContaining([
             expect.objectContaining({ id: "canvas_to_mp4", command: "motion.connector.canvas_to_mp4", outputKind: "mp4" }),
@@ -1972,15 +2199,13 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes product workflow debug commands through the CLI wrapper", async () => {
+  itLinux("routes product workflow debug commands through the CLI wrapper", async () => {
     const batchOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-batch-"));
     const mp4OutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-canvas-mp4-"));
-    const cutOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-canvas-cut-"));
-    const scriptToCutOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-script-cut-"));
     const scriptOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-cut-generate-"));
     const templateOutDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-template-cut-"));
     const selectionPath = join(mp4OutDir, "frame-selection.json");
-    tempDirs.push(batchOutDir, mp4OutDir, cutOutDir, scriptToCutOutDir, scriptOutDir, templateOutDir);
+    tempDirs.push(batchOutDir, mp4OutDir, scriptOutDir, templateOutDir);
     await writeFile(selectionPath, JSON.stringify(staticShapeTextFrameSelection(), null, 2), "utf8");
 
     const batch = await runCli([
@@ -1988,6 +2213,7 @@ describe("shellx-motion CLI", () => {
       "render-batch",
       "--tier",
       "render_motion",
+      "--trusted-local-tier",
       "--package",
       batchFixtureRoot,
       "--out",
@@ -2015,7 +2241,8 @@ describe("shellx-motion CLI", () => {
       "debug",
       "connector-canvas-to-mp4",
       "--tier",
-      "render_motion",
+      "write_local",
+      "--trusted-local-tier",
       "--canvas-selection",
       selectionPath,
       "--out",
@@ -2050,39 +2277,12 @@ describe("shellx-motion CLI", () => {
       }
     });
 
-    const cut = await runCli([
-      "debug",
-      "connector-canvas-to-cut",
-      "--tier",
-      "write_local",
-      "--canvas-selection",
-      selectionPath,
-      "--out",
-      cutOutDir,
-      "--cut-import-mode",
-      "editable_lowering",
-      "--dry-run-render"
-    ]);
-
-    expect(cut).toMatchObject({
-      ok: true,
-      command: "debug.connector-canvas-to-cut",
-      visibleState: {
-        operation: "connector.canvas_to_cut",
-        ok: true,
-        cutPlanPath: join(cutOutDir, "cut-import-plan.json")
-      },
-      result: {
-        render: { ok: true, required: false, dryRun: true },
-        cutPlanPath: join(cutOutDir, "cut-import-plan.json")
-      }
-    });
-
     const cutGenerate = await runCli([
       "debug",
       "connector-cut-generate-to-cut",
       "--tier",
       "write_local",
+      "--trusted-local-tier",
       "--script-json",
       JSON.stringify(scriptedVideo()),
       "--out",
@@ -2101,38 +2301,17 @@ describe("shellx-motion CLI", () => {
         cutPlanPath: join(scriptOutDir, "cut-import-plan.json")
       },
       result: {
-        scriptPath: join(scriptOutDir, "scripted-video.json"),
-        render: { ok: true, required: true, dryRun: true },
-        cutPlanPath: join(scriptOutDir, "cut-import-plan.json")
-      }
-    });
-
-    const scriptToCut = await runCli([
-      "debug",
-      "connector-script-to-cut",
-      "--tier",
-      "write_local",
-      "--script-json",
-      JSON.stringify(scriptedVideo()),
-      "--out",
-      scriptToCutOutDir,
-      "--created-at",
-      "2026-07-01T00:00:00.000Z",
-      "--dry-run-render"
-    ]);
-
-    expect(scriptToCut).toMatchObject({
-      ok: true,
-      command: "debug.connector-script-to-cut",
-      visibleState: {
-        operation: "connector.script_to_cut",
-        ok: true,
-        cutPlanPath: join(scriptToCutOutDir, "cut-import-plan.json")
-      },
-      result: {
-        scriptPath: join(scriptToCutOutDir, "scripted-video.json"),
-        render: { ok: true, required: true, dryRun: true },
-        cutPlanPath: join(scriptToCutOutDir, "cut-import-plan.json")
+        packageDir: join(scriptOutDir, "package"),
+        preview: { ok: true, lane: "native" },
+        render: {
+          ok: true,
+          required: true,
+          dryRun: true,
+          lane: "ffmpeg",
+          outputPath: join(scriptOutDir, "render", "pkg_script_launch_demo.mp4")
+        },
+        cutPlanPath: join(scriptOutDir, "cut-import-plan.json"),
+        receiptPath: join(scriptOutDir, "connector-run.receipt.json")
       }
     });
 
@@ -2141,6 +2320,7 @@ describe("shellx-motion CLI", () => {
       "connector-template-to-cut",
       "--tier",
       "write_local",
+      "--trusted-local-tier",
       "--package",
       resolve("../../fixtures/cut-native-static-package"),
       "--out",
@@ -2152,18 +2332,9 @@ describe("shellx-motion CLI", () => {
     ]);
 
     expect(template).toMatchObject({
-      ok: true,
+      ok: false,
       command: "debug.connector-template-to-cut",
-      visibleState: {
-        operation: "connector.template_to_cut",
-        ok: true,
-        cutPlanPath: join(templateOutDir, "cut-import-plan.json")
-      },
-      result: {
-        ok: true,
-        packageDir: join(templateOutDir, "package"),
-        cutPlanPath: join(templateOutDir, "cut-import-plan.json")
-      }
+      error: { code: "invalid_args", message: expect.stringContaining("only cutImportMode rendered_media") }
     });
   });
 
@@ -2198,6 +2369,7 @@ describe("shellx-motion CLI", () => {
       "--run"
     ], {
       ffmpegRunner: runner,
+      browserFrameRenderer: materializedBatchBrowserFrameRenderer(),
       scratchRoot: join(outDir, "frames")
     });
 
@@ -2216,11 +2388,24 @@ describe("shellx-motion CLI", () => {
         ok: true,
         dryRun: false,
         jobs: [
-          { rowId: "ada", status: "warning" },
-          { rowId: "grace", status: "warning" }
+          {
+            rowId: "ada",
+            status: "warning",
+            receiptPath: expect.any(String)
+          },
+          {
+            rowId: "grace",
+            status: "warning",
+            receiptPath: expect.any(String)
+          }
         ]
       }
     });
+    const jobs = ((result.result as { jobs: Array<{ receiptPath: string }> }).jobs);
+    const adaReceipt = JSON.parse(await readFile(jobs[0].receiptPath, "utf8")) as Record<string, any>;
+    const graceReceipt = JSON.parse(await readFile(jobs[1].receiptPath, "utf8")) as Record<string, any>;
+    expect(adaReceipt).toMatchObject({ output: { frameTransportPlan: { delivery: "materialized", reason: "injected_frame_renderer" } } });
+    expect(graceReceipt).toMatchObject({ output: { frameTransportPlan: { delivery: "materialized", reason: "injected_frame_renderer" } } });
     expect(commands.filter((command) => command.args[0] === "-version")).toHaveLength(2);
     expect(commands.filter((command) => command.args.includes("-framerate"))).toHaveLength(2);
     await expect(readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).resolves.toContain("fake debug batch");
@@ -2273,7 +2458,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes render cancel and retry debug commands through the CLI", async () => {
+  itLinux("routes render cancel and retry debug commands through the CLI", async () => {
     await expect(runCli(["debug", "render-cancel", "--tier", "render_motion", "--receipt-id", "render-1"])).resolves.toEqual({
       ok: false,
       command: "debug.render-cancel",
@@ -2429,7 +2614,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes prompt queue, cancel, and retry debug commands through the CLI", async () => {
+  itLinux("routes prompt queue, cancel, and retry debug commands through the CLI", async () => {
     await expect(runCli(["debug", "prompt-cancel", "--tier", "draft_motion", "--receipt-id", "prompt-1"])).resolves.toEqual({
       ok: false,
       command: "debug.prompt-cancel",
@@ -2575,7 +2760,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes prompt run debug commands through the CLI with linked prompt and agent receipts", async () => {
+  itLinux("routes prompt run debug commands through the CLI with linked prompt and agent receipts", async () => {
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-prompt-run-"));
     tempDirs.push(receiptsRoot);
 
@@ -2675,9 +2860,13 @@ describe("shellx-motion CLI", () => {
   });
 
   it("routes prompt command execution through the debug CLI with package edit and preview receipts", async () => {
-    const packageRoot = await writeTinyPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-prompt-execute-"));
-    tempDirs.push(packageRoot, outDir);
+    const sourcePackageRoot = await writeTinyPackageWithTimeline();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-prompt-execute-"));
+    const packageRoot = join(workspaceRoot, "package");
+    const outDir = join(workspaceRoot, "outputs");
+    await cp(sourcePackageRoot, packageRoot, { recursive: true });
+    await mkdir(outDir, { mode: 0o700 });
+    tempDirs.push(sourcePackageRoot, workspaceRoot);
     const receiptsRoot = join(outDir, "receipts");
     const patchedPackageRoot = join(outDir, "patched-package");
     const previewOutDir = join(outDir, "preview");
@@ -2696,6 +2885,8 @@ describe("shellx-motion CLI", () => {
       "fake",
       "--receipts-root",
       receiptsRoot,
+      "--cwd",
+      workspaceRoot,
       "--execute-agent-commands"
     ], {
       promptRuntime: {
@@ -2816,7 +3007,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes package-aware state debug commands through the CLI", async () => {
+  itLinux("routes package-aware state debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-state-receipts-"));
     tempDirs.push(packageRoot, receiptsRoot);
@@ -2906,6 +3097,128 @@ describe("shellx-motion CLI", () => {
     });
     const patchedMotion = JSON.parse(await readFile(join(outDir, "motion.json"), "utf8"));
     expect(patchedMotion.layers[0].text).toBe("CLI Title");
+  });
+
+  it("refuses layout-gap root and nested paths through the direct CLI package-patch route before package output", async () => {
+    const packageRoot = await writeTinyPackageWithTimeline();
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-package-patch-layout-gap-"));
+    tempDirs.push(packageRoot, outDir);
+    for (const patch of [
+      [{ op: "add", path: "/layoutGapAnimation", value: { schema: "shellx-motion/layout-gap-animation@1", tracks: [] } }],
+      [{ op: "remove", path: "/layoutGapAnimation" }],
+      [{ op: "replace", path: "/layoutGapAnimation/tracks/0", value: {} }],
+    ]) {
+      const result = await runCli([
+        "debug",
+        "package-patch",
+        "--tier",
+        "edit_motion",
+        "--package",
+        packageRoot,
+        "--out",
+        outDir,
+        "--patch-json",
+        JSON.stringify(patch),
+      ]);
+      expect(result).toEqual({
+        ok: false,
+        command: "debug.package-patch",
+        error: {
+          code: "invalid_args",
+          message: "motion.package.patch reserves /layoutGapAnimation for the typed layout gap animation lifecycle.",
+        },
+        warnings: [],
+      });
+      expect(await readdir(outDir)).toEqual([]);
+    }
+  });
+
+  it("routes one typed atomic revision transaction through the CLI without a host receipt path", async () => {
+    const packageRoot = await writeTinyPackageWithTimeline();
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-revision-transaction-"));
+    tempDirs.push(packageRoot, outDir);
+    const source = await loadMotionPackage(packageRoot);
+    const base = {
+      packageId: source.manifest.id,
+      motionId: source.motion.id,
+      manifestSha256: await hashPackageFile(join(packageRoot, "manifest.json")),
+      motionSha256: await hashPackageFile(join(packageRoot, "motion.json"))
+    };
+
+    const result = await runCli([
+      "debug",
+      "revision-transaction",
+      "--tier",
+      "edit_motion",
+      "--package",
+      packageRoot,
+      "--out",
+      outDir,
+      "--base-json",
+      JSON.stringify(base),
+      "--steps-json",
+      JSON.stringify([{ command: "motion.timeline.layer.text.set", layerId: "title", text: "CLI Atomic Title" }])
+    ]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      command: "debug.revision-transaction",
+      visibleState: { panel: "timeline", operation: "revision.transaction", packageDir: outDir, stepCount: 1 },
+      result: { packageId: source.manifest.id, transactionSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    });
+    expect(JSON.parse(await readFile(join(outDir, "motion.json"), "utf8")).layers[0].text).toBe("CLI Atomic Title");
+    expect(await readdir(join(outDir, "receipts"))).toEqual(["revision-transaction.receipt.json"]);
+
+    const forbidden = await runCli([
+      "debug", "revision-transaction", "--tier", "edit_motion", "--package", packageRoot, "--out", outDir,
+      "--receipts-root", join(outDir, "forbidden")
+    ]);
+    expect(forbidden).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_args",
+        message: "motion.revision.transaction does not accept --receipts-root; pass the bounded base and typed steps inline."
+      }
+    });
+  });
+
+  it("routes a read-only typed revision plan through the CLI with inline base and steps only", async () => {
+    const packageRoot = await writeTinyPackageWithTimeline();
+    tempDirs.push(packageRoot);
+    const source = await loadMotionPackage(packageRoot);
+    const base = {
+      packageId: source.manifest.id,
+      motionId: source.motion.id,
+      manifestSha256: await hashPackageFile(join(packageRoot, "manifest.json")),
+      motionSha256: await hashPackageFile(join(packageRoot, "motion.json"))
+    };
+    const original = await readFile(join(packageRoot, "motion.json"), "utf8");
+
+    const result = await runCli([
+      "debug", "revision-transaction-plan", "--package", packageRoot,
+      "--base-json", JSON.stringify(base),
+      "--steps-json", JSON.stringify([{ command: "motion.timeline.layer.text.set", layerId: "title", text: "CLI Planned Title" }])
+    ]);
+
+    expect(result).toMatchObject({
+      ok: true,
+      command: "debug.revision-transaction-plan",
+      visibleState: { panel: "timeline", operation: "motion.revision.transaction.plan", packageId: source.manifest.id, stepCount: 1 },
+      result: { base, validation: { ok: true, errorCount: 0 }, warnings: [], transactionSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    });
+    expect(JSON.stringify(result)).not.toMatch(/receipt|outDir|packageRoot/i);
+    expect(await readFile(join(packageRoot, "motion.json"), "utf8")).toBe(original);
+
+    const forbidden = await runCli([
+      "debug", "revision-transaction-plan", "--package", packageRoot, "--out", join(packageRoot, "forbidden")
+    ]);
+    expect(forbidden).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_args",
+        message: "motion.revision.transaction.plan does not accept --out; pass the bounded base and typed steps inline."
+      }
+    });
   });
 
   it("routes timeline keyframe upsert debug commands through the CLI", async () => {
@@ -3303,7 +3616,7 @@ describe("shellx-motion CLI", () => {
     expect(patchedMotion.scenes[0].markerIds).toEqual(["start", "outro", "middle"]);
   });
 
-  it("routes timeline control debug commands through the CLI", async () => {
+  itLinux("routes timeline control debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-timeline-controls-receipts-"));
     const statePath = join(packageRoot, ".shellx-motion", "timeline-state.json");
@@ -5033,6 +5346,44 @@ describe("shellx-motion CLI", () => {
           timing: { startMs: 0, endMs: 200, durationMs: 200 }
         }
       });
+    } finally {
+      if (previousInitCwd === undefined) {
+        delete process.env.INIT_CWD;
+      } else {
+        process.env.INIT_CWD = previousInitCwd;
+      }
+    }
+  });
+
+  it("resolves relative Debug --out paths from the source-checkout caller directory", async () => {
+    const previousInitCwd = process.env.INIT_CWD;
+    const callerRoot = resolve("../..");
+    const expectedOutDir = await mkdtemp(join(callerRoot, ".cli-debug-caller-"));
+    const outName = relative(callerRoot, expectedOutDir);
+    const unexpectedPackageDirOut = resolve(outName);
+    tempDirs.push(expectedOutDir, unexpectedPackageDirOut);
+    process.env.INIT_CWD = callerRoot;
+    try {
+      const result = await runCli([
+        "debug",
+        "animation-preset-apply",
+        "--tier",
+        "edit_motion",
+        "--package",
+        fixtureRoot,
+        "--out",
+        outName,
+        "--layer",
+        "title",
+        "--preset",
+        "fade-in",
+        "--duration-ms",
+        "200"
+      ]);
+
+      expect(result).toMatchObject({ ok: true, command: "debug.animation-preset-apply" });
+      await expect(stat(join(expectedOutDir, "motion.json"))).resolves.toBeDefined();
+      await expect(stat(unexpectedPackageDirOut)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       if (previousInitCwd === undefined) {
         delete process.env.INIT_CWD;
@@ -7843,10 +8194,11 @@ describe("shellx-motion CLI", () => {
     expect(Object.prototype.hasOwnProperty.call(patchedMotion.layers[0], "transitions")).toBe(false);
   });
 
-  it("routes support bundle debug commands through the CLI", async () => {
+  itLinux("routes support bundle debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-support-bundle-"));
-    tempDirs.push(packageRoot, outDir);
+    const outParent = await mkdtemp(join(tmpdir(), "shellx-motion-cli-support-bundle-"));
+    const outDir = join(outParent, "bundle");
+    tempDirs.push(packageRoot, outParent);
 
     const result = await runCli([
       "debug",
@@ -8147,8 +8499,9 @@ describe("shellx-motion CLI", () => {
 
   it("exports a standalone HTML snippet through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-html-snippet-"));
-    tempDirs.push(packageRoot, outDir);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-html-snippet-"));
+    const outDir = join(outRoot, "export");
+    tempDirs.push(packageRoot, outRoot);
 
     const result = await runCli([
       "html-snippet-export",
@@ -8175,8 +8528,9 @@ describe("shellx-motion CLI", () => {
 
   it("routes HTML snippet export debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-html-snippet-"));
-    tempDirs.push(packageRoot, outDir);
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-html-snippet-"));
+    const outDir = join(outRoot, "export");
+    tempDirs.push(packageRoot, outRoot);
 
     const result = await runCli([
       "debug",
@@ -8352,6 +8706,33 @@ describe("shellx-motion CLI", () => {
     expect(motion.layers[0]).toMatchObject({ id: "clip_01", type: "video", source: "media/clip01.mp4" });
   });
 
+  it("refuses a direct CLI OTIO import through an existing package symlink", async ({ skip }) => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-otio-import-symlink-"));
+    const outside = await mkdtemp(join(tmpdir(), "shellx-motion-cli-otio-import-outside-"));
+    const otioPath = join(tempRoot, "incoming.otio");
+    const packageRoot = join(tempRoot, "package");
+    tempDirs.push(tempRoot, outside);
+    await writeFile(otioPath, `${JSON.stringify(tinyOtioTimelineFixture(), null, 2)}\n`, "utf8");
+    try {
+      await symlink(outside, packageRoot, "dir");
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create symbolic links.");
+        return;
+      }
+      throw error;
+    }
+
+    const result = await runCli(["otio-import", otioPath, "--out", packageRoot]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "otio-import",
+      error: { code: "otio_import_failed" }
+    });
+    await expect(readFile(join(outside, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("routes OTIO debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-otio-"));
@@ -8415,6 +8796,7 @@ describe("shellx-motion CLI", () => {
   it("lists and applies template controls through the CLI", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-"));
     tempDirs.push(outDir);
+    await expect(stat(resolve("../../fixtures/packages/editable-lower-third/receipts"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const catalog = await runCli([
       "debug",
@@ -8814,6 +9196,7 @@ describe("shellx-motion CLI", () => {
     await writeFile(sourceAssetPath, "replacement image", "utf8");
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-media-"));
     tempDirs.push(packageRoot, sourceRoot, outDir);
+    await expect(stat(join(packageRoot, "receipts"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const result = await runCli([
       "template",
@@ -8862,6 +9245,30 @@ describe("shellx-motion CLI", () => {
         manifestAssets: ["assets/default-headshot.png", "assets/headshot.png"]
       }
     });
+  });
+
+  it("refuses template edits whose source package contains a symbolic link", async ({ skip }) => {
+    if (process.platform === "win32") {
+      skip("The standard Windows test account cannot create package symbolic links.");
+      return;
+    }
+    const fixtureRoot = await writeTemplateMediaPackage();
+    const testRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-linked-"));
+    const packageRoot = join(testRoot, "package");
+    const outsideRoot = join(testRoot, "outside");
+    const outsidePath = join(outsideRoot, "keep.txt");
+    const outDir = join(testRoot, "output");
+    tempDirs.push(fixtureRoot, testRoot);
+    await cp(fixtureRoot, packageRoot, { recursive: true });
+    await Promise.all([mkdirRaw(outsideRoot, { recursive: true }), mkdirRaw(outDir, { recursive: true })]);
+    await writeFile(outsidePath, "outside bytes", "utf8");
+    await symlink(outsidePath, join(packageRoot, "linked-sidecar.txt"), "file");
+
+    await expect(withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(testRoot), async () => await runCli([
+      "template", "apply", packageRoot, "--out", outDir, "--set", "title=Blocked",
+    ]))).rejects.toThrow(/symbolic link/);
+    await expect(readFile(outsidePath, "utf8")).resolves.toBe("outside bytes");
+    await expect(readdir(outDir)).resolves.toEqual([]);
   });
 
   // Output-directory ownership regression coverage. The three directory-producing commands
@@ -8990,7 +9397,7 @@ describe("shellx-motion CLI", () => {
     const packageRoot = await writeTinyNativePackage();
     tempDirs.push(outRoot, packageRoot);
     const emptyDir = join(outRoot, "empty");
-    await mkdir(emptyDir, { recursive: true });
+    await mkdir(emptyDir, { recursive: true, mode: 0o700 });
     const missingDir = join(outRoot, "missing", "frames");
     const renderArgs = (out: string) => [
       "render", packageRoot, "--lane", "ffmpeg", "--preset", "png-sequence", "--frame-lane", "native", "--out", out
@@ -9025,7 +9432,7 @@ describe("shellx-motion CLI", () => {
       error: {
         code: "output_dir_not_empty",
         path: outDir,
-        message: expect.stringContaining("--force")
+        message: expect.stringContaining("Nothing was written or deleted.")
       }
     });
     await expectDecoyOutputDirIntact(outDir);
@@ -9186,7 +9593,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("routes agent revision plan debug commands through the CLI", async () => {
+  itLinux("routes agent revision plan debug commands through the CLI", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-agent-revision-"));
     tempDirs.push(tempRoot);
     const receiptsRoot = join(tempRoot, "receipts");
@@ -9487,12 +9894,12 @@ describe("shellx-motion CLI", () => {
     const scriptPath = join(tempRoot, "scripted-video.json");
     await writeFile(scriptPath, `${JSON.stringify(storyboardPanelScriptedVideo(), null, 2)}\n`, "utf8");
 
-    const result = await runCli([
+    const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () => await runCli([
       "debug",
       "storyboard-panel",
       "--script",
       scriptPath
-    ]);
+    ]));
 
     expect(result).toMatchObject({
       ok: true,
@@ -9545,12 +9952,12 @@ describe("shellx-motion CLI", () => {
     const scriptPath = join(tempRoot, "scripted-video.json");
     await writeFile(scriptPath, `${JSON.stringify(storyboardPanelScriptedVideo(), null, 2)}\n`, "utf8");
 
-    const result = await runCli([
+    const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(tempRoot), async () => await runCli([
       "debug",
       "storyboard-graph",
       "--script",
       scriptPath
-    ]);
+    ]));
 
     expect(result).toMatchObject({
       ok: true,
@@ -9599,53 +10006,6 @@ describe("shellx-motion CLI", () => {
         ])
       },
       warnings: ["Storyboard review is required before compile or Cut handoff."]
-    });
-  });
-
-  it("routes Source-to-Cut debug connector commands through the CLI", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-debug-source-cut-"));
-    tempDirs.push(tempRoot);
-    const sourcePath = join(tempRoot, "source.md");
-    const outDir = join(tempRoot, "source-cut");
-    await writeFile(sourcePath, importedSourceMarkdown(), "utf8");
-
-    const result = await runCli([
-      "debug",
-      "connector-source-to-cut",
-      "--tier",
-      "write_local",
-      "--source",
-      sourcePath,
-      "--out",
-      outDir,
-      "--max-frames",
-      "2",
-      "--frame-duration-ms",
-      "900",
-      "--dry-run-render"
-    ]);
-
-    expect(result).toMatchObject({
-      ok: true,
-      command: "debug.connector-source-to-cut",
-      visibleState: {
-        panel: "receipts",
-        operation: "connector.source_to_cut",
-        ok: true,
-        cutPlanPath: join(outDir, "cut", "cut-import-plan.json"),
-        receiptPath: join(outDir, "receipts", "source-to-cut.receipt.json")
-      },
-      result: {
-        source: { path: sourcePath, kind: "repo" },
-        storyboard: {
-          scriptPath: join(outDir, "storyboard", "scripted-video.json"),
-          frameCount: 2,
-          reviewRequired: true
-        },
-        render: { ok: true, required: true, dryRun: true },
-        cutPlanPath: join(outDir, "cut", "cut-import-plan.json"),
-        receiptPath: join(outDir, "receipts", "source-to-cut.receipt.json")
-      }
     });
   });
 
@@ -9739,9 +10099,9 @@ describe("shellx-motion CLI", () => {
       visibleState: {
         panel: "capabilities",
         operation: "capabilities.panel",
-        cardCount: 7,
+        cardCount: 8,
         categoryCount: 4,
-        laneCount: 7,
+        laneCount: 8,
         packageId: "pkg_web_card",
         recommendedLane: "browser",
         output: "png-frame",
@@ -9753,8 +10113,8 @@ describe("shellx-motion CLI", () => {
         packageId: "pkg_web_card",
         motionId: "motion_web_card",
         summary: {
-          cardCount: 7,
-          laneCount: 7,
+          cardCount: 8,
+          laneCount: 8,
           categoryCount: 4,
           supportedCount: 1,
           recommendedLane: "browser"
@@ -9765,6 +10125,7 @@ describe("shellx-motion CLI", () => {
             supported: true,
             recommended: true,
             badges: expect.arrayContaining(["alpha", "subtitles", "stable", "medium"]),
+            colorAlpha: browserColorAlphaContract(),
             // Third and last copy of this contract. `playwright-core` ships no browser, so "bundled"
             // was a claim Motion could not keep, and the `playwright --version` probe passed on a
             // machine with no browser at all. Fixed in core, then in debug-api's panel test, and the
@@ -9773,7 +10134,7 @@ describe("shellx-motion CLI", () => {
               availability: "external-binary",
               requirement: "Chrome or Chromium browser binary (not shipped; see doctor)",
               cost: "local-cpu",
-              probe: { executable: "chromium", args: ["--version"], shell: false },
+              readiness: { command: "motion.platform.requirements", tools: ["chromium"] },
               setupHint: "Install a Chrome/Chromium browser, or set SHELLX_MOTION_BROWSER to one. Run `doctor` for what this machine is missing."
             }
           }),
@@ -9808,10 +10169,140 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("requires and reports an explicit CLI raw-prompt retention policy", async () => {
+  it("does not let --keep-frames consume a positional or the next option while collecting prompts", async () => {
+    const runtime = createFakePromptRuntime();
+    let prompt = "";
+    const result = await runCli([
+      "prompt", "run", "preview", "--keep-frames", "current package", "--package-id", "lower-third"
+    ], {
+      promptRuntime: {
+        runPrompt: async (input) => {
+          prompt = input.prompt;
+          return runtime.runPrompt(input);
+        }
+      }
+    });
+
+    expect(result).toMatchObject({ ok: true, command: "prompt.run" });
+    expect(prompt).toContain('User request JSON: "preview current package"');
+    expect(prompt).not.toContain("preview current package lower-third");
+  });
+
+  it("keeps direct summary-only prompts portable when raw retention capability is unavailable", async () => {
+    let runtimeCalls = 0;
+    const runtime = createFakePromptRuntime();
+
+    const result = await runCli(["prompt", "run", "preview current package", "--package-id", "lower-third"], {
+      hasStableReceiptPurgeCapability: () => false,
+      promptRuntime: {
+        runPrompt: async (input) => {
+          runtimeCalls += 1;
+          return await runtime.runPrompt(input);
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      command: "prompt.run",
+      promptRetention: { mode: "summary_only", rawRequestRetained: false }
+    });
+    expect(runtimeCalls).toBe(1);
+  });
+
+  it("refuses direct raw retention without stable receipt purge capability before runtime or receipt writes", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-raw-retention-capability-"));
+    tempDirs.push(tempRoot);
+    const receiptsRoot = join(tempRoot, "receipts");
+    const request = "raw prompt that must not reach an unsupported receipt store";
+    const runtime = createFakePromptRuntime();
+    let runtimeCalls = 0;
+
+    const result = await runCli([
+      "prompt", "run", request,
+      "--receipts-root", receiptsRoot,
+      "--retain-raw-prompt",
+      "--raw-prompt-delete-after", "2040-01-02T00:00:00.000Z",
+      "--raw-prompt-purpose", "debugging"
+    ], {
+      hasStableReceiptPurgeCapability: () => false,
+      promptRuntime: {
+        runPrompt: async (input) => {
+          runtimeCalls += 1;
+          return await runtime.runPrompt(input);
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "prompt.run",
+      error: { code: "capability_unavailable", message: expect.stringContaining("stable receipt read-and-purge") }
+    });
+    expect(runtimeCalls).toBe(0);
+    expect(await readdir(tempRoot)).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(request);
+  });
+
+  it("refuses direct raw retention without a governed receipt root before runtime", async () => {
+    const runtime = createFakePromptRuntime();
+    let runtimeCalls = 0;
+
+    const result = await runCli([
+      "prompt", "run", "raw prompt that must not be returned inline",
+      "--retain-raw-prompt",
+      "--raw-prompt-delete-after", "2040-01-02T00:00:00.000Z",
+      "--raw-prompt-purpose", "debugging"
+    ], {
+      hasStableReceiptPurgeCapability: () => true,
+      promptRuntime: {
+        runPrompt: async (input) => {
+          runtimeCalls += 1;
+          return await runtime.runPrompt(input);
+        }
+      }
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "prompt.run",
+      error: { code: "capability_unavailable", message: expect.stringContaining("host-configured receipt root") }
+    });
+    expect(runtimeCalls).toBe(0);
+    expect(JSON.stringify(result)).not.toContain("raw prompt that must not be returned inline");
+  });
+
+  itLinux("refuses a symlinked raw-retention receipt root before provider execution", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-raw-retention-symlink-"));
+    tempDirs.push(tempRoot);
+    const actualRoot = join(tempRoot, "actual");
+    const receiptsRoot = join(tempRoot, "receipts-link");
+    await mkdirRaw(actualRoot, { mode: 0o700 });
+    await symlink(actualRoot, receiptsRoot, "dir");
+    let runtimeCalls = 0;
+
+    const result = await runCli([
+      "prompt", "run", "raw prompt that cannot outlive its stable root",
+      "--receipts-root", receiptsRoot,
+      "--retain-raw-prompt",
+      "--raw-prompt-delete-after", "2040-01-02T00:00:00.000Z",
+      "--raw-prompt-purpose", "debugging"
+    ], {
+      hasStableReceiptPurgeCapability: () => true,
+      promptNow: () => "2040-01-01T00:00:00.000Z",
+      promptRuntime: { runPrompt: async () => { runtimeCalls += 1; throw new Error("must not execute"); } }
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "capability_unavailable", message: expect.stringContaining("stable receipt root") } });
+    expect(runtimeCalls).toBe(0);
+    expect(await readdir(actualRoot)).toEqual([]);
+  });
+
+  it("admits direct raw retention only with a supported governed receipt store", async () => {
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-"));
     tempDirs.push(receiptsRoot);
-    const deleteAfter = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const createdAt = "2040-01-01T00:00:00.000Z";
+    const deleteAfter = "2040-01-08T00:00:00.000Z";
     const request = "Project Cobalt exact CLI replay";
 
     const result = await runCli([
@@ -9827,7 +10318,11 @@ describe("shellx-motion CLI", () => {
       deleteAfter,
       "--raw-prompt-purpose",
       "user_requested_replay"
-    ], { promptRuntime: createFakePromptRuntime() });
+    ], {
+      hasStableReceiptPurgeCapability: () => true,
+      promptNow: () => createdAt,
+      promptRuntime: createFakePromptRuntime()
+    });
 
     expect(result).toMatchObject({
       ok: true,
@@ -9864,10 +10359,129 @@ describe("shellx-motion CLI", () => {
     });
   });
 
+  itLinux("redacts a direct raw prompt before its parent receipt persists after a receipt-write deadline race", async () => {
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-deadline-race-"));
+    tempDirs.push(receiptsRoot);
+    const request = "direct CLI parent receipt deadline race";
+    let now = "2040-01-01T00:00:00.000Z";
+    const result = await runCli([
+      "prompt", "run", request, "--receipts-root", receiptsRoot,
+      "--retain-raw-prompt", "--raw-prompt-delete-after", "2040-01-01T00:00:01.000Z", "--raw-prompt-purpose", "debugging"
+    ], {
+      promptNow: () => now,
+      promptReceiptWriteTestHook: (receipt) => { if (receipt.operation === "agent.prompt") now = "2040-01-01T00:00:02.000Z"; },
+      promptRuntime: createFakePromptRuntime()
+    });
+
+    expect(result).toMatchObject({ ok: true, promptRetention: { rawRequestRetained: false, rawRequestRedactedAt: "2040-01-01T00:00:02.000Z" } });
+    expect(JSON.stringify(result)).not.toContain(request);
+    if (!result.ok) return;
+    const receiptPaths = result.receiptPaths as string[];
+    expect(await readFile(receiptPaths[1]!, "utf8")).not.toContain(request);
+  });
+
+  itLinux("carries the direct CLI clock across raw command execution before parent persistence", async () => {
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-execute-deadline-race-"));
+    tempDirs.push(receiptsRoot);
+    const request = "direct CLI command execution deadline race";
+    const fake = createFakePromptRuntime();
+    let now = "2040-01-01T00:00:00.000Z";
+    const result = await runCli([
+      "prompt", "run", request, "--receipts-root", receiptsRoot, "--execute-agent-commands",
+      "--retain-raw-prompt", "--raw-prompt-delete-after", "2040-01-01T00:00:01.000Z", "--raw-prompt-purpose", "debugging"
+    ], {
+      promptNow: () => now,
+      promptReceiptWriteTestHook: (receipt) => { if (receipt.operation === "agent.prompt") now = "2040-01-01T00:00:02.000Z"; },
+      promptRuntime: { runPrompt: async (input) => {
+        const agent = await fake.runPrompt(input);
+        return agent.ok ? { ...agent, structuredOutput: { debugCommands: [] } } : agent;
+      } }
+    });
+
+    expect(result).toMatchObject({ ok: true, visibleState: { rawRequestRetained: false }, result: { receipt: { output: { promptRetention: { rawRequestRetained: false } } } } });
+    if (!result.ok) return;
+    expect(JSON.stringify((result.result as { receipt?: unknown }).receipt)).not.toContain(request);
+    const { receiptPath } = result.visibleState as { receiptPath: string };
+    expect(await readFile(receiptPath, "utf8")).not.toContain(request);
+  });
+
+  it("keeps past and equal direct raw-retention deadlines rejected before runtime or receipt writes", async () => {
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-deadline-"));
+    tempDirs.push(receiptsRoot);
+    const createdAt = "2040-01-01T00:00:00.000Z";
+    const runtime = createFakePromptRuntime();
+    let runtimeCalls = 0;
+
+    for (const deleteAfter of ["2039-12-31T23:59:59.999Z", createdAt]) {
+      const result = await runCli([
+        "prompt", "run", "replay request",
+        "--receipts-root", receiptsRoot,
+        "--retain-raw-prompt",
+        "--raw-prompt-delete-after", deleteAfter,
+        "--raw-prompt-purpose", "debugging"
+      ], {
+        hasStableReceiptPurgeCapability: () => true,
+        promptNow: () => createdAt,
+        promptRuntime: {
+          runPrompt: async (input) => {
+            runtimeCalls += 1;
+            return await runtime.runPrompt(input);
+          }
+        }
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        command: "prompt.run",
+        error: { code: "invalid_prompt_retention", message: expect.stringContaining("later") }
+      });
+    }
+
+    expect(runtimeCalls).toBe(0);
+    expect(await readdir(receiptsRoot)).toEqual([]);
+  });
+
+  itLinux("keeps direct CLI raw receipts inside the existing stable read-time purge lifecycle", async () => {
+    const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-purge-"));
+    tempDirs.push(receiptsRoot);
+    const request = "direct-cli prompt that must be purged at receipt read time";
+    const result = await runCli([
+      "prompt", "run", request,
+      "--receipts-root", receiptsRoot,
+      "--retain-raw-prompt",
+      "--raw-prompt-delete-after", "2040-01-08T00:00:00.000Z",
+      "--raw-prompt-purpose", "debugging"
+    ], {
+      promptNow: () => "2040-01-01T00:00:00.000Z",
+      promptRuntime: createFakePromptRuntime()
+    });
+
+    expect(result).toMatchObject({ ok: true, receiptPaths: [expect.any(String), expect.any(String)] });
+    if (!result.ok) return;
+    const promptReceiptPath = (result.receiptPaths as string[])[1]!;
+    const promptReceipt = JSON.parse(await readFile(promptReceiptPath, "utf8"));
+    promptReceipt.output.promptRetention.deleteAfter = "2000-01-01T00:00:00.000Z";
+    await writeFile(promptReceiptPath, JSON.stringify(promptReceipt), "utf8");
+
+    const read = await dispatchDebugCommand(
+      "motion.receipts.read",
+      { receiptsRoot, receiptPath: promptReceiptPath },
+      { tier: "read_motion", receiptsRoot }
+    );
+
+    expect(read.ok).toBe(true);
+    expect(JSON.stringify(read)).not.toContain(request);
+    expect(await readFile(promptReceiptPath, "utf8")).not.toContain(request);
+  });
+
   it("executes prompt command proposals through the top-level prompt CLI", async () => {
-    const packageRoot = await writeTinyPackageWithTimeline();
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-execute-"));
-    tempDirs.push(packageRoot, outDir);
+    const sourcePackageRoot = await writeTinyPackageWithTimeline();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-execute-"));
+    const packageRoot = join(workspaceRoot, "package");
+    const outDir = join(workspaceRoot, "outputs");
+    await cp(sourcePackageRoot, packageRoot, { recursive: true });
+    await mkdir(outDir, { mode: 0o700 });
+    tempDirs.push(sourcePackageRoot, workspaceRoot);
     const receiptsRoot = join(outDir, "receipts");
     const patchedPackageRoot = join(outDir, "patched-package");
     const previewOutDir = join(outDir, "preview");
@@ -9885,6 +10499,8 @@ describe("shellx-motion CLI", () => {
       "fake",
       "--receipts-root",
       receiptsRoot,
+      "--cwd",
+      workspaceRoot,
       "--execute-agent-commands"
     ], {
       promptRuntime: {
@@ -10024,32 +10640,39 @@ describe("shellx-motion CLI", () => {
     expect(receipt).toMatchObject({ operation: "preview.frame", status: "warning", packageId: "pkg_lower_third", lane: "native" });
   });
 
-  it("renders browser-lane preview artifacts", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-browser-"));
-    tempDirs.push(outDir);
+  it("refuses active browser previews before creating output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-browser-"));
+    const outDir = join(root, "out");
+    tempDirs.push(root);
 
     const result = await runCli(["preview", resolve("../../fixtures/packages/web-card"), "--lane", "browser", "--out", outDir]);
-    const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, unknown>;
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "preview",
-      lane: "browser",
-      receiptId: receipt.id
+      error: { code: "script_provenance_unresolved" }
     });
-    expect(receipt).toMatchObject({ operation: "preview.frame", status: "passed", lane: "browser" });
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects misspelled preview time flags instead of silently rendering frame zero", async () => {
+    const gpuOut = await mkdtemp(join(tmpdir(), "shellx-motion-cli-gpu-refusal-"));
+    tempDirs.push(gpuOut);
     await expect(runCli(["preview", fixtureRoot, "--lane", "browser", "--at", "3000"])).resolves.toEqual({
       ok: false,
       command: "preview",
       error: { code: "invalid_args", message: "Unsupported preview option: --at. Use --at-ms for the capture time." }
     });
-    await expect(runCli(["preview", fixtureRoot, "--lane", "gpu"])).resolves.toEqual({
+    await expect(runCli(["preview", fixtureRoot, "--lane", "gpu", "--out", gpuOut])).resolves.toMatchObject({
       ok: false,
       command: "preview",
-      error: { code: "unsupported_lane", message: "preview --lane must be native or browser; received gpu. ffmpeg is a delivery lane and has no preview form; use `render --lane ffmpeg` instead." }
+      lane: "gpu",
+      error: { code: "gpu_unsupported_feature" }
+    });
+    await expect(runCli(["preview", fixtureRoot, "--lane", "webgpu"])).resolves.toEqual({
+      ok: false,
+      command: "preview",
+      error: { code: "unsupported_lane", message: "preview --lane must be native, browser, or gpu; received webgpu. gpu is the strict general hardware WebGPU PNG preview lane with no fallback; ffmpeg is a delivery lane and has no preview form; use `render --lane ffmpeg` instead." }
     });
     await expect(runCli(["preview", fixtureRoot, "--at-ms", "NaN"])).resolves.toEqual({
       ok: false,
@@ -10059,9 +10682,10 @@ describe("shellx-motion CLI", () => {
   });
 
   it("captures generated MotionIR through the deterministic browser workflow", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-browser-"));
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-browser-"));
+    const outDir = join(outRoot, "capture");
     const packageRoot = await writeTinyNativePackage();
-    tempDirs.push(outDir, packageRoot);
+    tempDirs.push(outRoot, packageRoot);
 
     const result = await runCli(["capture-browser", packageRoot, "--out", outDir, "--at-ms", "100"]);
     const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, any>;
@@ -10094,10 +10718,11 @@ describe("shellx-motion CLI", () => {
   });
 
   it("captures browser frames with a deterministic replay workflow receipt", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-workflow-"));
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-workflow-"));
+    const outDir = join(outRoot, "capture");
     const packageRoot = await writeTinyNativePackage();
-    const workflowPath = join(outDir, "workflow.json");
-    tempDirs.push(outDir, packageRoot);
+    const workflowPath = join(outRoot, "workflow.json");
+    tempDirs.push(outRoot, packageRoot);
     await writeFile(workflowPath, JSON.stringify({
       schema: "shellx-motion/browser-workflow@1",
       viewport: { width: 64, height: 36, deviceScaleFactor: 1 },
@@ -10164,15 +10789,22 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("emits a deterministic browser recording manifest from sampled workflow captures", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-browser-recording-manifest-"));
+  it("emits a deterministic browser recording manifest with private default frames under umask 0002", async () => {
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-browser-recording-manifest-"));
+    const outDir = join(outRoot, "capture");
     const packageRoot = await writeTinyNativePackage();
     const recordingManifestPath = join(outDir, "browser-recording.manifest.json");
     const renderedAtMs: number[] = [];
-    tempDirs.push(outDir, packageRoot);
+    const privateSampleEvidenceModes = new Map<number, number>();
+    tempDirs.push(outRoot, packageRoot);
 
     const browserFrameRenderer: BrowserFrameRenderer = async (pkg, options) => {
       renderedAtMs.push(options.atMs);
+      if (options.atMs !== 100) {
+        // This runs before the injected renderer creates its output. Each sample must already
+        // have the private evidence root that production renderer companions share.
+        privateSampleEvidenceModes.set(options.atMs, Number((await stat(options.outDir)).mode) & 0o777);
+      }
       const outputPath = options.outputPath ?? join(options.outDir, `${pkg.manifest.id}-${options.atMs}.png`);
       await writeFile(outputPath, `png ${options.atMs}`, "utf8");
       return {
@@ -10201,22 +10833,31 @@ describe("shellx-motion CLI", () => {
       };
     };
 
-    const result = await runCli([
-      "capture-browser",
-      packageRoot,
-      "--out",
-      outDir,
-      "--at-ms",
-      "100",
-      "--recording-manifest",
-      recordingManifestPath,
-      "--recording-samples",
-      "3"
-    ], { browserFrameRenderer });
+    const previousUmask = process.platform === "win32" ? undefined : process.umask(0o002);
+    let result: Awaited<ReturnType<typeof runCli>>;
+    try {
+      result = await runCli([
+        "capture-browser",
+        packageRoot,
+        "--out",
+        outDir,
+        "--at-ms",
+        "100",
+        "--recording-manifest",
+        recordingManifestPath,
+        "--recording-samples",
+        "3"
+      ], { browserFrameRenderer });
+    } finally {
+      if (previousUmask !== undefined) process.umask(previousUmask);
+    }
     const manifest = JSON.parse(await readFile(recordingManifestPath, "utf8")) as Record<string, any>;
     const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, any>;
 
     expect(renderedAtMs).toEqual([100, 0, 150, 300]);
+    if (process.platform !== "win32") {
+      expect([...privateSampleEvidenceModes.entries()]).toEqual([[0, 0o700], [150, 0o700], [300, 0o700]]);
+    }
     expect(result).toMatchObject({
       ok: true,
       recordingManifestPath,
@@ -10250,6 +10891,62 @@ describe("shellx-motion CLI", () => {
         sampleCount: 3
       }
     });
+    if (process.platform !== "win32") {
+      expect(Number((await stat(join(outDir, "browser-recording-frames"))).mode) & 0o777).toBe(0o700);
+    }
+  });
+
+  it("preserves an existing CLI browser recording manifest", async () => {
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-browser-recording-manifest-no-clobber-"));
+    const outDir = join(outRoot, "capture");
+    const packageRoot = await writeTinyNativePackage();
+    const recordingManifestPath = join(outDir, "browser-recording.manifest.json");
+    const preserved = "retain pre-existing manifest\n";
+    tempDirs.push(outRoot, packageRoot);
+    await mkdir(outDir);
+    await writeFile(recordingManifestPath, preserved, "utf8");
+
+    const browserFrameRenderer: BrowserFrameRenderer = async (pkg, options) => {
+      const outputPath = options.outputPath ?? join(options.outDir, `${pkg.manifest.id}-${options.atMs}.png`);
+      await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
+      await writeFile(outputPath, `png ${options.atMs}`, "utf8");
+      return {
+        ok: true,
+        output: {
+          path: outputPath,
+          sha256: `${String(options.atMs).padStart(4, "0")}${"a".repeat(60)}`.slice(0, 64),
+          width: pkg.motion.width,
+          height: pkg.motion.height,
+          atMs: options.atMs,
+          browser: { name: "chromium", version: "test" },
+          viewport: { width: pkg.motion.width, height: pkg.motion.height, deviceScaleFactor: 1 }
+        },
+        receipt: {
+          schema: "shellx-motion/receipt@1",
+          id: `browser-manifest-no-clobber-${options.atMs}`,
+          operation: "preview.frame",
+          status: "passed",
+          packageId: pkg.manifest.id,
+          inputHashes: { motion: "b".repeat(64) },
+          createdAt: "2026-08-11T00:00:00.000Z",
+          lane: "browser",
+          output: { path: outputPath },
+          warnings: []
+        }
+      };
+    };
+
+    await expect(runCli([
+      "capture-browser",
+      packageRoot,
+      "--out",
+      outDir,
+      "--recording-manifest",
+      recordingManifestPath,
+      "--recording-samples",
+      "1"
+    ], { browserFrameRenderer })).rejects.toMatchObject({ code: "derived_output_exists" });
+    await expect(readFile(recordingManifestPath, "utf8")).resolves.toBe(preserved);
   });
 
   it("catalogs deterministic browser workflow captures and reports replay drift", async () => {
@@ -10280,8 +10977,8 @@ describe("shellx-motion CLI", () => {
       command: "capture-browser",
       workflowCatalogPath: catalogPath,
       workflowDrift: { status: "new" },
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath, status: "available", mediaType: "application/json" })
+      artifacts: expect.not.arrayContaining([
+        expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath })
       ])
     });
     expect(second).toMatchObject({
@@ -10326,14 +11023,8 @@ describe("shellx-motion CLI", () => {
         }
       ]
     });
-    expect(changedReceipt.output).toMatchObject({
-      workflowCatalogPath: catalogPath,
-      workflowDrift: {
-        status: "changed",
-        currentOutputSha256: changedOutput.sha256
-      }
-    });
-    expect(changedReceipt.artifacts).toEqual(expect.arrayContaining([
+    expect(changedReceipt.output).not.toHaveProperty("workflowCatalogPath");
+    expect(changedReceipt.artifacts).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath })
     ]));
   });
@@ -10349,7 +11040,7 @@ describe("shellx-motion CLI", () => {
       steps: [{ action: "wait", ms: 5 }]
     }, null, 2));
 
-    await runCli(["capture-browser", packageRoot, "--out", join(outDir, "first"), "--workflow", workflowPath, "--catalog", catalogPath]);
+    const first = await runCli(["capture-browser", packageRoot, "--out", join(outDir, "first"), "--workflow", workflowPath, "--catalog", catalogPath]);
     await rewriteTinyNativePackageTitle(packageRoot, "C");
     const result = await runCli([
       "capture-browser",
@@ -10373,6 +11064,10 @@ describe("shellx-motion CLI", () => {
         message: expect.stringContaining("Browser workflow drift detected")
       }
     });
+    await expect(stat(join(outDir, "changed", "pkg_cli_ffmpeg_sequence-browser-0.png"))).rejects.toMatchObject({ code: "ENOENT" });
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as Record<string, any>;
+    expect(catalog.entries[0].history).toHaveLength(1);
+    expect(catalog.entries[0].latest.outputSha256).toBe((first.output as { sha256: string }).sha256);
   });
 
   it("uses canonical workflow hashes for catalog baselines with equivalent default policy", async () => {
@@ -10424,10 +11119,11 @@ describe("shellx-motion CLI", () => {
   });
 
   it("returns a failed replay trace artifact when browser workflow verification fails", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-workflow-failure-"));
+    const outRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-capture-workflow-failure-"));
+    const outDir = join(outRoot, "capture");
     const packageRoot = await writeTinyNativePackage();
-    const workflowPath = join(outDir, "workflow.json");
-    tempDirs.push(outDir, packageRoot);
+    const workflowPath = join(outRoot, "workflow.json");
+    tempDirs.push(outRoot, packageRoot);
     await writeFile(workflowPath, JSON.stringify({
       schema: "shellx-motion/browser-workflow@1",
       steps: [
@@ -10959,12 +11655,12 @@ describe("shellx-motion CLI", () => {
       },
       dryRun: true,
       ffmpeg: {
-        args: expect.arrayContaining(["-filter:a", "volume=0.2"])
+        args: expect.arrayContaining(["-filter:a", "atrim=duration=0.3,volume=0.2,apad=whole_dur=0.3"])
       }
     });
   });
 
-  it("plans included video source audio as an FFmpeg mux input when --audio is omitted", async () => {
+  it("refuses browser video-source audio but defers it for admitted GPU PCM staging", async () => {
     const packageRoot = await writeTinyPackageWithVideoLayer({ includeAudio: true, playbackRate: 1.5 });
     tempDirs.push(packageRoot);
     const videoPath = join(packageRoot, "assets", "clip.mp4");
@@ -10980,31 +11676,22 @@ describe("shellx-motion CLI", () => {
     ]);
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "render",
       lane: "ffmpeg",
-      audioPath: videoPath,
-      audio: {
-        path: videoPath,
-        durationMs: 300,
-        trimStartMs: 50,
-        trimDurationMs: 200,
-        loop: false,
-        playbackRate: 1.5
-      },
-      dryRun: true,
-      ffmpeg: {
-        args: expect.arrayContaining([
-          "-i",
-          videoPath,
-          "-filter:a",
-          "atrim=start=0.05:duration=0.2,asetpts=PTS-STARTPTS,atempo=1.5",
-          "-t",
-          "0.3",
-          "/tmp/package-video-source-audio.mp4"
-        ])
+      error: {
+        code: "unsafe_input_path",
+        message: expect.stringContaining("WAV, FLAC, MP3, Ogg, or Opus")
       }
     });
+
+    const gpu = await runCli([
+      "render", packageRoot, "--lane", "ffmpeg", "--frame-lane", "gpu",
+      "--out", "/tmp/package-video-source-audio-gpu.mp4", "--dry-run"
+    ]);
+    expect(gpu).toMatchObject({ ok: true, command: "render", lane: "ffmpeg", frameLane: "gpu", dryRun: true,
+      ffmpeg: { args: expect.arrayContaining(["-f", "rawvideo", "-i", "pipe:0"]) } });
+    if (gpu.ok) expect((gpu.ffmpeg as { args: string[] }).args).not.toContain(videoPath);
   });
 
   it("plans package audio layer trim loop and volume controls for FFmpeg renders", async () => {
@@ -11045,7 +11732,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "atrim=start=0.25:duration=0.5,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=24000,volume=0.35",
+          "atrim=start=0.25:duration=0.5,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=24000,atrim=duration=0.3,volume=0.35,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-controls.mp4"
@@ -11088,7 +11775,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "volume=0.5,adelay=120:all=1",
+          "atrim=duration=0.18,volume=0.5,adelay=120:all=1,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-offset.mp4"
@@ -11097,7 +11784,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("plans included video source audio at the video layer timeline offset", async () => {
+  it("refuses included video source audio before applying its timeline offset", async () => {
     const packageRoot = await writeTinyPackageWithVideoLayer({ includeAudio: true, startMs: 90 });
     tempDirs.push(packageRoot);
     const videoPath = join(packageRoot, "assets", "clip.mp4");
@@ -11113,27 +11800,12 @@ describe("shellx-motion CLI", () => {
     ]);
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "render",
       lane: "ffmpeg",
-      audioPath: videoPath,
-      audio: {
-        path: videoPath,
-        startMs: 90,
-        trimStartMs: 50,
-        trimDurationMs: 200
-      },
-      dryRun: true,
-      ffmpeg: {
-        args: expect.arrayContaining([
-          "-i",
-          videoPath,
-          "-filter:a",
-          "atrim=start=0.05:duration=0.2,asetpts=PTS-STARTPTS,adelay=90:all=1",
-          "-t",
-          "0.3",
-          "/tmp/package-video-source-audio-offset.mp4"
-        ])
+      error: {
+        code: "unsafe_input_path",
+        message: expect.stringContaining("WAV, FLAC, MP3, Ogg, or Opus")
       }
     });
   });
@@ -11177,7 +11849,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "volume='if(lt(t,0),0,if(lt(t,0.5),0+(0.8-0)*((t-0)/(0.5-0)),if(lt(t,1),0.8+(0.2-0.8)*((t-0.5)/(1-0.5)),0.2)))':eval=frame",
+          "atrim=duration=0.3,volume='if(lt(t,0),0,if(lt(t,0.5),0+(0.8-0)*((t-0)/(0.5-0)),if(lt(t,1),0.8+(0.2-0.8)*((t-0.5)/(1-0.5)),0.2)))':eval=frame,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-volume-keyframes.mp4"
@@ -11223,7 +11895,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "afade=t=in:st=0:d=0.1,afade=t=out:st=0.15:d=0.15,volume=0",
+          "atrim=duration=0.3,afade=t=in:st=0:d=0.1,afade=t=out:st=0.15:d=0.15,volume=0,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-fades.mp4"
@@ -11270,7 +11942,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "afade=t=in:st=0:d=0.12,afade=t=out:st=0.12:d=0.18",
+          "atrim=duration=0.3,afade=t=in:st=0:d=0.12,afade=t=out:st=0.12:d=0.18,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-track-fades.mp4"
@@ -11315,7 +11987,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "pan=stereo|c0=1*c0|c1=0.75*c1",
+          "atrim=duration=0.3,pan=stereo|c0=1*c0|c1=0.75*c1,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-track-pan.mp4"
@@ -11354,7 +12026,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "pan=stereo|c0=0.65*c0|c1=1*c1",
+          "atrim=duration=0.3,pan=stereo|c0=0.65*c0|c1=1*c1,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-layer-pan.mp4"
@@ -11396,7 +12068,7 @@ describe("shellx-motion CLI", () => {
           "-i",
           audioPath,
           "-filter:a",
-          "loudnorm=I=-16:TP=-1.5:LRA=11",
+          "atrim=duration=0.3,loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=0.3",
           "-t",
           "0.3",
           "/tmp/package-audio-loudnorm.mp4"
@@ -11437,7 +12109,9 @@ describe("shellx-motion CLI", () => {
           "-i",
           voicePath,
           "-filter_complex",
-          "[1:a]atrim=start=0.1:duration=0.25,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=12000,volume=0.4,adelay=40:all=1[a1];[2:a]volume=0.8,adelay=160:all=1[a2];[a1][a2]amix=inputs=2:duration=longest:dropout_transition=0[mixeda]",
+          "[1:a]atrim=start=0.1:duration=0.25,asetpts=PTS-STARTPTS,aresample=48000,aloop=loop=-1:size=12000,atrim=duration=0.26,volume=0.4,adelay=40:all=1[a1];[2:a]atrim=duration=0.14,volume=0.8,adelay=160:all=1[a2];[a1][a2]amix=inputs=2:duration=longest:dropout_transition=0,apad=whole_dur=0.3[mixeda]",
+          "-map",
+          "0:v:0",
           "-map",
           "[mixeda]",
           "-t",
@@ -11510,9 +12184,12 @@ describe("shellx-motion CLI", () => {
       receipt: {
         operation: "render.final",
         status: "passed",
-        inputHashes: {
-          qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/)
-        },
+            inputHashes: {
+              qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityManifestMaterialized: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityBaselines: expect.stringMatching(/^[a-f0-9]{64}$/),
+              qualityInputs: expect.stringMatching(/^[a-f0-9]{64}$/)
+            },
         output: {
           qualityManifestPath: manifestPath,
           qualityCheck: { status: "passed" }
@@ -11521,10 +12198,13 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("renders ffmpeg lane output through a generated browser frame sequence by default", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-ffmpeg-"));
-    const packageRoot = await writeTinyNativePackage();
-    tempDirs.push(outDir, packageRoot);
+  it("retains an explicit --keep-frames FFmpeg render through the legacy frame sequence", async () => {
+    const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const outDir = await mkdtemp(join(sourceRoot, ".shellx-motion-cli-render-ffmpeg-"));
+    const temporaryPackageRoot = await writeTinyNativePackage();
+    const packageRoot = join(outDir, "package");
+    await cp(temporaryPackageRoot, packageRoot, { recursive: true });
+    tempDirs.push(outDir, temporaryPackageRoot);
     const outputPath = join(outDir, "final.mp4");
     const scratchRoot = join(outDir, "frames");
     const commands: FfmpegCommand[] = [];
@@ -11537,14 +12217,17 @@ describe("shellx-motion CLI", () => {
       if (command.args.includes("-encoders")) {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
+      if (command.args.includes("-framerate")) await writeFile(command.args.at(-1) as string, "fake mp4 bytes", "utf8");
       return { exitCode: 0, stdout: "", stderr: "frame=1 speed=1x" };
     };
 
-    const result = await runCli(["render", packageRoot, "--lane", "ffmpeg", "--out", outputPath], {
-      ffmpegRunner: runner,
-      scratchRoot
-    });
+    const result = await withCliSourceWorkspaceAnchor(
+      [packageRoot, outputPath, scratchRoot],
+      async () => await runCli(["render", packageRoot, "--lane", "ffmpeg", "--out", outputPath, "--keep-frames"], {
+        ffmpegRunner: runner,
+        scratchRoot
+      })
+    );
     const firstFrame = await readFile(join(scratchRoot, "pkg_cli_ffmpeg_sequence", "000001.png"));
     const lastFrame = await readFile(join(scratchRoot, "pkg_cli_ffmpeg_sequence", "000003.png"));
 
@@ -11570,11 +12253,16 @@ describe("shellx-motion CLI", () => {
         lane: "ffmpeg"
       }
     });
+    expect(result.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "rendered_media", path: outputPath, status: "available", primary: true })
+    ]));
+    expect(JSON.stringify(result)).not.toContain(".shellx-motion-final-");
     // Command stream: ffmpeg -version (health), ffmpeg -encoders (hardware-encode probe, no GPU on
     // WSL so software is used), the encode itself, then the encode's delivered-colour readback
-    // (`verifyDeliveredColor`, default-on under the current contract) reading back the file just written.
+    // (`verifyDeliveredColor`, default-on under the current contract) reading back the private
+    // staged file before it is published at the caller-selected final path.
     expect(commands).toHaveLength(4);
-    expect(commands[3].args).toEqual(expect.arrayContaining(["-show_streams", outputPath]));
+    expect(commands[3].args).toEqual(expect.arrayContaining(["-show_streams", commands[2].args.at(-1)]));
     expect(commands[1].args).toEqual(["-hide_banner", "-encoders"]);
     expect(commands[2]).toEqual({
       executable: resolveFfmpegExecutable(),
@@ -11610,10 +12298,11 @@ describe("shellx-motion CLI", () => {
         "tv",
         "-movflags",
         "+faststart",
-        outputPath
+        expect.stringMatching(/\/\.shellx-motion-final-[a-f0-9]{32}-[0-9a-f-]{36}\.mp4$/)
       ],
       shell: false
     });
+    expect(commands[2].args).not.toContain(outputPath);
     expect(firstFrame.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     expect(lastFrame.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
   }, 45_000);
@@ -11643,7 +12332,7 @@ describe("shellx-motion CLI", () => {
       if (command.args.includes("-encoders")) {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      await writeFile(outputPath, "fake mp4 bytes", "utf8");
+      if (command.args.includes("-framerate")) await writeFile(command.args.at(-1) as string, "fake mp4 bytes", "utf8");
       return { exitCode: 0, stdout: "", stderr: "frame=1 speed=1x" };
     };
 
@@ -11718,7 +12407,7 @@ describe("shellx-motion CLI", () => {
         const inputIndex = command.args.indexOf("-i");
         const framePattern = String(command.args[inputIndex + 1]);
         const firstFrame = await readFile(join(dirname(framePattern), "000001.png"));
-        await writeFile(outputPath, firstFrame);
+        if (command.args.includes("-framerate")) await writeFile(command.args.at(-1) as string, firstFrame);
         return { exitCode: 0, stdout: "", stderr: "frame=1 speed=1x" };
       };
       return runCli([
@@ -11731,7 +12420,10 @@ describe("shellx-motion CLI", () => {
         "--workflow",
         workflowPath,
         "--catalog",
-        catalogPath
+        catalogPath,
+        // All outputs in this catalog test share one package-derived receipt path. Replacement is
+        // therefore explicit even though the media output filename differs for each invocation.
+        "--force"
       ], {
         ffmpegRunner: runner,
         scratchRoot
@@ -11755,12 +12447,7 @@ describe("shellx-motion CLI", () => {
       workflowDrift: { status: "new" },
       receiptPath: join(outDir, "pkg_cli_ffmpeg_sequence-render.receipt.json"),
       receipt: {
-        output: {
-          workflowCatalogPath: catalogPath,
-          workflowDrift: { status: "new" }
-        },
         artifacts: expect.arrayContaining([
-          expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath, status: "available", mediaType: "application/json" }),
           expect.objectContaining({ role: "render_receipt", path: join(outDir, "pkg_cli_ffmpeg_sequence-render.receipt.json"), status: "available", mediaType: "application/json" })
         ])
       }
@@ -11806,15 +12493,12 @@ describe("shellx-motion CLI", () => {
         }
       ]
     });
-    expect(changedReceipt.output).toMatchObject({
-      workflowCatalogPath: catalogPath,
-      workflowDrift: {
-        status: "changed",
-        currentOutputSha256: changedOutput.sha256
-      }
-    });
+    expect(changedReceipt.output).not.toHaveProperty("workflowCatalogPath");
+    expect(changedReceipt.output).not.toHaveProperty("workflowDrift");
+    expect(changedReceipt.artifacts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath })
+    ]));
     expect(changedReceipt.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "browser_workflow_catalog", path: catalogPath }),
       expect.objectContaining({ role: "render_receipt", path: String(changed.receiptPath) })
     ]));
   }, 45_000);
@@ -11839,7 +12523,7 @@ describe("shellx-motion CLI", () => {
         }
         const inputIndex = command.args.indexOf("-i");
         const framePattern = String(command.args[inputIndex + 1]);
-        await writeFile(outputPath, await readFile(join(dirname(framePattern), "000001.png")));
+        if (command.args.includes("-framerate")) await writeFile(command.args.at(-1) as string, await readFile(join(dirname(framePattern), "000001.png")));
         return { exitCode: 0, stdout: "", stderr: "frame=1 speed=1x" };
       };
       return runCli([
@@ -11853,6 +12537,9 @@ describe("shellx-motion CLI", () => {
         workflowPath,
         "--catalog",
         catalogPath,
+        // A changed workflow records a new receipt at the package-derived sibling path only with
+        // the same explicit overwrite authority as a corresponding output replacement.
+        "--force",
         ...extraArgs
       ], {
         ffmpegRunner: runner,
@@ -11874,6 +12561,9 @@ describe("shellx-motion CLI", () => {
         message: expect.stringContaining("Browser workflow drift detected")
       }
     });
+    await expect(stat(join(outDir, "changed.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as Record<string, any>;
+    expect(catalog.entries[0].history).toHaveLength(1);
   }, 45_000);
 
   it("fails ffmpeg renders when the requested unique-frame quality gate is not met", async () => {
@@ -11911,10 +12601,10 @@ describe("shellx-motion CLI", () => {
         code: "frame_quality_failed",
         message: "Rendered frame sequence has 1 unique frame; expected at least 2."
       },
-      frames: { dir: join(scratchRoot, "pkg_cli_ffmpeg_sequence"), count: 3 }
     });
-    expect(commands).toHaveLength(1);
+    expect(commands).toHaveLength(2);
     expect(commands[0].args).toEqual(["-version"]);
+    expect(commands[1].args).toContain("-encoders");
   }, 45_000);
 
   it("fails PNG sequence renders when the requested unique-frame quality gate is not met", async () => {
@@ -12030,7 +12720,7 @@ describe("shellx-motion CLI", () => {
     expect(isFfprobeCommand(commands[0])).toBe(true);
     expect(commands[1]).toMatchObject({
       executable: resolveFfmpegExecutable(),
-      args: ["-y", "-i", inputPath, "-frames:v", "1", String(result.framePath)],
+      args: ["-y", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", inputPath, "-frames:v", "1", String(result.framePath)],
       shell: false
     });
   });
@@ -12562,6 +13252,10 @@ describe("shellx-motion CLI", () => {
       "-y",
       "-c:v",
       "libvpx-vp9",
+      "-protocol_whitelist",
+      "file",
+      "-format_whitelist",
+      "matroska",
       "-i",
       inputPath,
       "-frames:v",
@@ -12621,7 +13315,7 @@ describe("shellx-motion CLI", () => {
     });
     expect(commands[1]).toMatchObject({
       executable: resolveFfmpegExecutable(),
-      args: ["-y", "-ss", "1.5", "-i", inputPath, "-frames:v", "1", String(result.framePath)],
+      args: ["-y", "-ss", "1.5", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", inputPath, "-frames:v", "1", String(result.framePath)],
       shell: false
     });
   });
@@ -12714,23 +13408,29 @@ describe("shellx-motion CLI", () => {
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
-    const result = await runCli([
-      "quality-check",
-      inputPath,
-      "--at-ms",
-      "100",
-      "--preview-package",
-      packageRoot,
-      "--preview-lane",
-      "browser",
-      "--max-changed-pixels",
-      "0",
-      "--max-mean-diff",
-      "0"
-    ], {
-      ffmpegRunner: runner,
-      scratchRoot: join(outDir, "scratch")
-    });
+    const previousUmask = process.umask(0o002);
+    let result: Awaited<ReturnType<typeof runCli>>;
+    try {
+      result = await runCli([
+        "quality-check",
+        inputPath,
+        "--at-ms",
+        "100",
+        "--preview-package",
+        packageRoot,
+        "--preview-lane",
+        "browser",
+        "--max-changed-pixels",
+        "0",
+        "--max-mean-diff",
+        "0"
+      ], {
+        ffmpegRunner: runner,
+        scratchRoot: join(outDir, "scratch")
+      });
+    } finally {
+      process.umask(previousUmask);
+    }
 
     expect(result).toMatchObject({
       ok: true,
@@ -12749,8 +13449,9 @@ describe("shellx-motion CLI", () => {
       }
     });
     expect(commands.filter(isFfmpegCommand)).toEqual([
-      expect.objectContaining({ args: ["-y", "-ss", "0.1", "-i", inputPath, "-frames:v", "1", String(result.framePath)] })
+      expect.objectContaining({ args: ["-y", "-ss", "0.1", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", inputPath, "-frames:v", "1", String(result.framePath)] })
     ]);
+    expect((await stat(join(outDir, "scratch", "quality"))).mode & 0o777).toBe(0o700);
   });
 
   it("compares visual baselines by RGB only when alpha differs from encoded media", async () => {
@@ -13099,8 +13800,8 @@ describe("shellx-motion CLI", () => {
       ]
     });
     expect(commands.filter(isFfmpegCommand)).toEqual([
-      expect.objectContaining({ args: ["-y", "-i", inputPath, "-frames:v", "1", expect.stringContaining("final-start-frame.png")] }),
-      expect.objectContaining({ args: ["-y", "-ss", "0.5", "-i", inputPath, "-frames:v", "1", expect.stringContaining("final-mid-frame.png")] })
+      expect.objectContaining({ args: ["-y", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", inputPath, "-frames:v", "1", expect.stringContaining("final-start-frame.png")] }),
+      expect.objectContaining({ args: ["-y", "-ss", "0.5", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", inputPath, "-frames:v", "1", expect.stringContaining("final-mid-frame.png")] })
     ]);
 
     await writeFile(manifestPath, JSON.stringify({
@@ -13407,19 +14108,25 @@ describe("shellx-motion CLI", () => {
       return { exitCode: 0, stdout: "", stderr: "" };
     };
 
-    const result = await runCli([
-      "quality-check",
-      inputPath,
-      "--manifest",
-      manifestPath,
-      "--preview-package",
-      packageRoot,
-      "--preview-lane",
-      "browser"
-    ], {
-      ffmpegRunner: runner,
-      scratchRoot: join(outDir, "scratch")
-    });
+    const previousUmask = process.umask(0o002);
+    let result: Awaited<ReturnType<typeof runCli>>;
+    try {
+      result = await runCli([
+        "quality-check",
+        inputPath,
+        "--manifest",
+        manifestPath,
+        "--preview-package",
+        packageRoot,
+        "--preview-lane",
+        "browser"
+      ], {
+        ffmpegRunner: runner,
+        scratchRoot: join(outDir, "scratch")
+      });
+    } finally {
+      process.umask(previousUmask);
+    }
 
     expect(result).toMatchObject({
       ok: true,
@@ -13442,6 +14149,7 @@ describe("shellx-motion CLI", () => {
         }
       ]
     });
+    expect((await stat(join(outDir, "scratch", "quality"))).mode & 0o777).toBe(0o700);
   }, 45_000);
 
   it("checks quality manifest regions for typography/layout structure", async () => {
@@ -14083,6 +14791,40 @@ describe("shellx-motion CLI", () => {
     });
   });
 
+  it.skipIf(process.platform === "win32")("creates an absent batch output tree privately under umask 0002", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-batch-private-output-"));
+    const outDir = join(root, "batch");
+    tempDirs.push(root);
+    const previousUmask = process.umask(0o002);
+    try {
+      expect(await runCli(["render-batch", batchFixtureRoot, "--out", outDir, "--dry-run"]))
+        .toMatchObject({ ok: true, command: "render-batch", dryRun: true });
+      for (const path of [outDir, join(outDir, "packages"), join(outDir, "render"), join(outDir, "receipts")]) {
+        expect(Number((await stat(path)).mode) & 0o777, path).toBe(0o700);
+      }
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("refuses an unsafe batch-output parent before any output is created", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-batch-unsafe-output-"));
+    const unsafeParent = join(root, "unsafe");
+    const outDir = join(unsafeParent, "batch");
+    tempDirs.push(root);
+    await mkdir(unsafeParent, { mode: 0o777 });
+    await chmod(unsafeParent, 0o777);
+
+    const result = await runCli(["render-batch", batchFixtureRoot, "--out", outDir, "--dry-run"]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "render-batch",
+      error: { code: "invalid_args", message: expect.stringMatching(/writable|unsafe|topology/i) }
+    });
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("plans batch/data renders from external CSV rows", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-csv-dry-"));
     const rowsDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-csv-rows-"));
@@ -14347,8 +15089,10 @@ describe("shellx-motion CLI", () => {
     const sourceRoot = await writeFastBatchPackage();
     tempDirs.push(outDir, sourceRoot);
     const commands: FfmpegCommand[] = [];
+    const streamedCommands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
+      if (isFfprobeCommand(command)) return streamedVideoProbe();
       if (command.args[0] === "-version") {
         return { exitCode: 0, stdout: "ffmpeg version fake", stderr: "" };
       }
@@ -14359,7 +15103,11 @@ describe("shellx-motion CLI", () => {
       return { exitCode: 0, stdout: "", stderr: "frame=1 speed=1x" };
     };
 
-    const result = await runCli(["render-batch", sourceRoot, "--out", outDir], { ffmpegRunner: runner, scratchRoot: join(outDir, "frames") });
+    const result = await runCli(["render-batch", sourceRoot, "--out", outDir], {
+      ffmpegRunner: runner,
+      streamingProcessFactory: streamedBatchProcessFactory(streamedCommands),
+      scratchRoot: join(outDir, "frames")
+    });
     const ada = await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8");
     const grace = await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8");
 
@@ -14368,12 +15116,29 @@ describe("shellx-motion CLI", () => {
       command: "render-batch",
       dryRun: false,
       jobs: [
-        { rowId: "ada", packageId: "pkg_batch_card_ada", status: "warning" },
-        { rowId: "grace", packageId: "pkg_batch_card_grace", status: "warning" }
+        {
+          rowId: "ada",
+          packageId: "pkg_batch_card_ada",
+          status: "warning",
+          render: {
+            frameTransport: { delivery: "streamed", reason: "stream_default" },
+            receipt: { output: { frameTransport: { delivery: "streamed", frameLane: "browser", retainedFrameCount: 0 } } }
+          }
+        },
+        {
+          rowId: "grace",
+          packageId: "pkg_batch_card_grace",
+          status: "warning",
+          render: {
+            frameTransport: { delivery: "streamed", reason: "stream_default" },
+            receipt: { output: { frameTransport: { delivery: "streamed", frameLane: "browser", retainedFrameCount: 0 } } }
+          }
+        }
       ]
     });
     expect(commands.filter((command) => command.args[0] === "-version")).toHaveLength(2);
-    expect(commands.filter((command) => command.args.includes("-framerate"))).toHaveLength(2);
+    expect(streamedCommands).toHaveLength(2);
+    expect(streamedCommands.every((command) => command.args.includes("image2pipe") && command.args.includes("pipe:0"))).toBe(true);
     expect(ada).toContain("fake");
     expect(grace).toContain("fake");
   }, 45_000);
@@ -14459,8 +15224,10 @@ describe("shellx-motion CLI", () => {
     const sourceRoot = await writeFastBatchPackage();
     tempDirs.push(outDir, sourceRoot);
     const firstCommands: FfmpegCommand[] = [];
+    const firstStreamedCommands: FfmpegCommand[] = [];
     const firstRunner: FfmpegRunner = async (command) => {
       firstCommands.push(command);
+      if (isFfprobeCommand(command)) return streamedVideoProbe();
       if (command.args[0] === "-version") {
         return { exitCode: 0, stdout: "ffmpeg version fake", stderr: "" };
       }
@@ -14476,12 +15243,22 @@ describe("shellx-motion CLI", () => {
       return { exitCode: 1, stdout: "", stderr: `unexpected resume render: ${command.args.join(" ")}` };
     };
 
-    const first = await runCli(["render-batch", sourceRoot, "--out", outDir], { ffmpegRunner: firstRunner, scratchRoot: join(outDir, "frames") });
+    const first = await runCli(["render-batch", sourceRoot, "--out", outDir], {
+      ffmpegRunner: firstRunner,
+      streamingProcessFactory: streamedBatchProcessFactory(firstStreamedCommands),
+      scratchRoot: join(outDir, "frames")
+    });
     const resumed = await runCli(["render-batch", sourceRoot, "--out", outDir, "--resume"], { ffmpegRunner: failOnRender, scratchRoot: join(outDir, "resume-frames") });
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
     const firstJobs = first.jobs as Array<Record<string, string>>;
 
     expect(first.ok).toBe(true);
+    expect(first).toMatchObject({
+      jobs: [
+        { render: { receipt: { output: { frameTransport: { delivery: "streamed", retainedFrameCount: 0 } } } } },
+        { render: { receipt: { output: { frameTransport: { delivery: "streamed", retainedFrameCount: 0 } } } } }
+      ]
+    });
     expect(resumed).toMatchObject({
       ok: true,
       command: "render-batch",
@@ -14507,6 +15284,7 @@ describe("shellx-motion CLI", () => {
         ]
       }
     });
+    expect(firstStreamedCommands).toHaveLength(2);
     expect(secondCommands).toHaveLength(0);
     expect(await readFile(join(outDir, "render", "pkg_batch_card_ada.mp4"), "utf8")).toContain("fake");
     expect(await readFile(join(outDir, "render", "pkg_batch_card_grace.mp4"), "utf8")).toContain("fake");
@@ -14637,14 +15415,33 @@ describe("shellx-motion CLI", () => {
       scratchRoot: join(outDir, "frames")
     });
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
+    const qualityJobs = result.jobs as Array<Record<string, any>>;
+    const adaAppliedPath = qualityJobs[0].qualityManifestAppliedPath as string;
+    const graceAppliedPath = qualityJobs[1].qualityManifestAppliedPath as string;
 
     expect(result).toMatchObject({
       ok: true,
       command: "render-batch",
       qualityManifestPath: manifestPath,
       jobs: [
-        { rowId: "ada", qualityManifestPath: manifestPath, qualityCheck: { ok: true, command: "quality-check", manifestPath } },
-        { rowId: "grace", qualityManifestPath: manifestPath, qualityCheck: { ok: true, command: "quality-check", manifestPath } }
+        {
+          rowId: "ada",
+          qualityManifestPath: manifestPath,
+          qualityCheck: { ok: true, command: "quality-check", manifestPath: adaAppliedPath },
+          render: {
+            frameTransport: { delivery: "materialized", reason: "exact_source_quality" },
+            receipt: { output: { frameTransportPlan: { delivery: "materialized", reason: "exact_source_quality" }, qualityCheck: { status: "passed" } } }
+          }
+        },
+        {
+          rowId: "grace",
+          qualityManifestPath: manifestPath,
+          qualityCheck: { ok: true, command: "quality-check", manifestPath: graceAppliedPath },
+          render: {
+            frameTransport: { delivery: "materialized", reason: "exact_source_quality" },
+            receipt: { output: { frameTransportPlan: { delivery: "materialized", reason: "exact_source_quality" }, qualityCheck: { status: "passed" } } }
+          }
+        }
       ]
     });
     expect(receipt).toMatchObject({
@@ -14658,9 +15455,10 @@ describe("shellx-motion CLI", () => {
         ]
       }
     });
-    // Four ffprobe reads, two per rendered row: the delivered-colour readback each encode now
-    // performs (`verifyDeliveredColor`, default-on under the current contract) and the quality-check probe.
-    expect(commands.filter((command) => isFfprobeCommand(command))).toHaveLength(4);
+    // Six FFprobe reads, three per row. The final-render door owns the delivered-colour and
+    // manifest readbacks, then records the FFprobe identity that contributed to that exact-source
+    // evidence. Batch does not launch a second post-render quality check.
+    expect(commands.filter((command) => isFfprobeCommand(command))).toHaveLength(6);
     expect(commands.filter((command) => isFfprobeCommand(command) && command.args.includes("-show_streams"))).toHaveLength(4);
     expect(commands.filter((command) => command.args.includes(baselinePath))).toHaveLength(0);
     expect(commands.filter((command) => String(command.args[command.args.length - 1]).endsWith(".png"))).toHaveLength(2);
@@ -14691,8 +15489,9 @@ describe("shellx-motion CLI", () => {
 
     const adaOutputPath = join(outDir, "render", "pkg_batch_card_ada.png");
     const graceOutputPath = join(outDir, "render", "pkg_batch_card_grace.png");
-    const adaManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-    const graceManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+    const qualityJobs = result.jobs as Array<Record<string, any>>;
+    const adaManifestPath = qualityJobs[0].qualityManifestAppliedPath as string;
+    const graceManifestPath = qualityJobs[1].qualityManifestAppliedPath as string;
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
 
     expect(result).toMatchObject({
@@ -14769,8 +15568,9 @@ describe("shellx-motion CLI", () => {
     const graceOutputPath = join(outDir, "render", "pkg_batch_card_grace");
     const adaSampleFrame = join(adaOutputPath, "000002.png");
     const graceSampleFrame = join(graceOutputPath, "000002.png");
-    const adaManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-    const graceManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+    const qualityJobs = result.jobs as Array<Record<string, any>>;
+    const adaManifestPath = qualityJobs[0].qualityManifestAppliedPath as string;
+    const graceManifestPath = qualityJobs[1].qualityManifestAppliedPath as string;
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
 
     expect(result).toMatchObject({
@@ -14863,8 +15663,9 @@ describe("shellx-motion CLI", () => {
       ffmpegRunner: runner,
       scratchRoot: join(outDir, "frames")
     });
-    const adaManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_ada.quality-manifest.json");
-    const graceManifestPath = join(outDir, "receipts", "quality-manifests", "pkg_batch_card_grace.quality-manifest.json");
+    const qualityJobs = result.jobs as Array<Record<string, any>>;
+    const adaManifestPath = qualityJobs[0].qualityManifestAppliedPath as string;
+    const graceManifestPath = qualityJobs[1].qualityManifestAppliedPath as string;
     const adaManifest = JSON.parse(await readFile(adaManifestPath, "utf8")) as Record<string, any>;
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
 
@@ -14877,17 +15678,32 @@ describe("shellx-motion CLI", () => {
           rowId: "ada",
           qualityManifestPath: manifestPath,
           qualityManifestAppliedPath: adaManifestPath,
-          qualityCheck: { ok: true, manifestPath: adaManifestPath }
+          qualityCheck: { ok: true, manifestPath: adaManifestPath },
+          render: {
+            frameTransport: { delivery: "materialized", reason: "exact_source_quality" },
+            receipt: {
+              inputHashes: { qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/) },
+              output: { qualityManifestPath: adaManifestPath, qualityCheck: { status: "passed" } }
+            }
+          }
         },
         {
           rowId: "grace",
           qualityManifestPath: manifestPath,
           qualityManifestAppliedPath: graceManifestPath,
-          qualityCheck: { ok: true, manifestPath: graceManifestPath }
+          qualityCheck: { ok: true, manifestPath: graceManifestPath },
+          render: {
+            frameTransport: { delivery: "materialized", reason: "exact_source_quality" },
+            receipt: {
+              inputHashes: { qualityManifest: expect.stringMatching(/^[a-f0-9]{64}$/) },
+              output: { qualityManifestPath: graceManifestPath, qualityCheck: { status: "passed" } }
+            }
+          }
         }
       ]
     });
-    expect(adaManifest.samples[0].baseline).toBe(join(outDir, "baselines", "ada.png"));
+    expect(adaManifest.samples[0].baseline).toMatch(/baseline-000-[a-f0-9]{16}\.png$/);
+    expect(await readFile(adaManifest.samples[0].baseline)).toEqual(CONTRAST_PNG);
     expect(receipt).toMatchObject({
       output: {
         jobs: [
@@ -14903,8 +15719,10 @@ describe("shellx-motion CLI", () => {
     const sourceRoot = await writeFastBatchPackage();
     tempDirs.push(outDir, sourceRoot);
     const commands: FfmpegCommand[] = [];
+    const streamedCommands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
+      if (isFfprobeCommand(command)) return streamedVideoProbe("vp9", "matroska,webm");
       if (command.args[0] === "-version") {
         return { exitCode: 0, stdout: "ffmpeg version fake", stderr: "" };
       }
@@ -14917,6 +15735,7 @@ describe("shellx-motion CLI", () => {
 
     const result = await runCli(["render-batch", sourceRoot, "--out", outDir, "--preset", "webm-vp9"], {
       ffmpegRunner: runner,
+      streamingProcessFactory: streamedBatchProcessFactory(streamedCommands),
       scratchRoot: join(outDir, "frames")
     });
 
@@ -14928,16 +15747,26 @@ describe("shellx-motion CLI", () => {
         {
           rowId: "ada",
           outputPath: join(outDir, "render", "pkg_batch_card_ada.webm"),
-          render: { preset: "webm-vp9", output: { codec: "vp9", container: "webm", preset: "webm-vp9" } }
+          render: {
+            preset: "webm-vp9",
+            frameTransport: { delivery: "streamed", reason: "stream_default" },
+            output: { codec: "vp9", container: "webm", preset: "webm-vp9" },
+            receipt: { output: { frameTransport: { delivery: "streamed", retainedFrameCount: 0 } } }
+          }
         },
         {
           rowId: "grace",
           outputPath: join(outDir, "render", "pkg_batch_card_grace.webm"),
-          render: { preset: "webm-vp9", output: { codec: "vp9", container: "webm", preset: "webm-vp9" } }
+          render: {
+            preset: "webm-vp9",
+            frameTransport: { delivery: "streamed", reason: "stream_default" },
+            output: { codec: "vp9", container: "webm", preset: "webm-vp9" },
+            receipt: { output: { frameTransport: { delivery: "streamed", retainedFrameCount: 0 } } }
+          }
         }
       ]
     });
-    expect(commands.filter((command) => command.args.includes("libvpx-vp9"))).toHaveLength(2);
+    expect(streamedCommands.filter((command) => command.args.includes("libvpx-vp9"))).toHaveLength(2);
     await expect(readFile(join(outDir, "render", "pkg_batch_card_ada.webm"), "utf8")).resolves.toContain("fake");
     await expect(readFile(join(outDir, "render", "pkg_batch_card_grace.webm"), "utf8")).resolves.toContain("fake");
   }, 45_000);
@@ -15149,16 +15978,19 @@ describe("shellx-motion CLI", () => {
     const sourceRoot = await writeFastBatchPackage();
     tempDirs.push(outDir, sourceRoot);
     const commands: FfmpegCommand[] = [];
+    const streamedCommands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
       if (command.args[0] === "-version") {
         return { exitCode: 0, stdout: "ffmpeg version fake", stderr: "" };
       }
-      throw new Error("quality failure should happen before ffmpeg encode");
+      if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" };
+      throw new Error("quality failure should stop image2pipe before the encoder receives end-of-input");
     };
 
     const result = await runCli(["render-batch", sourceRoot, "--out", outDir, "--min-unique-frames", "2"], {
       ffmpegRunner: runner,
+      streamingProcessFactory: streamedBatchProcessFactory(streamedCommands),
       scratchRoot: join(outDir, "frames")
     });
     const receipt = JSON.parse(await readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")) as Record<string, any>;
@@ -15177,7 +16009,11 @@ describe("shellx-motion CLI", () => {
           rowId: "ada",
           status: "failed",
           quality: { minUniqueFrameHashes: 2 },
-          render: { ok: false, error: { code: "frame_quality_failed" } }
+          render: {
+            ok: false,
+            frameTransport: { delivery: "streamed", reason: "stream_default" },
+            error: { code: "frame_quality_failed", handoff: { delivery: "streamed" } }
+          }
         }
       ]
     });
@@ -15192,6 +16028,10 @@ describe("shellx-motion CLI", () => {
     });
     expect(commands.filter((command) => command.args[0] === "-version")).toHaveLength(1);
     expect(commands.filter((command) => command.args.includes("-framerate"))).toHaveLength(0);
+    // image2pipe opens its encoder before source production; the quality gate aborts it before
+    // end-of-input, so no completed FFmpeg encode or delivered output can be claimed.
+    expect(streamedCommands).toHaveLength(1);
+    expect(streamedCommands[0].args).toEqual(expect.arrayContaining(["-f", "image2pipe", "-i", "pipe:0"]));
   }, 45_000);
 
   it("plans Cut imports from the CLI", async () => {
@@ -15225,7 +16065,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("runs a Canvas-to-Cut connector harness from the CLI", async () => {
+  itLinux("refuses the removed Canvas-to-Cut dry-run control before host-job creation", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-connector-"));
     tempDirs.push(outDir);
 
@@ -15237,38 +16077,19 @@ describe("shellx-motion CLI", () => {
       outDir,
       "--dry-run-render"
     ]);
-    const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, unknown>;
-
     expect(result).toMatchObject({
       ok: false,
       command: "connector.canvas-to-cut",
-      packageDir: join(outDir, "package"),
-      preview: {
-        ok: false,
-        lane: "native"
-      },
-      cutPlanPath: join(outDir, "cut-import-plan.json"),
-      receiptPath: join(outDir, "connector-run.receipt.json"),
-      warnings: [
-        expect.stringContaining("Native renderer failed: ENOENT"),
-        "Canvas asset was not copied into package: assets/product-retouched.png"
-      ]
+      error: { code: "invalid_args", message: expect.stringContaining("does not accept --dry-run-render") }
     });
-    expect(String((result.warnings as unknown[])[0]).replaceAll("\\", "/")).toContain("assets/product-retouched.png");
-    expect(receipt).toMatchObject({
-      operation: "connector.canvas_to_cut",
-      status: "failed",
-      output: {
-        cut: { ok: true, mode: "rendered_media" },
-        render: { ok: true, dryRun: true }
-      }
-    });
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("passes editable Cut import mode through connector CLI without rendering media", async () => {
+  itLinux("refuses editable Canvas-to-Cut mode before host-job creation", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-connector-editable-cut-"));
-    tempDirs.push(outDir);
-    const selectionPath = join(outDir, "frame-selection.json");
+    const inputDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-connector-editable-input-"));
+    tempDirs.push(outDir, inputDir);
+    const selectionPath = join(inputDir, "frame-selection.json");
     await writeFile(selectionPath, JSON.stringify(staticShapeTextFrameSelection(), null, 2), "utf8");
 
     const result = await runCli([
@@ -15279,42 +16100,21 @@ describe("shellx-motion CLI", () => {
       outDir,
       "--cut-import-mode",
       "editable_lowering"
-    ], {
-      ffmpegRunner: async () => {
-        throw new Error("editable Cut import should not render media");
-      }
-    });
-    const cutPlan = JSON.parse(await readFile(String(result.cutPlanPath), "utf8")) as Record<string, unknown>;
+    ]);
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "connector.canvas-to-cut",
-      render: {
-        ok: true,
-        required: false,
-        dryRun: true,
-        lane: "ffmpeg"
-      },
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "cut_plan", path: join(outDir, "cut-import-plan.json"), status: "available", primary: true }),
-        expect.objectContaining({ role: "render_receipt", path: join(outDir, "receipts", "ffmpeg-render.receipt.json"), status: "available" })
-      ])
+      error: { code: "invalid_args", message: expect.stringContaining("only --cut-import-mode rendered_media") }
     });
-    expect((result.artifacts as Array<{ role: string }>).find((artifact) => artifact.role === "rendered_media")).toBeUndefined();
-    expect(cutPlan).toMatchObject({
-      ok: true,
-      mode: "editable_lowering",
-      operations: [
-        { verb: "cut.shape.create", sourceLayerId: "panel" },
-        { verb: "cut.title.create", sourceLayerId: "title" }
-      ]
-    });
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("passes WebM VP9 presets through Canvas-to-Cut CLI handoffs", async () => {
+  itLinux("refuses non-MP4 Canvas-to-Cut preset controls before host-job creation", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-cut-webm-"));
-    tempDirs.push(outDir);
-    const selectionPath = join(outDir, "frame-selection.json");
+    const inputDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-cut-webm-input-"));
+    tempDirs.push(outDir, inputDir);
+    const selectionPath = join(inputDir, "frame-selection.json");
     await writeFile(selectionPath, JSON.stringify(shapeTextFrameSelection(), null, 2), "utf8");
 
     const result = await runCli([
@@ -15329,28 +16129,15 @@ describe("shellx-motion CLI", () => {
       "rendered_media",
       "--dry-run-render"
     ]);
-    const renderReceipt = JSON.parse(await readFile(String((result.render as Record<string, unknown>).receiptPath), "utf8")) as Record<string, any>;
-
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "connector.canvas-to-cut",
-      render: {
-        preset: "webm-vp9",
-        outputPath: join(outDir, "render", "pkg_canvas_motion_real_frame_intro.webm")
-      },
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "rendered_media", mediaType: "video/webm" })
-      ])
+      error: { code: "invalid_args", message: expect.stringContaining("does not accept --preset") }
     });
-    expect(renderReceipt).toMatchObject({
-      output: {
-        preset: "webm-vp9",
-        command: { args: expect.arrayContaining(["-c:v", "libvpx-vp9"]) }
-      }
-    });
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects unsupported Canvas-to-Cut presets before creating connector output", async () => {
+  itLinux("rejects unsupported Canvas-to-Cut presets before creating connector output", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-cut-invalid-preset-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -15369,15 +16156,12 @@ describe("shellx-motion CLI", () => {
     expect(result).toMatchObject({
       ok: false,
       command: "connector.canvas-to-cut",
-      error: {
-        code: "unsupported_preset",
-        message: "Unsupported export preset: avi-xvid."
-      }
+      error: { code: "invalid_args", message: expect.stringContaining("does not accept --preset") }
     });
     await expect(stat(join(outDir, "run"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("runs a Canvas-to-MP4 export harness from the CLI without Cut", async () => {
+  itLinux("runs a Canvas-to-MP4 export harness from the CLI without Cut", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-mp4-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -15423,7 +16207,7 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("runs Canvas-to-MP4 CLI exports with non-default FFmpeg presets", async () => {
+  itLinux("runs Canvas-to-MP4 CLI exports with non-default FFmpeg presets", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-mp4-webm-"));
     tempDirs.push(outDir);
     const selectionPath = join(outDir, "frame-selection.json");
@@ -15512,6 +16296,39 @@ describe("shellx-motion CLI", () => {
           selectedFrameId: "frame_cli",
           layerIds: ["rect-blue", "heading"]
         }
+      });
+    } finally {
+      if (previousTrustedRoots === undefined) {
+        delete process.env.SHELLX_MOTION_TRUSTED_CANVAS_ROOTS;
+      } else {
+        process.env.SHELLX_MOTION_TRUSTED_CANVAS_ROOTS = previousTrustedRoots;
+      }
+    }
+  });
+
+  it("uses CLI --force to replace both a Canvas selection and its fixed sibling receipt", async () => {
+    const canvasRoot = await writeCanvasBridgeRoot();
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-canvas-bridge-force-"));
+    tempDirs.push(outDir);
+    const outPath = join(outDir, "frame-selection.json");
+    const receiptPath = join(outDir, "canvas-bridge-export.receipt.json");
+    const previousTrustedRoots = process.env.SHELLX_MOTION_TRUSTED_CANVAS_ROOTS;
+    process.env.SHELLX_MOTION_TRUSTED_CANVAS_ROOTS = canvasRoot;
+    await writeFile(outPath, "MY SELECTION", "utf8");
+    await writeFile(receiptPath, "MY RECEIPT", "utf8");
+
+    try {
+      const refused = await runCli(["connector", "canvas-bridge-export", canvasRoot, "--out", outPath]);
+      expect(refused).toMatchObject({ ok: false, error: { code: "output_path_exists" } });
+      expect(await readFile(outPath, "utf8")).toBe("MY SELECTION");
+      expect(await readFile(receiptPath, "utf8")).toBe("MY RECEIPT");
+
+      const result = await runCli(["connector", "canvas-bridge-export", canvasRoot, "--out", outPath, "--force"]);
+      expect(result).toMatchObject({ ok: true, path: outPath, receiptPath });
+      expect(await readFile(outPath, "utf8")).toContain("shellx-canvas/frame-selection@1");
+      expect(JSON.parse(await readFile(receiptPath, "utf8"))).toMatchObject({
+        operation: "canvas.bridge_export",
+        output: { path: outPath, receiptPath }
       });
     } finally {
       if (previousTrustedRoots === undefined) {
@@ -15618,24 +16435,13 @@ describe("shellx-motion CLI", () => {
     expect(scriptSource).toContain("video/mp4");
     expect(scriptSource).toContain("quality-check");
     expect(scriptSource).toContain("--preview-package");
-  });
-
-  it("wires a root Template-to-Cut smoke script for host verification", async () => {
-    const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-template-cut-smoke.ts");
-    const scriptSource = await readFile(scriptPath, "utf8");
-
-    expect(packageJson.scripts["connector:template-cut-smoke"]).toBe("tsx scripts/connector-template-cut-smoke.ts");
-    expect(scriptSource).toContain("connector");
-    expect(scriptSource).toContain("template-to-cut");
-    expect(scriptSource).toContain("fixtures/cut-native-static-package");
-    expect(scriptSource).toContain("editable_lowering");
-    expect(scriptSource).toContain("--dry-run-render");
+    expect(scriptSource).toContain("assertPrivateRepoScratchPath(repoRoot, outDir)");
+    expect(scriptSource).toContain("mode: 0o700");
   });
 
   it("wires a root Template-to-Cut rendered-media smoke script for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-template-cut-render-smoke.ts");
+    const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/connector-template-cut-render-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
     expect(packageJson.scripts["connector:template-cut-render-smoke"]).toBe("tsx scripts/connector-template-cut-render-smoke.ts");
@@ -15644,13 +16450,17 @@ describe("shellx-motion CLI", () => {
     expect(scriptSource).toContain("fixtures/packages/editable-lower-third");
     expect(scriptSource).toContain("rendered_media");
     expect(scriptSource).not.toContain("--dry-run-render");
+    expect(scriptSource).not.toContain("join(outDir, \"source-package\")");
     expect(scriptSource).toContain("status\", \"rendered_media.status\") === \"available\"");
+    expect(scriptSource).toContain('artifact_handle.status") === "available"');
     expect(scriptSource).toContain("video/mp4");
     expect(scriptSource).toContain("quality-check");
     expect(scriptSource).toContain("--preview-package");
+    expect(scriptSource).toContain("assertPrivateRepoScratchPath(repoRoot, outDir)");
+    expect(scriptSource).toContain("0o700");
   });
 
-  it("wires the Canvas-to-Cut smoke as a plan-only handoff", async () => {
+  it("wires the real Canvas-to-Cut P2B smoke as a plan-only handoff", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
     const scriptPath = resolve("../../scripts/connector-canvas-cut-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
@@ -15658,13 +16468,27 @@ describe("shellx-motion CLI", () => {
     expect(packageJson.scripts["connector:canvas-cut-smoke"]).toBe("tsx scripts/connector-canvas-cut-smoke.ts");
     expect(scriptSource).toContain("SHELLX_CANVAS_ROOT");
     expect(scriptSource).toContain("canvas-to-cut");
-    expect(scriptSource).toContain("--dry-run-render");
-    expect(scriptSource).toContain("cmd.exe");
-    expect(scriptSource).toContain("\"/c\", \"pnpm\"");
-    expect(scriptSource).not.toContain("pnpm.cmd");
+    expect(scriptSource).not.toContain("--dry-run-render");
+    expect(scriptSource).toContain("rendered_media.mediaType");
+    expect(scriptSource).toContain("artifact_handle.status");
+    expect(scriptSource).toContain("verifyAttestedArtifactHandleReference");
+    expect(scriptSource).toContain("render.frameLane");
+    expect(scriptSource).toContain("cutApplication");
     expect(scriptSource).not.toContain("SHELLX_CUT_ROOT");
     expect(scriptSource).not.toContain("SHELLX_MOTION_CUT_CARGO_TARGET_DIR");
     expect(scriptSource).not.toContain("--cut-root");
+  });
+
+  it("makes the fixture P2B Canvas smoke repeatable without force", async () => {
+    const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
+    const scriptSource = await readFile(resolve("../../scripts/connector-canvas-fixture-cut-smoke.ts"), "utf8");
+
+    expect(packageJson.scripts["connector:smoke"]).toBe("tsx scripts/connector-canvas-fixture-cut-smoke.ts");
+    expect(scriptSource).toContain("assertPrivateRepoScratchPath(repoRoot, outDir)");
+    expect(scriptSource).toContain("await rm(outDir, { recursive: true, force: true })");
+    expect(scriptSource).toContain("canvas-to-cut");
+    expect(scriptSource).not.toContain("--force");
+    expect(scriptSource).not.toContain("--dry-run-render");
   });
 
   it("wires a receipt-producing platform verification runner for host gates", async () => {
@@ -15737,7 +16561,7 @@ describe("shellx-motion CLI", () => {
     // broke five tests that were only ever asserting "the list equals the list I copied". What is
     // asserted instead are the invariants a correct ladder must satisfy, each checkable against a
     // source the plan does not derive from — so this cannot pass by agreeing with itself.
-    const planned = receipt.commands as Array<{ id: string; command: string[]; required: boolean; requiresEnv?: string[]; category: string }>;
+    const planned = receipt.commands as Array<{ id: string; command: string[]; required: boolean; requiresEnv?: string[]; category: string; platforms?: string[] }>;
     const plannedIds = planned.map((command) => command.id);
     const requiredIds = planned.filter((command) => command.required === true).map((command) => command.id);
     const optionalIds = planned.filter((command) => command.required !== true).map((command) => command.id);
@@ -15760,6 +16584,18 @@ describe("shellx-motion CLI", () => {
       "browser:capture-smoke", "connector:smoke", "connector:template-cut-render-smoke"
     ]) {
       expect(requiredIds).toContain(id);
+    }
+    expect(planned.find((command) => command.id === "connector:template-cut-render-smoke")).toMatchObject({
+      required: true,
+      platforms: ["linux"]
+    });
+    for (const id of [
+      "agent:smoke", "debug-server-prompt:smoke", "canvas-package-preview:smoke",
+      "evidence-surfaces:smoke", "source-storyboard:smoke", "render-job-lifecycle:smoke",
+      "connector:smoke", "connector:canvas-mp4-smoke",
+      "connector:script-cut-smoke", "connector:canvas-cut-smoke"
+    ]) {
+      expect(planned.find((command) => command.id === id)).toMatchObject({ platforms: ["linux"] });
     }
     // Ordering that the runner depends on: dependencies install before anything is typechecked or run.
     expect(plannedIds.slice(0, 3)).toEqual(["install", "typecheck", "test"]);
@@ -15791,9 +16627,11 @@ describe("shellx-motion CLI", () => {
     const { stdout: extendedStdout } = await execFile(process.execPath, [
       scriptPath, "--", "--dry-run", "--json", "--include-extended"
     ], { cwd: resolve("../..") });
-    const extendedIds = (JSON.parse(extendedStdout).commands as Array<{ id: string }>).map((command) => command.id);
+    const extendedCommands = JSON.parse(extendedStdout).commands as Array<{ id: string; platforms?: string[] }>;
+    const extendedIds = extendedCommands.map((command) => command.id);
     expect(extendedIds.length).toBeGreaterThan(plannedIds.length);
     for (const id of plannedIds) expect(extendedIds).toContain(id);
+    expect(extendedCommands.find((command) => command.id === "template-pack:proof")).toMatchObject({ platforms: ["linux"] });
 
     // The doc is held to the plan mechanically by `scripts/platform-verification-doc-gate.mjs`
     // (wired into `pnpm docs:check`). Asserted here too, because this is the test that ties the
@@ -15813,9 +16651,13 @@ describe("shellx-motion CLI", () => {
     const scriptPath = join(exactRoot, "scripts", "platform-verify.mjs");
     await mkdir(dirname(scriptPath), { recursive: true });
     await copyFile(sourceScriptPath, scriptPath);
+    await copyFile(resolve("../../scripts/repo-scratch.mjs"), join(exactRoot, "scripts", "repo-scratch.mjs"));
+    await copyFile(resolve("../../scripts/platform-verification-schema.mjs"), join(exactRoot, "scripts", "platform-verification-schema.mjs"));
+    await mkdir(join(exactRoot, "schemas"), { recursive: true });
+    await copyFile(resolve("../../schemas/platform-verification.schema.json"), join(exactRoot, "schemas", "platform-verification.schema.json"));
     await writeFile(join(exactRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
     await execFile("git", ["init", "--quiet", exactRoot]);
-    await execFile("git", ["-C", exactRoot, "add", "scripts/platform-verify.mjs", "pnpm-lock.yaml"]);
+    await execFile("git", ["-C", exactRoot, "add", "scripts/platform-verify.mjs", "scripts/platform-verification-schema.mjs", "scripts/repo-scratch.mjs", "schemas/platform-verification.schema.json", "pnpm-lock.yaml"]);
     await execFile("git", ["-C", exactRoot, "-c", "user.name=ShellX Motion Test", "-c", "user.email=motion-test@localhost", "commit", "--quiet", "-m", "exact workspace fixture"]);
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
@@ -15939,6 +16781,165 @@ describe("shellx-motion CLI", () => {
       expect.objectContaining({ hostId: "linux", status: "passed", dryRun: false }),
       expect.objectContaining({ hostId: "windows", status: "passed", dryRun: false }),
       expect.objectContaining({ hostId: "macos", status: "passed", dryRun: false })
+    ]));
+    expect(aggregate.summary.platformInapplicableSkips).toHaveLength(20);
+    expect(aggregate.summary.platformInapplicableSkips).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hostId: "windows", command: "connector:template-cut-render-smoke", hostPlatform: "win32", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "macos", command: "connector:template-cut-render-smoke", hostPlatform: "darwin", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "windows", command: "source-storyboard:smoke", hostPlatform: "win32", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "windows", command: "connector:script-cut-smoke", hostPlatform: "win32", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "macos", command: "connector:script-cut-smoke", hostPlatform: "darwin", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "windows", command: "connector:smoke", hostPlatform: "win32", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "macos", command: "connector:smoke", hostPlatform: "darwin", platforms: ["linux"] }),
+      expect.objectContaining({ hostId: "macos", command: "source-storyboard:smoke", hostPlatform: "darwin", platforms: ["linux"] })
+    ]));
+  });
+
+  it("rejects a structurally incomplete self-asserted platform receipt", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-forged-receipt-"));
+    tempDirs.push(tempRoot);
+    const receiptPath = await writePlatformReceipt(tempRoot, "linux");
+    const forged = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, any>;
+    delete forged.repoRoot;
+    delete forged.commandSummary;
+    delete forged.commands[0].exitCode;
+    await writeFile(receiptPath, `${JSON.stringify(forged, null, 2)}\n`, "utf8");
+
+    const aggregate = await execPlatformVerifierFailure([
+      scriptPath, "--", "--verify-receipts", receiptPath, "--required-hosts", "linux", "--json",
+    ]);
+    expect(aggregate).toMatchObject({
+      status: "failed",
+      summary: { invalidReceiptCount: 1, failedHosts: ["linux"] },
+      receipts: [expect.objectContaining({ schemaOk: false, ok: false })],
+    });
+    expect(aggregate.receipts[0].failures).toEqual(expect.arrayContaining([
+      expect.stringContaining("receipt schema validation failed"),
+    ]));
+  });
+
+  it("rejects duplicate command identities in a completed platform receipt", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-duplicate-command-"));
+    tempDirs.push(tempRoot);
+    const receiptPath = await writePlatformReceipt(tempRoot, "linux");
+    const forged = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, any>;
+    forged.commands[1] = { ...forged.commands[1], id: forged.commands[0].id, command: [...forged.commands[0].command] };
+    await writeFile(receiptPath, `${JSON.stringify(forged, null, 2)}\n`, "utf8");
+
+    const aggregate = await execPlatformVerifierFailure([
+      scriptPath, "--", "--verify-receipts", receiptPath, "--required-hosts", "linux", "--json",
+    ]);
+    expect(aggregate).toMatchObject({
+      status: "failed",
+      summary: { invalidReceiptCount: 1, failedHosts: ["linux"] },
+      receipts: [expect.objectContaining({ schemaOk: false, ok: false })],
+    });
+    expect(aggregate.receipts[0].failures[0]).toContain("must be unique");
+  });
+
+  it("emits an allowlisted shareable platform projection without local paths or raw output", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const { stdout } = await execFile(process.execPath, [
+      scriptPath, "--", "--dry-run", "--json", "--shareable", "--required-hosts", "none",
+    ], { cwd: resolve("../..") });
+    const projection = JSON.parse(stdout) as Record<string, any>;
+    const serialized = JSON.stringify(projection);
+
+    expect(projection).toMatchObject({
+      schema: "shellx-motion/platform-verification-shareable@1",
+      source: { schema: "shellx-motion/platform-verification@1", sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      status: "planned",
+      evidence: { host: { id: expect.any(String), platform: expect.any(String) } },
+    });
+    expect(serialized).not.toContain(resolve("../.."));
+    expect(serialized).not.toContain("repoRoot");
+    expect(serialized).not.toContain("hostname");
+    expect(serialized).not.toContain("stdoutTail");
+    expect(serialized).not.toContain("stderrTail");
+  });
+
+  it("redacts source paths and skip reasons from a shareable platform aggregate", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-shareable-aggregate-"));
+    tempDirs.push(tempRoot);
+    const receiptPath = await writePlatformReceipt(tempRoot, "windows");
+    const privateReceipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, any>;
+    const skipped = privateReceipt.commands.find((entry: Record<string, any>) => entry.status === "skipped");
+    expect(skipped).toBeDefined();
+    skipped.skipReason = `Not applicable; private source is ${tempRoot}`;
+    privateReceipt.toolchain.status = tempRoot;
+    privateReceipt.toolchain.workspace = {
+      status: tempRoot,
+      exact: false,
+      commit: tempRoot,
+      trackedDirty: false,
+      lockfileSha256: tempRoot,
+    };
+    privateReceipt.toolchain.node = { sha256: tempRoot };
+    privateReceipt.toolchain.encoders = { capabilities: { h264: true, privateDiagnostic: tempRoot } };
+    await writeFile(receiptPath, `${JSON.stringify(privateReceipt, null, 2)}\n`, "utf8");
+
+    const { stdout } = await execFile(process.execPath, [
+      scriptPath, "--", "--verify-receipts", receiptPath, "--required-hosts", "windows", "--json", "--shareable",
+    ], { cwd: resolve("../..") });
+    const projection = JSON.parse(stdout) as Record<string, any>;
+    const serialized = JSON.stringify(projection);
+
+    expect(projection).toMatchObject({
+      schema: "shellx-motion/platform-verification-shareable@1",
+      source: { schema: "shellx-motion/platform-verification-aggregate@1" },
+      status: "passed",
+    });
+    expect(serialized).not.toContain(tempRoot);
+    expect(serialized).not.toContain("skipReason");
+    expect(serialized).not.toContain("privateDiagnostic");
+    expect(serialized).not.toContain("path");
+  });
+
+  it("does not disclose an unreadable receipt path through the shareable aggregate", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-shareable-unreadable-"));
+    tempDirs.push(tempRoot);
+    const unreadablePath = join(tempRoot, "missing-private-receipt.json");
+
+    const projection = await execPlatformVerifierFailure([
+      scriptPath, "--", "--verify-receipts", unreadablePath, "--required-hosts", "linux", "--json", "--shareable",
+    ]);
+    const serialized = JSON.stringify(projection);
+    expect(projection).toMatchObject({
+      schema: "shellx-motion/platform-verification-shareable@1",
+      source: { schema: "shellx-motion/platform-verification-aggregate@1" },
+      status: "failed",
+    });
+    expect(serialized).not.toContain(tempRoot);
+    expect(serialized).not.toContain("missing-private-receipt");
+    expect(serialized).not.toContain("path");
+  });
+
+  it("rejects a forged Linux platform-inapplicable Template-to-Cut skip", async () => {
+    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-p2a-forged-skip-"));
+    tempDirs.push(tempRoot);
+    const receiptPaths = await Promise.all(["linux", "windows", "macos"].map((hostId) => writePlatformReceipt(tempRoot, hostId)));
+    const linuxReceipt = JSON.parse(await readFile(receiptPaths[0]!, "utf8")) as Record<string, any>;
+    const p2a = linuxReceipt.commands.find((command: { id?: string }) => command.id === "connector:template-cut-render-smoke");
+    p2a.status = "skipped";
+    p2a.skipKind = "platform-inapplicable";
+    p2a.skipReason = "forged Linux exemption";
+    await writeFile(receiptPaths[0]!, `${JSON.stringify(linuxReceipt, null, 2)}\n`, "utf8");
+
+    const aggregate = await execPlatformVerifierFailure([
+      scriptPath, "--", "--verify-receipts", ...receiptPaths, "--required-hosts", "linux,windows,macos", "--json"
+    ]);
+    expect(aggregate).toMatchObject({ status: "failed" });
+    expect(aggregate.receipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        hostId: "linux",
+        ok: false,
+        failures: expect.arrayContaining(["required command skipped (platform-inapplicable): connector:template-cut-render-smoke"])
+      })
     ]));
   });
 
@@ -16186,7 +17187,7 @@ describe("shellx-motion CLI", () => {
     ]));
   });
 
-  it("skips optional platform connector gates when required checkout env is absent", async () => {
+  itLinux("skips optional platform connector gates when required checkout env is absent", async () => {
     const scriptPath = resolve("../../scripts/platform-verify.mjs");
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
@@ -16218,7 +17219,7 @@ describe("shellx-motion CLI", () => {
     ]);
   });
 
-  it("fails required platform connector gates when required checkout env is absent", async () => {
+  itLinux("fails required platform connector gates when required checkout env is absent", async () => {
     const scriptPath = resolve("../../scripts/platform-verify.mjs");
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
@@ -16463,7 +17464,7 @@ describe("shellx-motion CLI", () => {
     expect(canvasPackagePreviewScriptSource).toContain("copiedAssetRefs");
     expect(canvasPackagePreviewScriptSource).toContain("missingAssetRefs");
     expect(canvasPackagePreviewScriptSource).toContain("resource-catalog.json");
-    expect(canvasPackagePreviewScriptSource).toContain("quality-check");
+    expect(canvasPackagePreviewScriptSource).toContain("inspectPngFile");
     expect(canvasPackagePreviewScriptSource).toContain("preview");
     expect(evidenceSurfacesScriptSource).toContain("motion.preview.frame");
     expect(evidenceSurfacesScriptSource).toContain("motion.receipts.panel");
@@ -16566,8 +17567,9 @@ describe("shellx-motion CLI", () => {
     expect(browserScriptSource).toContain("--fail-on-drift");
     expect(browserScriptSource).toContain("--recording-manifest");
     expect(browserScriptSource).toContain("--recording-samples");
+    expect(browserScriptSource).toContain('const recordingManifestPath = join(recordingCaptureOutDir, "browser-recording.manifest.json");');
     expect(browserScriptSource).toContain("browser_workflow_trace");
-    expect(browserScriptSource).toContain("browser_workflow_catalog");
+    expect(browserScriptSource).toContain("catalogSecond.workflowCatalogPath");
     expect(browserScriptSource).toContain("browser_recording_manifest");
     expect(browserScriptSource).toContain("recordingManifest");
     expect(browserScriptSource).toContain("action: \"type\"");
@@ -16603,7 +17605,7 @@ describe("shellx-motion CLI", () => {
     expect(debugServerPromptScriptSource).toContain("linkedReceiptIds");
   });
 
-  it("runs a Script-to-Cut connector harness from the CLI without Canvas", async () => {
+  itLinux("refuses the removed Script-to-Cut dry-run control before host-job creation", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-script-connector-"));
     tempDirs.push(outDir);
     const scriptPath = join(outDir, "storyboard.json");
@@ -16623,49 +17625,15 @@ describe("shellx-motion CLI", () => {
       "overlay-2",
       "--dry-run-render"
     ]);
-    const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, unknown>;
-    const cutPlan = JSON.parse(await readFile(String(result.cutPlanPath), "utf8")) as Record<string, any>;
-
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "connector.script-to-cut",
-      packageDir: join(outDir, "package"),
-      cutPlanPath: join(outDir, "cut-import-plan.json"),
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "rendered_media", path: join(outDir, "render", "pkg_script_launch_demo.mp4"), status: "planned", primary: true }),
-        expect.objectContaining({ role: "cut_plan", path: join(outDir, "cut-import-plan.json"), status: "available" })
-      ]),
-      receiptPath: join(outDir, "connector-run.receipt.json"),
-      // the text-delivery invariant: the connector still renders its native preview, but the case fold the
-      // block-glyph lane applies is now named per layer instead of being silent.
-      warnings: [
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_hook_title: ok.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_hook_body: howtenrkfl."
-      ]
+      error: { code: "invalid_args", message: expect.stringContaining("does not accept --dry-run-render") }
     });
-    expect(receipt).toMatchObject({
-      operation: "connector.script_to_cut",
-      status: "warning",
-      output: {
-        script: { path: scriptPath },
-        cut: { ok: true, mode: "rendered_media" },
-        render: { ok: true, dryRun: true }
-      }
-    });
-    expect(cutPlan.operations).toEqual([
-      expect.objectContaining({
-        verb: "cut.media.import_rendered",
-        startMs: 1250,
-        durationMs: 1800,
-        track: "overlay-2"
-      })
-    ]);
-    expect(cutPlan.receipt).toMatchObject({
-      output: { placement: { startMs: 1250, durationMs: 1800, track: "overlay-2" } }
-    });
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("runs a Source-to-Cut connector harness from imported source Markdown", async () => {
+  itLinux("refuses the removed Source-to-Cut dry-run control before host-job creation", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-source-connector-"));
     tempDirs.push(outDir);
     const sourcePath = join(outDir, "source.md");
@@ -16687,50 +17655,15 @@ describe("shellx-motion CLI", () => {
       "360",
       "--dry-run-render"
     ]);
-    const receipt = JSON.parse(await readFile(String(result.receiptPath), "utf8")) as Record<string, unknown>;
-
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "connector.source-to-cut",
-      source: {
-        path: sourcePath,
-        url: "https://github.com/nexu-io/html-video",
-        kind: "repo"
-      },
-      storyboard: {
-        scriptPath: join(outDir, "storyboard", "scripted-video.json"),
-        frameCount: 2,
-        reviewRequired: true
-      },
-      packageDir: join(outDir, "cut", "package"),
-      cutPlanPath: join(outDir, "cut", "cut-import-plan.json"),
-      render: { ok: true, required: true, dryRun: true },
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "source_markdown", path: sourcePath, status: "available", primary: true }),
-        expect.objectContaining({ role: "scripted_video", path: join(outDir, "storyboard", "scripted-video.json"), status: "available" }),
-        expect.objectContaining({ role: "source_to_cut_receipt", path: join(outDir, "receipts", "source-to-cut.receipt.json"), status: "available" })
-      ]),
-      receiptPath: join(outDir, "receipts", "source-to-cut.receipt.json"),
-      // the text-delivery invariant: native-preview case folding is reported, not swallowed.
-      warnings: [
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_title: videowrkfls.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_body: herfncpojtdmsauiv.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer frame_source_001_caption: ourcegithbm."
-      ]
+      error: { code: "invalid_args", message: expect.stringContaining("does not accept --dry-run-render") }
     });
-    expect(receipt).toMatchObject({
-      operation: "connector.source_to_cut",
-      status: "warning",
-      output: {
-        source: { path: sourcePath, kind: "repo" },
-        storyboard: { frameCount: 2, reviewRequired: true },
-        cut: { ok: true, mode: "rendered_media" },
-        render: { ok: true, dryRun: true }
-      }
-    });
+    await expect(stat(join(outDir, "receipts", "source-to-cut.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("runs a Cut Generate to Cut connector alias from the CLI", async () => {
+  itLinux("runs a Cut Generate to Cut connector alias from the CLI", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-cut-generate-connector-"));
     tempDirs.push(outDir);
     const scriptPath = join(outDir, "scripted-video.json");
@@ -16773,9 +17706,11 @@ describe("shellx-motion CLI", () => {
     });
   });
 
-  it("runs a Template-to-Cut connector harness from the CLI", async () => {
+  it("refuses non-rendered Template-to-Cut modes before creating a host job or delivery", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-cut-"));
     tempDirs.push(outDir);
+    const callerId = `template-p2a-invalid-${Date.now()}`;
+    const jobId = `template-p2a-invalid-${Date.now()}`;
 
     const result = await runCli([
       "connector",
@@ -16788,43 +17723,61 @@ describe("shellx-motion CLI", () => {
       "--set",
       "title=Dr. Mira Chen",
       "--set",
-      "accentColor=#ff006e"
+      "accentColor=#ff006e",
+      "--job-id",
+      jobId,
+      "--caller-id",
+      callerId
     ]);
-    const motion = JSON.parse(await readFile(join(outDir, "package", "motion.json"), "utf8")) as Record<string, any>;
-    const cutPlan = JSON.parse(await readFile(join(outDir, "cut-import-plan.json"), "utf8")) as Record<string, any>;
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       command: "connector.template-to-cut",
-      packageDir: join(outDir, "package"),
-      template: {
-        changedParams: ["title", "accentColor"],
-        receiptPath: join(outDir, "package", "receipts", "template-apply.receipt.json")
-      },
-      render: {
-        required: false,
-        dryRun: true
-      },
-      cutPlanPath: join(outDir, "cut-import-plan.json"),
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "template_source", path: resolve("../../fixtures/cut-native-static-package"), status: "available" }),
-        expect.objectContaining({ role: "template_apply_receipt", path: join(outDir, "package", "receipts", "template-apply.receipt.json"), status: "available" }),
-        expect.objectContaining({ role: "cut_plan", path: join(outDir, "cut-import-plan.json"), status: "available", primary: true })
-      ]),
-      receiptPath: join(outDir, "connector-run.receipt.json")
+      error: { code: "invalid_args", message: "connector template-to-cut accepts only --cut-import-mode rendered_media in P2A." }
     });
-    expect(motion.layers[1]).toMatchObject({ text: "Dr. Mira Chen", transform: { scale: 1 } });
-    expect(motion.layers[0]).toMatchObject({ fill: "#ff006e" });
-    expect(cutPlan).toMatchObject({
-      mode: "editable_lowering",
-      operations: [
-        { verb: "cut.shape.create", sourceLayerId: "accent", payload: { fill: "#ff006e" } },
-        { verb: "cut.title.create", sourceLayerId: "title", payload: { text: "Dr. Mira Chen" } }
-      ]
+    expect(result.jobId).toBeUndefined();
+    await expect(runCli(["job", "list", "--caller-id", callerId])).resolves.toMatchObject({ ok: true, command: "job.list", callerId, jobCount: 0 });
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each([
+    ["force", ["--force"]],
+    ["dry-run render", ["--dry-run-render"]],
+    ["native preview", ["--preview-lane", "native"]],
+    ["auto preview", ["--preview-lane", "auto"]],
+    ["GPU frame lane", ["--frame-lane", "gpu"]],
+    ["alternate render lane", ["--render-lane", "ffmpeg"]],
+    ["audio request", ["--needs-audio"]]
+  ])("returns invalid_args for Template-to-Cut P2A %s option before delivery", async (_label, forbiddenArgs) => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-template-cut-invalid-"));
+    tempDirs.push(outDir);
+
+    const result = await runCli([
+      "connector", "template-to-cut", resolve("../../fixtures/packages/editable-lower-third"),
+      "--out", outDir, "--set", "title=No Delivery", ...forbiddenArgs
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "connector.template-to-cut",
+      error: {
+        code: "invalid_args",
+        message: expect.stringContaining("Linux Browser-to-FFmpeg rendered_media only")
+      }
+    });
+    expect(result.jobId).toBeUndefined();
+    await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recognizes the exact cutout rig bake alias before rejecting incomplete input", async () => {
+    await expect(runCli(["debug", "cutout-rig-bake", "--tier", "edit_motion"])).resolves.toMatchObject({
+      ok: false,
+      command: "debug.cutout-rig-bake",
+      error: { code: "invalid_args", message: expect.stringContaining("requires packageRoot") },
     });
   });
 
-  it("returns structured connector errors when browser real render is missing package assets", async () => {
+  itLinux("returns a structured pre-publication connector refusal when a Canvas asset is missing", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-connector-render-fail-"));
     tempDirs.push(outDir);
 
@@ -16843,6 +17796,9 @@ describe("shellx-motion CLI", () => {
         code: "connector_failed"
       }
     });
-    expect(String((result.error as { message?: string }).message)).toContain("missing package asset");
-  });
+    const message = String((result.error as { message?: string }).message);
+    expect(message).toContain("missing Canvas assets");
+    expect(result.render).toBeUndefined();
+    expect(await readdir(outDir)).toEqual([]);
+  }, 45_000);
 });

@@ -42,3 +42,22 @@ connector-canvas.receipt.json
 ```
 
 Only templates with the required proof for their advertised hosts should appear as promoted catalog entries.
+
+## Promoted Moving-Proof Gate Matrix
+
+The following is the release-gate matrix for every one of the twelve promoted
+directories. It is distinct from a poster/contact-sheet review: each selected
+family gets a fresh short rendered MP4 in caller scratch.
+
+| Gate | Authority | Failure condition |
+| --- | --- | --- |
+| Promotion scope | `PUBLIC_PRODUCT_TEMPLATE_DIRS` + checked policy table | Missing, extra, or unreviewed public family ID. |
+| Delivery facts | Fresh final render receipt plus FFprobe readback | Hash mismatch, non-H.264 MP4, wrong measured fps/duration/BT.709 colour, or audio mismatch. |
+| Moving proof | Hashed browser source frames | Unique-frame count below the measured family threshold. |
+| Budget | Artifact stat, caller-scratch tree size, final receipt resources | Artifact, scratch, or FFmpeg process-tree RSS exceeds the family cap. |
+| Cut advertisement | Static host-parity gate | A `shellx-cut` manifest has no declared Generate or rendered-media handoff mode. |
+| Retention and recovery | Caller scratch only | Successful proof leaves only evidence/receipts; a marker-fenced `--resume-inspection` may recheck only the exact retained failed run with receipt/media/frame hashes and FFprobe readback, never Git content. |
+
+Rain is the intentional special case: `cinematic-rain-launch` proves a
+receipt-bound rendered-media handoff only, not a Cut Generate catalog or runtime
+path.

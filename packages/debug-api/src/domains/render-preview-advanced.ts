@@ -1,5 +1,6 @@
 /** Playhead and strip preview artifacts with deterministic receipts. */
 import {
+  AgentScriptProvenanceRefusal,
   analyzeFrameSequenceMotion,
   hashBuffer,
   motionDensityWarnings,
@@ -10,7 +11,11 @@ import {
 import { join } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import type { BrowserFrameRenderer } from "./integration-browser-workflow.js";
+import type { MotionBrowserRenderSession } from "@shellx-motion/renderer-browser";
 import { nonNegativeNumberArg, positiveIntegerArg, stringArg } from "./args.js";
+import { activeBrowserScripts, BrowserScriptEvidenceAccumulator } from "../browser-script-evidence.js";
+
+const MAX_PREVIEW_STRIP_INPUT_HASHES = 4_128;
 
 interface PreviewTimelineState {
   playheadMs: number;
@@ -23,6 +28,12 @@ export interface RenderPreviewAdvancedServices {
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   browserFrameRenderer?: BrowserFrameRenderer;
+  /**
+   * Default-renderer-only strip seam. The dispatcher supplies this only when the host did not
+   * inject a frame renderer, so an injected renderer keeps its existing one-call-per-frame path.
+   */
+  browserPreviewStripSessionFactory?: (pkg: MotionPackage) => Promise<Pick<MotionBrowserRenderSession, "renderFrame" | "close">>;
+  activeScriptSessionAvailable?: boolean;
   ensureDirectory?: (path: string) => Promise<void>;
   readPreviewTimelineState?: (pkg: MotionPackage) => Promise<PreviewTimelineState>;
   hashPackageIdentity?: (pkg: MotionPackage) => Promise<Record<string, string>>;
@@ -114,6 +125,12 @@ async function strip(args: unknown, services: RenderPreviewAdvancedServices): Pr
   if (unavailable) return unavailable;
   try {
     const pkg = await services.packageLoader!(packageRoot);
+    const requiresScriptEvidence = activeBrowserScripts(pkg);
+    if (requiresScriptEvidence && (!services.browserPreviewStripSessionFactory || services.activeScriptSessionAvailable === false)) {
+      throw new AgentScriptProvenanceRefusal(
+        "Active browser content requires one host-bound session for preview strips."
+      );
+    }
     const endMs = endMsArg ?? Math.max(0, pkg.motion.durationMs);
     if (startMs > pkg.motion.durationMs) return invalidArgs("startMs must be within motion duration.");
     if (endMs < startMs) return invalidArgs("endMs must be greater than or equal to startMs.");
@@ -121,12 +138,25 @@ async function strip(args: unknown, services: RenderPreviewAdvancedServices): Pr
     await services.ensureDirectory!(outDir);
     const frames: Array<{ index: number; atMs: number; path: string; sha256: string; width: number; height: number }> = [];
     const frameReceipts: OperationReceipt[] = [];
-    for (let index = 0; index < frameCount; index += 1) {
-      const atMs = stripFrameTimestampMs(index, frameCount, startMs, endMs);
-      const outputPath = join(outDir, `${safeFileToken(pkg.manifest.id)}-strip-${String(index + 1).padStart(2, "0")}-${atMs}ms.png`);
-      const preview = await services.browserFrameRenderer!(pkg, { atMs, outDir, outputPath, ...(createdAt ? { now: () => createdAt } : {}) });
-      frames.push({ index, atMs, path: preview.output.path, sha256: preview.output.sha256, width: preview.output.width, height: preview.output.height });
-      frameReceipts.push(preview.receipt);
+    const scriptEvidence = new BrowserScriptEvidenceAccumulator();
+    const session = services.browserPreviewStripSessionFactory
+      ? await services.browserPreviewStripSessionFactory(pkg)
+      : undefined;
+    try {
+      for (let index = 0; index < frameCount; index += 1) {
+        const atMs = stripFrameTimestampMs(index, frameCount, startMs, endMs);
+        const outputPath = join(outDir, `${safeFileToken(pkg.manifest.id)}-strip-${String(index + 1).padStart(2, "0")}-${atMs}ms.png`);
+        // Keep strip work ordered and governor-visible one frame at a time. In particular, do not
+        // use `renderFrames`: it has different batch admission, cancellation and receipt semantics.
+        const preview = session
+          ? await session.renderFrame({ atMs, outDir, outputPath, ...(createdAt ? { now: () => createdAt } : {}) })
+          : await services.browserFrameRenderer!(pkg, { atMs, outDir, outputPath, ...(createdAt ? { now: () => createdAt } : {}) });
+        frames.push({ index, atMs, path: preview.output.path, sha256: preview.output.sha256, width: preview.output.width, height: preview.output.height });
+        frameReceipts.push(preview.receipt);
+        scriptEvidence.observe(preview, requiresScriptEvidence);
+      }
+    } finally {
+      if (session) await session.close();
     }
     // The cheap "does this actually move?" answer. A strip renders a handful of frames and encodes
     // nothing, so an agent can iterate on motion here instead of discovering a frozen piece only
@@ -157,8 +187,15 @@ async function strip(args: unknown, services: RenderPreviewAdvancedServices): Pr
       label: `Preview strip frame ${index + 1} at ${frame.atMs}ms`, mediaType: "image/png",
       ...(index === 0 ? { primary: true } : {})
     }));
-    const inputHashes = await services.hashPackageIdentity!(pkg);
-    const output = { frameCount, startMs, endMs, frames, motion, artifacts };
+    const inputHashes = collectPreviewStripInputHashes(
+      await services.hashPackageIdentity!(pkg),
+      frameReceipts
+    );
+    const resolvedScriptEvidence = scriptEvidence.finish(requiresScriptEvidence);
+    const output = {
+      frameCount, startMs, endMs, frames, motion, artifacts,
+      ...(resolvedScriptEvidence ? { scriptExecution: resolvedScriptEvidence } : {})
+    };
     const receiptId = `preview-strip-${pkg.manifest.id}-${hashBuffer(Buffer.from(JSON.stringify({ inputHashes, output }), "utf8")).slice(0, 16)}`;
     const receiptPath = receiptsRoot ? join(receiptsRoot, `${safeFileToken(receiptId)}.receipt.json`) : undefined;
     const allArtifacts = receiptPath
@@ -188,14 +225,43 @@ async function strip(args: unknown, services: RenderPreviewAdvancedServices): Pr
   }
 }
 
+function collectPreviewStripInputHashes(
+  packageHashes: Readonly<Record<string, string>>,
+  frameReceipts: readonly OperationReceipt[]
+): Record<string, string> {
+  const collected = new Map<string, string>();
+  const add = (values: Readonly<Record<string, string>>, source: string): void => {
+    for (const [key, sha256] of Object.entries(values)) {
+      if (!key || key.length > 4_096 || key.includes("\0") || !/^[a-f0-9]{64}$/.test(sha256)) {
+        throw new Error(`Preview strip ${source} contains an invalid input hash.`);
+      }
+      const known = collected.get(key);
+      if (known !== undefined && known !== sha256) {
+        throw new Error(`Preview strip input hash changed between frames: ${key}`);
+      }
+      if (known === undefined && collected.size >= MAX_PREVIEW_STRIP_INPUT_HASHES) {
+        throw new Error(`Preview strip input hash evidence exceeds the ${MAX_PREVIEW_STRIP_INPUT_HASHES}-entry limit.`);
+      }
+      collected.set(key, sha256);
+    }
+  };
+  add(packageHashes, "package evidence");
+  frameReceipts.forEach((receipt, index) => add(receipt.inputHashes, `frame ${index + 1} receipt`));
+  return Object.fromEntries([...collected].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+}
+
 function requiredCapabilities(
   services: RenderPreviewAdvancedServices,
   receiptsRoot: string | undefined,
   needsTimeline: boolean
 ): MotionDebugResult | null {
-  if (!services.packageLoader || !services.browserFrameRenderer || !services.ensureDirectory || !services.hashPackageIdentity) {
+  if (!services.packageLoader || !services.ensureDirectory || !services.hashPackageIdentity) {
     return capabilityUnavailable("Preview artifact rendering is unavailable.");
   }
+  if (!services.browserFrameRenderer && !services.browserPreviewStripSessionFactory) {
+    return capabilityUnavailable("Preview artifact rendering is unavailable.");
+  }
+  if (needsTimeline && !services.browserFrameRenderer) return capabilityUnavailable("Preview artifact rendering is unavailable.");
   if (needsTimeline && !services.readPreviewTimelineState) return capabilityUnavailable("Preview timeline state reading is unavailable.");
   if (receiptsRoot && !services.writeReceipt) return capabilityUnavailable("Preview receipt persistence is unavailable.");
   return null;

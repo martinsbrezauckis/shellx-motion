@@ -5,18 +5,30 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
+import { OutputDirectoryReservation, type RetainedDirectoryAuthority } from "@shellx-motion/core";
+import {
+  createEffectModuleRegistryAuthority,
+  createEffectModuleRegistryUseAuthority,
+  type EffectModuleRegistryAuthority
+} from "@shellx-motion/renderer-browser/internal/effect-modules";
 import {
   DEBUG_COMMAND_CONTRACTS,
-  MOTION_ENGINE_VERSION,
+  MOTION_ENGINE_VERSION, createEphemeralAttestedRenderReuseProducerAuthority,
+  readMotionAgentSnapshotResource,
   requestedTierRefusal,
   tierRefusal,
   type MotionDebugCommand,
   type MotionDebugCommandContract,
   type MotionDebugContext,
-  type MotionDebugResult,
-  type ReceiptActor
+  type MotionDebugResult
 } from "@shellx-motion/debug-api";
+import {
+  runHostLayoutAuthorityRepairAtStartup,
+  type LayoutAuthorityRepairStartup,
+} from "./layout-authority-repair-lifecycle.js";
 import { debugContractForMcpToolName, mcpToolForDebugContract, mcpToolName } from "./mcp-tool-shape.js";
+import { clearObservedMcpConnection, observeMcpInitialize, type McpWebSocketConnectionState } from "./mcp-observed-session.js";
+import { authenticatedJobOwnerPrincipal, inferredServerActor } from "./dispatch-identities.js";
 // Refusal wording and the per-transport error envelopes live together; see transport-refusals.ts.
 import {
   PERMISSION_TIERS,
@@ -47,7 +59,6 @@ import {
 } from "./workbench-update.js";
 import {
   createWorkbenchUpdateController,
-  type WorkbenchUpdateController
 } from "./workbench-update-controller.js";
 import { createDefaultRevealOpener, runWorkbenchReveal, type RevealOpener } from "./workbench-reveal.js";
 import {
@@ -58,13 +69,17 @@ import {
 } from "./workbench-connections.js";
 import { isWorkbenchFile, writeWorkbenchFile } from "./workbench-static.js";
 import { dispatchGuarded } from "./guarded-dispatch.js";
-import { createOperatorReceiptGrants, grantOperatorReceiptRoot, dispatchContextBase, type OperatorReceiptGrants } from "./operator-receipt-grants.js";
+import { mcpResourceCapabilities, mcpResourceList, mcpResourceMethods, readMcpResource, type MotionAgentSnapshotResourceSource } from "./mcp-resources.js";
+import { createOperatorReceiptGrants, createOperatorRenderGrants, grantOperatorReceiptRoot, grantOperatorRenderRoot, dispatchContextBase } from "./operator-receipt-grants.js";
 import {
   createDefaultWorkbenchPathPicker,
   parseWorkbenchPathPurpose,
   runWorkbenchPathPicker,
   type WorkbenchPathPicker
 } from "./workbench-path-picker.js";
+import { effectModuleOperatorSessionCookie, handleEffectModuleWorkbenchRequest } from "./workbench-effect-modules.js";
+import { consumeWorkbenchBootstrapClaim } from "./workbench-bootstrap-claim.js";
+import type { MotionDebugServerSecurityContext, MotionPermissionTier } from "./debug-server-security.js";
 import {
   WORKBENCH_POSTER_EXTENSIONS,
   WORKBENCH_RASTER_CONTENT_TYPES,
@@ -82,6 +97,7 @@ import {
 import { createLocalMotionSdkTransport } from "@shellx-motion/sdk/local";
 import { localSdkOptionsFromDebugContext } from "./sdk-local-options.js";
 import { runSdkRequest } from "./sdk-route.js";
+import { strictServerRenderContext } from "./server-render-context.js";
 import {
   closeWebSocketWithPolicyError,
   readWebSocketFrames,
@@ -90,8 +106,8 @@ import {
   writeWebSocketText,
   type WebSocketFrame
 } from "./websocket-frame.js";
-
-type MotionPermissionTier = MotionDebugContext["tier"];
+import { createBoundedAsyncQueue } from "./bounded-async-queue.js";
+import { RawDebugRequestBodyTooLargeError, statusForRawDebugResult } from "./debug-http-status.js";
 
 export interface MotionDebugServerOptions {
   host?: string;
@@ -100,17 +116,19 @@ export interface MotionDebugServerOptions {
   /** @deprecated Use grantedTier. This value is a server-owned maximum, never a client default. */
   defaultTier?: MotionPermissionTier;
   capabilityToken?: string;
-  /** One-use launch value exchanged by the locally opened Workbench for the capability token. */
-  workbenchBootstrapToken?: string;
+  /** One-use launch value exchanged by the locally opened Workbench for the capability token; optionally removes its private handoff after exchange. */
+  workbenchBootstrapToken?: string; onWorkbenchBootstrapClaim?: () => void | Promise<void>;
   allowedOrigins?: string[];
   allowedHosts?: string[];
-  allowNonLoopback?: boolean;
   maxConcurrentRequests?: number;
   maxWebSocketConnections?: number;
   /** Extra authenticated roots whose bounded image artifacts the local workbench may preview. */
   artifactRoots?: string[];
   /** Agent reference collections. The repo's promoted pack is discovered automatically. */
   templateRoots?: string[];
+  /** Host-test seam to suppress automatic checkout discovery; not a transport option. */
+  useDefaultTemplateRoots?: boolean;
+  agentSnapshotSource?: MotionAgentSnapshotResourceSource;
   /** Absolute docs/public root the workbench documentation viewer serves. Defaults to the repo docs tree. */
   docsRoot?: string;
   /** `owner/repo` slug for the explicit update channel. Environment and caller overrides take precedence over the official repository. */
@@ -139,6 +157,12 @@ export interface MotionDebugServerOptions {
   pathPicker?: WorkbenchPathPicker;
   /** Injected one-click MCP client configurator; defaults to the installed provider CLIs. */
   connectionConfigurator?: MotionAgentConfigurator;
+  /** Host-selected private C1 registry root. Omitted servers expose no effect-module manager. */
+  effectModulesRoot?: string;
+  /** Host-only test/integration seam; no HTTP request, command, or package can provide an authority. */
+  effectModuleRegistryFactory?: (stateRoot: string) => EffectModuleRegistryAuthority;
+  /** Host-only pre-listen crash repair; no transport, package, CLI, or MCP input can invoke it. */
+  repairLayoutAuthorityPairsAtStartup?: LayoutAuthorityRepairStartup;
   context?: Partial<Omit<MotionDebugContext, "tier">>;
   sdkTransport?: MotionSdkTransport;
 }
@@ -164,50 +188,6 @@ interface JsonRpcRequestBody {
   params?: unknown;
 }
 
-interface MotionDebugServerSecurityContext {
-  capabilityToken: string;
-  /** Cleared synchronously after the first successful Workbench bootstrap exchange. */
-  workbenchBootstrapToken: string | null;
-  grantedTier: MotionPermissionTier;
-  /**
-   * Stable identity for this authenticated server instance, stamped as the receipt actor
-   * `sessionId` on every request that lacks a longer-lived per-connection id. Random per process
-   * start — it names "this debug-server session" without leaking the capability token.
-   */
-  sessionId: string;
-  context: Partial<Omit<MotionDebugContext, "tier">>;
-  allowedOrigins: Set<string>;
-  allowedHosts: Set<string>;
-  sdkTransport: MotionSdkTransport;
-  artifactRoots: string[];
-  /** Agent reference collections authorized for bounded poster reads. */
-  templateRoots: string[];
-  /** Absolute docs/public root served by the workbench documentation viewer. */
-  docsRoot: string;
-  /** `owner/repo` slug for the explicit update channel, or null when unconfigured. */
-  updateRepo: string | null;
-  /** GitHub API base for the update channel. */
-  updateApiBaseUrl: string;
-  /** Packaged-install root marker, or null when running from a source checkout. */
-  installRoot: string | null;
-  /** Upstream timeout for the update feed request, in milliseconds. */
-  updateTimeoutMs: number;
-  /** Unsafe development override allowing a non-GitHub base / private addresses for the update feed. */
-  updateAllowUnsafeBase: boolean;
-  /** Fetch implementation used by the update channel (undefined => pinned node transport default). */
-  updateFetch: UpdateFetch | undefined;
-  /** One cached update result shared by the UI and every discovery transport. */
-  updateController: WorkbenchUpdateController;
-  /** OS opener used by reveal-in-file-manager. */
-  revealOpener: RevealOpener;
-  /** Native chooser used by human Browse actions. */
-  pathPicker: WorkbenchPathPicker;
-  /** Receipt folders a person chose in the native chooser this session; see operator-receipt-grants.ts. */
-  operatorReceiptRoots: OperatorReceiptGrants;
-  /** Allowlisted provider-CLI configuration action used by the Connections page. */
-  connectionConfigurator: MotionAgentConfigurator;
-}
-
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const MAX_REQUEST_BYTES = 1_000_000;
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -217,6 +197,7 @@ const MIN_CAPABILITY_TOKEN_LENGTH = 32;
 const CAPABILITY_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 16;
 const DEFAULT_MAX_WEBSOCKET_CONNECTIONS = 8;
+const MAX_OUTSTANDING_WEBSOCKET_FRAMES = 32;
 const MAX_WORKBENCH_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /**
@@ -271,11 +252,21 @@ const JSON_RPC_METHODS = [
   "tools/list",
   "tools/call"
 ] as const;
+
+/** The host's explicit `jobView: null` policy removes every coordinator capability from discovery. */
+const COORDINATOR_COMMANDS = new Set<MotionDebugCommand>([
+  "motion.job.submit", "motion.connector.submit", "motion.job.get", "motion.job.list", "motion.job.events", "motion.job.cancel", "motion.job.retry"
+]);
+
+function publishedDebugContracts(security: Pick<MotionDebugServerSecurityContext, "context">): readonly MotionDebugCommandContract[] {
+  if (security.context.jobView === null) return DEBUG_COMMAND_CONTRACTS.filter((contract) => !COORDINATOR_COMMANDS.has(contract.command));
+  return DEBUG_COMMAND_CONTRACTS;
+}
 const MCP_PROTOCOL_VERSION = MCP_LEGACY_PROTOCOL_VERSION;
 export async function startMotionDebugServer(options: MotionDebugServerOptions = {}): Promise<MotionDebugServerHandle> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 0;
-  if (!isLoopbackHost(host) || options.allowNonLoopback === true) {
+  if (!isLoopbackHost(host)) {
     throw new Error("Motion debug server direct non-loopback binding is disabled; bind loopback and use an authenticated HTTPS reverse proxy or SSH tunnel.");
   }
   const capabilityToken = options.capabilityToken ?? randomBytes(32).toString("base64url");
@@ -296,7 +287,7 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     throw new Error("Motion debug server maxWebSocketConnections must be a positive integer.");
   }
   const templateRoots = [...new Set([
-    ...defaultTemplateRoots(),
+    ...(options.useDefaultTemplateRoots === false ? [] : defaultTemplateRoots()),
     ...(options.templateRoots ?? []).map((root) => resolve(root))
   ])];
   const updateRepo = normalizeUpdateRepo(options.updateRepo ?? process.env.SHELLX_MOTION_UPDATE_REPO ?? DEFAULT_UPDATE_REPO);
@@ -317,25 +308,52 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
       ...(options.updateFetch ? { fetchImpl: options.updateFetch } : {})
     })
   });
+  // Startup context supplies host authority/roots, never transport authorization.
+  const {
+    observedMcpAgentSession: _ignoredConfiguredObservedMcpSession,
+    // The server mints this only from its private registry below. A caller of startMotionDebugServer
+    // cannot substitute a capability-like token through the otherwise-host-owned base context.
+    gpuEffectModuleUseAuthority: _ignoredConfiguredGpuEffectModuleUseAuthority,
+    ...serverContext
+  } = options.context ?? {};
+  const attestedRenderReuseProducerAuthority = serverContext.attestedRenderReuseProducerAuthority ?? createEphemeralAttestedRenderReuseProducerAuthority();
+  await runHostLayoutAuthorityRepairAtStartup(serverContext.receiptsRoot, options.repairLayoutAuthorityPairsAtStartup);
+  const sessionId = `srv-${randomBytes(8).toString("hex")}`;
+  const jobOwnerPrincipal = `job-${randomBytes(32).toString("hex")}`;
+  const effectModulesRoot = options.effectModulesRoot ? resolve(options.effectModulesRoot) : null;
+  const effectModules = effectModulesRoot
+    ? (options.effectModuleRegistryFactory ?? ((stateRoot) => createEffectModuleRegistryAuthority({ stateRoot })))(effectModulesRoot)
+    : null;
+  // This is a one-way, opaque read/use projection. The Debug context never receives registry
+  // management operations, filesystem roots, manifest bytes, or an operator-selected state path.
+  const gpuEffectModuleUseAuthority = effectModules
+    ? createEffectModuleRegistryUseAuthority(effectModules)
+    : undefined;
+  const scratchArtifactRoot = resolve(serverContext.scratchRoot ?? ".scratch");
+  const configuredArtifactRoots = [...new Set([
+    scratchArtifactRoot,
+    ...(serverContext.receiptsRoot ? [resolve(serverContext.receiptsRoot)] : []),
+    ...templateRoots,
+    ...(options.artifactRoots ?? []).map((root) => resolve(root))
+  ])];
+  const artifactRootAuthorities = await retainExistingArtifactRoots(configuredArtifactRoots);
   const security: MotionDebugServerSecurityContext = {
     capabilityToken,
-    workbenchBootstrapToken,
+    workbenchBootstrapToken, ...(options.onWorkbenchBootstrapClaim ? { onWorkbenchBootstrapClaim: options.onWorkbenchBootstrapClaim } : {}),
+    workbenchOperatorSession: workbenchBootstrapToken ? randomBytes(32).toString("base64url") : null,
     grantedTier: options.grantedTier ?? options.defaultTier ?? "read_motion",
     // Non-secret per-instance session id, distinct from the capability token.
-    sessionId: `srv-${randomBytes(8).toString("hex")}`,
-    context: options.context ?? {},
+    sessionId,
+    jobOwnerPrincipal,
+    // Template roots are separately admitted by the Debug API caller boundary.
+    context: strictServerRenderContext({ ...serverContext, templateRoots }, attestedRenderReuseProducerAuthority, gpuEffectModuleUseAuthority),
+    ...(options.agentSnapshotSource ? { agentSnapshotSource: { ...options.agentSnapshotSource } } : {}),
     allowedOrigins: new Set((options.allowedOrigins ?? []).map(normalizeAllowedOrigin)),
     allowedHosts: new Set((options.allowedHosts ?? []).map(normalizeAllowedHost)),
-    artifactRoots: [...new Set([
-      resolve(options.context?.scratchRoot ?? ".scratch"),
-      ...(options.context?.receiptsRoot ? [resolve(options.context.receiptsRoot)] : []),
-      ...templateRoots,
-      ...(options.artifactRoots ?? []).map((root) => resolve(root))
-    ])],
+    artifactRoots: artifactRootAuthorities.map((authority) => authority.path),
+    artifactRootAuthorities,
     templateRoots,
-    sdkTransport: options.sdkTransport ?? createLocalMotionSdkTransport(
-      localSdkOptionsFromDebugContext(options.context),
-    ),
+    sdkTransport: options.sdkTransport ?? createLocalMotionSdkTransport(localSdkOptionsFromDebugContext({ ...serverContext, attestedRenderReuseProducerAuthority, callerId: serverContext.callerId?.trim() || jobOwnerPrincipal })),
     docsRoot: resolve(options.docsRoot ?? DEFAULT_DOCS_PUBLIC_ROOT),
     updateRepo,
     updateApiBaseUrl,
@@ -347,13 +365,16 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     revealOpener: options.revealOpener ?? createDefaultRevealOpener(),
     pathPicker: options.pathPicker ?? createDefaultWorkbenchPathPicker(),
     operatorReceiptRoots: createOperatorReceiptGrants(),
-    connectionConfigurator: options.connectionConfigurator ?? configureMotionAgent
+    operatorRenderGrants: createOperatorRenderGrants(),
+    connectionConfigurator: options.connectionConfigurator ?? configureMotionAgent,
+    effectModules,
+    workbenchOrigins: new Set()
   };
   if (!PERMISSION_TIERS.has(security.grantedTier)) {
     throw new Error("Motion debug server grantedTier must be a valid Motion permission tier.");
   }
-  let activeRequests = 0;
-  let activeWebSockets = 0;
+  let activeRequests = 0, activeWebSockets = 0;
+  const activeWebSocketSockets = new Set<Duplex>();
 
   const server = createServer((request, response) => {
     if (activeRequests >= maxConcurrentRequests) {
@@ -372,9 +393,9 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
       return;
     }
     if (handleWebSocketUpgrade(request, socket, head, security)) {
-      activeWebSockets += 1;
+      activeWebSockets += 1; activeWebSocketSockets.add(socket);
       socket.once("close", () => {
-        activeWebSockets -= 1;
+        activeWebSockets -= 1; activeWebSocketSockets.delete(socket);
       });
     }
   });
@@ -401,6 +422,7 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     for (const loopbackHost of ["127.0.0.1", "localhost", "::1"]) {
       security.allowedHosts.add(formatHostHeader(loopbackHost, actualPort));
       security.allowedOrigins.add(new URL(`http://${formatHostHeader(loopbackHost, actualPort)}`).origin);
+      security.workbenchOrigins.add(new URL(`http://${formatHostHeader(loopbackHost, actualPort)}`).origin);
     }
   }
   if (options.updateAutoCheck === true) updateController.start();
@@ -410,7 +432,17 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     url: new URL(`http://${formatHostHeader(address.address, address.port)}`),
     close: async () => {
       updateController.close();
-      await closeServer(server);
+      // `server.close()` waits for upgraded sockets, so end bridge-held principals before draining.
+      for (const socket of activeWebSocketSockets) socket.destroy();
+      // First stop accepting requests and wait for admitted HTTP work to drain. Only then may the
+      // registry discard pending state: an install that already passed its authority check must not
+      // stage a new confirmation after registry.close() has completed.
+      const failures: unknown[] = [];
+      try { await closeServer(server); }
+      catch (error) { failures.push(error); }
+      try { await security.effectModules?.close(); }
+      catch (error) { failures.push(error); }
+      if (failures.length > 0) throw new AggregateError(failures, "Motion debug server shutdown encountered failures.");
     }
   } as MotionDebugServerHandle;
   // Keep the ephemeral capability directly accessible to in-process hosts without
@@ -469,7 +501,7 @@ async function handleRequest(
         // Canonical engine version, so unauthenticated liveness callers and the
         // workbench read one value that matches every other transport.
         engineVersion: MOTION_ENGINE_VERSION,
-        contractCount: DEBUG_COMMAND_CONTRACTS.length,
+        contractCount: publishedDebugContracts(security).length,
         sdkSchema: MOTION_SDK_SCHEMA
       });
       return;
@@ -490,7 +522,10 @@ async function handleRequest(
         writeJson(response, 401, debugServerError("invalid_bootstrap", "This Start Motion link is invalid or has already been used."));
         return;
       }
-      security.workbenchBootstrapToken = null;
+      if (!await consumeWorkbenchBootstrapClaim(security)) { writeJson(response, 500, debugServerError("bootstrap_handoff_cleanup_failed", "The private Start Motion handoff could not be removed.")); return; }
+      if (security.workbenchOperatorSession) {
+        response.setHeader("set-cookie", effectModuleOperatorSessionCookie(security.workbenchOperatorSession));
+      }
       writeJson(response, 200, { ok: true, capabilityToken: security.capabilityToken });
       return;
     }
@@ -498,6 +533,11 @@ async function handleRequest(
     if (!hasHttpCapability(request, security.capabilityToken)) {
       response.setHeader("www-authenticate", "Bearer realm=\"shellx-motion-debug\"");
       writeJson(response, 401, debugServerError("unauthorized", "Motion debug server authentication is required."));
+      return;
+    }
+
+    if (path === "/workbench/effect-modules" || path.startsWith("/workbench/effect-modules/")) {
+      await handleEffectModuleWorkbenchRequest(request, response, path, security);
       return;
     }
 
@@ -518,6 +558,7 @@ async function handleRequest(
       }
       // A person just chose this in an OS dialog: host intent, not a caller argument.
       grantOperatorReceiptRoot(security.operatorReceiptRoots, parseWorkbenchPathPurpose(payload.purpose), selection.path);
+      grantOperatorRenderRoot(security.operatorRenderGrants, parseWorkbenchPathPurpose(payload.purpose), selection.path);
       writeJson(response, 200, { ok: true, cancelled: false, path: selection.path });
       return;
     }
@@ -528,7 +569,7 @@ async function handleRequest(
         writeJson(response, 400, debugServerError("invalid_artifact_path", "Workbench artifact requests require a path query parameter."));
         return;
       }
-      const artifact = await readWorkbenchArtifact(artifactPath, security.artifactRoots);
+      const artifact = await readWorkbenchArtifact(artifactPath, security.artifactRoots, security.artifactRootAuthorities);
       if (!artifact.ok) {
         writeJson(response, artifact.status, debugServerError(artifact.code, artifact.message));
         return;
@@ -546,7 +587,7 @@ async function handleRequest(
         writeJson(response, 400, debugServerError("invalid_poster_path", "Workbench poster requests require a path query parameter."));
         return;
       }
-      const poster = await readWorkbenchPoster(posterPath, security.artifactRoots);
+      const poster = await readWorkbenchPoster(posterPath, security.artifactRoots, security.artifactRootAuthorities);
       if (!poster.ok) {
         writeJson(response, poster.status, debugServerError(poster.code, poster.message));
         return;
@@ -608,6 +649,16 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && path === "/workbench/connections/configure") {
+      // Configuring an MCP provider mutates that provider's user configuration. It is not a
+      // read-only Workbench convenience: require the same deliberate local-write grant as other
+      // host configuration and file-creating operations.
+      if (PERMISSION_TIER_RANK[security.grantedTier] < PERMISSION_TIER_RANK.write_local) {
+        writeJson(response, 403, debugServerError(
+          "permission_denied",
+          `Motion agent configuration requires write_local; this server holds ${security.grantedTier}.`
+        ));
+        return;
+      }
       if (!hasJsonContentType(request)) {
         writeJson(response, 415, debugServerError("unsupported_media_type", "Agent configuration requires application/json."));
         return;
@@ -651,6 +702,7 @@ async function handleRequest(
       const reveal = await runWorkbenchReveal(
         (payload as { path?: unknown }).path,
         security.artifactRoots,
+        security.artifactRootAuthorities,
         security.revealOpener
       );
       if (!reveal.ok) {
@@ -689,7 +741,7 @@ async function handleRequest(
         // refuse anything else anyway.
         ...(security.context.receiptsRoot ? { receiptsRoot: resolve(security.context.receiptsRoot) } : {}),
         update: security.updateController.summary(),
-        contracts: DEBUG_COMMAND_CONTRACTS
+        contracts: publishedDebugContracts(security)
       });
       return;
     }
@@ -800,17 +852,23 @@ async function handleRequest(
     const invalidArgs = validateRawDispatchArgs(command, payload.args, resolvedTier.tier);
     const result = invalidArgs ?? await dispatchGuarded(command as MotionDebugCommand, payload.args ?? {}, {
       ...dispatchContextBase(security, resolvedTier.tier),
+      callerId: authenticatedJobOwnerPrincipal(security.context.callerId),
       // POST /debug is the bare HTTP transport: observe wire + session + granted tier so History can
       // answer "BY WHO" even when the caller supplied no createdBy. See inferredServerActor.
       actor: inferredServerActor({ wire: "http", protocol: "raw", grantedTier: resolvedTier.tier, sessionId: security.sessionId })
     });
 
-    writeJson(response, statusForDebugResult(result), {
+    writeJson(response, statusForRawDebugResult(result), {
       ...result,
       command
     });
   } catch (error) {
-    writeJson(response, 400, {
+    const status = error instanceof RawDebugRequestBodyTooLargeError
+      && request.method === "POST"
+      && new URL(request.url ?? "/", "http://127.0.0.1").pathname === "/debug"
+      ? 413
+      : 400;
+    writeJson(response, status, {
       ok: false,
       error: {
         code: "invalid_request",
@@ -826,74 +884,11 @@ async function handleRequest(
  * connection open and sends `initialize` (declaring its identity) before any `tools/call`; this lets
  * the later tool receipts record which agent drove them, and gives the whole exchange one session id.
  */
-interface WebSocketConnectionState {
-  /** Stable id for this connection, used as the receipt actor `sessionId`. */
-  sessionId: string;
-  /** MCP client identity ("name/version") captured from this connection's initialize handshake. */
-  clientInfo?: string;
-}
-
-/**
- * Normalize an MCP `clientInfo` object from the initialize handshake into a "name/version" label,
- * or undefined when it declares no usable name. Purely observed evidence — the client names itself.
- */
-function mcpClientInfoLabel(value: unknown): string | undefined {
-  const record = objectRecord(value);
-  if (!record) return undefined;
-  const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : undefined;
-  if (!name) return undefined;
-  const version = typeof record.version === "string" && record.version.trim() ? record.version.trim() : undefined;
-  return version ? `${name}/${version}` : name;
-}
-
-/**
- * Build the transport-observed {@link ReceiptActor} for a dispatch reaching the debug server. Only
- * facts the server actually observed are recorded here — the wire, the authenticated session, the
- * granted tier, and (for MCP) the handshake-declared client. The caller's own `createdBy` claim, if
- * any, still wins for the label downstream in applyReceiptActor; these observed facts always ride
- * alongside it so a spoofed label stays visibly attached to its real transport. Not authentication.
- *
- * @param input.wire The wire the command arrived on ("http" or "ws").
- * @param input.protocol "mcp" for an MCP tools/call (an agent), "raw" for direct HTTP/WS dispatch.
- * @param input.grantedTier The permission tier the server granted this session.
- * @param input.sessionId The observed session identity (per-connection or server-instance).
- * @param input.clientInfo Optional MCP client "name/version" from the initialize handshake.
- * @returns The observed actor facts to stamp onto receipts for this dispatch.
- */
-function inferredServerActor(input: {
-  wire: "http" | "ws";
-  protocol: "mcp" | "raw";
-  grantedTier: MotionPermissionTier;
-  sessionId: string;
-  clientInfo?: string;
-}): ReceiptActor {
-  if (input.protocol === "mcp") {
-    return {
-      kind: "agent",
-      // An MCP client is an agent; name it by its declared identity when the handshake provided one.
-      label: input.clientInfo ?? "mcp client",
-      transport: "mcp",
-      ...(input.clientInfo ? { clientInfo: input.clientInfo } : {}),
-      sessionId: input.sessionId,
-      grantedTier: input.grantedTier
-    };
-  }
-  // Raw HTTP/WS dispatch: the caller class is genuinely unknown (script, curl, tool, human) unless a
-  // createdBy claim later refines the label — so we honestly report "unknown" for kind.
-  return {
-    kind: "unknown",
-    label: input.wire === "ws" ? "ws client" : "http client",
-    transport: input.wire,
-    sessionId: input.sessionId,
-    grantedTier: input.grantedTier
-  };
-}
-
 async function handleJsonRpcRequest(
   payload: JsonRpcRequestBody,
   security: MotionDebugServerSecurityContext,
   transport: "json-rpc" | "websocket-json-rpc",
-  connection?: WebSocketConnectionState,
+  connection?: McpWebSocketConnectionState,
   modern?: ModernMcpRequestContext
 ): Promise<JsonRpcResponseBody> {
   // The wire the frame arrived on; drives the observed actor `transport` for non-MCP dispatch.
@@ -911,27 +906,14 @@ async function handleJsonRpcRequest(
 
   if (payload.method === "server/discover") {
     if (!modern) return jsonRpcError(id, -32601, "Unknown JSON-RPC method: server/discover.");
-    return jsonRpcResult(id, modernMcpResult({
-      supportedVersions: [...MCP_SUPPORTED_PROTOCOL_VERSIONS],
-      capabilities: { tools: {} },
-      instructions: "Use read-only Motion tools for inspection and request only the lowest permission tier required. Mutations remain enforced by the authenticated server grant.",
-      cacheScope: "private",
-      update: security.updateController.summary()
-    }, MOTION_ENGINE_VERSION));
+    return jsonRpcResult(id, modernMcpResult({ supportedVersions: [...MCP_SUPPORTED_PROTOCOL_VERSIONS], capabilities: { tools: {}, ...mcpResourceCapabilities(security.agentSnapshotSource) }, instructions: "Use read-only Motion tools for inspection and request only the lowest permission tier required. Mutations remain enforced by the authenticated server grant.", cacheScope: "private", update: security.updateController.summary() }, MOTION_ENGINE_VERSION));
   }
-  if (modern && payload.method !== "tools/list" && payload.method !== "tools/call" && payload.method !== "initialize") {
+  if (modern && payload.method !== "tools/list" && payload.method !== "tools/call" && payload.method !== "initialize" && !mcpResourceMethods(security.agentSnapshotSource).includes(payload.method)) {
     return jsonRpcError(id, -32601, `Unknown modern MCP method: ${payload.method}.`);
   }
 
   if (payload.method === "rpc.discover") {
-    const result = {
-      ok: true,
-      name: "shellx-motion-debug-server",
-      transport,
-      methods: [...JSON_RPC_METHODS],
-      contractCount: DEBUG_COMMAND_CONTRACTS.length,
-      update: security.updateController.summary()
-    };
+    const result = { ok: true, name: "shellx-motion-debug-server", transport, methods: [...JSON_RPC_METHODS, ...mcpResourceMethods(security.agentSnapshotSource)], contractCount: publishedDebugContracts(security).length, update: security.updateController.summary() };
     return jsonRpcResult(id, modern ? modernMcpResult(result, MOTION_ENGINE_VERSION) : result);
   }
 
@@ -944,14 +926,11 @@ async function handleJsonRpcRequest(
     // for the lifetime of this WebSocket connection, so later tools/call receipts can record which
     // agent drove them. Observed evidence — the client names itself here, before any tool runs.
     if (connection) {
-      const clientInfo = mcpClientInfoLabel(params.clientInfo);
-      if (clientInfo) connection.clientInfo = clientInfo;
+      observeMcpInitialize(connection, params);
     }
     return jsonRpcResult(id, {
       protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : MCP_PROTOCOL_VERSION,
-      capabilities: {
-        tools: {}
-      },
+      capabilities: { tools: {}, ...mcpResourceCapabilities(security.agentSnapshotSource) },
       serverInfo: {
         name: "shellx-motion-debug-server",
         version: MOTION_ENGINE_VERSION,
@@ -962,9 +941,18 @@ async function handleJsonRpcRequest(
 
   if (payload.method === "tools/list") {
     const result = {
-      tools: DEBUG_COMMAND_CONTRACTS.map(mcpToolForDebugContract)
+      tools: publishedDebugContracts(security).map(mcpToolForDebugContract)
     };
     return jsonRpcResult(id, modern ? modernMcpResult(result, MOTION_ENGINE_VERSION) : result);
+  }
+
+  if (payload.method === "resources/list") {
+    if (!security.agentSnapshotSource) return jsonRpcError(id, -32601, "Unknown JSON-RPC method: resources/list."); const result = mcpResourceList(security.agentSnapshotSource); return jsonRpcResult(id, modern ? modernMcpResult(result, MOTION_ENGINE_VERSION) : result);
+  }
+  if (payload.method === "resources/read") {
+    if (!security.agentSnapshotSource) return jsonRpcError(id, -32601, "Unknown JSON-RPC method: resources/read.");
+    const result = await readMcpResource(payload.params, security.agentSnapshotSource, async (fixed) => await readMotionAgentSnapshotResource(fixed, { ...dispatchContextBase(security, "read_motion"), callerId: authenticatedJobOwnerPrincipal(security.context.callerId, connection?.jobOwnerPrincipal), ...(fixed.packageRoot ? { snapshotPackageRoots: [fixed.packageRoot] } : { snapshotPackageRoots: [] }), ...(fixed.receiptsRoot ? { receiptsRoot: fixed.receiptsRoot } : {}), operatorReceiptRoots: [], actor: inferredServerActor({ wire, protocol: "mcp", grantedTier: "read_motion", sessionId, ...(modern?.clientInfo || connection?.clientInfo ? { clientInfo: modern?.clientInfo ?? connection?.clientInfo } : {}) }) }));
+    return result.ok ? jsonRpcResult(id, modern ? modernMcpResult(result.result, MOTION_ENGINE_VERSION) : result.result) : jsonRpcError(id, -32602, result.message);
   }
 
   if (payload.method === "tools/call") {
@@ -998,6 +986,7 @@ async function handleJsonRpcRequest(
       : null;
     const result = invalidArgs ?? await dispatchGuarded(contract.command, toolArgs.args ?? {}, {
       ...dispatchContextBase(security, resolvedTier.tier),
+      callerId: authenticatedJobOwnerPrincipal(security.context.callerId, connection?.jobOwnerPrincipal),
       // MCP tools/call: an AI agent driving the engine. Record the "mcp" transport, the granted tier,
       // this connection's session, and the handshake-declared client identity (when a WS connection
       // carried an initialize). See inferredServerActor.
@@ -1006,7 +995,8 @@ async function handleJsonRpcRequest(
         ...(modern?.clientInfo || connection?.clientInfo
           ? { clientInfo: modern?.clientInfo ?? connection?.clientInfo }
           : {})
-      })
+      }),
+      ...(connection?.observedMcpAgentSession ? { observedMcpAgentSession: connection.observedMcpAgentSession } : {})
     });
     const structuredContent = {
       ...result,
@@ -1030,7 +1020,7 @@ async function handleJsonRpcRequest(
       ok: true,
       transport,
       update: security.updateController.summary(),
-      contracts: DEBUG_COMMAND_CONTRACTS
+      contracts: publishedDebugContracts(security)
     });
   }
 
@@ -1051,6 +1041,7 @@ async function handleJsonRpcRequest(
     const invalidArgs = validateRawDispatchArgs(command, params.args, resolvedTier.tier);
     const result = invalidArgs ?? await dispatchGuarded(command as MotionDebugCommand, params.args ?? {}, {
       ...dispatchContextBase(security, resolvedTier.tier),
+      callerId: authenticatedJobOwnerPrincipal(security.context.callerId, connection?.jobOwnerPrincipal),
       // Non-MCP JSON-RPC dispatch over the raw wire (http or ws). Record the observed transport.
       actor: inferredServerActor({ wire, protocol: "raw", grantedTier: resolvedTier.tier, sessionId })
     });
@@ -1104,10 +1095,13 @@ function handleWebSocketUpgrade(
 
   // One session identity for the lifetime of this connection, so an MCP client's initialize +
   // tools/call frames share a `sessionId` and the initialize-declared clientInfo carries forward.
-  const connection: WebSocketConnectionState = { sessionId: `${security.sessionId}:ws-${randomBytes(4).toString("hex")}` };
+  const connection: McpWebSocketConnectionState = {
+    sessionId: `${security.sessionId}:ws-${randomBytes(4).toString("hex")}`,
+    jobOwnerPrincipal: `job-${randomBytes(32).toString("hex")}`
+  };
 
   let buffer: Buffer<ArrayBufferLike> = Buffer.concat([head]);
-  let processing = Promise.resolve();
+  const processing = createBoundedAsyncQueue(MAX_OUTSTANDING_WEBSOCKET_FRAMES, () => closeWebSocketWithPolicyError(socket, "WebSocket debug dispatch failed."));
   const consume = (chunk?: Buffer<ArrayBufferLike>): void => {
     if (chunk) buffer = Buffer.concat([buffer, chunk]);
     if (buffer.byteLength > MAX_REQUEST_BYTES + 14) {
@@ -1123,13 +1117,18 @@ function handleWebSocketUpgrade(
     }
     buffer = parsed.remaining;
     for (const frame of parsed.frames) {
-      processing = processing
-        .then(() => handleWebSocketFrame(socket, frame, security, connection))
-        .catch(() => closeWebSocketWithPolicyError(socket, "WebSocket debug dispatch failed."));
+      if (!processing.enqueue(() => handleWebSocketFrame(socket, frame, security, connection))) {
+        closeWebSocketWithPolicyError(socket, "WebSocket outstanding-frame limit reached.");
+        buffer = Buffer.alloc(0);
+        return;
+      }
     }
   };
 
   socket.on("data", consume);
+  // A closed socket must not retain an authorization fact in a long-lived server.
+  socket.once("close", () => clearObservedMcpConnection(connection));
+  socket.once("error", () => clearObservedMcpConnection(connection));
   if (buffer.length > 0) consume();
   return true;
 }
@@ -1138,7 +1137,7 @@ async function handleWebSocketFrame(
   socket: Duplex,
   frame: WebSocketFrame,
   security: MotionDebugServerSecurityContext,
-  connection: WebSocketConnectionState
+  connection: McpWebSocketConnectionState
 ): Promise<void> {
   if (frame.opcode === 0x8) {
     writeWebSocketFrame(socket, 0x8, Buffer.alloc(0));
@@ -1185,6 +1184,7 @@ type BoundedArtifactRead =
 async function readBoundedArtifactBytes(
   requestedPath: string,
   roots: string[],
+  authorities: readonly RetainedDirectoryAuthority[],
   options: { allowedExtensions: Set<string>; unsupportedCode: string; unsupportedMessage: string }
 ): Promise<BoundedArtifactRead> {
   const resolvedPath = resolve(requestedPath);
@@ -1195,6 +1195,7 @@ async function readBoundedArtifactBytes(
   let canonicalPath: string;
   let requestedFacts: Awaited<ReturnType<typeof lstat>>;
   try {
+    await assertArtifactRootAuthorities(authorities);
     [requestedFacts, canonicalPath] = await Promise.all([lstat(resolvedPath), realpath(resolvedPath)]);
     if (!requestedFacts.isFile() || requestedFacts.isSymbolicLink() || requestedFacts.size > MAX_WORKBENCH_ARTIFACT_BYTES) {
       return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench artifact must be a bounded regular file, not a symlink." };
@@ -1249,6 +1250,7 @@ async function readBoundedArtifactBytes(
       || pathAfterRead.ino !== opened.ino) {
       return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench artifact changed while it was being read." };
     }
+    await assertArtifactRootAuthorities(authorities);
     return { ok: true, bytes, extension };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -1266,12 +1268,13 @@ async function readBoundedArtifactBytes(
  */
 async function readWorkbenchArtifact(
   requestedPath: string,
-  roots: string[]
+  roots: string[],
+  authorities: readonly RetainedDirectoryAuthority[]
 ): Promise<
   | { ok: true; bytes: Buffer; contentType: string }
   | { ok: false; status: number; code: string; message: string }
 > {
-  const read = await readBoundedArtifactBytes(requestedPath, roots, {
+  const read = await readBoundedArtifactBytes(requestedPath, roots, authorities, {
     allowedExtensions: WORKBENCH_RASTER_EXTENSIONS,
     unsupportedCode: "unsupported_artifact",
     unsupportedMessage: "Workbench preview artifacts must be PNG, JPEG, GIF, or WebP images."
@@ -1294,12 +1297,13 @@ async function readWorkbenchArtifact(
  */
 async function readWorkbenchPoster(
   requestedPath: string,
-  roots: string[]
+  roots: string[],
+  authorities: readonly RetainedDirectoryAuthority[]
 ): Promise<
   | { ok: true; bytes: Buffer; contentType: string; contentSecurityPolicy: string }
   | { ok: false; status: number; code: string; message: string }
 > {
-  const read = await readBoundedArtifactBytes(requestedPath, roots, {
+  const read = await readBoundedArtifactBytes(requestedPath, roots, authorities, {
     allowedExtensions: WORKBENCH_POSTER_EXTENSIONS,
     unsupportedCode: "unsupported_poster",
     unsupportedMessage: "Workbench template posters must be SVG, PNG, or JPEG images."
@@ -1310,6 +1314,25 @@ async function readWorkbenchPoster(
     return { ok: false, status: 400, code: "unsafe_poster", message: assessed.message };
   }
   return { ok: true, bytes: read.bytes, ...assessed.payload };
+}
+
+async function assertArtifactRootAuthorities(authorities: readonly RetainedDirectoryAuthority[]): Promise<void> {
+  for (const authority of authorities) await authority.assertCurrent();
+}
+
+async function retainExistingArtifactRoots(roots: readonly string[]): Promise<readonly RetainedDirectoryAuthority[]> {
+  const authorities: RetainedDirectoryAuthority[] = [];
+  for (const root of roots) {
+    const existing = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!existing) continue;
+    authorities.push(await OutputDirectoryReservation.acquire(root, {
+      allowExistingContents: true, requireExisting: true, requireExclusiveChildAuthority: true
+    }));
+  }
+  return authorities;
 }
 
 async function openReadNoFollow(path: string) {
@@ -1345,14 +1368,6 @@ function jsonRpcResult(id: JsonRpcId, result: unknown): JsonRpcResponseBody {
   };
 }
 
-function statusForDebugResult(result: MotionDebugResult): number {
-  if (result.ok) return 200;
-  if (result.error.code === "permission_denied") return 403;
-  if (result.error.code === "unknown_command") return 404;
-  if (result.error.code === "invalid_args") return 400;
-  return 500;
-}
-
 async function readJsonBody(request: IncomingMessage): Promise<DebugRequestBody & JsonRpcRequestBody> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -1360,7 +1375,7 @@ async function readJsonBody(request: IncomingMessage): Promise<DebugRequestBody 
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
     if (total > MAX_REQUEST_BYTES) {
-      throw new Error(`Motion debug request body exceeds ${MAX_REQUEST_BYTES} bytes.`);
+      throw new RawDebugRequestBodyTooLargeError(MAX_REQUEST_BYTES);
     }
     chunks.push(buffer);
   }

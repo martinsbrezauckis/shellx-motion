@@ -121,7 +121,15 @@ export async function dispatchAgentRevisionCommand(
   });
   if (planPath) await services.writeJson!(planPath, plan);
   const receipt = receiptsRoot ? revisionPlanReceipt(plan, loadedQualityReceipts, planPath) : undefined;
-  const receiptPath = receiptsRoot && receipt ? await services.writeReceipt!(receiptsRoot, receipt) : undefined;
+  let receiptPath: string | undefined;
+  if (receiptsRoot && receipt) {
+    try {
+      receiptPath = await services.writeReceipt!(receiptsRoot, receipt);
+    } catch (error) {
+      if (planPath) return revisionPlanReceiptObserverFailure(plan, planPath, receipt, error);
+      throw error;
+    }
+  }
   return {
     ok: true,
     ...(receipt ? { receiptId: receipt.id } : {}),
@@ -136,6 +144,35 @@ export async function dispatchAgentRevisionCommand(
     },
     warnings: plan.findings.map((finding) => finding.message)
   };
+}
+
+function revisionPlanReceiptObserverFailure(
+  plan: ReturnType<typeof createAgentRevisionPlan>,
+  planPath: string,
+  receipt: OperationReceipt,
+  error: unknown
+): MotionDebugResult {
+  const message = `Revision plan committed, but host receipt persistence failed: ${errorMessage(error)}`;
+  const receiptObserver = { status: "failed", receiptId: receipt.id } as const;
+  return {
+    ok: false,
+    receiptId: receipt.id,
+    error: {
+      code: "agent_revision_plan_receipt_observer_failed",
+      message,
+      detail: { planCommitted: true, planPath, publicPaths: [planPath], receiptObserver }
+    },
+    visibleState: {
+      panel: "agent", operation: "agent.revision.plan", packageId: plan.packageId,
+      status: plan.status, planPath, receiptObserverStatus: receiptObserver.status
+    },
+    result: { planCommitted: true, planPath, plan, expectedReceipt: receipt, receiptObserver },
+    warnings: [...plan.findings.map((finding) => finding.message), message]
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function ownValue(args: unknown, key: string): unknown {

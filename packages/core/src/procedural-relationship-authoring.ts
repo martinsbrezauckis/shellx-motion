@@ -56,6 +56,22 @@ export function setMotionProceduralAudioEnvelopes(
   return checked(motion, graph, "/relationships/audioEnvelopes", "envelopes-updated");
 }
 
+/** Insert or replace one bounded, renderer-independent analyzed audio envelope. */
+export function upsertMotionProceduralAudioEnvelope(
+  motion: MotionDocument,
+  audioEnvelope: MotionProceduralAudioEnvelope,
+): MotionProceduralAuthoringResult {
+  const graph = cloneGraph(motion.relationships);
+  const envelopes = graph.audioEnvelopes ? structuredClone(graph.audioEnvelopes) : [];
+  const index = envelopes.findIndex((entry) => entry.id === audioEnvelope.id);
+  if (index < 0) envelopes.push(structuredClone(audioEnvelope));
+  else if (canonicalJson(envelopes[index]) === canonicalJson(audioEnvelope)) {
+    throw new Error(`Procedural audio envelope ${audioEnvelope.id} already matches the requested value.`);
+  } else envelopes[index] = structuredClone(audioEnvelope);
+  graph.audioEnvelopes = envelopes;
+  return checked(motion, graph, `/relationships/audioEnvelopes/${audioEnvelope.id}`, "envelopes-updated");
+}
+
 export function detachMotionProceduralRelationship(
   motion: MotionDocument,
   relationshipId: string,
@@ -64,7 +80,10 @@ export function detachMotionProceduralRelationship(
   const remaining = graph.relationships.filter((item) => item.id !== relationshipId);
   if (remaining.length === graph.relationships.length) throw new Error(`Unknown procedural relationship: ${relationshipId}.`);
   const next = structuredClone(motion);
-  if (remaining.length) next.relationships = { ...graph, relationships: remaining };
+  // An envelope is valid inert data until another relationship consumes it. Do
+  // not destroy those analyzed samples merely because this was the final graph
+  // edge detached from them.
+  if (remaining.length || (graph.audioEnvelopes?.length ?? 0) > 0) next.relationships = { ...graph, relationships: remaining };
   else delete next.relationships;
   return { motion: next, changedPath: `/relationships/relationships/${relationshipId}`, action: "detached" };
 }

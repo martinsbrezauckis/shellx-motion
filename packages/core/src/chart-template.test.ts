@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { compileChartTemplate, formatChartValue } from "./chart-template";
+import type { MotionLayer } from "./types";
+
+const PORTABLE_CHART_FONT_STACK = "Inter, Arial, Helvetica, sans-serif";
 
 describe("chart/stat template compiler", () => {
   it("compiles metric cards with locale-aware compact values and progress geometry", () => {
@@ -28,6 +31,7 @@ describe("chart/stat template compiler", () => {
       textLayerCount: 3,
       shapeLayerCount: 3
     });
+    expectChartTextUsesPortableStack(result.layers);
     expect(result.layers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "chart_motion_renders_value",
@@ -63,6 +67,7 @@ describe("chart/stat template compiler", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected comparison chart to compile");
 
+    expectChartTextUsesPortableStack(result.layers);
     expect(result.layers).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "chart_host_mix_cut_generate_current", width: 456 }),
       expect.objectContaining({ id: "chart_host_mix_cut_generate_previous", width: 337 }),
@@ -108,10 +113,12 @@ describe("chart/stat template compiler", () => {
       expect.objectContaining({ id: "chart_roadmap_progress", width: 475 }),
       expect.objectContaining({ id: "chart_roadmap_step_3_dot", shape: "ellipse" })
     ]));
+    expectChartTextUsesPortableStack(timeline.layers);
     expect(table.layers).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "chart_quality_row_0_value", text: "92\u00a0%" }),
       expect.objectContaining({ id: "chart_quality_row_1_bar", width: 117 })
     ]));
+    expectChartTextUsesPortableStack(table.layers);
   });
 
   it("rejects malformed chart data with helpful paths", () => {
@@ -142,3 +149,9 @@ describe("chart/stat template compiler", () => {
     expect(formatChartValue(42, { locale: "lv-LV", unit: "ms" })).toBe("42 ms");
   });
 });
+
+function expectChartTextUsesPortableStack(layers: MotionLayer[]): void {
+  for (const layer of layers.filter((layer) => layer.type === "text")) {
+    expect(layer.style?.fontFamily, layer.id).toBe(PORTABLE_CHART_FONT_STACK);
+  }
+}

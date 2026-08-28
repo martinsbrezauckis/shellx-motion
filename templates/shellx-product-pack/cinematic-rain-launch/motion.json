@@ -8,7 +8,7 @@
   "height": 1080,
   "background": "#030711",
   "safeAreas": {
-    "title": { "top": 96, "right": 112, "bottom": 96, "left": 112 },
+    "title": { "top": 96, "right": 112, "bottom": 96, "left": 64 },
     "action": { "top": 84, "right": 112, "bottom": 84, "left": 112 }
   },
   "layers": [
@@ -114,7 +114,7 @@
       "startMs": 180,
       "durationMs": 5400,
       "transform": { "x": 136, "y": 184, "width": 760, "height": 56 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 27, "fontWeight": 850, "letterSpacing": 3.4, "color": "#67e8f9" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 27, "fontWeight": 900, "letterSpacing": 3.4, "color": "#67e8f9" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 18 },
       "keyframes": {
         "opacity": [{ "atMs": 180, "value": 0 }, { "atMs": 620, "value": 1, "easing": "ease-out" }],
@@ -128,7 +128,7 @@
       "startMs": 300,
       "durationMs": 5200,
       "transform": { "x": 128, "y": 266, "width": 860, "height": 330 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 88, "fontWeight": 880, "lineHeight": 1.01, "color": "#f8fafc", "textShadow": { "x": 0, "y": 12, "blur": 30, "color": "rgba(0, 0, 0, 0.55)" } },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 88, "fontWeight": 900, "lineHeight": 1.01, "color": "#f8fafc", "textShadow": { "x": 0, "y": 12, "blur": 30, "color": "rgba(0, 0, 0, 0.55)" } },
       "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 54 },
       "effects": { "motionBlur": { "samples": 3, "shutterAngle": 180 } },
       "keyframes": {
@@ -143,7 +143,7 @@
       "startMs": 940,
       "durationMs": 4400,
       "transform": { "x": 136, "y": 626, "width": 760, "height": 154 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 34, "fontWeight": 620, "lineHeight": 1.18, "color": "#dcecf3" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 34, "fontWeight": 600, "lineHeight": 1.18, "color": "#dcecf3" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "title", "minFontSize": 24 },
       "keyframes": {
         "opacity": [{ "atMs": 940, "value": 0 }, { "atMs": 1380, "value": 1, "easing": "ease-out" }],
@@ -170,7 +170,7 @@
       "startMs": 3980,
       "durationMs": 1650,
       "transform": { "x": 174, "y": 843, "width": 292, "height": 44 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 31, "fontWeight": 850, "color": "#07111f" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 31, "fontWeight": 900, "color": "#07111f" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "action", "minFontSize": 22 }
     },
     {
@@ -198,6 +198,22 @@
       "kind": "image",
       "source": { "path": "assets/masks/rain-occlusion.svg", "mimeType": "image/svg+xml" },
       "size": { "width": 1920, "height": 1080 }
+    },
+    {
+      "id": "font_inter_600",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 600,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_900",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 900,
+      "style": "normal"
     }
   ],
   "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-cinematic-rain-launch" }

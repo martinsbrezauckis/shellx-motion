@@ -15,7 +15,7 @@
  * Dependencies: `./main` (`runCli`), node fs/os/path built-ins. Self-contained fixtures — no shared
  * temp-dir registry, each test cleans up its own directory.
  */
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -185,8 +185,12 @@ describe("native frame lane delivery text gate", () => {
   it("keeps native preview and still-frame renders working and reports the case fold as a warning", async () => {
     const packageRoot = await writeTextPackage("Sveiks");
     const outDir = await makeOutDir();
-    const previewPath = join(outDir, "preview.png");
-    const stillPath = join(outDir, "still.png");
+    // Each render keeps its immutable package-derived receipt beside the output. Separate parents
+    // keep this text-capability test independent from receipt replacement policy.
+    const previewPath = join(outDir, "preview", "frame.png");
+    const stillPath = join(outDir, "still", "frame.png");
+    await mkdir(join(outDir, "preview"), { recursive: true, mode: 0o700 });
+    await mkdir(join(outDir, "still"), { recursive: true, mode: 0o700 });
 
     const preview = await runCli(["render", packageRoot, "--lane", "native", "--out", previewPath]);
     const still = await runCli([

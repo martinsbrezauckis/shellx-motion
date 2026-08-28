@@ -130,6 +130,37 @@ describe("deterministic procedural relationships", () => {
     expect(() => evaluateMotionProceduralLayers(mapped, 0)).toThrow("zero input range");
   });
 
+  it("evaluates sin and cos as bounded radians and bakes their quantized output deterministically", () => {
+    const trig = graph([
+      relationship("sin", "target", "transform.x", [
+        { id: "radians", type: "constant", value: Math.PI / 2 },
+        { id: "out", type: "sin", input: "radians" },
+      ], "out"),
+      relationship("cos", "target", "transform.y", [
+        { id: "radians", type: "constant", value: Math.PI },
+        { id: "out", type: "cos", input: "radians" },
+      ], "out"),
+    ]);
+    const motion = documentWith(trig);
+    expect(validateMotionProceduralGraph(trig, motion).ok).toBe(true);
+    const evaluation = evaluateMotionProceduralLayers(motion, 0);
+    expect(evaluation.values).toMatchObject({ sin: 1, cos: -1 });
+    expect(bakeMotionProceduralRelationships(motion, { endMs: 80 }).fingerprint)
+      .toBe(bakeMotionProceduralRelationships(motion, { endMs: 80 }).fingerprint);
+
+    const outOfRange = graph([relationship("large", "target", "transform.x", [
+      { id: "radians", type: "constant", value: 1_000_001 }, { id: "out", type: "sin", input: "radians" },
+    ], "out")]);
+    expect(() => evaluateMotionProceduralLayers(documentWith(outOfRange), 0)).toThrow("finite radians within +/-1000000");
+
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const invalid = graph([relationship("not-finite", "target", "transform.x", [
+        { id: "radians", type: "constant", value }, { id: "out", type: "cos", input: "radians" },
+      ], "out")]);
+      expect(validateMotionProceduralGraph(invalid, documentWith(invalid))).toMatchObject({ ok: false });
+    }
+  });
+
   it("authors, disables, re-enables, and detaches relationships with graph validation", () => {
     const seed = documentWith(graph([relationship("existing", "target", "transform.x", [
       { id: "one", type: "constant", value: 1 },

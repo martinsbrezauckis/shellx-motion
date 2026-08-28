@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
-import { readFile, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dispatchDebugCommand } from "../packages/debug-api/src/index";
+import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const packageRoot = join(repoRoot, "fixtures", "packages", "lower-third");
-const outDir = join(repoRoot, ".scratch", "prompt-execution-smoke");
+const outDir = join(await preparePrivateRepoScratch(repoRoot), "prompt-execution-smoke");
 const receiptsRoot = join(outDir, "receipts");
 const patchedPackageRoot = join(outDir, "package");
 const previewOutDir = join(outDir, "preview");
 const previewPath = join(previewOutDir, "frame.png");
 
+await assertPrivateRepoScratchPath(repoRoot, outDir);
 await rm(outDir, { recursive: true, force: true });
+await mkdir(outDir, { recursive: true, mode: 0o700 });
+assert.equal(Number((await stat(outDir)).mode) & 0o777, 0o700, "prompt execution smoke output root must remain private under umask 0002");
 
 const debugResult = await dispatchDebugCommand(
   "motion.prompt.run",
@@ -28,6 +32,8 @@ const debugResult = await dispatchDebugCommand(
     tier: "edit_motion",
     scratchRoot: outDir,
     receiptsRoot,
+    authoringInputRoots: [packageRoot, outDir],
+    authoringOutputRoots: [outDir],
     promptRuntime: {
       runPrompt: async (input) => ({
         ok: true as const,

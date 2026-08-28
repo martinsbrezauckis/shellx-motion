@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "shellx-motion/platform-verification@1",
   "type": "object",
-  "required": ["schema", "status", "dryRun", "host", "repoRoot", "startedAt", "commands"],
+  "required": ["schema", "status", "dryRun", "host", "toolchain", "repoRoot", "startedAt", "finishedAt", "commandSummary", "commands"],
   "properties": {
     "schema": { "const": "shellx-motion/platform-verification@1" },
     "status": { "enum": ["planned", "running", "passed", "failed"] },
     "dryRun": { "type": "boolean" },
     "host": {
       "type": "object",
-      "required": ["id"],
+      "required": ["id", "hostname", "platform", "arch", "release", "node"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "hostname": { "type": "string", "minLength": 1 },
@@ -17,6 +17,21 @@
         "arch": { "type": "string", "minLength": 1 },
         "release": { "type": "string", "minLength": 1 },
         "node": { "type": "string", "minLength": 1 }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "required": ["status", "exact", "bundledCodecs"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "exact": { "type": "boolean" },
+        "bundledCodecs": { "type": "boolean" },
+        "workspace": { "type": "object" },
+        "node": { "type": "object" },
+        "pnpm": { "type": "object" },
+        "ffmpeg": { "type": "object" },
+        "ffprobe": { "type": "object" },
+        "encoders": { "type": "object" }
       }
     },
     "hostMatrix": {
@@ -34,6 +49,17 @@
     "repoRoot": { "type": "string", "minLength": 1 },
     "startedAt": { "type": "string", "minLength": 1 },
     "finishedAt": { "type": "string", "minLength": 1 },
+    "commandSummary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "skipped", "skippedByKind"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "skippedByKind": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+      }
+    },
     "commands": {
       "type": "array",
       "items": {
@@ -41,7 +67,7 @@
         "required": ["id", "command", "required", "status"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
-          "command": { "type": "array", "items": { "type": "string" } },
+          "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
           "required": { "type": "boolean" },
           "category": { "type": "string" },
           "requiresEnv": { "type": "array", "items": { "type": "string" } },

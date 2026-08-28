@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/debug-server",
-  "version": "0.1.0",
+  "version": "0.2.65",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -35,6 +35,7 @@
   "dependencies": {
     "@shellx-motion/core": "workspace:*",
     "@shellx-motion/debug-api": "workspace:*",
-    "@shellx-motion/sdk": "workspace:*"
+    "@shellx-motion/sdk": "workspace:*",
+    "@shellx-motion/renderer-browser": "workspace:*"
   }
 }

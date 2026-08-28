@@ -94,7 +94,7 @@
       "startMs": 300,
       "durationMs": 5200,
       "transform": { "x": 560, "y": 310, "width": 800, "height": 48 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 24, "fontWeight": 820, "letterSpacing": 5.2, "textAlign": "center", "color": "#fde68a" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 24, "fontWeight": 800, "letterSpacing": 5.2, "textAlign": "center", "color": "#fde68a" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 16 },
       "keyframes": {
         "opacity": [{ "atMs": 300, "value": 0 }, { "atMs": 900, "value": 1, "easing": "ease-out" }],
@@ -108,7 +108,7 @@
       "startMs": 520,
       "durationMs": 4900,
       "transform": { "x": 360, "y": 400, "width": 1200, "height": 180 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 104, "fontWeight": 780, "lineHeight": 1, "textAlign": "center", "color": "#f8fafc", "textShadow": { "x": 0, "y": 14, "blur": 40, "color": "rgba(0, 0, 0, 0.68)" } },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 104, "fontWeight": 800, "lineHeight": 1, "textAlign": "center", "color": "#f8fafc", "textShadow": { "x": 0, "y": 14, "blur": 40, "color": "rgba(0, 0, 0, 0.68)" } },
       "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 56 },
       "effects": { "motionBlur": { "samples": 3, "shutterAngle": 160 } },
       "keyframes": {
@@ -123,7 +123,7 @@
       "startMs": 1150,
       "durationMs": 3900,
       "transform": { "x": 560, "y": 626, "width": 800, "height": 104 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 30, "fontWeight": 540, "lineHeight": 1.25, "textAlign": "center", "color": "#e0e7ff" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 30, "fontWeight": 600, "lineHeight": 1.25, "textAlign": "center", "color": "#e0e7ff" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "cinematic", "minFontSize": 22 },
       "keyframes": {
         "opacity": [{ "atMs": 1150, "value": 0 }, { "atMs": 1720, "value": 1, "easing": "ease-out" }]
@@ -160,6 +160,22 @@
       "kind": "image",
       "source": { "path": "assets/samples/alpine-dawn.svg", "mimeType": "image/svg+xml" },
       "size": { "width": 1920, "height": 1080 }
+    },
+    {
+      "id": "font_inter_600",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 600,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_800",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-800-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 800,
+      "style": "normal"
     }
   ],
   "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-cinematic-fog-title" }

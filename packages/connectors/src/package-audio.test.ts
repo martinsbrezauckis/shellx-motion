@@ -116,6 +116,51 @@ describe("package audio inputs", () => {
     ]);
   });
 
+  it("expands grouped video audio into global timing and clips it to the group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-package-audio-group-"));
+    tempDirs.push(root);
+    await mkdir(join(root, "assets"), { recursive: true });
+    await writeFile(join(root, "assets", "clip.mp4"), "fake video bytes", "utf8");
+    const pkg: MotionPackage = {
+      root,
+      manifest: {
+        schema: "shellx-motion/package-manifest@1", id: "pkg_group_audio", name: "Group audio",
+        motion: "motion.json", assets: ["assets/clip.mp4"], sourceApp: "shellx-motion",
+        compatibility: { lanes: ["gpu", "ffmpeg"], hosts: ["motion"] }
+      },
+      motion: {
+        schema: "shellx-motion/motion@1", id: "motion_group_audio", name: "Group audio",
+        durationMs: 2_000, fps: 30, width: 640, height: 360,
+        layers: [
+          { id: "scene", type: "group", startMs: 400, durationMs: 1_000, childLayerIds: ["clip"] },
+          { id: "clip", type: "video", assetRef: "assets/clip.mp4", includeAudio: true, startMs: 200, durationMs: 1_200 }
+        ],
+        assets: [], provenance: { sourceApp: "shellx-motion", createdBy: "test" }
+      }
+    };
+    expect(resolvePackageAudioInputs(pkg)).toEqual([{
+      path: join(root, "assets", "clip.mp4"), layerId: "clip", startMs: 600, durationMs: 800
+    }]);
+  });
+
+  it("excludes muted-track and non-solo video audio from the effective encoder mix", () => {
+    const base = {
+      root: "/package",
+      manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_track_audio", name: "Track audio", motion: "motion.json", assets: ["assets/clip.mp4", "assets/tone.wav"], sourceApp: "test", compatibility: { lanes: ["gpu", "ffmpeg"], hosts: ["motion"] } },
+      motion: { schema: "shellx-motion/motion@1", id: "motion_track_audio", name: "Track audio", durationMs: 1_000, fps: 30, width: 16, height: 16, assets: [], provenance: { sourceApp: "test", createdBy: "test" }, layers: [
+        { id: "clip", type: "video", assetRef: "assets/clip.mp4", includeAudio: true, startMs: 0, durationMs: 1_000 },
+        { id: "tone", type: "audio", source: "assets/tone.wav", startMs: 0, durationMs: 1_000 }
+      ] }
+    } as MotionPackage;
+    const muted = structuredClone(base); muted.motion.tracks = [{ id: "video", type: "video", name: "Video", muted: true, layerIds: ["clip"] }];
+    expect(resolvePackageAudioInputs(muted).map((audio) => audio.layerId)).toEqual(["tone"]);
+    const soloed = structuredClone(base); soloed.motion.tracks = [
+      { id: "video", type: "video", name: "Video", layerIds: ["clip"] },
+      { id: "audio", type: "audio", name: "Audio", solo: true, layerIds: ["tone"] }
+    ];
+    expect(resolvePackageAudioInputs(soloed).map((audio) => audio.layerId)).toEqual(["tone"]);
+  });
+
   it("lowers audio ducking triggers into FFmpeg volume keyframes", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-package-audio-ducking-"));
     tempDirs.push(root);

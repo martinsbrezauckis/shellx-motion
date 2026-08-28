@@ -1,5 +1,6 @@
 /** ShellX Motion programmatic SDK. */
 export * from "./types";
+export type * from "./render-cache-plan-types";
 export * from "./cache";
 export * from "./client";
 export * from "./transport";

@@ -24,6 +24,8 @@ import {
 } from "./package-edit-transaction.js";
 
 export interface CompositingGraphAuthoringServices {
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   receiptsRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
@@ -128,6 +130,8 @@ async function mutate(
     const installed = await commitMotionDocumentEdit({
       sourcePackage: pkg,
       outputRoot,
+      authoringInputRoots: services.authoringInputRoots!,
+      authoringOutputRoots: services.authoringOutputRoots!,
       patchedMotion: motion,
       receipt,
       receiptFileName,

@@ -1,38 +1,32 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { hashBuffer, prepareOutputFile, type OperationReceipt } from "@shellx-motion/core";
 import type { ConnectorArtifact } from "./artifacts";
+import { publishConnectorArtifact } from "./artifact-handle";
+import { buildCanvasBridgeSmokeDoc, type CanvasBridgeSmokeDoc } from "./canvas-bridge-smoke";
+import {
+  admitTrustedCanvasBridge,
+  CanvasBridgeTrustError,
+  snapshotTrustedCanvasBridge
+} from "./canvas-bridge-authority";
+import {
+  CanvasBridgeOutputReservation,
+  CanvasBridgePublicationError,
+  canvasBridgeFileEvidence,
+  canvasBridgeOutputOwnershipFailure,
+  canvasBridgeReceiptPath,
+  commitCanvasBridgeSelection,
+  createCanvasBridgeExportReceipt,
+  ensureCanvasBridgeOutputParent,
+  forceCanvasBridgeOutputDestinations,
+  verifyCanvasBridgeFileEvidence,
+  verifyCanvasBridgeReceiptBinding,
+  writeStagedJson,
+  type CanvasBridgeFrameSelectionSchema
+} from "./canvas-bridge-publication";
 
-export interface CanvasBridgeLayer {
-  id: string;
-  kind: "shape" | "text";
-  shape?: string;
-  text?: string;
-  x: number;
-  y: number;
-  w?: number;
-  h?: number;
-  font?: string;
-  size?: number;
-  color?: string;
-  bold?: boolean;
-  style?: Record<string, unknown>;
-}
-
-export interface CanvasBridgeSmokeDoc {
-  width: number;
-  height: number;
-  layers: Array<{
-    id: string;
-    name: string;
-    visible: boolean;
-    locked: boolean;
-    opacity: number;
-    ops: CanvasBridgeLayer[];
-  }>;
-  activeLayerId: string;
-}
+export type { CanvasBridgeFrameSelectionSchema } from "./canvas-bridge-publication";
+export { buildCanvasBridgeSmokeDoc } from "./canvas-bridge-smoke";
+export type { CanvasBridgeLayer, CanvasBridgeSmokeDoc } from "./canvas-bridge-smoke";
 
 export interface CanvasBridgeFrameSelectionExportInput {
   canvasRoot: string;
@@ -44,21 +38,20 @@ export interface CanvasBridgeFrameSelectionExportInput {
   brandTokens?: Record<string, unknown>;
   doc?: CanvasBridgeSmokeDoc;
   generatedAt?: string;
-  receiptPath?: string;
   durationMs?: number;
   fps?: number;
   trustedCanvasRoots?: string[];
   /**
-   * Overwrite an existing file at `outPath`. Off by default: `--out` is a caller-supplied FILE path
-   * here, and the Canvas bridge writes it unconditionally (the output-ownership invariant — a caller's own `sel.json`
-   * was replaced by a run that reported ok:true).
+   * Overwrite the selected JSON and its fixed sibling receipt. Off by default: `--out` is a
+   * caller-supplied FILE path, so both destinations are refused unless the CLI caller opted in.
    */
   force?: boolean;
+  /**
+   * Compatibility-only internal option. Canvas bridge receipts are always the fixed sibling
+   * `canvas-bridge-export.receipt.json`; a different value is refused before bridge execution.
+   */
+  receiptPath?: string;
 }
-
-export type CanvasBridgeFrameSelectionSchema =
-  | "shellx-motion/canvas-frame-selection@1"
-  | "shellx-canvas/frame-selection@1";
 
 export type CanvasBridgeFrameSelectionExportResult =
   | {
@@ -78,130 +71,152 @@ export type CanvasBridgeFrameSelectionExportResult =
       canvasRoot: string;
       bridgePath: string;
       path: string;
-      error: { code: string; message: string; cause?: string };
+      error: { code: string; message: string; cause?: string; suggestedAction?: string };
     };
+
+/** Bounded fault seam for concurrent-publication regression coverage. Production callers omit it. */
+export interface CanvasBridgeFrameSelectionExportServices {
+  afterBridgeAuthorized?: () => Promise<void>;
+  afterBridgeStaged?: (stagedSelectionPath: string) => Promise<void>;
+  beforeSelectionPublished?: (privateStagePath: string) => Promise<void>;
+  afterSelectionPublished?: () => Promise<void>;
+}
 
 interface CanvasMotionBridge {
   buildMotionFrameSelection: (input: Record<string, unknown>) => unknown;
   writeMotionFrameSelection: (selection: unknown, options: { outPath: string }) => Promise<unknown>;
 }
 
-export function buildCanvasBridgeSmokeDoc(): CanvasBridgeSmokeDoc {
-  return {
-    width: 1280,
-    height: 800,
-    activeLayerId: "layer-main",
-    layers: [
-      {
-        id: "layer-main",
-        name: "Page",
-        visible: true,
-        locked: false,
-        opacity: 1,
-        ops: [
-          {
-            id: "rect-blue",
-            kind: "shape",
-            shape: "rectangle",
-            x: 140,
-            y: 150,
-            w: 240,
-            h: 150,
-            style: { stroke: "#1e3a5f", fill: "#3b82f6", width: 2, opacity: 1 }
-          },
-          {
-            id: "heading",
-            kind: "text",
-            x: 150,
-            y: 560,
-            text: "ShellX Canvas",
-            font: "Georgia, serif",
-            size: 64,
-            color: "#111827",
-            bold: true
-          }
-        ]
-      }
-    ]
-  };
-}
-
 export async function runCanvasBridgeFrameSelectionExport(
-  input: CanvasBridgeFrameSelectionExportInput
+  input: CanvasBridgeFrameSelectionExportInput,
+  services: CanvasBridgeFrameSelectionExportServices = {}
 ): Promise<CanvasBridgeFrameSelectionExportResult> {
   const canvasRoot = resolve(input.canvasRoot);
   const bridgePath = resolve(canvasRoot, "app", "server", "motion-package.mjs");
   const outPath = resolve(input.outPath);
+  const receiptPath = canvasBridgeReceiptPath(outPath);
+  if (outPath === receiptPath) {
+    return canvasBridgeFailure(canvasRoot, bridgePath, outPath, "canvas_bridge_output_path_invalid", "Canvas frame-selection output cannot use the fixed sibling receipt filename.");
+  }
+  if (input.receiptPath !== undefined && resolve(input.receiptPath) !== receiptPath) {
+    return canvasBridgeFailure(canvasRoot, bridgePath, outPath, "canvas_bridge_receipt_path_fixed", "Canvas bridge receipts are written only to the fixed sibling receipt path.");
+  }
 
   try {
     // Trust first — an untrusted Canvas root must be refused as untrusted, whatever else is wrong.
-    await assertTrustedCanvasBridgeRoot(canvasRoot, bridgePath, input.trustedCanvasRoots ?? trustedCanvasRootsFromEnv());
-    // The bridge writes `outPath` unconditionally, so the guard has to run before it is handed over.
-    const outPathGuard = await prepareOutputFile(outPath, { force: input.force === true });
-    if (!outPathGuard.ok) {
-      return { ok: false, canvasRoot, bridgePath, path: outPath, error: { code: outPathGuard.error.code, message: outPathGuard.error.message } };
-    }
-    const bridge = await loadCanvasMotionBridge(bridgePath);
-    const selection = bridge.buildMotionFrameSelection({
-      target: input.target ?? "sample",
-      projectName: input.projectName ?? "Canvas Sample Project",
-      frameName: input.frameName ?? "Story Hero",
-      doc: input.doc ?? buildCanvasBridgeSmokeDoc(),
-      selectedIds: input.selectedIds ?? ["rect-blue", "heading"],
-      brandTokens: input.brandTokens ?? { color: { accent: "#3b82f6" } },
-      generatedAt: input.generatedAt ?? new Date().toISOString(),
-      durationMs: input.durationMs ?? 5000,
-      fps: input.fps ?? 30
-    });
-    const writeResult = await bridge.writeMotionFrameSelection(selection, { outPath });
-    const schema = schemaFromWriteResult(writeResult, selection);
-    if (!isSupportedCanvasBridgeFrameSelectionSchema(schema)) {
+    const bridgeSource = await admitTrustedCanvasBridge(
+      canvasRoot,
+      bridgePath,
+      input.trustedCanvasRoots ?? trustedCanvasRootsFromEnv()
+    );
+    const outputParent = await ensureCanvasBridgeOutputParent(outPath);
+    const reservation = await CanvasBridgeOutputReservation.acquire(outputParent, receiptPath);
+    try {
+      // The fixed receipt path is the pair-wide reservation key. Hold it from ownership preflight
+      // through destructive force handling, publication, readback, and private-stage cleanup.
+      const ownershipFailure = await canvasBridgeOutputOwnershipFailure([outPath, receiptPath], input.force === true);
+      if (ownershipFailure) return canvasBridgeFailure(canvasRoot, bridgePath, outPath, ownershipFailure.code, ownershipFailure.message);
+
+      const { path: stageDir, identity: stageIdentity } = await reservation.createPrivateStageDirectory();
+      const bridgeSelectionPath = join(stageDir, "bridge-selection.json");
+      const stagedSelectionPath = join(stageDir, "selection.json");
+      const stagedReceiptPath = join(stageDir, "receipt.json");
+      try {
+      await services.afterBridgeAuthorized?.();
+      const bridgeSnapshot = await snapshotTrustedCanvasBridge(bridgeSource, join(stageDir, "bridge-runtime"));
+      const bridge = await loadCanvasMotionBridge(bridgeSnapshot.bridgePath);
+      const selection = bridge.buildMotionFrameSelection({
+        target: input.target ?? "sample",
+        projectName: input.projectName ?? "Canvas Sample Project",
+        frameName: input.frameName ?? "Story Hero",
+        doc: input.doc ?? buildCanvasBridgeSmokeDoc(),
+        selectedIds: input.selectedIds ?? ["rect-blue", "heading"],
+        brandTokens: input.brandTokens ?? { color: { accent: "#3b82f6" } },
+        generatedAt: input.generatedAt ?? new Date().toISOString(),
+        durationMs: input.durationMs ?? 5000,
+        fps: input.fps ?? 30
+      });
+      const writeResult = await bridge.writeMotionFrameSelection(selection, { outPath: bridgeSelectionPath });
+      const schema = schemaFromWriteResult(writeResult, selection);
+      if (!isSupportedCanvasBridgeFrameSelectionSchema(schema)) {
+        return canvasBridgeFailure(canvasRoot, bridgePath, outPath, "canvas_bridge_schema_mismatch", `Canvas bridge returned unsupported schema: ${schema}.`);
+      }
+      const writtenSelectionPath = pathFromWriteResult(writeResult);
+      if (writtenSelectionPath !== bridgeSelectionPath) {
+        return canvasBridgeFailure(canvasRoot, bridgePath, outPath, "canvas_bridge_output_path_mismatch", "Canvas bridge returned a selection path outside its approved staged destination.");
+      }
+      await services.afterBridgeStaged?.(bridgeSelectionPath);
+      const selectionEvidence = await commitCanvasBridgeSelection({
+        sourcePath: bridgeSelectionPath,
+        committedPath: stagedSelectionPath,
+        selection
+      });
+
+      const selectedFrameId = selectedFrameIdFromSelection(selection);
+      const layerIds = layerIdsFromSelection(selection);
+      await bridgeSource.assertCurrent();
+      const artifacts: ConnectorArtifact[] = [
+        { role: "canvas_bridge", path: bridgePath, status: "available" },
+        { role: "canvas_frame_selection", path: outPath, status: "available", mediaType: "application/json", primary: true },
+        { role: "connector_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
+      ];
+      const receipt = await createCanvasBridgeExportReceipt({
+        canvasRoot,
+        bridgePath,
+        bridgeSha256: bridgeSnapshot.bridgeSha256,
+        selectionHash: selectionEvidence.sha256,
+        selectionPath: outPath,
+        schema,
+        selectedFrameId,
+        layerIds,
+        receiptPath,
+        artifacts,
+        createdAt: input.generatedAt ?? new Date().toISOString()
+      });
+      await writeStagedJson(stagedReceiptPath, receipt);
+      const receiptEvidence = await canvasBridgeFileEvidence(stagedReceiptPath, "Committed Canvas bridge receipt");
+
+      // CLI's explicit --force applies to the selection and its receipt as one decision. Debug
+      // never passes force, so Debug callers always take the no-clobber branch.
+      if (input.force === true) {
+        const forcedFailure = await forceCanvasBridgeOutputDestinations([outPath, receiptPath]);
+        if (forcedFailure) return canvasBridgeFailure(canvasRoot, bridgePath, outPath, forcedFailure.code, forcedFailure.message);
+      }
+      await services.beforeSelectionPublished?.(stageDir);
+      await publishConnectorArtifact(stagedSelectionPath, outPath, {
+        privateStagingRoot: stageDir,
+        expectedPrivateStagingRoot: stageIdentity
+      });
+      await verifyCanvasBridgeFileEvidence(outPath, selectionEvidence, "Published Canvas bridge selection");
+      await services.afterSelectionPublished?.();
+      await publishConnectorArtifact(stagedReceiptPath, receiptPath, {
+        privateStagingRoot: stageDir,
+        expectedPrivateStagingRoot: stageIdentity
+      });
+      await verifyCanvasBridgeFileEvidence(receiptPath, receiptEvidence, "Published Canvas bridge receipt");
+      await verifyCanvasBridgeReceiptBinding(receiptPath, selectionEvidence.sha256);
+
       return {
-        ok: false,
+        ok: true,
         canvasRoot,
         bridgePath,
         path: outPath,
-        error: {
-          code: "canvas_bridge_schema_mismatch",
-          message: `Canvas bridge returned unsupported schema: ${schema}.`
-        }
+        schema,
+        selectedFrameId,
+        layerIds,
+        artifacts,
+        receiptPath,
+        selection
       };
+      } finally {
+        // A public selection that published before a receipt failure is intentionally retained.
+        // A retargeted private stage is retained too: the reservation release will return a typed
+        // manual-recovery contract rather than recursively deleting an uncertain pathname.
+        await reservation.removePrivateStage(stageDir, stageIdentity);
+      }
+    } finally {
+      await reservation.release();
     }
-    const selectionPath = pathFromWriteResult(writeResult) ?? outPath;
-    const selectedFrameId = selectedFrameIdFromSelection(selection);
-    const layerIds = layerIdsFromSelection(selection);
-    const receiptPath = resolve(input.receiptPath ?? join(dirname(selectionPath), "canvas-bridge-export.receipt.json"));
-    const artifacts: ConnectorArtifact[] = [
-      { role: "canvas_bridge", path: bridgePath, status: "available" },
-      { role: "canvas_frame_selection", path: selectionPath, status: "available", mediaType: "application/json", primary: true },
-      { role: "connector_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
-    ];
-    const receipt = await createCanvasBridgeExportReceipt({
-      canvasRoot,
-      bridgePath,
-      selection,
-      selectionPath,
-      schema,
-      selectedFrameId,
-      layerIds,
-      receiptPath,
-      artifacts,
-      createdAt: input.generatedAt ?? new Date().toISOString()
-    });
-    await writeJson(receiptPath, receipt);
-
-    return {
-      ok: true,
-      canvasRoot,
-      bridgePath,
-      path: selectionPath,
-      schema,
-      selectedFrameId,
-      layerIds,
-      artifacts,
-      receiptPath,
-      selection
-    };
   } catch (error) {
     if (error instanceof CanvasBridgeTrustError) {
       return {
@@ -215,6 +230,9 @@ export async function runCanvasBridgeFrameSelectionExport(
           cause: error.message
         }
       };
+    }
+    if (error instanceof CanvasBridgePublicationError) {
+      return canvasBridgeFailure(canvasRoot, bridgePath, outPath, error.code, error.message, error.suggestedAction);
     }
     return {
       ok: false,
@@ -230,75 +248,15 @@ export async function runCanvasBridgeFrameSelectionExport(
   }
 }
 
-async function createCanvasBridgeExportReceipt(input: {
-  canvasRoot: string;
-  bridgePath: string;
-  selection: unknown;
-  selectionPath: string;
-  schema: CanvasBridgeFrameSelectionSchema;
-  selectedFrameId: string;
-  layerIds: string[];
-  receiptPath: string;
-  artifacts: ConnectorArtifact[];
-  createdAt: string;
-}): Promise<OperationReceipt> {
-  const bridgeBytes = await readFile(input.bridgePath);
-  const selectionBytes = Buffer.from(JSON.stringify(input.selection), "utf8");
-  const selectionHash = hashBuffer(selectionBytes);
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `canvas-bridge-export-${selectionHash.slice(0, 16)}`,
-    operation: "canvas.bridge_export",
-    status: "passed",
-    packageId: "canvas_bridge_export",
-    inputHashes: {
-      bridge: hashBuffer(bridgeBytes),
-      selection: selectionHash
-    },
-    createdAt: input.createdAt,
-    lane: "connector",
-    output: {
-      canvasRoot: input.canvasRoot,
-      bridgePath: input.bridgePath,
-      path: input.selectionPath,
-      receiptPath: input.receiptPath,
-      schema: input.schema,
-      selectedFrameId: input.selectedFrameId,
-      layerIds: input.layerIds
-    },
-    artifacts: input.artifacts.filter((artifact) => artifact.role !== "connector_receipt"),
-    warnings: []
-  };
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-class CanvasBridgeTrustError extends Error {}
-
-async function assertTrustedCanvasBridgeRoot(canvasRoot: string, bridgePath: string, trustedRoots: string[]): Promise<void> {
-  try {
-    const rootPath = await realpathOrResolve(canvasRoot);
-    const trustedRootPaths = await Promise.all(trustedRoots.map(realpathOrResolve));
-    if (trustedRootPaths.length === 0 || !trustedRootPaths.some((trustedRoot) => isPathInsideOrEqual(trustedRoot, rootPath))) {
-      throw new CanvasBridgeTrustError("Canvas root is not in the trusted Canvas roots allowlist.");
-    }
-    const appRoot = await realpath(resolve(rootPath, "app"));
-    const resolvedBridgePath = await realpath(bridgePath);
-    if (!isPathInsideOrEqual(rootPath, resolvedBridgePath) || !isPathInsideOrEqual(appRoot, resolvedBridgePath)) {
-      throw new CanvasBridgeTrustError("Canvas bridge path resolves outside the Canvas checkout app root.");
-    }
-
-    const packageJson = readRecord(JSON.parse(await readFile(resolve(appRoot, "package.json"), "utf8")));
-    if (packageJson?.name !== "shellx-canvas") {
-      throw new CanvasBridgeTrustError("Canvas app package.json is not named shellx-canvas.");
-    }
-  } catch (error) {
-    if (error instanceof CanvasBridgeTrustError) throw error;
-    throw new CanvasBridgeTrustError(error instanceof Error ? error.message : String(error));
-  }
+function canvasBridgeFailure(
+  canvasRoot: string,
+  bridgePath: string,
+  path: string,
+  code: string,
+  message: string,
+  suggestedAction?: string
+): CanvasBridgeFrameSelectionExportResult {
+  return { ok: false, canvasRoot, bridgePath, path, error: { code, message, ...(suggestedAction ? { suggestedAction } : {}) } };
 }
 
 function trustedCanvasRootsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -306,14 +264,6 @@ function trustedCanvasRootsFromEnv(env: NodeJS.ProcessEnv = process.env): string
     .split(delimiter)
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-async function realpathOrResolve(path: string): Promise<string> {
-  try {
-    return await realpath(resolve(path));
-  } catch {
-    return resolve(path);
-  }
 }
 
 async function loadCanvasMotionBridge(bridgePath: string): Promise<CanvasMotionBridge> {
@@ -327,11 +277,6 @@ async function loadCanvasMotionBridge(bridgePath: string): Promise<CanvasMotionB
     buildMotionFrameSelection: (input) => buildMotionFrameSelection(input),
     writeMotionFrameSelection: async (selection, options) => writeMotionFrameSelection(selection, options)
   };
-}
-
-function isPathInsideOrEqual(parent: string, candidate: string): boolean {
-  const relativePath = relative(parent, candidate);
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function schemaFromWriteResult(writeResult: unknown, selection: unknown): string {

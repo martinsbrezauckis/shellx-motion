@@ -42,11 +42,11 @@ async function workspace(): Promise<string> {
   return dir;
 }
 
-/** `render --lane ffmpeg` over the tiny native package, into `outputPath`. */
+/** `render --keep-frames` over the tiny native package, into `outputPath`. */
 function renderArgs(packageRoot: string, outputPath: string, framesDir?: string, force = false): string[] {
   return [
     "render", packageRoot, "--lane", "ffmpeg", "--frame-lane", "native", "--preset", "mp4-h264",
-    "--out", outputPath,
+    "--out", outputPath, "--keep-frames",
     ...(framesDir ? ["--frames-dir", framesDir] : []),
     ...(force ? ["--force"] : [])
   ];
@@ -62,7 +62,7 @@ describe("render encode lane output ownership", () => {
     const root = await workspace();
     created.push(packageRoot);
     const framesRoot = join(root, "my-frames");
-    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence"), { recursive: true });
+    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence"), { recursive: true, mode: 0o700 });
     await writeFile(join(framesRoot, "pkg_cli_ffmpeg_sequence", "thesis.txt"), "MY THESIS", "utf8");
 
     const result = await runCli(renderArgs(packageRoot, join(root, "out.mp4"), framesRoot), { ffmpegRunner });
@@ -81,7 +81,7 @@ describe("render encode lane output ownership", () => {
     const root = await workspace();
     created.push(packageRoot);
     const framesRoot = join(root, "my-frames");
-    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence", "000001.png"), { recursive: true });
+    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence", "000001.png"), { recursive: true, mode: 0o700 });
     await writeFile(join(framesRoot, "pkg_cli_ffmpeg_sequence", "000001.png", "secret.txt"), "user data", "utf8");
 
     const result = await runCli(renderArgs(packageRoot, join(root, "out.mp4"), framesRoot), { ffmpegRunner });
@@ -90,21 +90,20 @@ describe("render encode lane output ownership", () => {
     expect(await readFile(join(framesRoot, "pkg_cli_ffmpeg_sequence", "000001.png", "secret.txt"), "utf8")).toBe("user data");
   });
 
-  it("re-renders into a caller's --frames-dir holding only Motion frames, without --force", async () => {
-    // The rail half: a stale frame from a longer previous render must still be wiped, or it would be
-    // encoded into this one. Two consecutive renders into the same caller-named directory must work.
+  it("does not infer ownership from Motion-shaped files in a caller's --frames-dir", async () => {
     const packageRoot = await writeTinyNativePackage();
     const root = await workspace();
     created.push(packageRoot);
     const framesRoot = join(root, "my-frames");
 
     const first = await runCli(renderArgs(packageRoot, join(root, "a.mp4"), framesRoot), { ffmpegRunner });
-    const framesAfterFirst = await readdir(join(framesRoot, "pkg_cli_ffmpeg_sequence"));
+    const framePath = join(framesRoot, "pkg_cli_ffmpeg_sequence", "000001.png");
+    const frameAfterFirst = await readFile(framePath);
     const second = await runCli(renderArgs(packageRoot, join(root, "b.mp4"), framesRoot), { ffmpegRunner });
 
     expect(first).toMatchObject({ ok: true, command: "render", lane: "ffmpeg" });
-    expect(framesAfterFirst).toContain("000001.png");
-    expect(second).toMatchObject({ ok: true, command: "render", lane: "ffmpeg" });
+    expect(second).toMatchObject({ ok: false, command: "render", lane: "ffmpeg", error: { code: "output_dir_not_empty" } });
+    expect(await readFile(framePath)).toEqual(frameAfterFirst);
   });
 
   it("wipes a caller's --frames-dir only when --force is passed", async () => {
@@ -112,7 +111,7 @@ describe("render encode lane output ownership", () => {
     const root = await workspace();
     created.push(packageRoot);
     const framesRoot = join(root, "my-frames");
-    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence"), { recursive: true });
+    await mkdir(join(framesRoot, "pkg_cli_ffmpeg_sequence"), { recursive: true, mode: 0o700 });
     await writeFile(join(framesRoot, "pkg_cli_ffmpeg_sequence", "notes.txt"), "user data", "utf8");
 
     const result = await runCli(renderArgs(packageRoot, join(root, "out.mp4"), framesRoot, true), { ffmpegRunner });
@@ -122,7 +121,7 @@ describe("render encode lane output ownership", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("refuses an existing --out file, the same way it refuses a non-empty --out directory", async () => {
+  it("refuses and preserves an existing --out file before drawing frames", async () => {
     const packageRoot = await writeTinyNativePackage();
     const root = await workspace();
     created.push(packageRoot);
@@ -131,7 +130,7 @@ describe("render encode lane output ownership", () => {
 
     const result = await runCli(renderArgs(packageRoot, outputPath, join(root, "frames")), { ffmpegRunner });
 
-    expect(result).toMatchObject({ ok: false, command: "render", lane: "ffmpeg", error: { code: "output_path_exists", path: outputPath } });
+    expect(result).toMatchObject({ ok: false, command: "render", lane: "ffmpeg", error: { code: "derived_output_exists" } });
     expect(await readFile(outputPath, "utf8")).toBe("MY FINAL CUT");
     // The refusal lands before any frame is drawn, so a wasted render never happens either.
     await expect(readdir(join(root, "frames"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -150,19 +149,19 @@ describe("render encode lane output ownership", () => {
     expect((await readFile(outputPath)).subarray(4, 8).toString("ascii")).toBe("ftyp");
   });
 
-  it("keeps wiping Motion's own scratch root, so the default re-render path has no wall", async () => {
-    // `scratchRoot` stands in for the default `.scratch/frames` here: the CLI treats an embedder's
-    // scratch root as caller-supplied, so this also pins that a directory of Motion's own frames is
-    // re-rendered into without --force.
+  it("treats an embedder's scratch root as caller-supplied and preserves its frames", async () => {
     const packageRoot = await writeTinyNativePackage();
     const root = await workspace();
     created.push(packageRoot);
     const scratchRoot = join(root, "scratch");
 
     const first = await runCli(renderArgs(packageRoot, join(root, "a.mp4")), { ffmpegRunner, scratchRoot });
+    const framePath = join(scratchRoot, "pkg_cli_ffmpeg_sequence", "000001.png");
+    const frameAfterFirst = await readFile(framePath);
     const second = await runCli(renderArgs(packageRoot, join(root, "b.mp4")), { ffmpegRunner, scratchRoot });
 
     expect(first).toMatchObject({ ok: true, lane: "ffmpeg" });
-    expect(second).toMatchObject({ ok: true, lane: "ffmpeg" });
+    expect(second).toMatchObject({ ok: false, lane: "ffmpeg", error: { code: "output_dir_not_empty" } });
+    expect(await readFile(framePath)).toEqual(frameAfterFirst);
   });
 });

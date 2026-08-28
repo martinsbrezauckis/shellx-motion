@@ -29,12 +29,12 @@ import { runCli } from "./main";
 const PACKAGES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /**
- * Mirrors `isNonShippingSource` in `scripts/source-modules.mjs`: test scaffolding is excluded from
- * the build and from tarballs, so it is the sanctioned home for a scripted runtime.
+ * Mirrors `isNonShippingSource` in `scripts/source-modules.mjs`: nonshipping source is excluded
+ * from the build and tarballs, while only test scaffolding is sanctioned for a scripted runtime.
  */
 function isNonShippingSource(path: string): boolean {
   const segments = path.replaceAll("\\", "/").split("/");
-  if (segments.some((segment) => ["test-support", "__tests__", "__fixtures__", "__mocks__"].includes(segment))) {
+  if (segments.some((segment) => ["test-support", "unadopted", "__tests__", "__fixtures__", "__mocks__"].includes(segment))) {
     return true;
   }
   return /\.(test|fixture|fixtures|test-support)(-[^.]+)?\.tsx?$/.test(segments.at(-1) ?? "");

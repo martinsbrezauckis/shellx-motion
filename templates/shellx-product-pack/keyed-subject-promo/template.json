@@ -5,7 +5,8 @@
   "motion": "motion.json",
   "compatibleLanes": [
     "browser",
-    "ffmpeg"
+    "ffmpeg",
+    "gpu"
   ],
   "compatibleHosts": [
     "shellx-motion",
@@ -99,7 +100,7 @@
       "attributionRequired": false,
       "redistributionAllowed": true,
       "commercialUse": true,
-      "notes": "Both package-local defaults are generated samples. User subject and background replacements require appropriate rights. Typography uses the host sans-serif stack."
+      "notes": "Both package-local defaults are generated samples. User subject and background replacements require appropriate rights. Typography uses package-local Inter faces under SIL OFL 1.1."
     },
     "assetsAttribution": [
       {
@@ -119,6 +120,20 @@
         "license": "shellx-generated-sample",
         "author": "ShellX Motion",
         "path": "assets/samples/green-screen-subject.svg"
+      },
+      {
+        "name": "Inter SemiBold (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-600-normal.woff2"
+      },
+      {
+        "name": "Inter Black (Latin subset)",
+        "license": "SIL-OFL-1.1",
+        "author": "The Inter Project Authors",
+        "url": "https://github.com/rsms/inter",
+        "path": "assets/fonts/inter-latin-900-normal.woff2"
       }
     ],
     "preview": {
@@ -130,11 +145,12 @@
       "sourceHash": "1ada26179d632bf96c54cbf62bba9cb23d3091010d96948768025f293be3c91a"
     },
     "performance": {
-      "recommendedLane": "browser",
+      "recommendedLane": "ffmpeg",
       "renderCost": "high",
       "previewFps": 24,
       "notes": [
-        "Uses chroma keying, spill suppression, matte cleanup, motion blur and a layered finishing pass."
+        "Uses chroma keying, spill suppression, matte cleanup, motion blur and a layered finishing pass.",
+        "GPU admission includes V25-B1 visual-only preview through the host-owned exact-time CFR video provider and the existing render --lane ffmpeg --frame-lane gpu final path. Preview does not attest audio, final-video staging, encoding, or mux. Native visual output and resource cleanup require fresh host verification."
       ]
     },
     "story": {

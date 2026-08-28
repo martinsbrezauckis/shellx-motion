@@ -1,21 +1,25 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
   assertLocalMotionFrameBudget,
+  assertMotionPointCapacity,
   assertReadableMotionKeyframes,
   evaluateMotionProceduralLayers,
-  hashFile,
-  hashPackageFile,
+  hasGpuScenePathGeometry,
+  loadedPackageInputHashes,
   loadMotionPackage,
   matchRendererCapability,
+  motionBehaviorLaneRefusal,
+  motionRelationLaneRefusal, motionScene3DAnimationLaneRefusal, motionLayoutGapAnimationLaneRefusal,
   NATIVE_CAPABILITY,
   previewReceiptStatus,
+  readVerifiedPackageAsset,
   resolveEasing,
-  resolvePackageAsset,
   type MotionLayer,
+  type MotionHostRenderCapacity,
   type MotionTransition,
   type MotionPackage,
-  type OperationReceipt
+  type OperationReceipt,
+  type DerivedOutputPublication
 } from "@shellx-motion/core";
 import {
   decodeNativePngRgba,
@@ -25,34 +29,56 @@ import {
   MAX_PNG_COMPRESSION_LEVEL,
   type NativeImage
 } from "./native-png";
-// The lane's whole "font" plus its coverage classifiers (the text-delivery invariant extraction).
-import { caseFoldedCharacters, fallbackGlyphCharacters, glyphRows } from "./native-glyphs";
+import { hslToRgb } from "./native-raster-blend";
+import { publishNativeOutput } from "./native-output-publication";
+import {
+  assertNoStructuralNativePrivatePublication,
+  resolveNativePrivateOutputPublication
+} from "./private-output-publication";
+import { RgbaCanvas } from "./native-raster-canvas";
+import { applyColorEffects, blurCanvas } from "./native-raster-filters";
+import { intersectClips, normalizeClip } from "./native-raster-geometry";
+import { clamp, type NativeBlendMode, type NativeClip, type NativeColorEffects, type Rgba } from "./native-raster-primitives";
+import { layoutNativeTextLines, lineHeightPixels, measureNativeText } from "./native-text-layout";
+import { drawNativeTextLayer, nativeTextLayerWarnings } from "./native-text-renderer";
+import { drawNativePointCloudLayer } from "./native-points-renderer";
+import { drawNativeParticleLayer, nativeParticleLayerDimensions } from "./native-particles-renderer";
+import { drawNativeAuthoredShapeGeometry } from "./native-authored-shape-geometry";
+import { assertNativeGltfPbrFinalRefusal } from "./native-gltf-pbr-final-refusal";
 import {
   nativeTextDeliveryIssues,
   nativeTextDeliveryMessage,
-  requestedFontFamily,
   type NativeTextDeliveryIssue
 } from "./text-delivery-gate";
-
 // Re-export the single-source native capability (owned by @shellx-motion/core) so existing
 // consumers can keep importing it from this package. The runtime gate below consumes it directly.
 export { NATIVE_CAPABILITY } from "@shellx-motion/core";
-// Re-export the PNG deflate-level constants (public API) from their new codec home so external
+// Re-export the PNG deflate-level constants (public API) from their codec home so external
 // consumers can keep importing them from this package entry point after the module-size extraction.
 export { INTERMEDIATE_FRAME_PNG_COMPRESSION_LEVEL, MAX_PNG_COMPRESSION_LEVEL } from "./native-png";
 // Delivery-target text gate (the text-delivery invariant) — exported so callers can pre-flight a lane choice without
 // opening a session, and so the CLI/tests can assert on the exact issue set.
 export { nativeTextDeliveryIssues, nativeTextDeliveryMessage, type NativeTextDeliveryIssue } from "./text-delivery-gate";
 export { caseFoldedCharacters, fallbackGlyphCharacters, nativeGlyphRepertoire } from "./native-glyphs";
-
-export interface NativePreviewFrameInput {
-  packageRoot: string;
-  outputPath?: string;
-  outputRoots?: string[];
-  atMs?: number;
-  now?: () => string;
-}
-
+/** One-frame-at-a-time native delivery producer for a pre-admitted final-video encoder job. */
+export {
+  getNativeFrameProducerFailureEvidence,
+  NativeFrameProducerCleanupFailure,
+  NativeFrameProducerFailure,
+  produceNativeFrameStream
+} from "./native-frame-producer";
+export type {
+  NativeFrameProducerContext,
+  NativeFrameProducerEvidence,
+  NativeFrameProducerInput,
+  NativeFrameProducerRange,
+  NativeFrameProducerRangeEvidence,
+  NativeFrameProducerResult,
+  NativeStreamingFrameSink,
+  NativeStreamingJobContext
+} from "./native-frame-producer";
+export { renderNativePreviewFrame } from "./native-preview-frame";
+export type { NativePreviewFrameInput } from "./native-preview-frame";
 export interface NativePreviewFrame {
   png: Buffer;
   path: string | null;
@@ -61,11 +87,9 @@ export interface NativePreviewFrame {
   height: number;
   atMs: number;
 }
-
 export type NativePreviewFrameResult =
   | { ok: true; frame: NativePreviewFrame; receipt: OperationReceipt; warnings: string[] }
   | { ok: false; error: NativePreviewError; receipt: OperationReceipt; warnings: string[] };
-
 export type NativePreviewError =
   | {
       code: "unsupported_layer";
@@ -122,11 +146,11 @@ export interface NativeRenderSession {
   /** Release the decoded-asset and asset-hash caches held for the session's lifetime. */
   close(): void;
 }
-
 export interface CreateNativeRenderSessionInput {
   packageRoot: string;
   /** Output roots that any written frame path must resolve inside; enforced per rendered frame. */
   outputRoots?: string[];
+  hostCapacity?: MotionHostRenderCapacity;
   /** Clock for receipt `createdAt`; invoked once per rendered frame. Defaults to wall-clock ISO time. */
   now?: () => string;
   /**
@@ -148,7 +172,6 @@ export interface CreateNativeRenderSessionInput {
    */
   renderTarget?: "preview" | "delivery";
 }
-
 interface NativeRenderSessionState {
   pkg: MotionPackage;
   outputRoots: string[];
@@ -158,7 +181,7 @@ interface NativeRenderSessionState {
   structuralHashes: Map<string, string>;
   /** package-relative asset ref -> decoded pixels; each asset decoded at most once per session. */
   imageCache: NativeImageAssets;
-  /** package-relative asset ref -> sha256; each asset content-hashed at most once per session. */
+  /** package-relative asset ref -> hash of the exact decoded asset snapshot; populated with imageCache. */
   assetHashCache: Map<string, string>;
   /** zlib deflate level applied to every frame PNG this session encodes. */
   pngCompressionLevel: number;
@@ -167,8 +190,8 @@ interface NativeRenderSessionState {
    * delivery sessions whose text the block-glyph set draws faithfully (the text-delivery invariant).
    */
   textDeliveryIssues: NativeTextDeliveryIssue[];
+  privateOutputPublication?: DerivedOutputPublication;
 }
-
 /**
  * Open a native render session for `packageRoot`. Loads and structurally hashes the package once (and
  * asserts its canvas fits the local frame budget); image assets are decoded lazily and cached on first
@@ -177,18 +200,23 @@ interface NativeRenderSessionState {
  * loops) should open one session and render N frames to realize the load-once win.
  */
 export async function createNativeRenderSession(input: CreateNativeRenderSessionInput): Promise<NativeRenderSession> {
+  assertNoStructuralNativePrivatePublication(input);
+  const privateOutputPublication = resolveNativePrivateOutputPublication(input);
   const pkg = await loadMotionPackage(input.packageRoot);
+  const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "native"); if (layoutGapAnimationRefusal) throw new Error(layoutGapAnimationRefusal.message);
+  const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "native"); if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message); const relationRefusal = motionRelationLaneRefusal(pkg.motion, "native"); if (relationRefusal) throw new Error(relationRefusal.message);
+  const behaviorRefusal = motionBehaviorLaneRefusal(pkg.motion, "native"); if (behaviorRefusal) throw new Error(behaviorRefusal.message);
+  assertNativeGltfPbrFinalRefusal(pkg);
   assertLocalMotionFrameBudget({ width: pkg.motion.width, height: pkg.motion.height });
+  assertMotionPointCapacity(pkg.motion.layers, input.hostCapacity);
   // Same gate the browser lane applies at session open: a document whose keyframes the evaluator
   // cannot read renders motionless and reports success, so it is refused before any frame is drawn.
   assertReadableMotionKeyframes(pkg.motion);
   const capability = matchRendererCapability(pkg.motion, NATIVE_CAPABILITY);
-  // Structural evidence hashed once at session open; reused for every frame's receipt (and for the
-  // failure receipts, where no image assets are or can be decoded). Uses the package-reader hash, as
-  // the per-frame path did, so values are identical for unmutated inputs.
-  const structuralHashes = new Map<string, string>();
-  structuralHashes.set("manifest.json", await hashPackageFile(resolve(pkg.root, "manifest.json")));
-  structuralHashes.set(pkg.manifest.motion, await hashPackageFile(resolvePackageAsset(pkg, pkg.manifest.motion)));
+  const loadedHashes = loadedPackageInputHashes(pkg);
+  if (!loadedHashes?.["manifest.json"] || !loadedHashes[pkg.manifest.motion]) throw new Error("Native renderer requires loader-owned manifest and motion input hashes.");
+  // Reopening these pathnames after load would let a supplier swap their bytes before receipt creation.
+  const structuralHashes = new Map<string, string>([["manifest.json", loadedHashes["manifest.json"]], [pkg.manifest.motion, loadedHashes[pkg.manifest.motion]]]);
   const state: NativeRenderSessionState = {
     pkg,
     outputRoots: input.outputRoots ?? [],
@@ -198,7 +226,8 @@ export async function createNativeRenderSession(input: CreateNativeRenderSession
     imageCache: new Map(),
     assetHashCache: new Map(),
     pngCompressionLevel: input.pngCompressionLevel ?? MAX_PNG_COMPRESSION_LEVEL,
-    textDeliveryIssues: input.renderTarget === "delivery" ? nativeTextDeliveryIssues(pkg.motion) : []
+    textDeliveryIssues: input.renderTarget === "delivery" ? nativeTextDeliveryIssues(pkg.motion) : [],
+    ...(privateOutputPublication ? { privateOutputPublication } : {})
   };
   return {
     renderFrameAtMs: (atMs, outputPath) => renderNativeSessionFrame(state, atMs, outputPath),
@@ -293,8 +322,7 @@ async function renderNativeSessionFrame(
   const png = encodePng(canvas.width, canvas.height, canvas.data, state.pngCompressionLevel);
   const sha256 = hashBuffer(png);
   if (resolvedOutputPath) {
-    await mkdir(dirname(resolvedOutputPath), { recursive: true });
-    await writeFile(resolvedOutputPath, png);
+    await publishNativeOutput(resolvedOutputPath, png, state.privateOutputPublication);
   }
 
   const frame: NativePreviewFrame = {
@@ -322,26 +350,6 @@ async function renderNativeSessionFrame(
   };
 }
 
-/**
- * Render a single native preview frame. Thin wrapper over {@link createNativeRenderSession}: it opens a
- * session, renders one frame, and closes it, so every single-frame caller (preview, still-frame and
- * one-off render commands, connectors) keeps an unchanged public contract — identical frame bytes and
- * byte-identical receipts. Multi-frame callers should open one session via {@link createNativeRenderSession}
- * and render N frames to get the load-once benefit.
- */
-export async function renderNativePreviewFrame(input: NativePreviewFrameInput): Promise<NativePreviewFrameResult> {
-  const session = await createNativeRenderSession({
-    packageRoot: input.packageRoot,
-    ...(input.outputRoots ? { outputRoots: input.outputRoots } : {}),
-    ...(input.now ? { now: input.now } : {})
-  });
-  try {
-    return await session.renderFrameAtMs(input.atMs ?? 0, input.outputPath);
-  } finally {
-    session.close();
-  }
-}
-
 function isPathInsideAnyRoot(path: string, roots: string[]): boolean {
   const resolvedPath = resolve(path);
   return roots.map((root) => root.trim()).filter(Boolean).map((root) => resolve(root)).some((root) => isPathInsideOrEqual(root, resolvedPath));
@@ -360,9 +368,8 @@ function isPathInsideOrEqual(parent: string, candidate: string): boolean {
  * assets actually decoded and composited into this frame, see {@link ensureSessionImageAssets} — is
  * also hashed and keyed by its ref; without this, swapping a decoded pixel input would leave
  * `inputHashes` unchanged, so the receipt would claim complete input evidence while excluding the
- * actual pixels. Asset content hashes use the TOCTOU-hardened `hashFile` receipts helper
- * (symlinks and mid-read mutation are rejected) and are computed at most once per asset per session,
- * then reused — identical values to the per-frame path's re-hash for unmutated inputs.
+ * actual pixels. The hash comes from the exact verified bytes decoded into `imageCache`, never a
+ * later pathname reopen, and is computed at most once per asset per session.
  *
  * Keys are emitted in sorted order so the receipt is byte-for-byte deterministic regardless of the
  * order in which layers reference their assets. Manifest / motion keys take precedence over any image
@@ -376,11 +383,8 @@ async function buildSessionInputHashes(state: NativeRenderSessionState, activeAs
   const hashes = new Map(state.structuralHashes);
   for (const assetRef of activeAssetRefs) {
     if (hashes.has(assetRef)) continue; // manifest/motion win; dedupe repeated refs
-    let assetHash = state.assetHashCache.get(assetRef);
-    if (assetHash === undefined) {
-      assetHash = await hashFile(resolvePackageAsset(state.pkg, assetRef));
-      state.assetHashCache.set(assetRef, assetHash);
-    }
+    const assetHash = state.assetHashCache.get(assetRef);
+    if (assetHash === undefined) throw new Error(`Native image asset was decoded without a verified hash: ${assetRef}`);
     hashes.set(assetRef, assetHash);
   }
   return sortHashRecord(hashes);
@@ -501,7 +505,13 @@ async function ensureSessionImageAssets(state: NativeRenderSessionState, evaluat
     seen.add(assetRef);
     activeRefs.push(assetRef);
     if (!state.imageCache.has(assetRef)) {
-      state.imageCache.set(assetRef, decodeNativePngRgba(await readFile(resolvePackageAsset(state.pkg, assetRef))));
+      const asset = await readVerifiedPackageAsset(state.pkg, assetRef, {
+        label: `Native image asset ${assetRef}`
+      });
+      const image = decodeNativePngRgba(asset.bytes);
+      // Decoded pixels and receipt hash come from one opened, no-follow, in-root object.
+      state.imageCache.set(assetRef, image);
+      state.assetHashCache.set(assetRef, asset.sha256);
     }
   }
   return activeRefs;
@@ -560,7 +570,21 @@ function drawNativeLayer(canvas: RgbaCanvas, layer: MotionLayer, pkg: MotionPack
 
 function paintNativeLayer(canvas: RgbaCanvas, layer: MotionLayer, pkg: MotionPackage, atMs: number, imageAssets: NativeImageAssets): void {
   if (layer.type === "shape") drawShapeLayer(canvas, layer, pkg, atMs);
-  if (layer.type === "text" || layer.type === "caption") drawTextLayer(canvas, layer, pkg, atMs);
+  if (layer.type === "points") drawNativePointCloudLayer({
+    canvas, layer, atMs, viewport: { width: pkg.motion.width, height: pkg.motion.height }, services: nativeLayerServices,
+    colorFor: (color, pointOpacity) => {
+      const parsed = parseColor(resolveTokenString(color, pkg));
+      return applyLayerOpacity({ ...parsed, a: Math.round(parsed.a * pointOpacity) }, layer);
+    }
+  });
+  if (layer.type === "particles") drawNativeParticleLayer({
+    canvas, layer, atMs, viewport: { width: pkg.motion.width, height: pkg.motion.height }, services: nativeLayerServices,
+    colorFor: (color, particleOpacity) => {
+      const parsed = parseColor(resolveTokenString(color, pkg));
+      return applyLayerOpacity({ ...parsed, a: Math.round(parsed.a * particleOpacity) }, layer);
+    }
+  });
+  if (layer.type === "text" || layer.type === "caption") drawNativeTextLayer(canvas, layer, pkg, atMs, nativeTextRenderingServices);
   if (layer.type === "image") drawImageLayer(canvas, layer, pkg, imageAssets, atMs);
 }
 
@@ -572,13 +596,6 @@ function normalizedRotation(rotation: number): number {
 function nativeBlurRadius(layer: MotionLayer): number {
   const effects = readRecord(layer.effects);
   return Math.max(0, readNumber(effects.blur) ?? 0);
-}
-
-interface NativeColorEffects {
-  brightness: number;
-  contrast: number;
-  saturate: number;
-  grayscale: number;
 }
 
 function nativeColorEffects(layer: MotionLayer): NativeColorEffects {
@@ -614,24 +631,6 @@ const NATIVE_BLEND_MODES = new Set<NativeBlendMode>([
   "plus-lighter"
 ]);
 
-type NativeBlendMode =
-  | "multiply"
-  | "screen"
-  | "overlay"
-  | "darken"
-  | "lighten"
-  | "color-dodge"
-  | "color-burn"
-  | "hard-light"
-  | "soft-light"
-  | "difference"
-  | "exclusion"
-  | "hue"
-  | "saturation"
-  | "color"
-  | "luminosity"
-  | "plus-lighter";
-
 function nativeBlendMode(layer: MotionLayer): NativeBlendMode | null {
   const blendMode = readString(layer.blendMode);
   if (!blendMode || blendMode === "normal") return null;
@@ -649,6 +648,8 @@ function layerRotationAnchor(layer: MotionLayer, pkg: MotionPackage, imageAssets
 
 function layerBaseDimensions(layer: MotionLayer, transform: ReturnType<typeof readTransform>, pkg: MotionPackage, imageAssets: NativeImageAssets): { width: number; height: number } {
   const style = readRecord(layer.style);
+  if (layer.type === "points") return { width: pkg.motion.width, height: pkg.motion.height };
+  if (layer.type === "particles") return nativeParticleLayerDimensions(layer, transform);
   if (layer.type === "shape") {
     return {
       width: transform.width ?? readNumber(layer.width) ?? readNumber(style.width) ?? 100,
@@ -680,7 +681,7 @@ function estimateNativeTextBox(layer: MotionLayer, style: Record<string, unknown
   const glyphHeight = pixelSize * 7;
   const spacing = Math.max(1, Math.round(pixelSize * 0.8));
   const lineHeight = lineHeightPixels(style.lineHeight, fontSize, 1, glyphHeight);
-  const lines = layoutTextLines(text, null, glyphWidth, spacing);
+  const lines = layoutNativeTextLines(text, null, glyphWidth, spacing);
   return {
     width: Math.max(1, lines.reduce((max, line) => Math.max(max, measureNativeText(line, glyphWidth, spacing)), 0)),
     height: Math.max(1, lines.length <= 1 ? glyphHeight : ((lines.length - 1) * lineHeight) + glyphHeight)
@@ -769,17 +770,15 @@ function scaledImagePlacement(box: NativeClip, sourceRect: Pick<NativeClip, "wid
 }
 
 function centerNaturalImagePlacement(box: NativeClip, sourceRect: Pick<NativeClip, "width" | "height">): NativeClip {
-  return {
-    x: box.x + ((box.width - sourceRect.width) / 2),
-    y: box.y + ((box.height - sourceRect.height) / 2),
-    width: sourceRect.width,
-    height: sourceRect.height
-  };
+  return { x: box.x + ((box.width - sourceRect.width) / 2), y: box.y + ((box.height - sourceRect.height) / 2), width: sourceRect.width, height: sourceRect.height };
 }
 
 function drawShapeLayer(canvas: RgbaCanvas, layer: MotionLayer, pkg: MotionPackage, atMs: number): void {
-  const transform = readTransform(layer);
-  const style = readRecord(layer.style);
+  const transform = readTransform(layer), style = readRecord(layer.style);
+  if (hasGpuScenePathGeometry(layer)) {
+    const width = transform.width ?? readNumber(layer.width) ?? readNumber(style.width) ?? 100, height = transform.height ?? readNumber(layer.height) ?? readNumber(style.height) ?? 100, box = scaleBoxAroundOrigin(transform.x, transform.y, width, height, transform.scale, transform.originX, transform.originY);
+    canvas.withClip(layerPaintClip(layer, box, transform.scale, atMs), () => drawNativeAuthoredShapeGeometry(canvas, layer, pkg, transform, style, resolveTokenString)); return;
+  }
   const scale = transform.scale;
   const width = transform.width ?? readNumber(layer.width) ?? readNumber(style.width) ?? 100;
   const height = transform.height ?? readNumber(layer.height) ?? readNumber(style.height) ?? 100;
@@ -956,229 +955,6 @@ function drawShapeShadow(
   fillNativeShape(canvas, shapeKind, { x: baseX, y: baseY, width: baseWidth, height: baseHeight }, baseRadius, shadow.color, pathData);
 }
 
-function drawTextLayer(canvas: RgbaCanvas, layer: MotionLayer, pkg: MotionPackage, atMs: number): void {
-  const text = readString(layer.text) ?? "";
-  if (text.length === 0) return;
-
-  const transform = readTransform(layer);
-  const style = readRecord(layer.style);
-  const fontSize = readNumber(style.fontSize) ?? 32;
-  const baseTextColor = parseColor(resolveTokenString(readString(style.color) ?? readString(layer.color) ?? "#111827", pkg));
-  const color = applyLayerOpacity(baseTextColor, layer);
-  const pixelSize = Math.max(1, Math.round((fontSize * transform.scale) / 7));
-  const glyphWidth = pixelSize * 5;
-  const glyphHeight = pixelSize * 7;
-  const spacing = Math.max(1, Math.round(pixelSize * 0.8)) + letterSpacingPixels(style.letterSpacing, transform.scale);
-  const fontWeightExtra = fontWeightExtraPixels(style.fontWeight, pixelSize);
-  const lineHeight = lineHeightPixels(style.lineHeight, fontSize, transform.scale, glyphHeight);
-  const baseLineWidth = textBoxBaseWidth(layer, style, transform);
-  const maxLineWidth = textBoxWidthPixels(layer, style, transform);
-  const textAlign = nativeTextAlign(style.textAlign);
-  const baseBoxHeight = textBoxBaseHeight(layer, style, transform);
-  const maxBoxHeight = textBoxHeightPixels(layer, style, transform);
-  const verticalAlign = nativeVerticalAlign(style.verticalAlign ?? style.alignY);
-  const padding = textBoxPaddingPixels(style, transform.scale);
-  const border = textBoxBorder(style, transform.scale);
-  const shadow = textShadow(style, pkg, transform.scale, layer, baseTextColor);
-  const contentLineWidth = insetDimension(maxLineWidth, (border.width * 2) + padding.left + padding.right);
-  const contentBoxHeight = insetDimension(maxBoxHeight, (border.width * 2) + padding.top + padding.bottom);
-  const lines = layoutTextLines(text, contentLineWidth, glyphWidth, spacing);
-  const visualBox = textVisualBox(transform, baseLineWidth, baseBoxHeight, maxLineWidth, maxBoxHeight, lines, glyphWidth, spacing, lineHeight, glyphHeight, border, padding);
-  const contentX = visualBox.x + border.width + padding.left;
-  const contentY = visualBox.y + border.width + padding.top;
-  const mask = layerPaintClip(layer, visualBox, transform.scale, atMs);
-
-  canvas.withClip(mask, () => {
-    drawTextBoxDecoration(canvas, layer, pkg, style, transform, visualBox, maxLineWidth, maxBoxHeight, border, baseTextColor);
-    const startY = alignedTextStartY(contentY, lines.length, contentBoxHeight, lineHeight, glyphHeight, verticalAlign);
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-      let cursorX = alignedTextStartX(contentX, lines[lineIndex], contentLineWidth, glyphWidth, spacing, textAlign);
-      const cursorY = startY + lineIndex * lineHeight;
-      if (shadow) {
-        drawTextLineShadow(canvas, lines[lineIndex], cursorX, cursorY, pixelSize, glyphWidth, spacing, fontWeightExtra, shadow);
-      }
-      drawTextLineGlyphs(canvas, lines[lineIndex], cursorX, cursorY, pixelSize, glyphWidth, spacing, fontWeightExtra, color);
-    }
-  });
-}
-
-interface NativeTextShadow {
-  x: number;
-  y: number;
-  blur: number;
-  color: Rgba;
-}
-
-function textShadow(style: Record<string, unknown>, pkg: MotionPackage, scale: number, layer: MotionLayer, currentColor: Rgba): NativeTextShadow | null {
-  const shadow = readRecord(style.textShadow ?? style.shadow);
-  if (Object.keys(shadow).length === 0) return null;
-  const color = applyLayerOpacity(parseColor(resolveTokenString(readString(shadow.color) ?? "rgba(0,0,0,0.35)", pkg), { currentColor }), layer);
-  if (color.a <= 0) return null;
-  return {
-    x: shadowLengthPixels(shadow, ["x", "offsetX"], scale),
-    y: shadowLengthPixels(shadow, ["y", "offsetY"], scale),
-    blur: Math.max(0, shadowLengthPixels(shadow, ["blur", "blurRadius"], scale)),
-    color
-  };
-}
-
-function drawTextBoxDecoration(
-  canvas: RgbaCanvas,
-  layer: MotionLayer,
-  pkg: MotionPackage,
-  style: Record<string, unknown>,
-  transform: ReturnType<typeof readTransform>,
-  box: NativeClip,
-  width: number | null,
-  height: number | null,
-  border: { color: string | null; width: number },
-  currentColor: Rgba
-): void {
-  if (width === null || height === null) return;
-  const radius = textBoxRadiusPixels(style, transform.scale, width, height);
-  const background = readString(style.backgroundColor) ?? readString(style.background);
-  if (background) {
-    canvas.fillRoundedRect(box.x, box.y, width, height, radius, applyLayerOpacity(parseColor(resolveTokenString(background, pkg), { currentColor }), layer));
-  }
-  if (border.color && border.width > 0) {
-    canvas.strokeRoundedRect(box.x, box.y, width, height, border.width, radius, applyLayerOpacity(parseColor(resolveTokenString(border.color, pkg), { currentColor }), layer));
-  }
-}
-
-function insetDimension(value: number | null, inset: number): number | null {
-  return value === null ? null : Math.max(0, value - inset);
-}
-
-function textBoxPaddingPixels(style: Record<string, unknown>, scale: number): { top: number; right: number; bottom: number; left: number } {
-  const all = readCssPixelValue(style.padding) ?? 0;
-  const horizontal = readCssPixelValue(style.paddingX) ?? all;
-  const vertical = readCssPixelValue(style.paddingY) ?? all;
-  return {
-    top: Math.max(0, (readCssPixelValue(style.paddingTop) ?? vertical) * scale),
-    right: Math.max(0, (readCssPixelValue(style.paddingRight) ?? horizontal) * scale),
-    bottom: Math.max(0, (readCssPixelValue(style.paddingBottom) ?? vertical) * scale),
-    left: Math.max(0, (readCssPixelValue(style.paddingLeft) ?? horizontal) * scale)
-  };
-}
-
-function textBoxBorder(style: Record<string, unknown>, scale: number): { color: string | null; width: number } {
-  const color = readString(style.borderColor) ?? readString(style.stroke);
-  const widthFallback = color ? readCssPixelValue(style.width) ?? 0 : 0;
-  const width = readCssPixelValue(style.borderWidth) ?? readCssPixelValue(style.strokeWidth) ?? widthFallback;
-  return { color, width: Math.max(0, width * scale) };
-}
-
-function textBoxRadiusPixels(style: Record<string, unknown>, scale: number, width: number, height: number): number {
-  const radius = readCssPixelValue(style.borderRadius) ?? readCssPixelValue(style.radius) ?? 0;
-  return Math.max(0, Math.min((radius * scale), width / 2, height / 2));
-}
-
-type NativeTextAlign = "left" | "center" | "right";
-type NativeVerticalAlign = "top" | "middle" | "bottom";
-
-function nativeTextAlign(value: unknown): NativeTextAlign {
-  const align = readString(value)?.trim().toLowerCase();
-  if (align === "center" || align === "right") return align;
-  return "left";
-}
-
-function nativeVerticalAlign(value: unknown): NativeVerticalAlign {
-  const align = readString(value)?.trim().toLowerCase();
-  if (align === "bottom") return "bottom";
-  if (align === "middle" || align === "center") return "middle";
-  return "top";
-}
-
-function alignedTextStartX(
-  x: number,
-  line: string,
-  maxLineWidth: number | null,
-  glyphWidth: number,
-  spacing: number,
-  textAlign: NativeTextAlign
-): number {
-  if (maxLineWidth === null || textAlign === "left") return x;
-  const lineWidth = measureNativeText(line, glyphWidth, spacing);
-  const remaining = Math.max(0, maxLineWidth - lineWidth);
-  if (textAlign === "right") return x + remaining;
-  return x + remaining / 2;
-}
-
-function alignedTextStartY(
-  y: number,
-  lineCount: number,
-  maxBoxHeight: number | null,
-  lineHeight: number,
-  glyphHeight: number,
-  verticalAlign: NativeVerticalAlign
-): number {
-  if (maxBoxHeight === null || verticalAlign === "top") return y;
-  const textHeight = lineCount <= 1 ? glyphHeight : ((lineCount - 1) * lineHeight) + glyphHeight;
-  const remaining = Math.max(0, maxBoxHeight - textHeight);
-  if (verticalAlign === "bottom") return y + remaining;
-  return y + remaining / 2;
-}
-
-function textBoxWidthPixels(layer: MotionLayer, style: Record<string, unknown>, transform: ReturnType<typeof readTransform>): number | null {
-  const value = textBoxBaseWidth(layer, style, transform);
-  return value === null ? null : value * transform.scale;
-}
-
-function textBoxHeightPixels(layer: MotionLayer, style: Record<string, unknown>, transform: ReturnType<typeof readTransform>): number | null {
-  const value = textBoxBaseHeight(layer, style, transform);
-  return value === null ? null : value * transform.scale;
-}
-
-function textBoxBaseWidth(layer: MotionLayer, style: Record<string, unknown>, transform: ReturnType<typeof readTransform>): number | null {
-  const value = transform.width ?? readCssPixelValue(layer.width) ?? readCssPixelValue(style.width);
-  return value !== null && value > 0 ? value : null;
-}
-
-function textBoxBaseHeight(layer: MotionLayer, style: Record<string, unknown>, transform: ReturnType<typeof readTransform>): number | null {
-  const value = transform.height ?? readCssPixelValue(layer.height) ?? readCssPixelValue(style.height);
-  return value !== null && value > 0 ? value : null;
-}
-
-function textVisualBox(
-  transform: ReturnType<typeof readTransform>,
-  baseWidth: number | null,
-  baseHeight: number | null,
-  width: number | null,
-  height: number | null,
-  lines: string[],
-  glyphWidth: number,
-  spacing: number,
-  lineHeight: number,
-  glyphHeight: number,
-  border: { width: number },
-  padding: { top: number; right: number; bottom: number; left: number }
-): NativeClip {
-  const naturalTextWidth = lines.reduce((max, line) => Math.max(max, measureNativeText(line, glyphWidth, spacing)), 0);
-  const naturalTextHeight = lines.length <= 1 ? glyphHeight : ((lines.length - 1) * lineHeight) + glyphHeight;
-  const scaledWidth = width ?? naturalTextWidth + (border.width * 2) + padding.left + padding.right;
-  const scaledHeight = height ?? naturalTextHeight + (border.width * 2) + padding.top + padding.bottom;
-  const baseVisualWidth = baseWidth ?? scaledDimensionBase(scaledWidth, transform.scale);
-  const baseVisualHeight = baseHeight ?? scaledDimensionBase(scaledHeight, transform.scale);
-  const box = scaleBoxAroundOrigin(transform.x, transform.y, baseVisualWidth, baseVisualHeight, transform.scale, transform.originX, transform.originY);
-  return {
-    x: box.x,
-    y: box.y,
-    width: scaledWidth,
-    height: scaledHeight
-  };
-}
-
-function scaledDimensionBase(value: number, scale: number): number {
-  return scale === 0 ? 0 : value / scale;
-}
-
-interface NativeClip {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  radius?: number;
-}
 
 function layerPaintClip(layer: MotionLayer, box: NativeClip, scale: number, atMs: number): NativeClip | null {
   const mask = readRecord(layer.mask);
@@ -1275,208 +1051,6 @@ function readCssPixelValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function layoutTextLines(text: string, maxLineWidth: number | null, glyphWidth: number, spacing: number): string[] {
-  const hardLines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  if (maxLineWidth === null) return hardLines;
-  return hardLines.flatMap((line) => wrapTextLine(line, maxLineWidth, glyphWidth, spacing));
-}
-
-function wrapTextLine(line: string, maxLineWidth: number, glyphWidth: number, spacing: number): string[] {
-  const words = line.split(/[ \t]+/).filter(Boolean);
-  if (words.length === 0) return [""];
-
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    if (!current) {
-      const wrapped = wrapLongWord(word, maxLineWidth, glyphWidth, spacing);
-      lines.push(...wrapped.slice(0, -1));
-      current = wrapped.at(-1) ?? "";
-      continue;
-    }
-
-    const candidate = `${current} ${word}`;
-    if (measureNativeText(candidate, glyphWidth, spacing) <= maxLineWidth) {
-      current = candidate;
-      continue;
-    }
-
-    lines.push(current);
-    const wrapped = wrapLongWord(word, maxLineWidth, glyphWidth, spacing);
-    lines.push(...wrapped.slice(0, -1));
-    current = wrapped.at(-1) ?? "";
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function wrapLongWord(word: string, maxLineWidth: number, glyphWidth: number, spacing: number): string[] {
-  if (measureNativeText(word, glyphWidth, spacing) <= maxLineWidth) return [word];
-  const lines: string[] = [];
-  let current = "";
-  for (const char of word) {
-    const candidate = `${current}${char}`;
-    if (current && measureNativeText(candidate, glyphWidth, spacing) > maxLineWidth) {
-      lines.push(current);
-      current = char;
-      continue;
-    }
-    current = candidate;
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function measureNativeText(text: string, glyphWidth: number, spacing: number): number {
-  let width = 0;
-  for (const char of text) {
-    if (char === "\t") {
-      width += (glyphWidth + spacing) * 4;
-      continue;
-    }
-    width += glyphWidth + spacing;
-  }
-  return width === 0 ? 0 : width - spacing;
-}
-
-function lineHeightPixels(value: unknown, fontSize: number, scale: number, glyphHeight: number): number {
-  const numeric = readNumber(value);
-  if (numeric !== null) return normalizedLineHeightPixels(numeric, fontSize, scale, glyphHeight);
-
-  const text = readString(value)?.trim();
-  if (!text) return normalizedLineHeightPixels(1.15, fontSize, scale, glyphHeight);
-  if (text.endsWith("%")) {
-    const percent = Number(text.slice(0, -1));
-    if (Number.isFinite(percent)) return normalizedLineHeightPixels(percent / 100, fontSize, scale, glyphHeight);
-  }
-  if (text.endsWith("px")) {
-    const px = Number(text.slice(0, -2));
-    if (Number.isFinite(px)) return normalizedLineHeightPixels(px, fontSize, scale, glyphHeight);
-  }
-  const parsed = Number(text);
-  return Number.isFinite(parsed)
-    ? normalizedLineHeightPixels(parsed, fontSize, scale, glyphHeight)
-    : normalizedLineHeightPixels(1.15, fontSize, scale, glyphHeight);
-}
-
-function letterSpacingPixels(value: unknown, scale: number): number {
-  return (readCssPixelValue(value) ?? 0) * scale;
-}
-
-function normalizedLineHeightPixels(value: number, fontSize: number, scale: number, glyphHeight: number): number {
-  const cssPixels = value <= 4 ? fontSize * value : value;
-  return Math.max(glyphHeight + 1, Math.round(cssPixels * scale));
-}
-
-function fontWeightExtraPixels(value: unknown, pixelSize: number): number {
-  const weight = normalizedFontWeight(value);
-  if (weight >= 800) return Math.max(1, Math.round(pixelSize * 1.25));
-  if (weight >= 700) return Math.max(1, Math.round(pixelSize * 0.8));
-  if (weight >= 600) return Math.max(1, Math.round(pixelSize * 0.4));
-  return 0;
-}
-
-function normalizedFontWeight(value: unknown): number {
-  const numeric = readNumber(value);
-  if (numeric !== null) return numeric;
-  const text = readString(value)?.trim().toLowerCase();
-  if (!text || text === "normal") return 400;
-  if (text === "bold" || text === "bolder") return 700;
-  if (text === "lighter") return 300;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : 400;
-}
-
-function drawTextLineShadow(
-  canvas: RgbaCanvas,
-  line: string,
-  x: number,
-  y: number,
-  pixelSize: number,
-  glyphWidth: number,
-  spacing: number,
-  fontWeightExtra: number,
-  shadow: NativeTextShadow
-): void {
-  drawTextLineGlyphs(canvas, line, x + shadow.x, y + shadow.y, pixelSize, glyphWidth, spacing, fontWeightExtra, shadow.color);
-  if (shadow.blur <= 0) return;
-
-  const steps = Math.min(12, Math.max(1, Math.ceil(shadow.blur)));
-  for (let step = steps; step >= 1; step -= 1) {
-    const alpha = Math.round(shadow.color.a * ((steps - step + 1) / (steps + 1)) * 0.25);
-    if (alpha <= 0) continue;
-    const expansion = (shadow.blur * step) / steps;
-    const color = { ...shadow.color, a: alpha };
-    drawTextLineGlyphs(canvas, line, x + shadow.x - expansion, y + shadow.y, pixelSize, glyphWidth, spacing, fontWeightExtra, color);
-    drawTextLineGlyphs(canvas, line, x + shadow.x + expansion, y + shadow.y, pixelSize, glyphWidth, spacing, fontWeightExtra, color);
-    drawTextLineGlyphs(canvas, line, x + shadow.x, y + shadow.y - expansion, pixelSize, glyphWidth, spacing, fontWeightExtra, color);
-    drawTextLineGlyphs(canvas, line, x + shadow.x, y + shadow.y + expansion, pixelSize, glyphWidth, spacing, fontWeightExtra, color);
-  }
-}
-
-function drawTextLineGlyphs(
-  canvas: RgbaCanvas,
-  line: string,
-  x: number,
-  y: number,
-  pixelSize: number,
-  glyphWidth: number,
-  spacing: number,
-  fontWeightExtra: number,
-  color: Rgba
-): void {
-  let cursorX = x;
-  for (const char of line) {
-    if (char === " ") {
-      cursorX += glyphWidth + spacing;
-      continue;
-    }
-    if (char === "\t") {
-      cursorX += (glyphWidth + spacing) * 4;
-      continue;
-    }
-    drawGlyph(canvas, char, cursorX, y, pixelSize, fontWeightExtra, color);
-    cursorX += glyphWidth + spacing;
-  }
-}
-
-function drawGlyph(canvas: RgbaCanvas, char: string, x: number, y: number, pixelSize: number, fontWeightExtra: number, color: Rgba): void {
-  const rows = glyphRows(char);
-  for (let row = 0; row < rows.length; row += 1) {
-    for (let col = 0; col < rows[row].length; col += 1) {
-      if (rows[row][col] === "1") {
-        canvas.fillRect(x + col * pixelSize, y + row * pixelSize, pixelSize + fontWeightExtra, pixelSize, color);
-      }
-    }
-  }
-}
-
-/**
- * Per-layer warnings for text the native block-glyph lane cannot draw faithfully.
- *
- * the text-delivery invariant: the lane used to case-fold lowercase text with NO signal at all ("Sveiks" was drawn
- * "SVEIKS"), which is exactly the silent lowering the product forbids. Every unfaithful property is
- * now named per layer, and because these land in the receipt's `warnings` the preview receipt drops
- * to `warning` status. Delivery renders do not warn — they refuse (see `./text-delivery-gate`).
- */
-function nativeTextLayerWarnings(layer: MotionLayer): string[] {
-  const text = readString(layer.text) ?? "";
-  const warnings: string[] = [];
-  const caseFolded = caseFoldedCharacters(text);
-  if (caseFolded.length > 0) {
-    warnings.push(`Native renderer case-folded lowercase text to uppercase block glyphs on layer ${layer.id}: ${caseFolded.join("")}.`);
-  }
-  const fallbackChars = fallbackGlyphCharacters(text);
-  if (fallbackChars.length > 0) {
-    warnings.push(`Native renderer used fallback block glyphs for unsupported text characters on layer ${layer.id}: ${fallbackChars.join("")}.`);
-  }
-  const fontFamily = requestedFontFamily(layer);
-  if (fontFamily) {
-    warnings.push(`Native renderer ignored the requested font family '${fontFamily}' on layer ${layer.id} and drew block glyphs instead.`);
-  }
-  return warnings;
-}
-
 function scaleBoxAroundOrigin(
   x: number,
   y: number,
@@ -1554,827 +1128,19 @@ function resolveTokenValue(value: unknown, pkg: MotionPackage): unknown {
   return current === undefined ? value : current;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
 
-interface Rgba {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-}
-
-class RgbaCanvas {
-  readonly data: Buffer;
-  private readonly clipStack: NativeClip[] = [];
-
-  constructor(
-    readonly width: number,
-    readonly height: number
-  ) {
-    this.data = Buffer.alloc(width * height * 4);
-  }
-
-  fill(color: Rgba): void {
-    this.fillRect(0, 0, this.width, this.height, color);
-  }
-
-  composite(source: RgbaCanvas, blendMode: NativeBlendMode | null = null): void {
-    for (let sy = 0; sy < source.height; sy += 1) {
-      for (let sx = 0; sx < source.width; sx += 1) {
-        const sourceOffset = (sy * source.width + sx) * 4;
-        const alpha = source.data[sourceOffset + 3];
-        if (alpha <= 0) continue;
-        this.compositePixel(sx, sy, {
-          r: source.data[sourceOffset],
-          g: source.data[sourceOffset + 1],
-          b: source.data[sourceOffset + 2],
-          a: alpha
-        }, blendMode);
-      }
-    }
-  }
-
-  compositeRotated(source: RgbaCanvas, anchorX: number, anchorY: number, rotationDegrees: number, blendMode: NativeBlendMode | null = null): void {
-    const radians = (rotationDegrees * Math.PI) / 180;
-    const cos = Math.cos(radians);
-    const sin = Math.sin(radians);
-
-    for (let sy = 0; sy < source.height; sy += 1) {
-      for (let sx = 0; sx < source.width; sx += 1) {
-        const sourceOffset = (sy * source.width + sx) * 4;
-        const alpha = source.data[sourceOffset + 3];
-        if (alpha <= 0) continue;
-        const dx = sx + 0.5 - anchorX;
-        const dy = sy + 0.5 - anchorY;
-        const targetX = Math.round(anchorX + (dx * cos) - (dy * sin) - 0.5);
-        const targetY = Math.round(anchorY + (dx * sin) + (dy * cos) - 0.5);
-        if (targetX < 0 || targetY < 0 || targetX >= this.width || targetY >= this.height) continue;
-        this.compositePixel(targetX, targetY, {
-          r: source.data[sourceOffset],
-          g: source.data[sourceOffset + 1],
-          b: source.data[sourceOffset + 2],
-          a: alpha
-        }, blendMode);
-      }
-    }
-  }
-
-  withClip(clip: NativeClip | null, paint: () => void): void {
-    if (!clip) {
-      paint();
-      return;
-    }
-    const normalized = normalizeClip(clip);
-    const bounded = intersectClips(this.currentClipBounds(), normalized);
-    if (bounded.width <= 0 || bounded.height <= 0) return;
-    this.clipStack.push(normalized);
-    try {
-      paint();
-    } finally {
-      this.clipStack.pop();
-    }
-  }
-
-  fillRect(x: number, y: number, width: number, height: number, color: Rgba): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        this.setPixel(px, py, color);
-      }
-    }
-  }
-
-  strokeRect(x: number, y: number, width: number, height: number, strokeWidth: number, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width, height));
-    if (size <= 0) return;
-    this.fillRect(x, y, width, size, color);
-    this.fillRect(x, y + height - size, width, size, color);
-    this.fillRect(x, y, size, height, color);
-    this.fillRect(x + width - size, y, size, height, color);
-  }
-
-  fillRoundedRect(x: number, y: number, width: number, height: number, radius: number, color: Rgba): void {
-    if (radius <= 0) {
-      this.fillRect(x, y, width, height, color);
-      return;
-    }
-    this.paintRoundedRect(x, y, width, height, radius, color, () => true);
-  }
-
-  strokeRoundedRect(x: number, y: number, width: number, height: number, strokeWidth: number, radius: number, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width / 2, height / 2));
-    if (size <= 0) return;
-    if (radius <= 0) {
-      this.strokeRect(x, y, width, height, size, color);
-      return;
-    }
-    const innerX = x + size;
-    const innerY = y + size;
-    const innerWidth = Math.max(0, width - size * 2);
-    const innerHeight = Math.max(0, height - size * 2);
-    const innerRadius = Math.max(0, radius - size);
-    this.paintRoundedRect(x, y, width, height, radius, color, (px, py) => {
-      return !roundedRectContains(px, py, innerX, innerY, innerWidth, innerHeight, innerRadius);
-    });
-  }
-
-  fillEllipse(x: number, y: number, width: number, height: number, color: Rgba): void {
-    this.paintEllipse(x, y, width, height, color, () => true);
-  }
-
-  strokeEllipse(x: number, y: number, width: number, height: number, strokeWidth: number, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width / 2, height / 2));
-    if (size <= 0) return;
-    const innerX = x + size;
-    const innerY = y + size;
-    const innerWidth = Math.max(0, width - size * 2);
-    const innerHeight = Math.max(0, height - size * 2);
-    this.paintEllipse(x, y, width, height, color, (px, py) => {
-      return !ellipseContains(px, py, innerX, innerY, innerWidth, innerHeight);
-    });
-  }
-
-  fillTriangle(x: number, y: number, width: number, height: number, color: Rgba): void {
-    this.paintTriangle(x, y, width, height, color, () => true);
-  }
-
-  strokeTriangle(x: number, y: number, width: number, height: number, strokeWidth: number, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width, height));
-    if (size <= 0) return;
-    const points = trianglePoints(x, y, width, height);
-    this.paintTriangle(x, y, width, height, color, (px, py) => triangleEdgeDistance(px, py, points) <= size);
-  }
-
-  fillStar(x: number, y: number, width: number, height: number, color: Rgba): void {
-    this.paintStar(x, y, width, height, color, () => true);
-  }
-
-  strokeStar(x: number, y: number, width: number, height: number, strokeWidth: number, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width, height));
-    if (size <= 0) return;
-    const points = starPoints(x, y, width, height);
-    this.paintStar(x, y, width, height, color, (px, py) => polygonEdgeDistance(px, py, points) <= size);
-  }
-
-  fillPathShape(x: number, y: number, width: number, height: number, pathData: string, color: Rgba): void {
-    const points = pathPolygonPoints(pathData, x, y, width, height);
-    this.paintPolygon(x, y, width, height, points, color, () => true);
-  }
-
-  strokePathShape(x: number, y: number, width: number, height: number, strokeWidth: number, pathData: string, color: Rgba): void {
-    const size = Math.max(0, Math.min(strokeWidth, width, height));
-    if (size <= 0) return;
-    const points = pathPolygonPoints(pathData, x, y, width, height);
-    this.paintPolygon(x, y, width, height, points, color, (px, py) => polygonEdgeDistance(px, py, points) <= size);
-  }
-
-  drawImage(
-    image: NativeImage,
-    placement: NativeClip,
-    opacity: number,
-    roundedClip: { box: NativeClip; radius: number } | null = null,
-    sourceRect: NativeClip = { x: 0, y: 0, width: image.width, height: image.height }
-  ): void {
-    if (placement.width <= 0 || placement.height <= 0 || opacity <= 0) return;
-    const minX = Math.max(0, Math.floor(placement.x));
-    const minY = Math.max(0, Math.floor(placement.y));
-    const maxX = Math.min(this.width, Math.ceil(placement.x + placement.width));
-    const maxY = Math.min(this.height, Math.ceil(placement.y + placement.height));
-    for (let py = minY; py < maxY; py += 1) {
-      const v = clamp((py + 0.5 - placement.y) / placement.height, 0, 1);
-      const sourceY = clamp(Math.floor(sourceRect.y + (v * sourceRect.height)), 0, image.height - 1);
-      for (let px = minX; px < maxX; px += 1) {
-        if (roundedClip && !roundedRectContains(px + 0.5, py + 0.5, roundedClip.box.x, roundedClip.box.y, roundedClip.box.width, roundedClip.box.height, roundedClip.radius)) {
-          continue;
-        }
-        const u = clamp((px + 0.5 - placement.x) / placement.width, 0, 1);
-        const sourceX = clamp(Math.floor(sourceRect.x + (u * sourceRect.width)), 0, image.width - 1);
-        const sourceOffset = (sourceY * image.width + sourceX) * 4;
-        const alpha = Math.round(image.rgba[sourceOffset + 3] * opacity);
-        if (alpha <= 0) continue;
-        this.setPixel(px, py, {
-          r: image.rgba[sourceOffset],
-          g: image.rgba[sourceOffset + 1],
-          b: image.rgba[sourceOffset + 2],
-          a: alpha
-        });
-      }
-    }
-  }
-
-  private paintEllipse(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    color: Rgba,
-    predicate: (px: number, py: number) => boolean
-  ): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        const sampleX = px + 0.5;
-        const sampleY = py + 0.5;
-        if (ellipseContains(sampleX, sampleY, x, y, width, height) && predicate(sampleX, sampleY)) {
-          this.setPixel(px, py, color);
-        }
-      }
-    }
-  }
-
-  private paintTriangle(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    color: Rgba,
-    predicate: (px: number, py: number) => boolean
-  ): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    const points = trianglePoints(x, y, width, height);
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        const sampleX = px + 0.5;
-        const sampleY = py + 0.5;
-        if (triangleContains(sampleX, sampleY, points) && predicate(sampleX, sampleY)) {
-          this.setPixel(px, py, color);
-        }
-      }
-    }
-  }
-
-  private paintStar(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    color: Rgba,
-    predicate: (px: number, py: number) => boolean
-  ): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    const points = starPoints(x, y, width, height);
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        const sampleX = px + 0.5;
-        const sampleY = py + 0.5;
-        if (polygonContains(sampleX, sampleY, points) && predicate(sampleX, sampleY)) {
-          this.setPixel(px, py, color);
-        }
-      }
-    }
-  }
-
-  private paintPolygon(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    points: PolygonPoint[],
-    color: Rgba,
-    predicate: (px: number, py: number) => boolean
-  ): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        const sampleX = px + 0.5;
-        const sampleY = py + 0.5;
-        if (polygonContains(sampleX, sampleY, points) && predicate(sampleX, sampleY)) {
-          this.setPixel(px, py, color);
-        }
-      }
-    }
-  }
-
-  private paintRoundedRect(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    radius: number,
-    color: Rgba,
-    predicate: (px: number, py: number) => boolean
-  ): void {
-    const minX = Math.max(0, Math.round(x));
-    const minY = Math.max(0, Math.round(y));
-    const maxX = Math.min(this.width, Math.round(x + width));
-    const maxY = Math.min(this.height, Math.round(y + height));
-    for (let py = minY; py < maxY; py += 1) {
-      for (let px = minX; px < maxX; px += 1) {
-        const sampleX = px + 0.5;
-        const sampleY = py + 0.5;
-        if (roundedRectContains(sampleX, sampleY, x, y, width, height, radius) && predicate(sampleX, sampleY)) {
-          this.setPixel(px, py, color);
-        }
-      }
-    }
-  }
-
-  private setPixel(x: number, y: number, color: Rgba): void {
-    if (!this.clipStack.every((clip) => clipContains(clip, x, y))) return;
-    const offset = (y * this.width + x) * 4;
-    if (color.a === 255) {
-      this.data[offset] = color.r;
-      this.data[offset + 1] = color.g;
-      this.data[offset + 2] = color.b;
-      this.data[offset + 3] = color.a;
-      return;
-    }
-
-    const sourceAlpha = color.a / 255;
-    const targetAlpha = this.data[offset + 3] / 255;
-    const outAlpha = sourceAlpha + targetAlpha * (1 - sourceAlpha);
-    if (outAlpha === 0) {
-      this.data[offset] = 0;
-      this.data[offset + 1] = 0;
-      this.data[offset + 2] = 0;
-      this.data[offset + 3] = 0;
-      return;
-    }
-
-    this.data[offset] = Math.round((color.r * sourceAlpha + this.data[offset] * targetAlpha * (1 - sourceAlpha)) / outAlpha);
-    this.data[offset + 1] = Math.round((color.g * sourceAlpha + this.data[offset + 1] * targetAlpha * (1 - sourceAlpha)) / outAlpha);
-    this.data[offset + 2] = Math.round((color.b * sourceAlpha + this.data[offset + 2] * targetAlpha * (1 - sourceAlpha)) / outAlpha);
-    this.data[offset + 3] = Math.round(outAlpha * 255);
-  }
-
-  private compositePixel(x: number, y: number, source: Rgba, blendMode: NativeBlendMode | null): void {
-    if (blendMode === null) {
-      this.setPixel(x, y, source);
-      return;
-    }
-    const offset = (y * this.width + x) * 4;
-    const backdrop: Rgba = {
-      r: this.data[offset],
-      g: this.data[offset + 1],
-      b: this.data[offset + 2],
-      a: this.data[offset + 3]
-    };
-    if (backdrop.a <= 0) {
-      this.setPixel(x, y, source);
-      return;
-    }
-    this.setPixel(x, y, {
-      ...blendRgb(blendMode, backdrop, source),
-      a: source.a
-    });
-  }
-
-  private currentClipBounds(): NativeClip | null {
-    return this.clipStack.reduce<NativeClip | null>((bounds, clip) => intersectClips(bounds, clip), null);
-  }
-}
-
-function blendRgb(mode: NativeBlendMode, backdrop: Rgba, source: Rgba): Rgba {
-  if (mode === "hue" || mode === "saturation" || mode === "color" || mode === "luminosity") {
-    return blendHsl(mode, backdrop, source);
-  }
-  return {
-    r: blendChannel(mode, backdrop.r, source.r),
-    g: blendChannel(mode, backdrop.g, source.g),
-    b: blendChannel(mode, backdrop.b, source.b),
-    a: source.a
-  };
-}
-
-function blendChannel(mode: NativeBlendMode, backdropChannel: number, sourceChannel: number): number {
-  const backdrop = backdropChannel / 255;
-  const source = sourceChannel / 255;
-  let value: number;
-
-  if (mode === "multiply") value = backdrop * source;
-  else if (mode === "screen") value = backdrop + source - backdrop * source;
-  else if (mode === "overlay") value = backdrop <= 0.5 ? 2 * backdrop * source : 1 - 2 * (1 - backdrop) * (1 - source);
-  else if (mode === "darken") value = Math.min(backdrop, source);
-  else if (mode === "lighten") value = Math.max(backdrop, source);
-  else if (mode === "color-dodge") value = backdrop <= 0 ? 0 : source >= 1 ? 1 : Math.min(1, backdrop / (1 - source));
-  else if (mode === "color-burn") value = backdrop >= 1 ? 1 : source <= 0 ? 0 : 1 - Math.min(1, (1 - backdrop) / source);
-  else if (mode === "hard-light") value = source <= 0.5 ? 2 * backdrop * source : 1 - 2 * (1 - backdrop) * (1 - source);
-  else if (mode === "soft-light") value = softLightChannel(backdrop, source);
-  else if (mode === "difference") value = Math.abs(backdrop - source);
-  else if (mode === "exclusion") value = backdrop + source - 2 * backdrop * source;
-  else if (mode === "plus-lighter") value = Math.min(1, backdrop + source);
-  else value = source;
-
-  return clamp(Math.round(value * 255), 0, 255);
-}
-
-function softLightChannel(backdrop: number, source: number): number {
-  if (source <= 0.5) return backdrop - (1 - 2 * source) * backdrop * (1 - backdrop);
-  const d = backdrop <= 0.25 ? ((16 * backdrop - 12) * backdrop + 4) * backdrop : Math.sqrt(backdrop);
-  return backdrop + (2 * source - 1) * (d - backdrop);
-}
-
-function blendHsl(mode: NativeBlendMode, backdrop: Rgba, source: Rgba): Rgba {
-  const backdropHsl = rgbToHsl(backdrop);
-  const sourceHsl = rgbToHsl(source);
-  if (mode === "hue") return hslToRgb({ h: sourceHsl.h, s: backdropHsl.s, l: backdropHsl.l, a: source.a });
-  if (mode === "saturation") return hslToRgb({ h: backdropHsl.h, s: sourceHsl.s, l: backdropHsl.l, a: source.a });
-  if (mode === "color") return hslToRgb({ h: sourceHsl.h, s: sourceHsl.s, l: backdropHsl.l, a: source.a });
-  return hslToRgb({ h: backdropHsl.h, s: backdropHsl.s, l: sourceHsl.l, a: source.a });
-}
-
-function rgbToHsl(color: Rgba): { h: number; s: number; l: number; a: number } {
-  const r = color.r / 255;
-  const g = color.g / 255;
-  const b = color.b / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  if (max === min) return { h: 0, s: 0, l, a: color.a };
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h: number;
-  if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  return { h: h / 6, s, l, a: color.a };
-}
-
-function hslToRgb(color: { h: number; s: number; l: number; a: number }): Rgba {
-  if (color.s === 0) {
-    const channel = clamp(Math.round(color.l * 255), 0, 255);
-    return { r: channel, g: channel, b: channel, a: color.a };
-  }
-  const q = color.l < 0.5 ? color.l * (1 + color.s) : color.l + color.s - color.l * color.s;
-  const p = 2 * color.l - q;
-  return {
-    r: clamp(Math.round(hueToRgb(p, q, color.h + 1 / 3) * 255), 0, 255),
-    g: clamp(Math.round(hueToRgb(p, q, color.h) * 255), 0, 255),
-    b: clamp(Math.round(hueToRgb(p, q, color.h - 1 / 3) * 255), 0, 255),
-    a: color.a
-  };
-}
-
-function hueToRgb(p: number, q: number, t: number): number {
-  let hue = t;
-  if (hue < 0) hue += 1;
-  if (hue > 1) hue -= 1;
-  if (hue < 1 / 6) return p + (q - p) * 6 * hue;
-  if (hue < 1 / 2) return q;
-  if (hue < 2 / 3) return p + (q - p) * (2 / 3 - hue) * 6;
-  return p;
-}
-
-function blurCanvas(source: RgbaCanvas, radius: number): RgbaCanvas {
-  const pixelRadius = Math.min(32, Math.max(1, Math.ceil(radius)));
-  const premultiplied = new Float64Array(source.width * source.height * 4);
-  for (let offset = 0; offset < source.data.length; offset += 4) {
-    const alpha = source.data[offset + 3] / 255;
-    premultiplied[offset] = source.data[offset] * alpha;
-    premultiplied[offset + 1] = source.data[offset + 1] * alpha;
-    premultiplied[offset + 2] = source.data[offset + 2] * alpha;
-    premultiplied[offset + 3] = source.data[offset + 3];
-  }
-
-  const horizontal = blurFloatRgba(premultiplied, source.width, source.height, pixelRadius, "horizontal");
-  const vertical = blurFloatRgba(horizontal, source.width, source.height, pixelRadius, "vertical");
-  const blurred = new RgbaCanvas(source.width, source.height);
-  for (let offset = 0; offset < vertical.length; offset += 4) {
-    const alpha = clamp(Math.round(vertical[offset + 3]), 0, 255);
-    if (alpha <= 0) continue;
-    const alphaRatio = alpha / 255;
-    blurred.data[offset] = clamp(Math.round(vertical[offset] / alphaRatio), 0, 255);
-    blurred.data[offset + 1] = clamp(Math.round(vertical[offset + 1] / alphaRatio), 0, 255);
-    blurred.data[offset + 2] = clamp(Math.round(vertical[offset + 2] / alphaRatio), 0, 255);
-    blurred.data[offset + 3] = alpha;
-  }
-  return blurred;
-}
-
-function applyColorEffects(source: RgbaCanvas, effects: NativeColorEffects): RgbaCanvas {
-  const output = new RgbaCanvas(source.width, source.height);
-  const grayscaleAmount = clamp(effects.grayscale, 0, 1);
-
-  for (let offset = 0; offset < source.data.length; offset += 4) {
-    const alpha = source.data[offset + 3];
-    if (alpha <= 0) continue;
-
-    let r = source.data[offset] * effects.brightness;
-    let g = source.data[offset + 1] * effects.brightness;
-    let b = source.data[offset + 2] * effects.brightness;
-
-    r = (((r / 255) - 0.5) * effects.contrast + 0.5) * 255;
-    g = (((g / 255) - 0.5) * effects.contrast + 0.5) * 255;
-    b = (((b / 255) - 0.5) * effects.contrast + 0.5) * 255;
-
-    const saturatedLuma = luminance(r, g, b);
-    r = saturatedLuma + (r - saturatedLuma) * effects.saturate;
-    g = saturatedLuma + (g - saturatedLuma) * effects.saturate;
-    b = saturatedLuma + (b - saturatedLuma) * effects.saturate;
-
-    if (grayscaleAmount > 0) {
-      const grayscaleLuma = luminance(r, g, b);
-      r += (grayscaleLuma - r) * grayscaleAmount;
-      g += (grayscaleLuma - g) * grayscaleAmount;
-      b += (grayscaleLuma - b) * grayscaleAmount;
-    }
-
-    output.data[offset] = clamp(Math.round(r), 0, 255);
-    output.data[offset + 1] = clamp(Math.round(g), 0, 255);
-    output.data[offset + 2] = clamp(Math.round(b), 0, 255);
-    output.data[offset + 3] = alpha;
-  }
-
-  return output;
-}
-
-function luminance(r: number, g: number, b: number): number {
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function blurFloatRgba(
-  input: Float64Array,
-  width: number,
-  height: number,
-  radius: number,
-  direction: "horizontal" | "vertical"
-): Float64Array {
-  const output = new Float64Array(input.length);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const from = direction === "horizontal" ? Math.max(0, x - radius) : Math.max(0, y - radius);
-      const to = direction === "horizontal" ? Math.min(width - 1, x + radius) : Math.min(height - 1, y + radius);
-      const count = to - from + 1;
-      const outputOffset = (y * width + x) * 4;
-      for (let sample = from; sample <= to; sample += 1) {
-        const sampleX = direction === "horizontal" ? sample : x;
-        const sampleY = direction === "horizontal" ? y : sample;
-        const sampleOffset = (sampleY * width + sampleX) * 4;
-        output[outputOffset] += input[sampleOffset] / count;
-        output[outputOffset + 1] += input[sampleOffset + 1] / count;
-        output[outputOffset + 2] += input[sampleOffset + 2] / count;
-        output[outputOffset + 3] += input[sampleOffset + 3] / count;
-      }
-    }
-  }
-  return output;
-}
-
-function normalizeClip(clip: NativeClip): NativeClip {
-  return {
-    x: Math.round(clip.x),
-    y: Math.round(clip.y),
-    width: Math.round(clip.width),
-    height: Math.round(clip.height),
-    ...(clip.radius !== undefined ? { radius: Math.max(0, clip.radius) } : {})
-  };
-}
-
-function intersectClips(existing: NativeClip | null, next: NativeClip): NativeClip {
-  if (!existing) return next;
-  const x = Math.max(existing.x, next.x);
-  const y = Math.max(existing.y, next.y);
-  const right = Math.min(existing.x + existing.width, next.x + next.width);
-  const bottom = Math.min(existing.y + existing.height, next.y + next.height);
-  return {
-    x,
-    y,
-    width: Math.max(0, right - x),
-    height: Math.max(0, bottom - y),
-    ...(existing.radius !== undefined || next.radius !== undefined
-      ? { radius: Math.max(existing.radius ?? 0, next.radius ?? 0) }
-      : {})
-  };
-}
-
-function clipContains(clip: NativeClip, x: number, y: number): boolean {
-  if (clip.radius !== undefined && clip.radius > 0) {
-    return roundedRectContains(x + 0.5, y + 0.5, clip.x, clip.y, clip.width, clip.height, clip.radius);
-  }
-  return x >= clip.x && y >= clip.y && x < clip.x + clip.width && y < clip.y + clip.height;
-}
-
-function roundedRectContains(px: number, py: number, x: number, y: number, width: number, height: number, radius: number): boolean {
-  if (px < x || py < y || px >= x + width || py >= y + height || width <= 0 || height <= 0) return false;
-  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
-  if (r <= 0) return true;
-  if (px >= x + r && px < x + width - r) return true;
-  if (py >= y + r && py < y + height - r) return true;
-  const cx = px < x + r ? x + r : x + width - r;
-  const cy = py < y + r ? y + r : y + height - r;
-  const dx = px - cx;
-  const dy = py - cy;
-  return (dx * dx) + (dy * dy) <= r * r;
-}
-
-function ellipseContains(px: number, py: number, x: number, y: number, width: number, height: number): boolean {
-  if (px < x || py < y || px >= x + width || py >= y + height || width <= 0 || height <= 0) return false;
-  const rx = width / 2;
-  const ry = height / 2;
-  if (rx <= 0 || ry <= 0) return false;
-  const dx = (px - (x + rx)) / rx;
-  const dy = (py - (y + ry)) / ry;
-  return (dx * dx) + (dy * dy) <= 1;
-}
-
-interface TrianglePoints {
-  ax: number;
-  ay: number;
-  bx: number;
-  by: number;
-  cx: number;
-  cy: number;
-}
-
-function trianglePoints(x: number, y: number, width: number, height: number): TrianglePoints {
-  return {
-    ax: x + (width / 2),
-    ay: y,
-    bx: x,
-    by: y + height,
-    cx: x + width,
-    cy: y + height
-  };
-}
-
-function triangleContains(px: number, py: number, points: TrianglePoints): boolean {
-  const d1 = triangleSign(px, py, points.ax, points.ay, points.bx, points.by);
-  const d2 = triangleSign(px, py, points.bx, points.by, points.cx, points.cy);
-  const d3 = triangleSign(px, py, points.cx, points.cy, points.ax, points.ay);
-  const hasNegative = d1 < 0 || d2 < 0 || d3 < 0;
-  const hasPositive = d1 > 0 || d2 > 0 || d3 > 0;
-  return !(hasNegative && hasPositive);
-}
-
-function triangleSign(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  return (px - bx) * (ay - by) - (ax - bx) * (py - by);
-}
-
-function triangleEdgeDistance(px: number, py: number, points: TrianglePoints): number {
-  return Math.min(
-    distanceToSegment(px, py, points.ax, points.ay, points.bx, points.by),
-    distanceToSegment(px, py, points.bx, points.by, points.cx, points.cy),
-    distanceToSegment(px, py, points.cx, points.cy, points.ax, points.ay)
-  );
-}
-
-function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lengthSquared = (dx * dx) + (dy * dy);
-  if (lengthSquared <= 0) return Math.hypot(px - ax, py - ay);
-  const t = clamp(((px - ax) * dx + (py - ay) * dy) / lengthSquared, 0, 1);
-  const nearestX = ax + (t * dx);
-  const nearestY = ay + (t * dy);
-  return Math.hypot(px - nearestX, py - nearestY);
-}
-
-interface PolygonPoint {
-  x: number;
-  y: number;
-}
-
-function starPoints(x: number, y: number, width: number, height: number): PolygonPoint[] {
-  const centerX = x + (width / 2);
-  const centerY = y + (height / 2);
-  const outerRadiusX = width / 2;
-  const outerRadiusY = height / 2;
-  const innerRadiusX = outerRadiusX * 0.45;
-  const innerRadiusY = outerRadiusY * 0.45;
-  const points: PolygonPoint[] = [];
-  for (let index = 0; index < 10; index += 1) {
-    const angle = (-Math.PI / 2) + (index * Math.PI / 5);
-    const radiusX = index % 2 === 0 ? outerRadiusX : innerRadiusX;
-    const radiusY = index % 2 === 0 ? outerRadiusY : innerRadiusY;
-    points.push({
-      x: centerX + (Math.cos(angle) * radiusX),
-      y: centerY + (Math.sin(angle) * radiusY)
-    });
-  }
-  return points;
-}
-
-function pathPolygonPoints(pathData: string, x: number, y: number, width: number, height: number): PolygonPoint[] {
-  const localPoints = parsePathPolygon(pathData);
-  if (localPoints.length < 3) throw new Error("Native path shapes require at least three path points.");
-  const bounds = polygonBounds(localPoints);
-  const minX = Math.min(0, bounds.minX);
-  const minY = Math.min(0, bounds.minY);
-  const sourceWidth = Math.max(1, Math.max(100, bounds.maxX) - minX);
-  const sourceHeight = Math.max(1, Math.max(100, bounds.maxY) - minY);
-  return localPoints.map((point) => ({
-    x: x + ((point.x - minX) / sourceWidth) * width,
-    y: y + ((point.y - minY) / sourceHeight) * height
-  }));
-}
-
-function parsePathPolygon(pathData: string): PolygonPoint[] {
-  const tokens = pathData.match(/[MLHVZmlhvz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) ?? [];
-  const points: PolygonPoint[] = [];
-  let index = 0;
-  let command = "";
-  let current: PolygonPoint = { x: 0, y: 0 };
-  let start: PolygonPoint | null = null;
-
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (isPathCommand(token)) {
-      command = token;
-      index += 1;
-      if (command === "Z" || command === "z") {
-        if (start && (current.x !== start.x || current.y !== start.y)) points.push({ ...start });
-        current = start ? { ...start } : current;
-      }
-      continue;
-    }
-    if (!command) throw new Error("Native path shapes must start with a path command.");
-
-    if (command === "M" || command === "m" || command === "L" || command === "l") {
-      const xValue = readPathNumber(tokens[index]);
-      const yValue = readPathNumber(tokens[index + 1]);
-      index += 2;
-      current = command === command.toLowerCase()
-        ? { x: current.x + xValue, y: current.y + yValue }
-        : { x: xValue, y: yValue };
-      points.push({ ...current });
-      if (!start) start = { ...current };
-      if (command === "M") command = "L";
-      if (command === "m") command = "l";
-      continue;
-    }
-
-    if (command === "H" || command === "h") {
-      const xValue = readPathNumber(tokens[index]);
-      index += 1;
-      current = command === "h" ? { x: current.x + xValue, y: current.y } : { x: xValue, y: current.y };
-      points.push({ ...current });
-      continue;
-    }
-
-    if (command === "V" || command === "v") {
-      const yValue = readPathNumber(tokens[index]);
-      index += 1;
-      current = command === "v" ? { x: current.x, y: current.y + yValue } : { x: current.x, y: yValue };
-      points.push({ ...current });
-      continue;
-    }
-
-    throw new Error(`Native path shapes do not support path command ${command}.`);
-  }
-
-  const last = points.at(-1);
-  if (start && last && last.x === start.x && last.y === start.y) points.pop();
-  return points;
-}
-
-function isPathCommand(token: string): boolean {
-  return /^[MLHVZmlhvz]$/.test(token);
-}
-
-function readPathNumber(token: string | undefined): number {
-  if (token === undefined || isPathCommand(token)) throw new Error("Native path shapes contain an incomplete command.");
-  const value = Number(token);
-  if (!Number.isFinite(value)) throw new Error(`Native path shapes contain an invalid number: ${token}`);
-  return value;
-}
-
-function polygonBounds(points: PolygonPoint[]): { minX: number; minY: number; maxX: number; maxY: number } {
-  return points.reduce((bounds, point) => ({
-    minX: Math.min(bounds.minX, point.x),
-    minY: Math.min(bounds.minY, point.y),
-    maxX: Math.max(bounds.maxX, point.x),
-    maxY: Math.max(bounds.maxY, point.y)
-  }), { minX: Number.POSITIVE_INFINITY, minY: Number.POSITIVE_INFINITY, maxX: Number.NEGATIVE_INFINITY, maxY: Number.NEGATIVE_INFINITY });
-}
-
-function polygonContains(px: number, py: number, points: PolygonPoint[]): boolean {
-  let inside = false;
-  for (let current = 0, previous = points.length - 1; current < points.length; previous = current, current += 1) {
-    const currentPoint = points[current];
-    const previousPoint = points[previous];
-    if ((currentPoint.y > py) === (previousPoint.y > py)) continue;
-    const intersectionX = ((previousPoint.x - currentPoint.x) * (py - currentPoint.y)) / (previousPoint.y - currentPoint.y) + currentPoint.x;
-    if (px < intersectionX) inside = !inside;
-  }
-  return inside;
-}
-
-function polygonEdgeDistance(px: number, py: number, points: PolygonPoint[]): number {
-  let distance = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    distance = Math.min(distance, distanceToSegment(px, py, current.x, current.y, next.x, next.y));
-  }
-  return distance;
-}
+const nativeTextRenderingServices = {
+  applyLayerOpacity,
+  layerPaintClip,
+  parseColor,
+  resolveTokenString
+};
+
+const nativeLayerServices = {
+  readTransform,
+  scaleBoxAroundOrigin,
+  layerPaintClip
+};
 
 function parseColor(value: string, context: { currentColor?: Rgba } = {}): Rgba {
   const hex = value.trim();

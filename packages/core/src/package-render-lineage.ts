@@ -2,11 +2,15 @@ import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
+import { loadMotionPackage } from "./package";
+import { requiredLoadedPackageDocumentHashes } from "./package-loaded-inputs";
+import type { MotionPackage, OperationReceipt } from "./types";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const MAX_MOTION_BYTES = 64 * 1024 * 1024;
-const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
+/** Canonical bounded package-source ceiling shared by source-preserving authoring paths. */
+export const MAX_PACKAGE_SOURCE_BYTES = 64 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 
 export interface PackageRenderLineage {
@@ -17,6 +21,57 @@ export interface PackageRenderLineage {
   sourceSha256?: string;
   normalizedSourceSha256?: string;
   loweringReceiptSha256?: string;
+}
+
+/** A package plus the exact bounded source identity that was stable when it was loaded. */
+export interface StableRenderPackage {
+  pkg: MotionPackage;
+  lineage: PackageRenderLineage;
+}
+
+/**
+ * Load a final-render package only after retaining and rechecking the bounded source identity.
+ * This is deliberately a stability check, not an atomic snapshot: callers recheck again before
+ * releasing a receipt, or retain their own immutable source authority.
+ */
+export async function loadStableRenderPackage(packageRoot: string): Promise<StableRenderPackage> {
+  const lineage = await derivePackageRenderLineage(packageRoot);
+  const pkg = await loadMotionPackage(packageRoot);
+  await assertStableRenderPackageLineage(pkg, lineage);
+  return { pkg, lineage };
+}
+
+/** Recheck that a loaded package still names the exact lineage used for the render. */
+export async function assertStableRenderPackageLineage(
+  pkg: MotionPackage,
+  expected: PackageRenderLineage,
+): Promise<void> {
+  validatePackageRenderLineage(expected);
+  const loaded = requiredLoadedPackageDocumentHashes(pkg, "Final render receipt");
+  if (loaded["manifest.json"] !== expected.manifestSha256
+    || loaded[pkg.manifest.motion] !== expected.motionSha256) {
+    throw new Error("Loaded Motion package bytes do not match its final render lineage.");
+  }
+  const current = await derivePackageRenderLineage(pkg.root);
+  if (!sameLineage(current, expected)) {
+    throw new Error("Motion package render lineage changed during the final render operation.");
+  }
+}
+
+/**
+ * Attach the bounded source identity to an ordinary final receipt after rechecking the package.
+ * Renderer input hashes remain additive; callers must not replace them with an unverified path.
+ */
+export async function bindFinalRenderReceiptLineage(
+  receipt: OperationReceipt,
+  pkg: MotionPackage,
+  lineage: PackageRenderLineage,
+): Promise<void> {
+  if (receipt.operation !== "render.final") {
+    throw new Error("Package render lineage may only bind an ordinary render.final receipt.");
+  }
+  await assertStableRenderPackageLineage(pkg, lineage);
+  receipt.inputHashes = { ...receipt.inputHashes, ...packageRenderLineageInputHashes(lineage) };
 }
 
 export function packageRenderLineageInputHashes(
@@ -88,8 +143,8 @@ export async function derivePackageRenderLineage(packageRoot: string): Promise<P
   const declaredSourceHash = sha256(adapter.sourceSha256, "glTF preserved sourceSha256");
   const declaredNormalizedHash = sha256(adapter.loweringSourceSha256, "glTF normalized sourceSha256");
   const [sourceFile, normalizedFile, receiptFile] = await Promise.all([
-    readPackageFile(root, sourceRef, MAX_SOURCE_BYTES, "glTF preserved source"),
-    readPackageFile(root, normalizedRef, MAX_SOURCE_BYTES, "glTF normalized source"),
+    readPackageFile(root, sourceRef, MAX_PACKAGE_SOURCE_BYTES, "glTF preserved source"),
+    readPackageFile(root, normalizedRef, MAX_PACKAGE_SOURCE_BYTES, "glTF normalized source"),
     readPackageFile(root, receiptRef, MAX_RECEIPT_BYTES, "glTF lowering receipt"),
   ]);
   const sourceSha256 = hash(sourceFile.bytes);
@@ -235,4 +290,8 @@ function sameHashRecord(left: Record<string, unknown>, right: Record<string, str
   const rightKeys = Object.keys(right).sort();
   return leftKeys.length === rightKeys.length
     && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
+}
+
+function sameLineage(left: PackageRenderLineage, right: PackageRenderLineage): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

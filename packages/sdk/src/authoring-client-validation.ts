@@ -5,6 +5,12 @@ import {
   validateCompositingRequest,
 } from "./compositing-client.js";
 import { validateGltfOutput, validateGltfRequest } from "./gltf-client.js";
+import { isAudioOperation, validateAudioOutput, validateAudioRequest } from "./audio-client.js";
+import {
+  isCutoutRigOperation,
+  validateCutoutRigOutput,
+  validateCutoutRigRequest,
+} from "./cutout-rig-client.js";
 import {
   isProceduralOperation,
   validateProceduralOutput,
@@ -17,7 +23,9 @@ export function validateAuthoringRequest(
 ): MotionSdkError | null {
   return validateCompositingRequest(operation, input)
     ?? validateGltfRequest(operation, input)
-    ?? validateProceduralRequest(operation, input);
+    ?? validateAudioRequest(operation, input)
+    ?? validateProceduralRequest(operation, input)
+    ?? validateCutoutRigRequest(operation, input);
 }
 
 export function validateAuthoringOutput(
@@ -27,9 +35,12 @@ export function validateAuthoringOutput(
 ): MotionSdkError | null {
   return validateCompositingOutput(operation, output, requestInput)
     ?? validateGltfOutput(operation, output, requestInput)
-    ?? validateProceduralOutput(operation, output, requestInput);
+    ?? validateAudioOutput(operation, output, requestInput)
+    ?? validateProceduralOutput(operation, output, requestInput)
+    ?? validateCutoutRigOutput(operation, output, requestInput);
 }
 
 export function isAuthoringPackageOperation(operation: MotionSdkOperation): boolean {
-  return operation === "gltfImport" || isCompositingOperation(operation) || isProceduralOperation(operation);
+  return operation === "gltfImport" || isCompositingOperation(operation) || isAudioOperation(operation)
+    || isProceduralOperation(operation) || isCutoutRigOperation(operation);
 }

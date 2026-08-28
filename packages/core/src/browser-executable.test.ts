@@ -20,18 +20,21 @@
  * pass or fail because of the browser the developer's own machine happens to have installed.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, chownSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserExecutableCandidates,
   findMotionBrowserExecutable,
+  motionBrowserExecutableVerificationProblem,
   motionBrowserOverrideProblem,
   resolveMotionBrowserExecutable,
   untrustedMotionBrowserCaches
 } from "./browser-executable";
 import { resolvesInside, untrustedExecutableDirectoryReason } from "./executable-trust";
+import { scanPlaywrightBrowserCache } from "./playwright-browser-cache";
+import { hasAtomicCOWAuthority } from "./tool-environment.test-support";
 
 const tempDirs: string[] = [];
 
@@ -48,7 +51,7 @@ async function cacheRoot(): Promise<string> {
 /** Write a runnable Chromium stand-in at `<root>/<entry>/chrome-linux/chrome`. */
 function plantBuild(root: string, entry: string): string {
   const executable = join(root, entry, "chrome-linux", "chrome");
-  mkdirSync(join(root, entry, "chrome-linux"), { recursive: true });
+  mkdirSync(join(root, entry, "chrome-linux"), { recursive: true, mode: 0o700 });
   writeFileSync(executable, "#!/bin/sh\necho 'Chromium 1.0.0.0'\n");
   chmodSync(executable, 0o755);
   return executable;
@@ -61,7 +64,7 @@ function plantBuild(root: string, entry: string): string {
  * a real `~/.cache/ms-playwright` would otherwise contribute candidates these assertions counted.
  */
 async function withBrowserEnv(
-  env: { playwrightBrowsersPath?: string; browserPath?: string },
+  env: { playwrightBrowsersPath?: string; browserPath?: string; home?: string },
   run: () => Promise<void> | void
 ): Promise<void> {
   const emptyHome = await mkdtemp(join(tmpdir(), "shellx-motion-browser-home-"));
@@ -71,7 +74,7 @@ async function withBrowserEnv(
   const applied: Record<string, string | undefined> = {
     [keys[0]]: env.playwrightBrowsersPath,
     [keys[1]]: env.browserPath,
-    [keys[2]]: emptyHome,
+    [keys[2]]: env.home ?? emptyHome,
     [keys[3]]: join(emptyHome, "AppData")
   };
   for (const key of keys) {
@@ -88,16 +91,51 @@ async function withBrowserEnv(
   }
 }
 
-/** A supplementary group this account is in but which is not its primary group, when one exists. */
-function foreignGroupId(): number | null {
-  if (typeof process.getgroups !== "function" || typeof process.getgid !== "function") return null;
-  const primary = process.getgid();
-  return process.getgroups().find((gid) => gid !== primary) ?? null;
-}
-
 const posixOnly = typeof process.getuid === "function";
+// PLAYWRIGHT_BROWSERS_PATH is deliberately subject to the complete ancestor trust rule. A managed
+// host that cannot provide that authority must not make this suite pretend that its tmpdir can.
+const fullPathCacheAuthority = hasAtomicCOWAuthority(tmpdir());
 
-describe("the Playwright cache scan orders builds numerically", () => {
+describe("the Playwright cache scan rejects unverified Windows ACLs", () => {
+  it("fails closed when Windows ACL ownership cannot be established", async () => {
+    const root = await cacheRoot();
+    plantBuild(root, "chromium-1200");
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      const scan = scanPlaywrightBrowserCache({ platform: "win32" });
+      expect(scan.candidates).toEqual([]);
+      expect(scan.refusals).toContainEqual({
+        path: root,
+        label: "the browser cache at PLAYWRIGHT_BROWSERS_PATH",
+        reason: "its Windows access-control ownership cannot be verified by this runtime"
+      });
+    });
+  });
+});
+
+describe("the current account home is a verified cache boundary", () => {
+  it.skipIf(!posixOnly)("uses a compatible default cache below the account home without trusting a remapped outer ancestor", async () => {
+    const outer = await cacheRoot();
+    const home = join(outer, "account-home");
+    const cache = join(home, ".cache", "ms-playwright");
+    const executable = plantBuild(cache, "chromium-1228");
+    chmodSync(outer, 0o775);
+
+    await withBrowserEnv({ home }, () => {
+      // A caller-selected HOME does not gain this exemption: without the account-home fact, the
+      // shared outer directory is still an unsafe ancestor.
+      expect(scanPlaywrightBrowserCache().candidates).not.toContain(executable);
+      // The OS account record is the positive proof that this is the current user's home. The
+      // cache root, build, layout, and executable remain subject to every ordinary trust check.
+      expect(scanPlaywrightBrowserCache({ currentUserHome: home }).candidates).toContain(executable);
+    });
+  });
+});
+
+// Windows intentionally cannot accept a caller-created cache root without authoritative ACL
+// evidence. Numeric cache ordering is therefore exercised on POSIX hosts, while the Windows suite
+// above pins the fail-closed behavior instead of falling through to an installed system Chrome.
+describe.skipIf(process.platform === "win32" || !fullPathCacheAuthority)("the Playwright cache scan orders builds numerically", () => {
   it("does NOT select a planted chromium-zz that outsorts every genuine build", async () => {
     const root = await cacheRoot();
     // `chromium-zz` > `chromium-999` > `chromium-1200` as STRINGS. The old comparator was
@@ -150,7 +188,90 @@ describe("the Playwright cache scan orders builds numerically", () => {
   });
 });
 
-describe.skipIf(!posixOnly)("the Playwright cache scan refuses directories other people can write", () => {
+describe.skipIf(!posixOnly || !fullPathCacheAuthority)("the Playwright cache scan refuses directories other people can write", () => {
+  it("refuses a cache executable whose nested layout directory is world-writable", async () => {
+    const root = await cacheRoot();
+    const executable = plantBuild(root, "chromium-1200");
+    const layout = join(root, "chromium-1200", "chrome-linux");
+    chmodSync(layout, 0o777);
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      // RED before the fix: the cache scanner verified the root and chromium-1200, then appended
+      // chrome-linux/chrome without checking the directory that actually controls the program.
+      // Both the read-only Chromium probe and the browser renderer consume this same candidate.
+      expect(scanPlaywrightBrowserCache().candidates).not.toContain(executable);
+      expect(findMotionBrowserExecutable()).not.toBe(executable);
+      expect(untrustedMotionBrowserCaches()).toContainEqual({
+        path: layout,
+        label: "chrome-linux in chromium-1200 in the browser cache at PLAYWRIGHT_BROWSERS_PATH",
+        reason: "it is world-writable"
+      });
+    });
+  });
+
+  it("refuses a symlinked executable leaf even when it resolves inside the trusted cache", async () => {
+    const root = await cacheRoot();
+    const executable = plantBuild(root, "chromium-1200");
+    const replacement = join(root, "chromium-1200", "replacement-chrome");
+    writeFileSync(replacement, "#!/bin/sh\nexit 0\n");
+    chmodSync(replacement, 0o755);
+    unlinkSync(executable);
+    symlinkSync(replacement, executable);
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      expect(scanPlaywrightBrowserCache().candidates).not.toContain(executable);
+      expect(untrustedMotionBrowserCaches()).toContainEqual({
+        path: executable,
+        label: "chrome in chrome-linux in chromium-1200 in the browser cache at PLAYWRIGHT_BROWSERS_PATH",
+        reason: "it is a symbolic link"
+      });
+    });
+  });
+
+  it("revalidates an auto-discovered executable after its trusted layout changes", async () => {
+    const root = await cacheRoot();
+    const executable = plantBuild(root, "chromium-1200");
+    const layout = join(root, "chromium-1200", "chrome-linux");
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      const location = resolveMotionBrowserExecutable();
+      expect(location).toMatchObject({ executable, autoDiscoveredCache: true });
+      chmodSync(layout, 0o777);
+      expect(motionBrowserExecutableVerificationProblem(location))
+        .toContain("no longer passes canonical-path, ownership, mode, and regular-file checks");
+    });
+  });
+
+  it("refuses a world-writable executable leaf inside an otherwise trusted layout", async () => {
+    const root = await cacheRoot();
+    const executable = plantBuild(root, "chromium-1200");
+    chmodSync(executable, 0o777);
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      expect(scanPlaywrightBrowserCache().candidates).not.toContain(executable);
+      expect(untrustedMotionBrowserCaches()).toContainEqual({
+        path: executable,
+        label: "chrome in chrome-linux in chromium-1200 in the browser cache at PLAYWRIGHT_BROWSERS_PATH",
+        reason: "it is world-writable"
+      });
+    });
+  });
+
+  it("refuses a group-writable executable leaf inside an otherwise trusted layout", async () => {
+    const root = await cacheRoot();
+    const executable = plantBuild(root, "chromium-1200");
+    chmodSync(executable, 0o775);
+
+    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
+      expect(scanPlaywrightBrowserCache().candidates).not.toContain(executable);
+      expect(untrustedMotionBrowserCaches()).toContainEqual({
+        path: executable,
+        label: "chrome in chrome-linux in chromium-1200 in the browser cache at PLAYWRIGHT_BROWSERS_PATH",
+        reason: "it is group-writable"
+      });
+    });
+  });
+
   it("refuses a world-writable cache root even when its build number is the highest", async () => {
     const root = await cacheRoot();
     plantBuild(root, "chromium-99999");
@@ -163,7 +284,7 @@ describe.skipIf(!posixOnly)("the Playwright cache scan refuses directories other
       // Asserted as "not this path" rather than "null", because a developer machine with a real
       // `/usr/bin/google-chrome` legitimately falls through to it — and that fall-through is the
       // correct outcome, not a second finding.
-      expect(findMotionBrowserExecutable()).not.toContain(root);
+      expect(findMotionBrowserExecutable()?.startsWith(root) ?? false).toBe(false);
       expect(browserExecutableCandidates().some((path) => path.startsWith(root))).toBe(false);
       expect(untrustedMotionBrowserCaches()).toEqual([{
         path: root,
@@ -203,30 +324,14 @@ describe.skipIf(!posixOnly)("the Playwright cache scan refuses directories other
     });
   });
 
-  it("accepts a group-writable cache whose group is this account's own primary group", async () => {
-    // The user-private-group layout every RPM-based distro ships with umask 002. Refusing it would
-    // report "no browser" to a large share of legitimate Linux users, which is why the trust rule
-    // carves it out explicitly rather than rejecting every g+w directory.
-    const root = await cacheRoot();
-    const genuine = plantBuild(root, "chromium-1200");
-    chmodSync(root, 0o775);
-
-    await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
-      expect(findMotionBrowserExecutable()).toBe(genuine);
-    });
-  });
-
-  it("refuses a cache writable by a group that is NOT this account's primary group", async () => {
-    const foreign = foreignGroupId();
-    if (foreign === null) return; // No supplementary group on this host: nothing to assert against.
+  it("refuses a group-writable cache even when this account owns its group", async () => {
     const root = await cacheRoot();
     plantBuild(root, "chromium-1200");
-    chownSync(root, process.getuid!(), foreign);
     chmodSync(root, 0o775);
 
     await withBrowserEnv({ playwrightBrowsersPath: root }, () => {
-      expect(findMotionBrowserExecutable()).not.toContain(root);
-      expect(untrustedMotionBrowserCaches()[0]?.reason).toMatch(/writable by group/);
+      expect(findMotionBrowserExecutable()?.startsWith(root) ?? false).toBe(false);
+      expect(untrustedMotionBrowserCaches()[0]?.reason).toBe("it is group-writable");
     });
   });
 });
@@ -310,7 +415,7 @@ describe("an explicit SHELLX_MOTION_BROWSER pin fails closed", () => {
   });
 });
 
-describe("the trust rule itself", () => {
+describe.skipIf(!fullPathCacheAuthority)("the trust rule itself", () => {
   it("accepts a directory only this account can write", async () => {
     const root = await cacheRoot();
     expect(untrustedExecutableDirectoryReason(root)).toBe(null);
@@ -351,13 +456,21 @@ describe("the trust rule itself", () => {
     chmodSync(root, 0o755);
   });
 
-  it("resolves containment through symlinks and rejects a sibling with a shared prefix", async () => {
+  it("resolves containment through symlinks and rejects a sibling with a shared prefix", async ({ skip }) => {
     const root = await cacheRoot();
     const sibling = `${root}-evil`;
     mkdirSync(sibling);
     tempDirs.push(sibling);
-    mkdirSync(join(root, "inside"));
-    symlinkSync(sibling, join(root, "escape"));
+    mkdirSync(join(root, "inside"), { mode: 0o700 });
+    try {
+      symlinkSync(sibling, join(root, "escape"));
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create symbolic links; covered on symlink-capable hosts.");
+        return;
+      }
+      throw error;
+    }
 
     expect(resolvesInside(root, join(root, "inside"))).toBe(true);
     expect(resolvesInside(root, root)).toBe(true);

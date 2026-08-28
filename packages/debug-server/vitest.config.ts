@@ -11,6 +11,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    setupFiles: ["../../scripts/vitest-setup-job-stores.ts"]
+    setupFiles: [
+      "../../scripts/vitest-setup-job-stores.ts",
+      "./vitest-private-workspace-setup.ts"
+    ]
   }
 });

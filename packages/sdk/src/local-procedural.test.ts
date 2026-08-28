@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLocalMotionSdk } from "./local.js";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support.js";
 
 const roots: string[] = [];
 
@@ -23,7 +24,10 @@ describe("local procedural relationship SDK", () => {
     const detachedRoot = join(root, "detached");
     await writePackage(sourceRoot);
     const sourceText = await readFile(join(sourceRoot, "motion.json"), "utf8");
-    const sdk = createLocalMotionSdk();
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+      inputRoots: [root],
+      outputRoots: [root],
+    }));
 
     const set = await sdk.proceduralSet({
       packageRoot: sourceRoot,
@@ -156,7 +160,7 @@ describe("local procedural relationship SDK", () => {
     const outputRoot = join(root, "output");
     const outsideRoot = join(root, "outside");
     const sourceRoot = join(inputRoot, "source");
-    await Promise.all([mkdir(outputRoot), mkdir(outsideRoot)]);
+    await Promise.all([mkdir(outputRoot, { mode: 0o700 }), mkdir(outsideRoot)]);
     await writePackage(sourceRoot);
     const sdk = createLocalMotionSdk({
       authoringInputRoots: [inputRoot],
@@ -208,7 +212,7 @@ async function fixtureRoot(): Promise<string> {
 }
 
 async function writePackage(root: string): Promise<void> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",
     id: "sdk-procedural",

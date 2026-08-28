@@ -7,6 +7,7 @@
     <title>ShellX Motion Manual</title>
     <meta name="description" content="ShellX Motion manual: install, local rendering, Engine Room, receipts, agents, and product integrations." />
     <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://docs.theshellx.com/manual/motion/" />
     <meta name="theme-color" content="#070b0d" />
     <link rel="icon" href="./icon.png" type="image/png" />
     <link rel="stylesheet" href="./motion.css?v=1" />
@@ -31,7 +32,7 @@
           <img src="./icon.png" alt="" width="56" height="56" />
           <div>
             <strong>ShellX Motion</strong>
-            <span data-app-version="0.1.0">v0.1.0</span>
+            <span data-app-version="0.2.65">v0.2.65</span>
           </div>
         </div>
         <label class="search-field">
@@ -76,7 +77,7 @@
           <p class="eyebrow">Start here</p>
           <h2>Install and verify the source release</h2>
           <p>
-            Motion v0.1.0 ships as source. Use Node.js 24, pnpm 10.6 or newer, and install FFmpeg plus
+            Motion v0.2.65 ships as source. Use Node.js 24, pnpm 10.6 or newer, and install FFmpeg plus
             FFprobe for final video. Validation and native still previews work without the codec tools.
           </p>
           <div class="command-block" aria-label="Install and verify commands">
@@ -98,10 +99,11 @@
           <h2>Use Engine Room without typing paths</h2>
           <p>
             Engine Room is Motion's local workbench. Start Motion and it opens already unlocked with
-            local create, edit, and render access. Package, output, quality-manifest, and receipt
-            locations use the operating system's Browse picker.
+            local access bounded by host-owned roots. Authoring package/revision roots come from the
+            launch command; package, render-output, quality-manifest, and receipt Browse results grant
+            only the exact human-selected locations for the current session.
           </p>
-          <div class="command-block"><code>pnpm start</code></div>
+          <div class="command-block"><code>pnpm start -- --authoring-input-root /path/to/packages --authoring-output-root /path/to/revisions --render-package-root /path/to/packages --render-input-root /path/to/render-inputs --render-output-root /path/to/renders</code></div>
           <div class="feature-grid">
             <article><span class="feature-index">A</span><h3>Inspector</h3><p>Open a package, inspect layers and assets, scrub the timeline, preview frames, and render a final file.</p></article>
             <article><span class="feature-index">B</span><h3>History</h3><p>Review receipts, quality results, the app or agent that triggered work, and where each output was saved.</p></article>
@@ -139,18 +141,20 @@
 
         <section class="manual-section" id="receipts" data-search="receipts history evidence hashes output path quality warnings encoder agent review">
           <p class="eyebrow">Verify the result</p>
-          <h2>Every delivered render has a receipt beside it</h2>
+          <h2>Every delivered render returns a receipt</h2>
           <p>
             A render receipt records the package identity, input and output hashes, renderer, encoder,
             dimensions, duration, quality checks, warnings, and actor evidence. Engine Room History turns
-            that record into a readable timeline and can open the output's containing folder.
+            persisted records into a readable timeline and can open the output's containing folder. CLI
+            renders write an output-sidecar copy; Debug/MCP renders persist under a governed receipt root
+            when the caller or server supplies one.
           </p>
           <ol class="proof-steps">
             <li><b>Match the package.</b><span>Confirm the package id and inputs are the ones you intended.</span></li>
             <li><b>Read the result.</b><span>A warning is not a pass; inspect the named gate and fallback.</span></li>
             <li><b>Match the output.</b><span>Confirm the file path and SHA-256 hash before delivery.</span></li>
           </ol>
-          <p class="fine-print">Validation returns its result directly and does not create a receipt file. Package-producing batch operations keep their own receipts inside the package they create.</p>
+          <p class="fine-print">Validation returns its result directly and creates no receipt file only without an explicit governed receipt destination. Package-producing batch operations keep their own receipts inside the package they create.</p>
         </section>
 
         <section class="manual-section" id="security" data-search="security local first loopback token network sandbox path privacy telemetry data packages">

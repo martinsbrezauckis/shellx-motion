@@ -11,6 +11,7 @@ import {
 const PROPERTY_SET = new Set<string>(MOTION_PROCEDURAL_PROPERTIES);
 const NODE_TYPES = new Set([
   "constant", "property", "time", "frame", "audio-envelope", "abs", "negate",
+  "sin", "cos",
   "add", "subtract", "multiply", "divide", "min", "max", "clamp", "map",
   "ease", "distance", "noise",
 ]);
@@ -45,7 +46,7 @@ export function validateProceduralNode(value: unknown, path: string, context: Pr
 export function proceduralNodeInputs(value: unknown): string[] {
   const node = plainRecord(value);
   if (!node) return [];
-  if (node.type === "abs" || node.type === "negate" || node.type === "ease" || node.type === "noise") return strings(node.input);
+  if (node.type === "abs" || node.type === "negate" || node.type === "sin" || node.type === "cos" || node.type === "ease" || node.type === "noise") return strings(node.input);
   if (["add", "subtract", "multiply", "divide", "min", "max"].includes(String(node.type))) return strings(node.left, node.right);
   if (node.type === "clamp") return strings(node.input, node.min, node.max);
   if (node.type === "map") return strings(node.input, node.inMin, node.inMax, node.outMin, node.outMax);
@@ -121,7 +122,7 @@ function fieldsFor(type: string): string[] {
   if (type === "time") return ["id", "type", "unit"];
   if (type === "frame") return ["id", "type"];
   if (type === "audio-envelope") return ["id", "type", "envelopeId"];
-  if (type === "abs" || type === "negate") return ["id", "type", "input"];
+  if (type === "abs" || type === "negate" || type === "sin" || type === "cos") return ["id", "type", "input"];
   if (["add", "subtract", "multiply", "divide", "min", "max"].includes(type)) return ["id", "type", "left", "right"];
   if (type === "clamp") return ["id", "type", "input", "min", "max"];
   if (type === "map") return ["id", "type", "input", "inMin", "inMax", "outMin", "outMax", "clamp"];

@@ -28,13 +28,13 @@ export function unsupportedRenderLaneMessage(lane: string): string {
 }
 
 export function unsupportedPreviewLaneMessage(lane: string): string {
-  return `preview --lane must be native or browser; received ${lane}. `
-    + "ffmpeg is a delivery lane and has no preview form; use `render --lane ffmpeg` instead.";
+  return `preview --lane must be native, browser, or gpu; received ${lane}. `
+    + "gpu is the strict general hardware WebGPU PNG preview lane with no fallback; ffmpeg is a delivery lane and has no preview form; use `render --lane ffmpeg` instead.";
 }
 
 export function unsupportedFrameLaneMessage(frameLane: string): string {
-  return `--frame-lane must be native or browser; received ${frameLane}. `
-    + "The browser lane is the only one that renders text faithfully; native draws a bitmap font.";
+  return `--frame-lane must be native, browser, or gpu; received ${frameLane}. `
+    + "gpu is strict streamed FFmpeg final-video delivery with raw RGBA frames; unsupported content, unavailable hardware, and materialized paths refuse without fallback.";
 }
 
 /**

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * scripts/shipping-imports-gate.mjs — no shipped module may depend on test scaffolding.
+ * scripts/shipping-imports-gate.mjs — no shipped module may depend on nonshipping source.
  *
  * ROLE
  * ----
@@ -24,9 +24,9 @@
  * WIRING: `pnpm run source-hygiene:check`, therefore the first step of `pnpm test`. Cheap and
  * deterministic — parse only, no build, no network.
  *
- * Exit code: 0 when clean, 1 when any shipping module imports test scaffolding.
+ * Exit code: 0 when clean, 1 when any shipping module imports nonshipping source.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -37,7 +37,6 @@ import {
 } from "./source-modules.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES_DIR = join(ROOT, "packages");
 
 /** Source extensions a relative specifier can resolve to. */
 const SOURCE_EXTENSIONS = [".ts", ".tsx"];
@@ -74,43 +73,61 @@ function resolveRelative(fromFile, specifier) {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-const offenders = [];
-let inspected = 0;
+/** Inspect a repository root for shipping modules that import nonshipping source. */
+export function inspectShippingImports(root = ROOT) {
+  const packagesDir = join(root, "packages");
+  const offenders = [];
+  let inspected = 0;
 
-for (const entry of readdirSync(PACKAGES_DIR).sort()) {
-  const packageDir = join(PACKAGES_DIR, entry);
-  if (!statSync(packageDir).isDirectory() || !existsSync(join(packageDir, "package.json"))) continue;
+  for (const entry of readdirSync(packagesDir).sort()) {
+    const packageDir = join(packagesDir, entry);
+    if (!statSync(packageDir).isDirectory() || !existsSync(join(packageDir, "package.json"))) continue;
 
-  for (const file of listSources(join(packageDir, "src"))) {
-    if (isNonShippingSource(relative(packageDir, file))) continue;
-    inspected += 1;
-    const sourceFile = ts.createSourceFile(
-      file,
-      readFileSync(file, "utf8"),
-      ts.ScriptTarget.ESNext,
-      /* setParentNodes */ false,
-      file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-    );
-    for (const literal of collectModuleSpecifiers(sourceFile)) {
-      if (!literal.text.startsWith(".")) continue;
-      const target = resolveRelative(file, literal.text);
-      if (target === null) continue; // unresolvable specifiers are tsc's failure to report
-      if (isNonShippingSource(relative(packageDir, target))) {
-        offenders.push(`${relative(ROOT, file)} imports "${literal.text}" -> ${relative(ROOT, target)}`);
+    for (const file of listSources(join(packageDir, "src"))) {
+      if (isNonShippingSource(portableRelative(packageDir, file))) continue;
+      inspected += 1;
+      const sourceFile = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.ESNext,
+        /* setParentNodes */ false,
+        file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+      );
+      for (const literal of collectModuleSpecifiers(sourceFile)) {
+        if (!literal.text.startsWith(".")) continue;
+        const target = resolveRelative(file, literal.text);
+        if (target === null) continue; // unresolvable specifiers are tsc's failure to report
+        if (isNonShippingSource(portableRelative(packageDir, target))) {
+          offenders.push(`${portableRelative(root, file)} imports "${literal.text}" -> ${portableRelative(root, target)}`);
+        }
       }
     }
   }
+  return { offenders, inspected };
 }
 
-if (offenders.length > 0) {
-  console.error(`Shipping modules importing test scaffolding (${offenders.length}):`);
-  for (const offender of offenders) console.error(`  ${offender}`);
-  console.error("");
-  console.error("Non-shipping modules are excluded from the build emit, so an installed user");
-  console.error("would hit ERR_MODULE_NOT_FOUND. Move the shared code into a shipping module,");
-  console.error("or keep the import inside a test. Non-shipping naming convention:");
-  for (const line of NON_SHIPPING_SOURCE_CONVENTION) console.error(`  ${line}`);
-  process.exit(1);
+/** Diagnostics and retained test evidence must have one spelling on every host. */
+function portableRelative(from, to) {
+  return relative(from, to).replaceAll("\\", "/");
 }
 
-console.log(`shipping-imports: OK — ${inspected} shipping module(s), none import test scaffolding.`);
+function main() {
+  const { offenders, inspected } = inspectShippingImports();
+  if (offenders.length > 0) {
+    console.error(`Shipping modules importing nonshipping source (${offenders.length}):`);
+    for (const offender of offenders) console.error(`  ${offender}`);
+    console.error("");
+    console.error("Nonshipping modules are excluded from the build emit, so an installed user");
+    console.error("would hit ERR_MODULE_NOT_FOUND. Move shared code into a shipping module,");
+    console.error("or keep the dependency within the nonshipping boundary. Convention:");
+    for (const line of NON_SHIPPING_SOURCE_CONVENTION) console.error(`  ${line}`);
+    return 1;
+  }
+
+  console.log(`shipping-imports: OK — ${inspected} shipping module(s), none import nonshipping source.`);
+  return 0;
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exit(main());
+}

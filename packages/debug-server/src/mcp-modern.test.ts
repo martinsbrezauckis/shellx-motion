@@ -1,6 +1,8 @@
 /** Dual-era MCP coverage: modern per-request metadata plus legacy initialize coexist. */
 import { afterEach, describe, expect, it } from "vitest";
+import { DEBUG_COMMAND_CONTRACTS } from "@shellx-motion/debug-api";
 import { startMotionDebugServer } from "./index";
+import { mcpToolForDebugContract } from "./mcp-tool-shape.js";
 
 const servers: Array<{ close: () => Promise<void> }> = [];
 afterEach(async () => {
@@ -75,7 +77,10 @@ describe("modern MCP HTTP compatibility", () => {
 
     expect(listed.status).toBe(200);
     expect(listed.body.result.resultType).toBe("complete");
-    expect(listed.body.result.tools).toHaveLength(169);
+    // Bind the response to every authored contract rather than a stale magic
+    // count: additions, removals, reordering, or a malformed projection all
+    // fail this exact public-registry identity check.
+    expect(listed.body.result.tools).toEqual(DEBUG_COMMAND_CONTRACTS.map(mcpToolForDebugContract));
     expect(listed.body.result.tools[0].annotations).toMatchObject({ readOnlyHint: expect.any(Boolean) });
     expect(called.status).toBe(200);
     expect(called.body.result).toMatchObject({

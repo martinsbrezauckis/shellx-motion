@@ -34,6 +34,7 @@ import type {
 } from "@shellx-motion/debug-api";
 import { DEBUG_COMMAND_CONTRACTS } from "@shellx-motion/debug-api";
 import { publishedArgsSchema, tierAllows } from "./mcp-tool-shape.js";
+import { argumentProblems, jsonTypeOf, nearestName, plainObject, scalarEcho } from "./mcp-args-property-validation.js";
 
 /** The failing half of a debug result — what this module returns when a call does not match. */
 type MotionDebugFailure = Extract<MotionDebugResult, { ok: false }>;
@@ -48,6 +49,12 @@ export type McpArgViolationKind =
   | "unknown_property"
   | "bad_enum_value"
   | "below_minimum"
+  | "above_maximum"
+  | "above_max_length"
+  | "below_min_length"
+  | "bad_pattern"
+  | "not_multiple_of"
+  | "not_above_exclusive_minimum"
   | "malformed_envelope";
 
 /** One field-specific problem: which argument, what was expected, what actually arrived. */
@@ -65,6 +72,16 @@ export interface McpArgViolation {
   allowedValues?: string[];
   /** Declared lower bound, for a range rejection. */
   minimum?: number;
+  /** Declared upper bound, for a range rejection. */
+  maximum?: number;
+  /** Declared Unicode-scalar string ceiling, for a string-length rejection. */
+  maxLength?: number;
+  /** Declared Unicode-scalar string floor, for a string-length rejection. */
+  minLength?: number;
+  /** Declared exact string grammar, for a pattern rejection. */
+  pattern?: string;
+  /** Declared numeric step, for a multiple rejection. */
+  multipleOf?: number;
   /** Closest declared argument name, when an unknown property looks like a typo. */
   didYouMean?: string;
 }
@@ -158,188 +175,6 @@ function envelopeProblems(toolArguments: unknown): McpArgViolation[] {
   return violations;
 }
 
-/** Every way the supplied arguments can disagree with the advertised schema, in a stable order. */
-function argumentProblems(schema: MotionDebugArgsSchema, args: Record<string, unknown>): McpArgViolation[] {
-  const properties = schema.properties ?? {};
-  const violations: McpArgViolation[] = [];
-
-  // Required first: a missing argument is the caller's most actionable problem, so it leads.
-  for (const required of schema.required ?? []) {
-    const accepted = namesSatisfying(required, properties);
-    if (accepted.some((name) => suppliedValue(args, name) !== undefined)) continue;
-    violations.push({
-      argument: required,
-      kind: "missing_required",
-      ...(properties[required]?.type ? { expectedType: properties[required].type } : {}),
-      ...(allowedValuesFor(properties[required]) ? { allowedValues: allowedValuesFor(properties[required]) as string[] } : {})
-    });
-  }
-
-  const resolvers = propertyResolvers(properties);
-  for (const name of Object.keys(args)) {
-    const value = suppliedValue(args, name);
-    // Absent-by-value: every domain arg helper reads undefined/null as "not supplied", so rejecting
-    // them here would fail calls the dispatcher accepts. Presence is judged by value, not by key.
-    if (value === undefined) continue;
-    const property = resolvers.get(name);
-    if (!property) {
-      // Unknown properties are rejected only where the schema closes the object. Five commands
-      // (render.final, render.batch, preview.frame, canvas.bridge_export, browser.workflow.capture)
-      // set `additionalProperties: true` on purpose and must keep accepting extras.
-      if (schema.additionalProperties === false) {
-        const suggestion = nearestName(name, [...resolvers.keys()]);
-        violations.push({
-          argument: name,
-          kind: "unknown_property",
-          receivedType: jsonTypeOf(value),
-          ...(suggestion ? { didYouMean: suggestion } : {})
-        });
-      }
-      continue;
-    }
-
-    if (!matchesDeclaredType(value, property.type)) {
-      violations.push({
-        argument: name,
-        kind: "wrong_type",
-        expectedType: property.type,
-        receivedType: jsonTypeOf(value),
-        ...scalarEcho(value)
-      });
-      continue;
-    }
-
-    const allowed = allowedValuesFor(property);
-    if (allowed && typeof value === "string" && !allowed.includes(value)) {
-      violations.push({
-        argument: name,
-        kind: "bad_enum_value",
-        receivedType: "string",
-        receivedValue: value,
-        allowedValues: allowed
-      });
-      continue;
-    }
-
-    if (typeof property.minimum === "number" && typeof value === "number" && value < property.minimum) {
-      violations.push({
-        argument: name,
-        kind: "below_minimum",
-        receivedType: "number",
-        receivedValue: value,
-        minimum: property.minimum
-      });
-    }
-  }
-
-  return violations;
-}
-
-/**
- * Map every accepted argument name to the property schema that governs it.
- *
- * Aliases are not decoration: the handlers really do read `stringArg(args, "layerId") ?? stringArg(args, "layer")`,
- * and the published schemas declare those synonyms. A validator that ignored them would reject
- * working calls.
- */
-function propertyResolvers(properties: Record<string, MotionDebugArgPropertySchema>): Map<string, MotionDebugArgPropertySchema> {
-  const resolvers = new Map<string, MotionDebugArgPropertySchema>();
-  for (const [name, property] of Object.entries(properties)) resolvers.set(name, property);
-  for (const [, property] of Object.entries(properties)) {
-    for (const alias of property.aliases ?? []) if (!resolvers.has(alias)) resolvers.set(alias, property);
-  }
-  return resolvers;
-}
-
-/**
- * Every argument name that satisfies one required property.
- *
- * Two synonym mechanisms are in play and both are load-bearing:
- *  1. the structured `aliases` list (`outDir` also answers to `packageDir`), and
- *  2. a separately declared property whose published description reads "Alias for <name>" —
- *     `motion.quality.panel.manifestPath`, `motion.template.plan.prompt` and
- *     `motion.canvas.bridge_export.path` are declared that way, each satisfying a REQUIRED
- *     property, and each really is honoured by its handler.
- *
- * The prose form is read here so the validator can never contradict the description the agent was
- * given. Migrating those three to the structured `aliases` field would let this second branch go;
- * that edit lives in the debug-api metadata modules.
- */
-function namesSatisfying(required: string, properties: Record<string, MotionDebugArgPropertySchema>): string[] {
-  const names = new Set<string>([required]);
-  for (const alias of properties[required]?.aliases ?? []) names.add(alias);
-  for (const [name, property] of Object.entries(properties)) {
-    if (proseAliasTarget(property.description) !== required) continue;
-    names.add(name);
-    for (const alias of property.aliases ?? []) names.add(alias);
-  }
-  return [...names];
-}
-
-/** The property a description declares itself a synonym of, e.g. "Alias for qualityManifestPath." */
-function proseAliasTarget(description: string | undefined): string | null {
-  if (!description) return null;
-  const match = /^alias for ([A-Za-z0-9_]+)/i.exec(description.trim());
-  return match ? match[1] : null;
-}
-
-/**
- * The value a caller actually supplied under `name`, or `undefined` when it counts as absent.
- * `null` counts as absent because every domain arg helper reads it that way.
- */
-function suppliedValue(args: Record<string, unknown>, name: string): unknown {
-  if (!Object.hasOwn(args, name)) return undefined;
-  const value = args[name];
-  return value === null ? undefined : value;
-}
-
-/**
- * The accepted values for an enumerated property.
- *
- * There is no `enumRef` branch here on purpose: the schema this module validates against has
- * already been through `publishedArgsSchema`, which replaces every reference with the real values.
- * So `property.enum` is exactly the list the client was shown in `tools/list`, and the rejection
- * message can quote it.
- */
-function allowedValuesFor(property: MotionDebugArgPropertySchema | undefined): string[] | null {
-  return property?.enum ? [...property.enum] : null;
-}
-
-/** Whether a value matches a declared type, honouring a declared union such as ["number","string"]. */
-function matchesDeclaredType(value: unknown, declared: DeclaredType): boolean {
-  const accepted = Array.isArray(declared) ? declared : [declared];
-  return accepted.some((type) => {
-    switch (type) {
-      case "string": return typeof value === "string";
-      // Finite is part of "number" here: NaN/Infinity cannot survive JSON, and every numeric arg
-      // helper requires finiteness, so a non-finite value would be rejected downstream anyway.
-      case "number": return typeof value === "number" && Number.isFinite(value);
-      case "boolean": return typeof value === "boolean";
-      case "array": return Array.isArray(value);
-      case "object": return plainObject(value) !== null;
-      default: return false;
-    }
-  });
-}
-
-/** JSON type name of a value, as an agent would describe what it sent. */
-function jsonTypeOf(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
-}
-
-/** Echo a scalar back so the caller can see what the server read. Large/structured values are not echoed. */
-function scalarEcho(value: unknown): { receivedValue?: string | number | boolean } {
-  if (typeof value === "number" || typeof value === "boolean") return { receivedValue: value };
-  if (typeof value === "string") return { receivedValue: value.length <= 120 ? value : `${value.slice(0, 117)}...` };
-  return {};
-}
-
-function plainObject(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
 /**
  * Build the failing result: one sentence per violation, plus the fix for each.
  *
@@ -404,6 +239,18 @@ function violationSentence(violation: McpArgViolation): string {
       return `argument ${violation.argument} must be ${quotedList(violation.allowedValues ?? [])}, received ${received}.`;
     case "below_minimum":
       return `argument ${violation.argument} must be >= ${violation.minimum}, received ${received}.`;
+    case "above_maximum":
+      return `argument ${violation.argument} must be <= ${violation.maximum}, received ${received}.`;
+    case "above_max_length":
+      return `argument ${violation.argument} must contain at most ${violation.maxLength} Unicode scalars, received ${received}.`;
+    case "below_min_length":
+      return `argument ${violation.argument} must contain at least ${violation.minLength} Unicode scalars, received ${received}.`;
+    case "bad_pattern":
+      return `argument ${violation.argument} does not match its declared exact format, received ${received}.`;
+    case "not_multiple_of":
+      return `argument ${violation.argument} must be a multiple of ${violation.multipleOf}, received ${received}.`;
+    case "not_above_exclusive_minimum":
+      return `argument ${violation.argument} must be > ${violation.minimum}, received ${received}.`;
     case "unknown_property":
       return `argument ${violation.argument} is not declared by this command.`;
     case "malformed_envelope":
@@ -426,6 +273,18 @@ function violationFix(violation: McpArgViolation): string {
       return `Set ${violation.argument} to one of ${quotedList(violation.allowedValues ?? [])}.`;
     case "below_minimum":
       return `Set ${violation.argument} to a number >= ${violation.minimum}.`;
+    case "above_maximum":
+      return `Set ${violation.argument} to a number <= ${violation.maximum}.`;
+    case "above_max_length":
+      return `Shorten ${violation.argument} to at most ${violation.maxLength} Unicode scalars.`;
+    case "below_min_length":
+      return `Use at least ${violation.minLength} Unicode scalars for ${violation.argument}.`;
+    case "bad_pattern":
+      return `Use the exact published format for ${violation.argument}.`;
+    case "not_multiple_of":
+      return `Set ${violation.argument} to a multiple of ${violation.multipleOf}.`;
+    case "not_above_exclusive_minimum":
+      return `Set ${violation.argument} to a number > ${violation.minimum}.`;
     case "unknown_property":
       return violation.didYouMean
         ? `Remove ${violation.argument} (did you mean ${violation.didYouMean}?).`
@@ -458,33 +317,4 @@ function quotedList(values: readonly string[]): string {
   if (quoted.length === 1) return quoted[0];
   if (quoted.length === 2) return `${quoted[0]} or ${quoted[1]}`;
   return `${quoted.slice(0, -1).join(", ")}, or ${quoted[quoted.length - 1]}`;
-}
-
-/**
- * Closest declared name to a rejected one, so a typo gets pointed at its target instead of only
- * being refused. Case-insensitive edit distance, capped so unrelated names never "match".
- */
-function nearestName(supplied: string, candidates: readonly string[]): string | null {
-  const limit = supplied.length <= 4 ? 1 : 2;
-  let best: { name: string; distance: number } | null = null;
-  for (const candidate of candidates) {
-    const distance = editDistance(supplied.toLowerCase(), candidate.toLowerCase());
-    if (distance > limit) continue;
-    if (!best || distance < best.distance) best = { name: candidate, distance };
-  }
-  return best ? best.name : null;
-}
-
-/** Levenshtein distance, two-row form. Inputs are argument names, so the size is trivially bounded. */
-function editDistance(left: string, right: string): number {
-  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let row = 1; row <= left.length; row += 1) {
-    const current = [row];
-    for (let column = 1; column <= right.length; column += 1) {
-      const substitution = previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1);
-      current[column] = Math.min(current[column - 1] + 1, previous[column] + 1, substitution);
-    }
-    previous = current;
-  }
-  return previous[right.length];
 }

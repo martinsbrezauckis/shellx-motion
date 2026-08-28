@@ -17,10 +17,9 @@
  * out of the request itself, found nothing in an SDK body, and refused nothing. `sdkRequestReceiptsRoot`
  * states the answer for this transport explicitly — see `caller-boundary.ts` in `@shellx-motion/debug-api`.
  *
- * The fence is applied to EVERY operation, not the subset whose documented input includes
- * `receiptsRoot`. `readSdkRequest` validates the cache key, not the field set, so `input.receiptsRoot`
- * rides on any operation a caller likes; fencing only the documented carriers would fence the
- * documentation rather than the door.
+ * The SDK's shared semantic validator now runs before cache-key use or dispatch. Operations whose
+ * closed contract does not admit `receiptsRoot` stop there; operations that do admit it continue to
+ * the same host-root fence as every other transport.
  *
  * Dependencies: `@shellx-motion/sdk` for the request envelope and cache key, `./transport-refusals.js`
  * for this transport's error shape, `./sdk-operation-policy.js` for the per-operation tier,
@@ -29,6 +28,8 @@
  * Primary caller: `./index.ts`.
  */
 import {
+  assertConfiguredAuthoringPackageEditRoots,
+  AuthoringRootPolicyError,
   refuseUntrustedCallerReceiptsRoot,
   tierRefusal,
   type MotionDebugContext
@@ -36,10 +37,12 @@ import {
 import {
   MOTION_SDK_SCHEMA,
   motionSdkCacheKey,
+  validateMotionSdkRequestInput,
   type MotionSdkTransport,
   type MotionSdkTransportRequest
 } from "@shellx-motion/sdk";
-import { dispatchContextBase, type OperatorReceiptGrants } from "./operator-receipt-grants.js";
+import { dispatchContextBase, type OperatorReceiptGrants, type OperatorRenderGrants } from "./operator-receipt-grants.js";
+import { refuseSdkRenderPaths } from "./sdk-render-boundary.js";
 import { SDK_OPERATION_TIER, readSdkOperation } from "./sdk-operation-policy.js";
 import { PERMISSION_TIER_RANK, debugServerError, sdkFailure } from "./transport-refusals.js";
 
@@ -51,6 +54,7 @@ export interface SdkRouteSecurity {
   sdkTransport: MotionSdkTransport;
   context: Partial<Omit<MotionDebugContext, "tier">>;
   operatorReceiptRoots: OperatorReceiptGrants;
+  operatorRenderGrants: OperatorRenderGrants;
   artifactRoots: string[];
 }
 
@@ -67,7 +71,7 @@ export interface SdkRouteAnswer { status: number; body: unknown }
 export function sdkRequestReceiptsRoot(request: MotionSdkTransportRequest): string | undefined {
   const input = request.input as unknown as Record<string, unknown> | undefined;
   const requested = input?.receiptsRoot;
-  return typeof requested === "string" && requested.trim() !== "" ? requested : undefined;
+  return typeof requested === "string" ? requested : undefined;
 }
 
 /**
@@ -106,16 +110,48 @@ export async function runSdkRequest(payload: unknown, security: SdkRouteSecurity
     };
   }
 
+  const input = objectRecord(request.input);
+  if (!input) return { status: 400, body: sdkFailure(request, "invalid_sdk_request", "Motion SDK request input must be an object.") };
+  const renderPathRefusal = await refuseSdkRenderPaths(request.operation, input, requiredTier, context);
+  if (renderPathRefusal) {
+    return {
+      status: 403,
+      body: sdkFailure(request, renderPathRefusal.code, renderPathRefusal.message, {
+        detail: { resolvedBy: "host_operator", requiredTier, operation: request.operation }
+      })
+    };
+  }
+
+  // trackingRequest creates a revision but has the same caller-selected package roles as an edit.
+  if (requiredTier === "edit_motion" || request.operation === "trackingRequest") {
+    try {
+      await assertConfiguredAuthoringPackageEditRoots(
+        String(input.packageRoot ?? ""),
+        String(input.outDir ?? ""),
+        context.authoringInputRoots,
+        context.authoringOutputRoots,
+        `Motion SDK ${request.operation}`
+      );
+    } catch (error) {
+      if (!(error instanceof AuthoringRootPolicyError)) throw error;
+      return {
+        status: 403,
+        body: sdkFailure(request, error.code, error.message, {
+          detail: { resolvedBy: "host_operator", requiredTier, operation: request.operation }
+        })
+      };
+    }
+  }
+
   return { status: 200, body: await security.sdkTransport.execute(request) };
 }
 
 /**
  * Validate a canonical SDK request body.
  *
- * The cache key is recomputed from the input and must match, and the request id must be derived from
- * it, so a body cannot claim one identity while carrying another. Note what this does NOT do: it
- * does not restrict `input` to the operation's declared fields. That is why the fence above runs for
- * every operation.
+ * The operation's complete shared SDK input validator runs before cache-key derivation. The cache
+ * key is then recomputed from that admitted input and the request id must be derived from it, so a
+ * body cannot claim one identity while carrying another.
  */
 async function readSdkRequest(value: unknown): Promise<{ ok: true; request: MotionSdkTransportRequest } | { ok: false; message: string }> {
   const body = objectRecord(value);
@@ -126,6 +162,8 @@ async function readSdkRequest(value: unknown): Promise<{ ok: true; request: Moti
   if (typeof body.cacheKey !== "string" || !/^[a-f0-9]{64}$/.test(body.cacheKey)) return { ok: false, message: "Motion SDK cacheKey must be SHA-256." };
   const input = objectRecord(body.input);
   if (!input) return { ok: false, message: "Motion SDK request input must be an object." };
+  const inputError = validateMotionSdkRequestInput(operation, input);
+  if (inputError) return { ok: false, message: inputError.message };
   let expected: string;
   try { expected = await motionSdkCacheKey(operation, input); }
   catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }

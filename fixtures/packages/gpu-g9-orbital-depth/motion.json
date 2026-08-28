@@ -1,0 +1,246 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_gpu_g9_orbital_depth",
+  "name": "Orbital Depth — G9 GPU Film",
+  "durationMs": 7200,
+  "fps": 24,
+  "width": 1920,
+  "height": 1080,
+  "background": "#020617",
+  "safeAreas": {
+    "copy": { "top": 82, "right": 104, "bottom": 82, "left": 108 }
+  },
+  "layers": [
+    {
+      "id": "camera-language",
+      "type": "camera",
+      "startMs": 0,
+      "durationMs": 7200,
+      "transform": { "x": 0, "y": 0, "scale": 1, "originX": 960, "originY": 540 },
+      "keyframes": {
+        "transform.x": [
+          { "atMs": 0, "value": -12 },
+          { "atMs": 3600, "value": 18, "easing": "ease-in-out" },
+          { "atMs": 7200, "value": -8, "easing": "ease-in-out" }
+        ],
+        "transform.scale": [
+          { "atMs": 0, "value": 1 },
+          { "atMs": 7200, "value": 1.04, "easing": "ease-in-out" }
+        ]
+      }
+    },
+    {
+      "id": "orbital-world",
+      "type": "scene3d",
+      "startMs": 0,
+      "durationMs": 7200,
+      "opacity": 1,
+      "effects": { "brightness": 1.04, "contrast": 1.08, "saturate": 1.1 },
+      "scene3d": {
+        "schema": "shellx-motion/scene3d@2",
+        "camera": {
+          "position": [4.8, 3.2, 7.2],
+          "target": [0, -0.1, 0],
+          "fovDeg": 40,
+          "near": 0.1,
+          "far": 100,
+          "orbitDegPerSecond": 24
+        },
+        "lighting": {
+          "ambient": 0.22,
+          "direction": [-0.45, -0.9, -0.35],
+          "intensity": 1.7,
+          "color": "#dbeafe"
+        },
+        "backgroundColor": "#020617",
+        "objects": [
+          {
+            "id": "launch-plane",
+            "primitive": "plane",
+            "position": [0, -1.38, 0],
+            "rotationDeg": [0, 0, 0],
+            "scale": 7,
+            "color": "#172554",
+            "emissive": 0.1
+          },
+          {
+            "id": "gltf-orbital-sail",
+            "primitive": "mesh",
+            "position": [-0.75, 0.26, 0.2],
+            "rotationDeg": [0, 0, 0],
+            "spinDegPerSecond": [0, 72, 18],
+            "scale": 2.8,
+            "color": "#1accf2",
+            "emissive": 0.28,
+            "geometry": {
+              "positions": [-0.5, -0.5, 0, 0.5, -0.5, 0, 0, 0.5, 0],
+              "normals": [0, 0, 1, 0, 0, 1, 0, 0, 1],
+              "indices": [0, 1, 2]
+            },
+            "source": {
+              "format": "gltf",
+              "meshIndex": 0,
+              "primitiveIndex": 0,
+              "materialIndex": 0,
+              "geometrySha256": "81ba01c3f55b2e13c188b0fc43a0c5543b6b52f2940010314eec0474c50b33e5"
+            }
+          },
+          {
+            "id": "signal-pyramid",
+            "primitive": "pyramid",
+            "position": [1.45, -0.12, -0.5],
+            "rotationDeg": [0, -22, 0],
+            "spinDegPerSecond": [0, -42, 0],
+            "scale": 1.7,
+            "color": "#f472b6",
+            "emissive": 0.24
+          },
+          {
+            "id": "telemetry-core",
+            "primitive": "box",
+            "position": [0.46, 1.08, -0.9],
+            "rotationDeg": [36, 0, 28],
+            "spinDegPerSecond": [76, 96, 32],
+            "scale": 0.46,
+            "color": "#fef08a",
+            "emissive": 0.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "atmospheric-fog",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 7200,
+      "opacity": 0.56,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "fog",
+        "seed": 20260815,
+        "quality": "cinematic",
+        "mode": "overlay",
+        "backgroundColor": "#020617",
+        "fogColor": "#a5b4fc",
+        "lightColor": "#e0f2fe",
+        "fog": {
+          "density": 0.42,
+          "speed": 0.32,
+          "scale": 5.8,
+          "turbulence": 0.58,
+          "height": 0.68,
+          "depthLayers": 4,
+          "lightStrength": 0.62
+        }
+      }
+    },
+    {
+      "id": "orbit-snow",
+      "type": "environment",
+      "startMs": 0,
+      "durationMs": 7200,
+      "opacity": 0.72,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+      "environment": {
+        "schema": "shellx-motion/environment@1",
+        "kind": "snow",
+        "seed": 20260816,
+        "quality": "cinematic",
+        "mode": "overlay",
+        "backgroundColor": "#020617",
+        "snowColor": "#f8fafc",
+        "shadowColor": "#93c5fd",
+        "lightColor": "#e0f2fe",
+        "fall": { "intensity": 0.68, "speed": 0.76, "wind": 0.18, "turbulence": 0.52, "flakeSize": 1.08, "depthLayers": 4, "focusFalloff": 0.66 },
+        "ground": { "horizon": 0.62, "accumulation": 0.18, "drift": 0.28, "contactAmount": 0.2 },
+        "atmosphere": { "haze": 0.32, "depthFade": 0.58 }
+      }
+    },
+    {
+      "id": "orbital-trails",
+      "type": "particles",
+      "startMs": 0,
+      "durationMs": 7200,
+      "transform": { "x": 0, "y": 0, "width": 1920, "height": 1080, "originX": 960, "originY": 540 },
+      "emitter": {
+        "seed": 20260817,
+        "count": 360,
+        "lifetimeMs": 2800,
+        "shape": "circle",
+        "color": "#f8fafc",
+        "secondaryColor": "#22d3ee",
+        "minSize": 1,
+        "maxSize": 3,
+        "minSpeed": 10,
+        "maxSpeed": 64,
+        "direction": -90,
+        "spread": 150,
+        "gravity": 4,
+        "fadeOut": true
+      },
+      "effects": { "trail": { "durationMs": 1500, "samples": 6 } }
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "DEPTH-BUFFERED / GLTF-ADMITTED / ATMOSPHERIC",
+      "startMs": 580,
+      "durationMs": 5500,
+      "transform": { "x": 114, "y": 792, "width": 920, "height": 38 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 20,
+        "fontWeight": 600,
+        "letterSpacing": 3.2,
+        "lineHeight": 1,
+        "color": "#bae6fd"
+      },
+      "textFit": { "policy": "safe", "safeAreaId": "copy" }
+    },
+    {
+      "id": "title",
+      "type": "text",
+      "text": "ORBITAL\nDEPTH.",
+      "startMs": 760,
+      "durationMs": 5280,
+      "transform": { "x": 116, "y": 842, "width": 770, "height": 190 },
+      "style": {
+        "fontFamily": "Inter, Arial, Helvetica, sans-serif",
+        "fontSize": 88,
+        "fontWeight": 900,
+        "letterSpacing": -1.8,
+        "lineHeight": 0.9,
+        "color": "#f8fafc",
+        "textShadow": { "x": 0, "y": 12, "blur": 30, "color": "rgba(0,0,0,0.58)" }
+      },
+      "effects": { "glow": { "radius": 8, "color": "#22d3ee" } },
+      "textFit": { "policy": "auto-fit", "safeAreaId": "copy", "minFontSize": 54 },
+      "keyframes": {
+        "opacity": [
+          { "atMs": 760, "value": 0 },
+          { "atMs": 1340, "value": 1, "easing": "ease-out" }
+        ]
+      }
+    },
+    {
+      "id": "finish",
+      "type": "adjustment",
+      "startMs": 0,
+      "durationMs": 7200,
+      "effects": {
+        "vignette": { "amount": 0.66, "softness": 0.62, "color": "#020617" },
+        "filmGrain": { "amount": 0.16, "size": 2, "seed": 882026 }
+      }
+    }
+  ],
+  "assets": [
+    { "id": "font_inter_600", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" }, "weight": 600, "style": "normal" },
+    { "id": "font_inter_900", "type": "font", "family": "Inter", "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" }, "weight": 900, "style": "normal" }
+  ],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "g9-product-film-fixture",
+    "workflow": "gpu-depth-scene3d-environment"
+  }
+}

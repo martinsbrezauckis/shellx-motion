@@ -29,8 +29,7 @@ import { booleanArg, nonNegativeIntegerArg, objectArg, recordArg, stringArg } fr
 import { commitMotionDocumentEdit, commitPackageEdit } from "./package-edit-transaction.js";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-
-export interface TrackingAuthoringServices {
+export interface TrackingAuthoringServices { authoringInputRoots?: string[]; authoringOutputRoots?: string[];
   receiptsRoot?: string;
   scratchRoot?: string;
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
@@ -86,6 +85,7 @@ async function requestTracking(args: unknown, services: TrackingAuthoringService
       id: analysisId,
       assetId,
       sourcePath: media.path,
+      inputRoot: pkg.root,
       mode,
       model,
       reference,
@@ -267,8 +267,8 @@ async function applyTracking(args: unknown, services: TrackingAuthoringServices)
       artifacts,
     });
     const installed = await commitMotionDocumentEdit({
-      sourcePackage: pkg,
-      outputRoot,
+      sourcePackage: pkg, outputRoot,
+      authoringInputRoots: services.authoringInputRoots, authoringOutputRoots: services.authoringOutputRoots,
       patchedMotion: applied.motion,
       receipt,
       receiptFileName: `tracking-${analysisId}-apply.receipt.json`,
@@ -332,8 +332,8 @@ async function detachTracking(args: unknown, services: TrackingAuthoringServices
       artifacts,
     });
     const installed = await commitMotionDocumentEdit({
-      sourcePackage: pkg,
-      outputRoot,
+      sourcePackage: pkg, outputRoot,
+      authoringInputRoots: services.authoringInputRoots, authoringOutputRoots: services.authoringOutputRoots,
       patchedMotion: detached.motion,
       receipt,
       receiptFileName: `tracking-${attachment.analysisId}-detach.receipt.json`,

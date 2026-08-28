@@ -2,16 +2,19 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { compareCodeUnits } from "../packages/core/src/canonical-json";
 import { ACTIONS, type MotionPermissionTier } from "../packages/actions/src/catalog";
-import { DEBUG_COMMANDS, DEBUG_COMMAND_CONTRACTS } from "../packages/debug-api/src/index";
+import { AGENT_SNAPSHOT_SCHEMA_DOCUMENT, DEBUG_COMMANDS, DEBUG_COMMAND_CONTRACTS } from "../packages/debug-api/src/index";
 import { MOTION_DEBUG_ARG_ENUMS } from "../packages/debug-api/src/command-metadata-enums";
 import {
   integrationCapabilitiesForHost,
-  loadSchema,
   MOTION_EXPORT_PRESETS,
-  NAMED_EASINGS_LIST,
+  buildMotionPublicSchema,
   validateAgainstPublishedSchema,
   type JsonSchemaDocument
 } from "../packages/core/src/index";
+import {
+  CANVAS_BRIDGE_PACKAGE_SCHEMA,
+  convertCanvasFrameToMotionPackage
+} from "../packages/adapters-canvas/src/index";
 
 const PERMISSIONS: MotionPermissionTier[] = ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"];
 const GENERATED_BY = "scripts/generate-public-contracts.ts";
@@ -56,12 +59,16 @@ async function generate(): Promise<void> {
   await mkdir(schemasRoot, { recursive: true });
   await writeJson(resolve(schemasRoot, "actions.json"), buildActionsRegistry());
   await writeJson(resolve(schemasRoot, "debug.json"), buildDebugRegistry());
+  await writeJson(resolve(schemasRoot, "agent-snapshot.schema.json"), AGENT_SNAPSHOT_SCHEMA_DOCUMENT);
+  await writeJson(resolve(schemasRoot, "motion.schema.json"), buildMotionPublicSchema());
 }
 
 /**
  * Verify mode (CI): confirm the generated registries are up to date AND that the hand-authored
- * published schemas are consistent with their code-side authorities (validate.ts, the Canvas parser,
- * the export-preset source, the integration protocol). Returns the list of drift problems found.
+ * published schemas are consistent with their code-side authorities (the generated Motion document
+ * contract, the Canvas parser,
+ * the export-preset source, the integration protocol, and Canvas bridge package producer).
+ * Returns the list of drift problems found.
  *
  * This is the standing drift gate for engine-review A4 and connector-review D3/D6: schema-vs-validator
  * divergence surfaces here (and in the sibling vitest drift tests) instead of shipping silently.
@@ -73,6 +80,8 @@ async function check(): Promise<string[]> {
   // 1. Generated registries must match what the current code would emit.
   await expectGeneratedFileMatches(resolve(schemasRoot, "actions.json"), buildActionsRegistry(), problems);
   await expectGeneratedFileMatches(resolve(schemasRoot, "debug.json"), buildDebugRegistry(), problems);
+  await expectGeneratedFileMatches(resolve(schemasRoot, "agent-snapshot.schema.json"), AGENT_SNAPSHOT_SCHEMA_DOCUMENT, problems);
+  await expectGeneratedFileMatches(resolve(schemasRoot, "motion.schema.json"), buildMotionPublicSchema(), problems);
 
   // 1b. Every enumRef in a published argument schema must resolve in the published argEnums
   // dictionary, otherwise an agent reading the contract hits a dead reference.
@@ -84,22 +93,7 @@ async function check(): Promise<string[]> {
     }
   }
 
-  // 2. motion.schema.json must be pinned to validate.ts's motion contract (A4).
-  const motionSchema = await readSchema(resolve(schemasRoot, "motion.schema.json"));
-  const motionRequired = (await loadSchema("motion")).required;
-  if (!arraysEqual(asStringArray(motionSchema.required), motionRequired)) {
-    problems.push(`motion.schema.json required list drifted from validate.ts (expected ${JSON.stringify(motionRequired)}).`);
-  }
-  const layerRequired = asStringArray(((motionSchema.$defs as Record<string, JsonSchemaDocument>)?.layer)?.required);
-  if (!arraysEqual(layerRequired, ["id", "type", "startMs", "durationMs"])) {
-    problems.push(`motion.schema.json $defs.layer.required drifted from validateMotionLayers (got ${JSON.stringify(layerRequired)}).`);
-  }
-  const easingEnum = asStringArray(((motionSchema.$defs as Record<string, JsonSchemaDocument>)?.easing as { anyOf?: JsonSchemaDocument[] })?.anyOf?.[0]?.enum);
-  if (!arraysEqual(easingEnum, [...NAMED_EASINGS_LIST])) {
-    problems.push(`motion.schema.json easing enum drifted from NAMED_EASINGS_LIST (got ${JSON.stringify(easingEnum)}).`);
-  }
-
-  // 3. canvas-frame-selection.schema.json must accept every shipped Canvas fixture (D3).
+  // 2. canvas-frame-selection.schema.json must accept every shipped Canvas fixture (D3).
   const canvasSchema = await readSchema(resolve(schemasRoot, "canvas-frame-selection.schema.json"));
   const canvasFixturesDir = resolve("fixtures/canvas");
   const fixtureNames = (await readdir(canvasFixturesDir)).filter((name) => name.endsWith(".json"));
@@ -112,7 +106,48 @@ async function check(): Promise<string[]> {
     }
   }
 
-  // 4. Integration-protocol preset advertisement must equal the single-source preset list (D6).
+  // 3. canvas-bridge-package@1 must be a real public wire contract, not an unbacked capability
+  // advertisement. Validate converter output from every shipped Canvas fixture through the composed
+  // schema (which intentionally reuses the manifest, motion, and receipt schemas).
+  const canvasBridgePackageSchema = await readSchema(resolve(schemasRoot, "canvas-bridge-package.schema.json"));
+  if (canvasBridgePackageSchema.$id !== CANVAS_BRIDGE_PACKAGE_SCHEMA) {
+    problems.push(`canvas-bridge-package.schema.json must declare $id ${CANVAS_BRIDGE_PACKAGE_SCHEMA}.`);
+  }
+  const bridgeSchemaDependencies = new Map<string, JsonSchemaDocument>(await Promise.all(
+    ["package-manifest.schema.json", "motion.schema.json", "receipt.schema.json"].map(async (name) =>
+      [name, await readSchema(resolve(schemasRoot, name))] as const
+    )
+  ));
+  for (const name of fixtureNames) {
+    const fixture = JSON.parse(await readFile(resolve(canvasFixturesDir, name), "utf8"));
+    const canvasPackage = convertCanvasFrameToMotionPackage(fixture, {
+      createdAt: "2026-08-08T00:00:00.000Z",
+      inputPath: `fixtures/canvas/${name}`
+    });
+    const errors = validateAgainstPublishedSchema(canvasBridgePackageSchema, canvasPackage, (ref) => bridgeSchemaDependencies.get(ref));
+    if (errors.length > 0) {
+      problems.push(`canvas-bridge-package.schema.json rejects converted fixture ${name}: ${JSON.stringify(errors.slice(0, 3))}`);
+    }
+  }
+  for (const host of ["shellx-motion", "shellx-canvas"] as const) {
+    if (!integrationCapabilitiesForHost(host).schemas.canvas?.includes(CANVAS_BRIDGE_PACKAGE_SCHEMA)) {
+      problems.push(`${host} integration capabilities do not advertise ${CANVAS_BRIDGE_PACKAGE_SCHEMA}.`);
+    }
+  }
+
+  // 4. The segment store itself stays internal, but its durable on-disk schema is published so a
+  // future adapter cannot invent a second shape. Pin both the id and checked-in fixture here.
+  const segmentStoreSchema = await readSchema(resolve(schemasRoot, "render-segment-store.schema.json"));
+  if (segmentStoreSchema.$id !== "shellx-motion/render-segment-store@1") {
+    problems.push("render-segment-store.schema.json must declare $id shellx-motion/render-segment-store@1.");
+  }
+  const segmentStoreFixture = JSON.parse(await readFile(resolve("fixtures/renderer-segment-store/empty-store.json"), "utf8"));
+  const segmentStoreErrors = validateAgainstPublishedSchema(segmentStoreSchema, segmentStoreFixture);
+  if (segmentStoreErrors.length > 0) {
+    problems.push(`render-segment-store.schema.json rejects its fixture: ${JSON.stringify(segmentStoreErrors.slice(0, 3))}`);
+  }
+
+  // 5. Integration-protocol preset advertisement must equal the single-source preset list (D6).
   const advertised = integrationCapabilitiesForHost("shellx-motion").presets;
   if (!arraysEqual(advertised, [...MOTION_EXPORT_PRESETS])) {
     problems.push(`shellx-motion integration presets drifted from MOTION_EXPORT_PRESETS (got ${JSON.stringify(advertised)}).`);
@@ -152,10 +187,6 @@ async function expectGeneratedFileMatches(path: string, expected: unknown, probl
 
 async function readSchema(path: string): Promise<JsonSchemaDocument> {
   return JSON.parse(await readFile(path, "utf8")) as JsonSchemaDocument;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 function arraysEqual(left: string[], right: string[]): boolean {

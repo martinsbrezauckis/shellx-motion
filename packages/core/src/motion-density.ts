@@ -14,22 +14,18 @@
  * piece is frozen and WHERE, and hands back warning strings. It never fails anything: a static
  * title card is legitimate output. The defect being fixed is SILENCE, not static-ness.
  *
- * METRIC — deliberately the same one an verifier would reach for
- * -------------------------------------------------------------
- * ffmpeg's `freezedetect` filter is what anyone checking this claim will run, so this module
- * re-implements its metric rather than inventing a private one:
+ * METRIC — verifier-comparable without being blind to small moving regions
+ * ------------------------------------------------------------------------
+ * The first signal re-implements ffmpeg `freezedetect`:
  *
  *   mafd = SAD(current, reference) over the Y, Cb and Cr planes / sample count / 256
  *
- * and a frame counts as "still" when `mafd <= noiseThreshold`. Crucially the comparison is against
- * the REFERENCE frame (the first frame of the current still run), not against the immediately
- * previous frame — exactly as `vf_freezedetect.c` does — so a slow drift accumulates and correctly
- * breaks the run instead of hiding under a per-frame threshold forever. When a frame differs, it
- * becomes the new reference. Defaults (`noiseThreshold` 0.003, `minFrozenMs` 300) match the
- * `freezedetect=n=0.003:d=0.3` invocation used in the regression that motivated this work, so a receipt
- * number can be checked against ffmpeg directly.
+ * Whole-frame MAFD alone calls thin chart lines, captions and path reveals frozen. The second signal
+ * counts full-resolution luma pixels that differ from the adjacent frame by more than
+ * `changedPixelDelta`. A comparison is still only when reference-frame MAFD AND adjacent-frame
+ * changed-pixel fraction are quiet, catching both slow drift and small moving regions.
  *
- * Two deliberate differences from ffmpeg, both in the direction of MORE truth:
+ * Other deliberate differences from ffmpeg:
  *   - We measure the renderer's own frames, before encoding. That is the authoritative picture:
  *     codec quantisation can only add noise to a freeze, never remove one.
  *   - Chroma is included (subsampled 2x2, as yuv420p does). A pure hue change at constant luma is
@@ -43,7 +39,7 @@
  * The accumulator takes ALREADY-DECODED frames. Its intended caller is
  * `inspectFrameSequence` in quality.ts, which decodes every frame anyway — so measuring motion adds
  * one arithmetic pass over pixels the renderer already produced, and no second decode of anything.
- * Memory is bounded at two frames' worth of planes regardless of sequence length.
+ * Memory is bounded at two frames' planes plus one previous-frame luma plane.
  *
  * DETERMINISM
  * -----------
@@ -61,6 +57,7 @@
 
 import {
   allocatePlanes,
+  changedLumaPixelRatio,
   fillPlanesFromRgba,
   meanAbsoluteFrameDifference,
   type MotionDensityFrame,
@@ -74,6 +71,10 @@ export type { MotionDensityFrame } from "./motion-density-planes";
 export interface MotionDensityPolicy {
   /** mafd (0..1) at or below which a frame counts as unchanged. Default 0.003. */
   noiseThreshold?: number;
+  /** Luma byte delta above which a full-resolution pixel counts as changed. Default 2. */
+  changedPixelDelta?: number;
+  /** Changed-pixel fraction at or below which an interval is area-quiet. Default 0.001. */
+  changedPixelRatio?: number;
   /** Shortest still run reported as a frozen range, in ms. Default 300. */
   minFrozenMs?: number;
   /** Frozen fraction (0..1) at or above which a warning is emitted. Default 0.25. */
@@ -129,6 +130,9 @@ interface MotionDensityMeasurement {
   /** Mean and peak mafd across all comparisons, rounded to 6dp. */
   meanFrameDifference: number;
   maxFrameDifference: number;
+  /** Mean and peak fraction of materially changed full-resolution luma pixels. */
+  meanChangedPixelRatio: number;
+  maxChangedPixelRatio: number;
   policy: ResolvedMotionDensityPolicy;
 }
 
@@ -180,19 +184,29 @@ export type MotionDensityReport = MotionDensityAnalyzed | MotionDensityUnavailab
 
 export const MOTION_DENSITY_POLICY_DEFAULTS: ResolvedMotionDensityPolicy = {
   noiseThreshold: 0.003,
+  changedPixelDelta: 2,
+  changedPixelRatio: 0.001,
   minFrozenMs: 300,
   warnFrozenRatio: 0.25,
   warnLongestFrozenMs: 2000,
   maxReportedRanges: 8
 };
 
+/** Hard ceiling for retained range evidence, even when an untrusted caller requests more. */
+export const MAX_MOTION_DENSITY_REPORTED_RANGES = 64;
+
 export function resolveMotionDensityPolicy(policy: MotionDensityPolicy = {}): ResolvedMotionDensityPolicy {
   return {
     noiseThreshold: finitePositiveOr(policy.noiseThreshold, MOTION_DENSITY_POLICY_DEFAULTS.noiseThreshold, true),
+    changedPixelDelta: Math.min(255, finitePositiveOr(policy.changedPixelDelta, MOTION_DENSITY_POLICY_DEFAULTS.changedPixelDelta, true)),
+    changedPixelRatio: Math.min(1, finitePositiveOr(policy.changedPixelRatio, MOTION_DENSITY_POLICY_DEFAULTS.changedPixelRatio, true)),
     minFrozenMs: finitePositiveOr(policy.minFrozenMs, MOTION_DENSITY_POLICY_DEFAULTS.minFrozenMs, true),
     warnFrozenRatio: finitePositiveOr(policy.warnFrozenRatio, MOTION_DENSITY_POLICY_DEFAULTS.warnFrozenRatio, true),
     warnLongestFrozenMs: finitePositiveOr(policy.warnLongestFrozenMs, MOTION_DENSITY_POLICY_DEFAULTS.warnLongestFrozenMs, true),
-    maxReportedRanges: Math.max(1, Math.floor(finitePositiveOr(policy.maxReportedRanges, MOTION_DENSITY_POLICY_DEFAULTS.maxReportedRanges, false)))
+    maxReportedRanges: Math.min(
+      MAX_MOTION_DENSITY_REPORTED_RANGES,
+      Math.max(1, Math.floor(finitePositiveOr(policy.maxReportedRanges, MOTION_DENSITY_POLICY_DEFAULTS.maxReportedRanges, false)))
+    )
   };
 }
 
@@ -230,20 +244,59 @@ export function createMotionDensityAccumulator(policy: MotionDensityPolicy = {})
   // avoids ~1.3 GB of short-lived typed-array garbage.
   let reference: MotionPlanes | null = null;
   let scratch: MotionPlanes | null = null;
+  let previousLuma: Uint8Array | null = null;
   let referenceAtMs = 0;
   let frameCount = 0;
   let comparisons = 0;
   let stillComparisons = 0;
   let differenceTotal = 0;
   let maxDifference = 0;
+  let changedPixelRatioTotal = 0;
+  let maxChangedPixelRatio = 0;
   let firstAtMs = 0;
   let lastAtMs = 0;
   let failure: string | null = null;
-  const runs: Array<{ startMs: number; endMs: number }> = [];
+  // A complete render may have one still run per frame. Keep only the current mergeable span and
+  // the fixed-cap best evidence instead of an O(frameCount) run list.
+  let activeSpan: MotionFrozenRange | undefined;
+  const reportedSpans: MotionFrozenRange[] = [];
+  let frozenMs = 0;
+  let longestFrozenMs = 0;
+  let longestFrozenSpanMs = 0;
+  let frozenRunCount = 0;
+  let frozenSpanCount = 0;
+  let finished: MotionDensityReport | undefined;
+
+  const retainCompletedSpan = () => {
+    if (!activeSpan) return;
+    frozenSpanCount += 1;
+    longestFrozenSpanMs = Math.max(longestFrozenSpanMs, activeSpan.durationMs);
+    insertReportedSpan(reportedSpans, activeSpan, resolved.maxReportedRanges);
+    activeSpan = undefined;
+  };
+  const observeClosedRun = (startMs: number, endMs: number) => {
+    const durationMs = Math.round(endMs - startMs);
+    if (durationMs < resolved.minFrozenMs) {
+      retainCompletedSpan();
+      return;
+    }
+    const run = { startMs: Math.round(startMs), endMs: Math.round(endMs), durationMs };
+    frozenMs += run.durationMs;
+    longestFrozenMs = Math.max(longestFrozenMs, run.durationMs);
+    frozenRunCount += 1;
+    if (activeSpan?.endMs === run.startMs) {
+      activeSpan.endMs = run.endMs;
+      activeSpan.durationMs = activeSpan.endMs - activeSpan.startMs;
+      activeSpan.holds += 1;
+      return;
+    }
+    retainCompletedSpan();
+    activeSpan = { ...run, holds: 1 };
+  };
 
   return {
     observe(frame, atMs) {
-      if (failure) return;
+      if (failure || finished) return;
       if (reference && (reference.width !== frame.width || reference.height !== frame.height)) {
         failure = `Frame size changed mid-sequence (${reference.width}x${reference.height} -> ${frame.width}x${frame.height}).`;
         return;
@@ -259,6 +312,7 @@ export function createMotionDensityAccumulator(policy: MotionDensityPolicy = {})
       if (!reference) {
         reference = planes;
         scratch = allocatePlanes(frame.width, frame.height);
+        previousLuma = planes.y.slice();
         referenceAtMs = atMs;
         firstAtMs = atMs;
         lastAtMs = atMs;
@@ -268,26 +322,31 @@ export function createMotionDensityAccumulator(policy: MotionDensityPolicy = {})
       frameCount += 1;
       lastAtMs = atMs;
       const difference = meanAbsoluteFrameDifference(planes, reference);
+      const changedPixelRatio = changedLumaPixelRatio(planes.y, previousLuma!, resolved.changedPixelDelta);
+      previousLuma!.set(planes.y);
       comparisons += 1;
       differenceTotal += difference;
       if (difference > maxDifference) maxDifference = difference;
-      if (difference <= resolved.noiseThreshold) {
+      changedPixelRatioTotal += changedPixelRatio;
+      if (changedPixelRatio > maxChangedPixelRatio) maxChangedPixelRatio = changedPixelRatio;
+      if (difference <= resolved.noiseThreshold && changedPixelRatio <= resolved.changedPixelRatio) {
         stillComparisons += 1;
         return;
       }
       // The picture changed: close the run that started at the reference frame, then make this frame
       // the new reference by swapping the two plane sets (no reallocation).
-      if (atMs > referenceAtMs) runs.push({ startMs: referenceAtMs, endMs: atMs });
+      if (atMs > referenceAtMs) observeClosedRun(referenceAtMs, atMs);
       scratch = reference;
       reference = planes;
       referenceAtMs = atMs;
     },
     fail(reason) {
-      if (!failure) failure = reason;
+      if (!finished && !failure) failure = reason;
     },
     finish({ durationMs, coverage }) {
-      if (failure) return { status: "unavailable", reason: failure };
-      if (frameCount === 0) return { status: "unavailable", reason: "No frames were analyzed." };
+      if (finished) return finished;
+      if (failure) return (finished = { status: "unavailable", reason: failure });
+      if (frameCount === 0) return (finished = { status: "unavailable", reason: "No frames were analyzed." });
       const measurement: MotionDensityMeasurement = {
         status: "analyzed",
         frameCount,
@@ -297,62 +356,42 @@ export function createMotionDensityAccumulator(policy: MotionDensityPolicy = {})
         durationMs: Math.round(durationMs),
         meanFrameDifference: comparisons > 0 ? roundMotionValue(differenceTotal / comparisons) : 0,
         maxFrameDifference: roundMotionValue(maxDifference),
+        meanChangedPixelRatio: comparisons > 0 ? roundMotionValue(changedPixelRatioTotal / comparisons) : 0,
+        maxChangedPixelRatio: roundMotionValue(maxChangedPixelRatio),
         policy: resolved
       };
       if (coverage === "sampled") {
-        return {
+        return (finished = {
           ...measurement,
           coverage: "sampled",
           stillIntervalRatio: comparisons > 0 ? roundMotionValue(stillComparisons / comparisons) : 0
-        };
+        });
       }
 
-      const closed = [...runs];
       // The final run stays open to the end of the piece: the picture really is still from the last
       // change through to the end of the video.
       const finalEndMs = Math.max(referenceAtMs, durationMs);
-      if (finalEndMs > referenceAtMs) closed.push({ startMs: referenceAtMs, endMs: finalEndMs });
-      const frozen = closed
-        .map((run) => ({ startMs: Math.round(run.startMs), endMs: Math.round(run.endMs), durationMs: Math.round(run.endMs - run.startMs) }))
-        .filter((run) => run.durationMs >= resolved.minFrozenMs);
-      const frozenMs = frozen.reduce((total, run) => total + run.durationMs, 0);
-      const longestFrozenMs = frozen.reduce((longest, run) => Math.max(longest, run.durationMs), 0);
-      const spans = mergeContiguousRuns(frozen);
-      const longestFrozenSpanMs = spans.reduce((longest, span) => Math.max(longest, span.durationMs), 0);
-      // Longest first so the cap keeps the spans an author most needs to see; ties broken by start
-      // time so the ordering is total and machine-stable rather than dependent on sort stability.
-      const ordered = [...spans].sort((a, b) => (b.durationMs - a.durationMs) || (a.startMs - b.startMs));
-      const reported = ordered.slice(0, resolved.maxReportedRanges).sort((a, b) => a.startMs - b.startMs);
-      return {
+      if (finalEndMs > referenceAtMs) observeClosedRun(referenceAtMs, finalEndMs);
+      retainCompletedSpan();
+      const reported = [...reportedSpans].sort((a, b) => a.startMs - b.startMs);
+      return (finished = {
         ...measurement,
         coverage: "complete",
         frozenMs,
         frozenRatio: roundMotionValue(frozenMs / Math.max(1, Math.round(durationMs))),
         longestFrozenMs,
         longestFrozenSpanMs,
-        frozenRunCount: frozen.length,
+        frozenRunCount,
         frozenRanges: reported,
-        omittedRanges: spans.length - reported.length
-      };
+        omittedRanges: frozenSpanCount - reported.length
+      });
     }
   };
 }
 
-/**
- * Merge freezes that end exactly where the next begins into one span, counting the holds. Runs
- * arrive in timeline order, so a single forward pass suffices.
- */
-function mergeContiguousRuns(runs: Array<{ startMs: number; endMs: number; durationMs: number }>): MotionFrozenRange[] {
-  const spans: MotionFrozenRange[] = [];
-  for (const run of runs) {
-    const previous = spans[spans.length - 1];
-    if (previous && previous.endMs === run.startMs) {
-      previous.endMs = run.endMs;
-      previous.durationMs = previous.endMs - previous.startMs;
-      previous.holds += 1;
-      continue;
-    }
-    spans.push({ startMs: run.startMs, endMs: run.endMs, durationMs: run.durationMs, holds: 1 });
-  }
-  return spans;
+/** Keep the longest spans with a stable timestamp tie break, in constant bounded state. */
+function insertReportedSpan(spans: MotionFrozenRange[], span: MotionFrozenRange, cap: number): void {
+  spans.push({ ...span });
+  spans.sort((a, b) => (b.durationMs - a.durationMs) || (a.startMs - b.startMs));
+  if (spans.length > cap) spans.pop();
 }

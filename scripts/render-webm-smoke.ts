@@ -79,8 +79,11 @@ const webmArtifact = renderArtifacts.find((artifact) => readObjectField(artifact
 assert(webmArtifact, "render receipt missing video/webm artifact");
 assert(readObjectField(webmArtifact, "status", "webmArtifact.status") === "available", "WebM artifact must be available");
 
-const frames = readObject(readObjectField(render, "frames", "render.frames"), "render.frames");
-assert(readNumber(readObjectField(frames, "count", "render.frames.count"), "render.frames.count") >= 2, "WebM render must emit multiple frames");
+const frameTransport = readObject(readObjectField(renderOutput, "frameTransport", "render.output.frameTransport"), "render.output.frameTransport");
+assert(readObjectField(frameTransport, "delivery", "render.output.frameTransport.delivery") === "streamed", "WebM default render must use streamed frame delivery");
+const frameCount = readNumber(readObjectField(frameTransport, "frameCount", "render.output.frameTransport.frameCount"), "render.output.frameTransport.frameCount");
+assert(frameCount >= 2, "WebM render must emit multiple frames");
+assert(readObjectField(frameTransport, "retainedFrameCount", "render.output.frameTransport.retainedFrameCount") === 0, "WebM streamed delivery must not retain source frames");
 
 const quality = await runCli([
   "quality-check",
@@ -131,7 +134,7 @@ console.log(JSON.stringify({
     mediaType: "video/webm",
     bytes: webmBytes.length,
     frameLane: readObjectField(render, "frameLane", "render.frameLane"),
-    frames: readObjectField(frames, "count", "render.frames.count"),
+    frames: frameCount,
     receiptStatus: renderSuccess.status,
     acceptedWarnings: renderSuccess.warnings,
     matchedAdvisories: renderSuccess.matchedAdvisories,

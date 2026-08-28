@@ -12,6 +12,7 @@ import {
   trackingSettingsSha256,
   type TrackingAnalysis,
 } from "@shellx-motion/core";
+import { withTestAuthoringRoots } from "../authoring-test-context.test-support.js";
 import { dispatchTrackingAuthoringCommand } from "./authoring-tracking.js";
 
 const roots: string[] = [];
@@ -29,9 +30,11 @@ describe("persisted tracking authoring commands", () => {
     const appliedRoot = join(root, "applied");
     const detachedRoot = join(root, "detached");
     await writeTrackingPackage(sourceRoot);
-    const services = {
+    let admittedInputRoot: string | undefined;
+    const services = withTestAuthoringRoots({
       packageLoader: loadMotionPackage,
       trackingAnalyzer: async (input: any) => {
+        admittedInputRoot = input.inputRoot;
         const source = {
           assetId: input.assetId,
           sha256: await hashFile(input.sourcePath),
@@ -55,7 +58,7 @@ describe("persisted tracking authoring commands", () => {
       isEmptyOrAbsentDirectory: async (path: string) => {
         try { return (await readdir(path)).length === 0; } catch { return true; }
       },
-    };
+    }, { inputRoots: [root], outputRoots: [root] });
     const requestArgs = {
       packageRoot: sourceRoot,
       outDir: trackedRoot,
@@ -69,6 +72,7 @@ describe("persisted tracking authoring commands", () => {
 
     const requested = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.request", requestArgs, services);
     expect(requested).toMatchObject({ ok: true, result: { lifecycle: { state: "succeeded", attempt: 1 } } });
+    expect(admittedInputRoot).toBe(resolve(sourceRoot));
     expect(JSON.parse(await readFile(join(trackedRoot, "analysis/tracking/plate_track.lifecycle.json"), "utf8"))).toMatchObject({
       schema: "shellx-motion/tracking-lifecycle@1",
       id: "plate_track",
@@ -114,7 +118,7 @@ describe("persisted tracking authoring commands", () => {
 });
 
 async function writeTrackingPackage(root: string): Promise<void> {
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets/plate.mp4"), "fixture-video-bytes", "utf8");
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",
@@ -175,6 +179,6 @@ function analysisFixture(
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }

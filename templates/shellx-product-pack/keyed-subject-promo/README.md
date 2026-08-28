@@ -2,7 +2,17 @@
 
 A presenter-led campaign template that combines a replaceable scene with a chroma-keyed subject, spill suppression, matte cleanup, parallax motion and a branded finishing pass.
 
-The initial `subjectMedia` contract accepts a still plate on an even `#00ff00` background. Both media slots require production rights. Typography uses the host sans-serif stack and the included sample assets are redistribution-safe.
+The initial `subjectMedia` contract accepts a still plate on an even `#00ff00`
+background. Both media slots require production rights. Typography is pinned to
+package-local Inter Latin faces (SIL OFL 1.1; see
+`assets/fonts/LICENSE-Inter.txt`) and the included sample assets are
+redistribution-safe.
+
+V25-B1 accepted implementation also admits the active background video to
+`preview --lane gpu` through its host-owned, visual-only exact-time CFR provider.
+That preview binds immutable source and decoded-RGBA evidence, uses pre-reserved
+dynamic textures, and is not audio, final-video, or encoder/mux proof. Existing
+final delivery remains `render --lane ffmpeg --frame-lane gpu`. Native visual output and resource cleanup require fresh host verification.
 
 Generated background footage:
 

@@ -1,9 +1,25 @@
+import { isPublicationCommitUncertain } from "@shellx-motion/core";
 import type { MotionSdkHandlerResult } from "./transport.js";
 
 export async function localResult<T>(run: () => Promise<T>): Promise<MotionSdkHandlerResult<T>> {
   try {
     return { ok: true, output: await run() };
   } catch (error) {
+    if (isPublicationCommitUncertain(error)) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          retryable: false,
+          detail: {
+            possiblyCommitted: true,
+            publicPaths: [error.evidence.publicPath],
+            expectedPublication: error.evidence
+          }
+        }
+      };
+    }
     return {
       ok: false,
       error: error instanceof LocalMotionSdkError

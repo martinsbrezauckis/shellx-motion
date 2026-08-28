@@ -11,11 +11,9 @@ import type {
   MotionSdkKeyingMutationResponse, MotionSdkKeyingRemoveRequest, MotionSdkRotoRemoveRequest,
   MotionSdkRotoTrackingDetachRequest, MotionSdkRotoUpsertRequest,
 } from "./keying-types.js";
-import type {
-  MotionSdkTimelineEditRequest,
-  MotionSdkTimelineEditResponse,
-} from "./timeline-edit-types.js";
+import type { MotionSdkTimelineEditRequest, MotionSdkTimelineEditResponse } from "./timeline-edit-types.js";
 import type { MotionSdkPackageIdentity } from "./package-types.js";
+import type { MotionSdkTemplateParameterSchema, MotionSdkValidateRequest, MotionSdkValidateResponse } from "./validation-types.js";
 import type {
   MotionSdkCompositingInspectRequest,
   MotionSdkCompositingInspectResponse,
@@ -23,34 +21,28 @@ import type {
   MotionSdkCompositingRemoveRequest,
   MotionSdkCompositingSetRequest,
 } from "./compositing-types.js";
+import type { MotionSdkRevisionTransactionPlanRequest, MotionSdkRevisionTransactionPlanResponse, MotionSdkRevisionTransactionRequest, MotionSdkRevisionTransactionResponse } from "./revision-transaction-types.js";
+import type { MotionSdkAttestedReuse, MotionSdkGpuPostRenderReuseIdentity } from "./render-reuse-types.js";
+import type { MotionSdkPreviewRequest, MotionSdkPreviewResponse } from "./sdk-preview-types.js";
 
 export type * from "./tracking-types.js";
 export type * from "./keying-types.js";
 export type * from "./timeline-edit-types.js";
 export type * from "./package-types.js";
 export type * from "./authoring-types.js";
-
+export type * from "./validation-types.js";
+export type * from "./revision-transaction-types.js";
+export type { MotionSdkPreviewRequest, MotionSdkPreviewResponse } from "./sdk-preview-types.js";
 export const MOTION_SDK_SCHEMA = "shellx-motion/sdk@1" as const;
 
 export type MotionSdkOperation = keyof MotionSdkRequestMap;
 /** Alias of the authored contract's state union (schemas/job-status.json); see docs/public/JOB_STATUS.md. */
 export type MotionSdkJobState = JobState;
 
-export interface MotionSdkValidateRequest {
-  packageRoot: string;
-}
-
 export interface MotionSdkCompileRequest {
   script: unknown;
   outDir: string;
   createdAt?: string;
-}
-
-export interface MotionSdkPreviewRequest {
-  packageRoot: string;
-  outDir: string;
-  atMs?: number;
-  workflowPath?: string;
 }
 
 export interface MotionSdkRenderRequest {
@@ -59,10 +51,31 @@ export interface MotionSdkRenderRequest {
   preset: string;
   artifactRoot?: string;
   receiptsRoot?: string;
+  /** Strict GPU is raw-RGBA FFmpeg final-video delivery, direct or durably segmented; it never falls back. */
+  frameLane?: "browser" | "native" | "gpu";
   workflowPath?: string;
   qualityManifestPath?: string;
+  /** Retain materialized final-video PNG frames; omitted means temporary frames only when required. */
+  keepFrames?: boolean;
+  /** Closed durable final delivery selector; storage is derived from outputPath. */
+  segmented?: { segmentFrames: number; resume?: boolean };
+  reuseAttested?: MotionSdkAttestedReuse;
   idempotencyKey?: string;
   cutHandoff?: { target: "shellx-cut"; mode: "rendered_media" };
+}
+
+/** Streamed-final coordinator request; use `render()` for materialized compatibility paths. */
+export interface MotionSdkCoordinatedRenderRequest {
+  /** Supply a stable id when reconnecting clients need to query this run before it completes. */
+  jobId?: string;
+  packageRoot: string;
+  outputPath: string;
+  preset: string;
+  receiptsRoot?: string;
+  /** Strict GPU is direct or durably segmented raw-RGBA FFmpeg final video; it never falls back or reuses old producer evidence. */
+  frameLane?: "browser" | "native" | "gpu";
+  /** Closed durable final delivery selector, including governed GPU final jobs; storage is derived from outputPath. */
+  segmented?: { segmentFrames: number; resume?: boolean };
 }
 
 export interface MotionSdkStatusRequest {
@@ -76,32 +89,10 @@ export interface MotionSdkCancelRequest {
   reason?: string;
 }
 
-export interface MotionSdkValidateResponse {
-  package: MotionSdkPackageIdentity;
-  template?: MotionSdkTemplateParameterSchema;
-  warnings: string[];
-}
-
 export interface MotionSdkCompileResponse {
   packageRoot: string;
   package: MotionSdkPackageIdentity;
   receiptPath: string;
-  warnings: string[];
-}
-
-export interface MotionSdkPreviewResponse {
-  packageId: string;
-  motionId: string;
-  frame: {
-    path: string;
-    sha256: string;
-    width: number;
-    height: number;
-    atMs: number;
-    mediaType: "image/png" | "image/jpeg";
-  };
-  receiptId: string;
-  receiptPath?: string;
   warnings: string[];
 }
 
@@ -119,6 +110,10 @@ export interface MotionSdkRenderResponse {
   outputPath?: string;
   receiptId?: string;
   artifact?: MotionSdkArtifactIdentity;
+  /** Present only after the local host validates a completed direct GPU receipt plus its retained artifact; segmented GPU receipts retain their own transport evidence. */
+  gpuPostRenderReuse?: MotionSdkGpuPostRenderReuseIdentity;
+  /** Present only when the request explicitly retained materialized final-video PNG frames. */
+  frames?: { dir: string; count: number };
   artifactReference?: AttestedArtifactHandleReference;
   cutHandoff?: {
     schema: "shellx-motion/cut-handoff@1";
@@ -152,9 +147,9 @@ export interface MotionSdkStatusResponse {
 
 export interface MotionSdkCancelResponse {
   targetJobId: string;
-  state: "cancelled";
-  receiptId: string;
-  receiptPath?: string;
+  /** The live state at acknowledgement time. It is never forged to cancelled while work unwinds. */
+  state: MotionSdkJobState;
+  cancelRequested: true;
   warnings: string[];
 }
 
@@ -166,6 +161,8 @@ export interface MotionSdkRequestMap {
   status: MotionSdkStatusRequest;
   cancel: MotionSdkCancelRequest;
   timelineEdit: MotionSdkTimelineEditRequest;
+  revisionTransactionPlan: MotionSdkRevisionTransactionPlanRequest;
+  revisionTransaction: MotionSdkRevisionTransactionRequest;
   trackingRequest: MotionSdkTrackingRequestRequest;
   trackingInspect: MotionSdkTrackingInspectRequest;
   trackingApply: MotionSdkTrackingApplyRequest;
@@ -190,6 +187,8 @@ export interface MotionSdkResponseMap {
   status: MotionSdkStatusResponse;
   cancel: MotionSdkCancelResponse;
   timelineEdit: MotionSdkTimelineEditResponse;
+  revisionTransactionPlan: MotionSdkRevisionTransactionPlanResponse;
+  revisionTransaction: MotionSdkRevisionTransactionResponse;
   trackingRequest: MotionSdkTrackingRequestResponse;
   trackingInspect: MotionSdkTrackingInspectResponse;
   trackingApply: MotionSdkTrackingApplyResponse;
@@ -247,7 +246,6 @@ export type MotionSdkResult<T> =
 export interface MotionSdkTransport {
   execute<K extends MotionSdkOperation>(request: MotionSdkTransportRequest<K>): Promise<MotionSdkTransportResponse<K>>;
 }
-
 export interface MotionSdkClient {
   validate(input: MotionSdkValidateRequest): Promise<MotionSdkResult<MotionSdkValidateResponse>>;
   compile(input: MotionSdkCompileRequest): Promise<MotionSdkResult<MotionSdkCompileResponse>>;
@@ -256,6 +254,8 @@ export interface MotionSdkClient {
   status(input: MotionSdkStatusRequest): Promise<MotionSdkResult<MotionSdkStatusResponse>>;
   cancel(input: MotionSdkCancelRequest): Promise<MotionSdkResult<MotionSdkCancelResponse>>;
   timelineEdit(input: MotionSdkTimelineEditRequest): Promise<MotionSdkResult<MotionSdkTimelineEditResponse>>;
+  revisionTransactionPlan(input: MotionSdkRevisionTransactionPlanRequest): Promise<MotionSdkResult<MotionSdkRevisionTransactionPlanResponse>>;
+  revisionTransaction(input: MotionSdkRevisionTransactionRequest): Promise<MotionSdkResult<MotionSdkRevisionTransactionResponse>>;
   trackingRequest(input: MotionSdkTrackingRequestRequest): Promise<MotionSdkResult<MotionSdkTrackingRequestResponse>>;
   trackingInspect(input: MotionSdkTrackingInspectRequest): Promise<MotionSdkResult<MotionSdkTrackingInspectResponse>>;
   trackingApply(input: MotionSdkTrackingApplyRequest): Promise<MotionSdkResult<MotionSdkTrackingApplyResponse>>;
@@ -270,16 +270,4 @@ export interface MotionSdkClient {
   compositingInspect(input: MotionSdkCompositingInspectRequest): Promise<MotionSdkResult<MotionSdkCompositingInspectResponse>>;
   compositingSet(input: MotionSdkCompositingSetRequest): Promise<MotionSdkResult<MotionSdkCompositingMutationResponse>>;
   compositingRemove(input: MotionSdkCompositingRemoveRequest): Promise<MotionSdkResult<MotionSdkCompositingMutationResponse>>;
-}
-
-export interface MotionSdkTemplateParameterSchema {
-  schema: "shellx-motion/template-parameters@1";
-  templateId: string;
-  jsonSchema: {
-    $schema: "https://json-schema.org/draft/2020-12/schema";
-    type: "object";
-    properties: Record<string, Record<string, unknown>>;
-    required: string[];
-    additionalProperties: false;
-  };
 }

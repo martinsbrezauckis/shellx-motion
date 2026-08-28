@@ -48,10 +48,11 @@ targets, real MP4 proof, and any advertised Cut/Design Studio receipts.
 
 ## Proof Command
 
-Run the product-pack proof lane after template edits:
+Run the product-pack proof lane after template edits. Use a caller-owned empty
+scratch directory for durable diagnostics:
 
 ```bash
-pnpm run template-pack:proof
+pnpm run template-pack:proof -- --out /absolute/caller-scratch/template-product-pack-proof
 ```
 
 Every starter renders to a real MP4 at native dimensions and full story duration
@@ -60,12 +61,37 @@ quality checks, verifies audio on audio templates, and writes:
 
 ```text
 .scratch/template-product-pack-proof/evidence.json
-.scratch/template-product-pack-proof/contact-sheet.svg
-.scratch/template-product-pack-proof/renders/*.mp4
+.scratch/template-product-pack-proof/receipts/*.render.receipt.json
 ```
 
-Use `-- --full-duration` when preparing release evidence at the template's own
-frame rate instead of the reduced proof frame rate.
+The release profile is full story duration at the checked 8 fps. It derives
+duration/fps/colour/audio facts from the fresh final receipt plus FFprobe
+readback, requires measured per-family unique-frame movement, enforces resource
+budgets, and verifies the artifact hash against the final receipt. It does not
+accept `--full-duration` or another fps until the checked measured policy is
+deliberately recalibrated. The RSS budget is the final receipt's FFmpeg encode
+process tree only; it does not claim a browser-frame or total end-to-end RSS
+budget.
+
+Successful default runs prune MP4s, frames, package copies, and quality
+diagnostics after writing the evidence and copied final receipts. Pass
+`--retain-artifacts` to keep diagnostics, and `--force` only to intentionally
+replace marker-bound proof roles in the same exact scratch directory. The gate
+refuses broad roots, symlink roots, markerless non-empty directories, and
+unknown content; it never recursively removes an arbitrary caller path. Never
+commit the retained media; CI may upload it only as failure diagnostics.
+
+For the one documented frame-root recovery case, `--resume-inspection` opens a
+complete marker-bound failed proof without `--force`. It rehashes the retained
+media, final receipts, and source frames and performs FFprobe-only delivery
+readback without starting a browser render. It rejects stale policy identity,
+partial diagnostics, any other failure shape, and tampered artifacts; it is not
+a general render-cache switch. A red recovery records only
+`resume-inspection.failure.json`, preserving the baseline `evidence.json`.
+
+The built-in `.scratch/template-product-pack-proof` is a repeatable
+repository-owned verification location. An explicit `--out` remains
+caller-owned and needs `--force` to reset its existing marker-bound proof roles.
 
 The lane **fails closed**. A family it cannot fully inspect is a reported
 failure, never a silent pass, and any failure makes the whole run `ok:false`
@@ -79,6 +105,10 @@ with exit code 1. Gate codes recorded in `evidence.json`:
 | `missing_quality_manifest` | the family declares no `metadata.qualityTargets.manifest`, so its frames were never visually inspected |
 | `missing_preview_poster` / `preview_poster_dimension_mismatch` / `preview_poster_not_a_real_render` | the shipped catalog poster is absent, the wrong size, or blank/near-empty rather than a real render |
 | `render_failed` / `quality_check_failed` | the render or the frame/preview comparison failed |
+| `artifact_hash_mismatch` / `receipt_copy_hash_mismatch` | rendered bytes do not bind to the fresh final receipt or its retained copy |
+| `frame_count_mismatch` / `motion_density_below_policy` | the browser frame sequence is incomplete or has too little measured movement |
+| `delivered_*_mismatch` / `receipt_*_mismatch` | FFprobe or final receipt does not prove the policy delivery format, duration, colour, or audio facts |
+| `artifact_size_over_budget` / `scratch_over_budget` / `encode_rss_over_budget` | measured artifact, caller scratch, or receipt-observed FFmpeg encode RSS exceeds its family cap |
 
 Because the visual gate is mandatory, **all 12 published families declare a
 package-local `quality/representative-frames.json`**.
@@ -87,12 +117,13 @@ For resource-conscious local development, keep the full 12-template catalog
 gate while rendering only the changed families:
 
 ```bash
-pnpm run template-pack:proof -- --only cinematic-fog-title,editorial-liquid-surface --fps 6
+pnpm run template-pack:proof -- --only cinematic-fog-title,editorial-liquid-surface
 ```
 
 The targeted lane rejects unknown names, reports the full catalog count beside
 the selected render count, and still performs the real MP4 plus browser-preview
-comparison for every selected family.
+comparison for every selected family. The moving-proof profile is fixed at 8
+fps.
 
 For a zero-render integration check across the promoted Motion catalog and the
 bundled host agent contracts, pass the explicit local host worktrees. This gate
@@ -106,9 +137,11 @@ pnpm run template-pack:host-parity -- \
   --cut-root /path/to/shellx-cut
 ```
 
-This gate validates all 12 published packages, the four rich Cut Generate mappings,
-decimal-control exposure, and the Design Studio Edit-in-Motion/Refresh workflow. It
-records that it launched zero browsers and created zero rendered media.
+This gate validates all 12 published packages, all five `shellx-cut` manifest
+advertisements, the four rich Cut Generate mappings, rain's rendered-media-only
+static handoff, decimal-control exposure, and the Design Studio
+Edit-in-Motion/Refresh workflow. It records that it launched zero browsers and
+created zero rendered media.
 
 Each template directory should contain:
 

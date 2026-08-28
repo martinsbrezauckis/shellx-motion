@@ -1,6 +1,5 @@
 /** Lottie-specific wrapper around the shared atomic vector package writer. */
 import {
-  flattenStaticLottiePrecomps,
   hashBuffer,
   lowerStaticLottieToMotion,
   type FlattenedLottiePrecomps
@@ -30,19 +29,20 @@ export async function writeStaticLottiePackage(options: WriteStaticLottiePackage
     packagePrefix: "pkg_lottie",
     prepareSource: (bytes) => {
       const text = decodeLottieUtf8(bytes);
-      precomposition = flattenStaticLottiePrecomps(text);
-      loweringPath = precomposition.changed ? "source/flattened-animation.json" : "source/input.lottie.json";
-      const loweringBytes = Buffer.from(precomposition.animationText, "utf8");
+      // The Core lowerer selects its bounded GPU precomposition branch before
+      // the legacy diagnostics. Passing the original text is essential: the
+      // old flattener cannot represent transformed or clipped `ty:0` wrappers.
+      // For a source without `ty:0`, this remains byte-for-byte the old input
+      // path and therefore leaves package/receipt fingerprints unchanged.
+      precomposition = unflattenedPrecomposition(text);
+      loweringPath = "source/input.lottie.json";
       const sourceSha256 = hashBuffer(bytes);
       return {
         primaryPath: "source/input.lottie.json",
         primarySha256: sourceSha256,
         loweringPath,
-        loweringText: precomposition.animationText,
-        files: [
-          { path: "source/input.lottie.json", bytes, sha256: sourceSha256 },
-          ...(precomposition.changed ? [{ path: loweringPath, bytes: loweringBytes, sha256: hashBuffer(loweringBytes) }] : [])
-        ],
+        loweringText: text,
+        files: [{ path: "source/input.lottie.json", bytes, sha256: sourceSha256 }],
         manifestData: { precomposition: publicPrecomposition(precomposition) }
       };
     },
@@ -59,6 +59,18 @@ export async function writeStaticLottiePackage(options: WriteStaticLottiePackage
 function publicPrecomposition(value: FlattenedLottiePrecomps): Omit<FlattenedLottiePrecomps, "animationText"> {
   const { animationText: _animationText, ...evidence } = value;
   return evidence;
+}
+
+function unflattenedPrecomposition(animationText: string): FlattenedLottiePrecomps {
+  return {
+    schema: "shellx-motion/lottie-precomp-flattening@1",
+    animationText,
+    flattenedPrecompCount: 0,
+    flattenedLayerCount: 0,
+    maxDepth: 0,
+    changed: false,
+    policy: "full-frame-identity-static"
+  };
 }
 
 function decodeLottieUtf8(bytes: Uint8Array): string {

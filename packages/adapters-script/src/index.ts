@@ -1,8 +1,21 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { assertPublicSourceUrl, canonicalJsonSha256, hashBuffer, type MotionDocument, type MotionLayer, type MotionScene, type OperationReceipt, type PackageManifest,
+import {
+  assertPublicSourceUrl,
+  canonicalJsonSha256,
+  hashBuffer,
+  type MotionDocument,
+  type MotionLayer,
+  type MotionScene,
+  type OperationReceipt,
+  type PackageManifest,
   compareCodeUnits,
 } from "@shellx-motion/core";
+import {
+  publishScriptedMotionPackage,
+  type WriteScriptedMotionPackageOptions,
+  type WrittenScriptedMotionPackage
+} from "./scripted-package-publication.js";
+
+export type { WriteScriptedMotionPackageOptions, WrittenScriptedMotionPackage } from "./scripted-package-publication.js";
 
 export interface ConvertScriptedFramesOptions {
   createdAt?: string;
@@ -14,17 +27,6 @@ export interface ScriptedMotionExport {
   manifest: PackageManifest;
   motion: MotionDocument;
   receipt: OperationReceipt;
-}
-
-export interface WriteScriptedMotionPackageOptions {
-  packageDir: string;
-}
-
-export interface WrittenScriptedMotionPackage {
-  packageDir: string;
-  manifestPath: string;
-  motionPath: string;
-  receiptPath: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -193,17 +195,7 @@ export async function writeScriptedMotionPackage(
   scriptedExport: ScriptedMotionExport,
   options: WriteScriptedMotionPackageOptions
 ): Promise<WrittenScriptedMotionPackage> {
-  const packageDir = resolve(options.packageDir);
-  const manifestPath = join(packageDir, "manifest.json");
-  const motionPath = join(packageDir, scriptedExport.manifest.motion);
-  const receiptPath = join(packageDir, "receipts", "script-compile.receipt.json");
-
-  await mkdir(join(packageDir, "receipts"), { recursive: true });
-  await writeJson(manifestPath, scriptedExport.manifest);
-  await writeJson(motionPath, scriptedExport.motion);
-  await writeJson(receiptPath, scriptedExport.receipt);
-
-  return { packageDir, manifestPath, motionPath, receiptPath };
+  return await publishScriptedMotionPackage(scriptedExport, options);
 }
 
 function frameLayers(frame: ScriptedFrame, layout: { startMs: number; width: number; height: number; sceneId: string }): MotionLayer[] {
@@ -774,7 +766,7 @@ function createScriptReceipt(input: {
   return {
     schema: "shellx-motion/receipt@1",
     id: `receipt_script_compile_${input.packageId}`,
-    operation: "package.compile",
+    operation: "script.compile",
     status: "passed",
     packageId: input.packageId,
     inputHashes: {
@@ -1125,8 +1117,4 @@ function nonZeroRound(value: number): number {
   const rounded = Math.round(value);
   if (rounded !== 0) return rounded;
   return value < 0 ? -1 : 1;
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }

@@ -104,7 +104,7 @@
       "startMs": 180,
       "durationMs": 5400,
       "transform": { "x": 136, "y": 190, "width": 760, "height": 52 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 25, "fontWeight": 820, "letterSpacing": 4, "color": "#99f6e4" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 25, "fontWeight": 800, "letterSpacing": 4, "color": "#99f6e4" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 17 },
       "keyframes": {
         "opacity": [{ "atMs": 180, "value": 0 }, { "atMs": 620, "value": 1, "easing": "ease-out" }],
@@ -118,7 +118,7 @@
       "startMs": 320,
       "durationMs": 5200,
       "transform": { "x": 128, "y": 280, "width": 820, "height": 310 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 96, "fontWeight": 860, "lineHeight": 0.98, "color": "#f0fdfa", "textShadow": { "x": 0, "y": 12, "blur": 32, "color": "rgba(0, 0, 0, 0.56)" } },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 96, "fontWeight": 900, "lineHeight": 0.98, "color": "#f0fdfa", "textShadow": { "x": 0, "y": 12, "blur": 32, "color": "rgba(0, 0, 0, 0.56)" } },
       "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 54 },
       "effects": { "motionBlur": { "samples": 3, "shutterAngle": 150 } },
       "keyframes": {
@@ -133,7 +133,7 @@
       "startMs": 980,
       "durationMs": 4300,
       "transform": { "x": 136, "y": 628, "width": 710, "height": 144 },
-      "style": { "fontFamily": "sans-serif", "fontSize": 33, "fontWeight": 560, "lineHeight": 1.2, "color": "#ccfbf1" },
+      "style": { "fontFamily": "Inter, Arial, Helvetica, sans-serif", "fontSize": 33, "fontWeight": 600, "lineHeight": 1.2, "color": "#ccfbf1" },
       "textFit": { "policy": "auto-fit", "safeAreaId": "editorial", "minFontSize": 23 },
       "keyframes": {
         "opacity": [{ "atMs": 980, "value": 0 }, { "atMs": 1460, "value": 1, "easing": "ease-out" }]
@@ -170,6 +170,30 @@
       "kind": "image",
       "source": { "path": "assets/samples/coastal-editorial.svg", "mimeType": "image/svg+xml" },
       "size": { "width": 1920, "height": 1080 }
+    },
+    {
+      "id": "font_inter_600",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-600-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 600,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_800",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-800-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 800,
+      "style": "normal"
+    },
+    {
+      "id": "font_inter_900",
+      "type": "font",
+      "family": "Inter",
+      "source": { "path": "assets/fonts/inter-latin-900-normal.woff2", "mimeType": "font/woff2" },
+      "weight": 900,
+      "style": "normal"
     }
   ],
   "provenance": { "sourceApp": "shellx-motion", "createdBy": "shellx-motion-template-pack", "workflow": "template-pack-editorial-liquid-surface" }

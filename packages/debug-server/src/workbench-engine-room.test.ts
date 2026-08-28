@@ -140,13 +140,21 @@ describe("engine room documentation viewer", () => {
       expect(index.status).toBe(200);
       const body = await index.json() as { version: number; sections: Array<{ pages: Array<{ id: string }> }> };
       expect(body.version).toBe(1);
-      expect(body.sections.flatMap((section) => section.pages.map((entry) => entry.id))).not.toContain("templates");
+      const pageIds = body.sections.flatMap((section) => section.pages.map((entry) => entry.id));
+      expect(pageIds).not.toContain("templates");
+      expect(pageIds).toEqual(expect.arrayContaining(["cutout-rigging", "transition-presets", "cut-job-integration-spec"]));
       const firstPageId = body.sections[0]?.pages[0]?.id;
       expect(firstPageId).toBeTruthy();
       const page = await authed(new URL(`/workbench/docs/page?id=${encodeURIComponent(firstPageId)}`, server.url));
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toContain("text/markdown");
       expect((await page.text()).length).toBeGreaterThan(0);
+      for (const pageId of ["cutout-rigging", "transition-presets", "cut-job-integration-spec"]) {
+        const humanGuide = await authed(new URL(`/workbench/docs/page?id=${encodeURIComponent(pageId)}`, server.url));
+        expect(humanGuide.status).toBe(200);
+        expect(humanGuide.headers.get("content-type")).toContain("text/markdown");
+        expect((await humanGuide.text()).length).toBeGreaterThan(0);
+      }
     } finally {
       await server.close();
     }
@@ -266,6 +274,22 @@ describe("engine room update channel", () => {
     }
   });
 
+  it("rejects a malformed release tag instead of silently treating it as 0.0.0", async () => {
+    const github = await startMockGithub(() => ({ status: 200, body: JSON.stringify({ tag_name: "release-1.4.0" }) }));
+    const server = await startTestServer({ port: 0, updateRepo: "shellx/motion", updateApiBaseUrl: github.baseUrl, updateAllowUnsafeBase: true });
+    try {
+      const check = await authed(new URL("/workbench/update-check", server.url), { method: "POST" });
+      expect(await check.json()).toMatchObject({
+        ok: false,
+        configured: true,
+        error: { code: "update_feed_invalid", message: expect.stringContaining("valid SemVer") }
+      });
+    } finally {
+      await server.close();
+      await closeServer(github.server);
+    }
+  });
+
   it("returns a network-failure payload when the feed is unreachable", async () => {
     // Point at a closed loopback port; the fetch fails fast, not a fake success.
     const server = await startTestServer({ port: 0, updateRepo: "shellx/motion", updateApiBaseUrl: "http://127.0.0.1:1", updateTimeoutMs: 1500, updateAllowUnsafeBase: true });
@@ -305,11 +329,17 @@ describe("engine room update channel", () => {
     }
   });
 
-  it("compares engine versions numerically by release core", () => {
+  it("compares strict SemVer precedence, normalizes v tags, and rejects malformed inputs", () => {
     expect(compareEngineVersions("0.0.0", "1.2.0")).toBe(-1);
     expect(compareEngineVersions("1.2.0", "1.2.0")).toBe(0);
     expect(compareEngineVersions("2.0.0", "1.9.9")).toBe(1);
-    expect(compareEngineVersions("v1.2.0", "1.2.0-rc.1")).toBe(0);
+    expect(compareEngineVersions("1.2.0-beta.2", "1.2.0-beta.11")).toBe(-1);
+    expect(compareEngineVersions("1.2.0-beta.11", "1.2.0-rc.1")).toBe(-1);
+    expect(compareEngineVersions("1.2.0-rc.1", "1.2.0")).toBe(-1);
+    expect(compareEngineVersions("v1.2.0", "1.2.0+build.20260808")).toBe(0);
+    expect(compareEngineVersions("1.2.0+build.1", "1.2.0+build.999")).toBe(0);
+    expect(compareEngineVersions("1.2", "1.2.0")).toBeNull();
+    expect(compareEngineVersions("1.2.0-01", "1.2.0")).toBeNull();
   });
 });
 

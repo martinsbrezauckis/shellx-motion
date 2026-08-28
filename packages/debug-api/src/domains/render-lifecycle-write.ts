@@ -1,6 +1,7 @@
 /** Render cancel/retry control receipts behind bounded lookup and persistence ports. */
 import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
+import type { StableReceiptSnapshot } from "../receipt-store-stable-reader.js";
 import { stringArg } from "./args.js";
 
 export type RenderControlTarget =
@@ -11,7 +12,7 @@ export type RenderControlTarget =
       receipt: OperationReceipt;
       path: string;
       state: string;
-      sha256: string;
+      snapshot: StableReceiptSnapshot;
       retryCount: number;
       outputPath?: string;
     };
@@ -59,9 +60,10 @@ async function cancel(
     targetOperation: target.receipt.operation,
     targetStatus: target.receipt.status,
     targetState: target.state,
+    targetReceiptSnapshot: target.snapshot,
     ...(reason ? { reason } : {})
   };
-  const inputHashes = { targetReceipt: target.sha256 };
+  const inputHashes = { targetReceipt: target.snapshot.sha256 };
   const receipt: OperationReceipt = {
     schema: "shellx-motion/receipt@1",
     id: `render-cancel-${safeFileToken(target.receipt.id)}-${hashBuffer(Buffer.from(JSON.stringify({ inputHashes, output }), "utf8")).slice(0, 16)}`,
@@ -101,11 +103,12 @@ async function retry(
     sourceOperation: source.receipt.operation,
     sourceStatus: source.receipt.status,
     sourceState: source.state,
+    sourceReceiptSnapshot: source.snapshot,
     retryAttempt,
     ...(source.outputPath ? { sourceOutputPath: source.outputPath } : {}),
     ...(reason ? { reason } : {})
   };
-  const inputHashes = { sourceReceipt: source.sha256 };
+  const inputHashes = { sourceReceipt: source.snapshot.sha256 };
   const receipt: OperationReceipt = {
     schema: "shellx-motion/receipt@1",
     id: `render-retry-${safeFileToken(source.receipt.id)}-${hashBuffer(Buffer.from(JSON.stringify({ inputHashes, output }), "utf8")).slice(0, 16)}`,

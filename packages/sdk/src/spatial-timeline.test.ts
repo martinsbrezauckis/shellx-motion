@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { effectiveLayerAtMs, loadMotionPackage, readMotionSpatialPath } from "@shellx-motion/core";
 import { describe, expect, it } from "vitest";
 import { createLocalMotionSdk } from "./local";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support";
 
 async function fixture(): Promise<{ root: string; packageRoot: string }> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-spatial-"));
@@ -18,8 +19,12 @@ describe("SDK spatial timeline edits", () => {
     try {
       const source = await loadMotionPackage(packageRoot);
       const layerId = source.motion.layers[0].id;
+      const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, {
+        inputRoots: [root],
+        outputRoots: [root],
+      }));
       const firstRoot = join(root, "first");
-      const first = await createLocalMotionSdk().timelineEdit({
+      const first = await sdk.timelineEdit({
         packageRoot,
         outDir: firstRoot,
         edit: {
@@ -39,7 +44,7 @@ describe("SDK spatial timeline edits", () => {
       if (!first.ok) throw new Error(first.error.message);
 
       const secondRoot = join(root, "second");
-      const second = await createLocalMotionSdk().timelineEdit({
+      const second = await sdk.timelineEdit({
         packageRoot: firstRoot,
         outDir: secondRoot,
         edit: {

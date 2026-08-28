@@ -3,7 +3,7 @@
   "id": "template_shellx_tracked_callout_overlay",
   "name": "ShellX Tracked Callout Overlay",
   "motion": "motion.json",
-  "compatibleLanes": ["browser", "ffmpeg"],
+  "compatibleLanes": ["browser", "ffmpeg", "gpu"],
   "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
   "metadata": {
     "inputSchema": {
@@ -48,10 +48,12 @@
       "attributionRequired": false,
       "redistributionAllowed": true,
       "commercialUse": true,
-      "notes": "The package-local device image is a generated sample. User replacements require appropriate rights. Typography uses the host sans-serif stack."
+      "notes": "The package-local device image is a generated sample. User replacements require appropriate rights. Typography uses package-local Inter faces under SIL OFL 1.1."
     },
     "assetsAttribution": [
-      { "name": "Device Inspection Sample", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/samples/device-inspection.svg" }
+      { "name": "Device Inspection Sample", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/samples/device-inspection.svg" },
+      { "name": "Inter SemiBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-600-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
     ],
     "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
     "provenance": {
@@ -59,10 +61,10 @@
       "sourceHash": "97370ab88c6ff99c862f69d6fa9ff71ddbc53725dcf9d5346191b5e074ed21d1"
     },
     "performance": {
-      "recommendedLane": "browser",
+      "recommendedLane": "gpu",
       "renderCost": "medium",
       "previewFps": 24,
-      "notes": ["Callout dot, leader, panel and copy share synchronized baked keyframes suitable for replacement with point or planar tracking output."]
+      "notes": ["Callout dot, leader, panel and copy share synchronized baked keyframes suitable for replacement with point or planar tracking output.", "GPU is strict and requires live admitted WebGPU hardware; browser and FFmpeg remain available when that explicit selection cannot run."]
     },
     "story": {
       "kind": "tracked-product-explainer",

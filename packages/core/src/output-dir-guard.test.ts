@@ -8,18 +8,25 @@
  *
  * Dependencies: node fs/os/path built-ins, `./output-dir-guard`.
  */
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { prepareFramesDir, prepareOutputDir, prepareOutputFile, refuseUnsafeOutputDirReuse } from "./output-dir-guard";
+import {
+  assertOutputDirGuard,
+  MotionOutputGuardError,
+  prepareFramesDir,
+  prepareOutputDir,
+  prepareOutputFile,
+  refuseUnsafeOutputDirReuse
+} from "./output-dir-guard";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-/** 8-byte PNG signature plus filler — enough for the guard's content check, as a real frame is. */
+/** A valid PNG-shaped payload used to prove that file shape is not ownership evidence. */
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16, 7)]);
 
 async function temp(): Promise<string> {
@@ -34,7 +41,7 @@ describe("prepareFramesDir ownership", () => {
     // someone's files was recursively deleted while the comment claimed content proved ownership.
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(join(framesDir, "000001.png"), { recursive: true });
+    await mkdir(join(framesDir, "000001.png"), { recursive: true, mode: 0o700 });
     await writeFile(join(framesDir, "000001.png", "secret.txt"), "user data", "utf8");
 
     const result = await prepareFramesDir(framesDir, { force: false, callerSupplied: true });
@@ -46,7 +53,7 @@ describe("prepareFramesDir ownership", () => {
   it("refuses a file named like a frame whose bytes are not a PNG", async () => {
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(framesDir, { recursive: true });
+    await mkdir(framesDir, { recursive: true, mode: 0o700 });
     await writeFile(join(framesDir, "000002.png"), "my notes, saved with an unlucky name", "utf8");
 
     const result = await prepareFramesDir(framesDir, { force: false, callerSupplied: true });
@@ -58,7 +65,7 @@ describe("prepareFramesDir ownership", () => {
   it("refuses a symlink that resolves to a real PNG rather than following it", async ({ skip }) => {
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(framesDir, { recursive: true });
+    await mkdir(framesDir, { recursive: true, mode: 0o700 });
     await writeFile(join(root, "real.png"), PNG_BYTES);
     try {
       await symlink(join(root, "real.png"), join(framesDir, "000001.png"));
@@ -75,12 +82,12 @@ describe("prepareFramesDir ownership", () => {
     expect(await readFile(join(root, "real.png"))).toEqual(PNG_BYTES);
   });
 
-  it("wipes a directory holding only Motion's own PNG frames, so re-renders do not need --force", async () => {
-    // The other half of the contract: the guard must be a rail, not a wall. A stale frame from a
-    // longer previous render still has to go, or it would be encoded into this one.
+  it("refuses a caller-supplied directory even when every entry looks like a Motion frame", async () => {
+    // A legitimate caller sequence can have the same names and PNG signature. Shape is not proof
+    // that Motion owns the bytes, so only explicit --force may delete them.
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(framesDir, { recursive: true });
+    await mkdir(framesDir, { recursive: true, mode: 0o700 });
     await writeFile(join(framesDir, "000001.png"), PNG_BYTES);
     await writeFile(join(framesDir, "000009.png"), PNG_BYTES);
     // A crashed render's zero-length stub has no content to lose and must not become a wall.
@@ -88,8 +95,10 @@ describe("prepareFramesDir ownership", () => {
 
     const result = await prepareFramesDir(framesDir, { force: false, callerSupplied: true });
 
-    expect(result).toEqual({ ok: true });
-    expect(await readdir(framesDir)).toEqual([]);
+    expect(result).toMatchObject({ ok: false, error: { code: "output_dir_not_empty" } });
+    expect(await readFile(join(framesDir, "000001.png"))).toEqual(PNG_BYTES);
+    expect(await readFile(join(framesDir, "000009.png"))).toEqual(PNG_BYTES);
+    expect(await readFile(join(framesDir, "000010.png"))).toEqual(Buffer.alloc(0));
   });
 
   it("accepts an absent or empty directory without creating anything else", async () => {
@@ -101,13 +110,25 @@ describe("prepareFramesDir ownership", () => {
     expect(await prepareFramesDir(framesDir, { force: false, callerSupplied: true })).toEqual({ ok: true });
   });
 
+  it.skipIf(process.platform === "win32")("creates a missing Motion-owned output directory privately under umask 0002", async () => {
+    const root = await temp();
+    const framesDir = join(root, "nested", "frames");
+    const previousUmask = process.umask(0o002);
+    try {
+      expect(await prepareFramesDir(framesDir, { force: false, callerSupplied: true })).toEqual({ ok: true });
+      expect(Number((await lstat(framesDir)).mode) & 0o777).toBe(0o700);
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
   it("wipes without evidence ONLY for Motion's own default scratch root", async () => {
     // `callerSupplied: false` is the single documented exception, and it is stated at the call site
     // rather than assumed: the CLI passes it only when neither --frames-dir nor a host scratch root
     // was supplied.
     const root = await temp();
     const scratch = join(root, ".scratch", "frames", "pkg_x");
-    await mkdir(scratch, { recursive: true });
+    await mkdir(scratch, { recursive: true, mode: 0o700 });
     await writeFile(join(scratch, "leftover.json"), "{}", "utf8");
 
     expect(await prepareFramesDir(scratch, { force: false, callerSupplied: false })).toEqual({ ok: true });
@@ -119,7 +140,7 @@ describe("prepareFramesDir ownership", () => {
     // stale build that omits it must NOT be handed the unguarded wipe.
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(framesDir, { recursive: true });
+    await mkdir(framesDir, { recursive: true, mode: 0o700 });
     await writeFile(join(framesDir, "notes.txt"), "user data", "utf8");
 
     const result = await prepareFramesDir(framesDir, { force: false } as never);
@@ -131,7 +152,7 @@ describe("prepareFramesDir ownership", () => {
   it("wipes a caller-supplied directory when --force is passed", async () => {
     const root = await temp();
     const framesDir = join(root, "frames");
-    await mkdir(join(framesDir, "keep"), { recursive: true });
+    await mkdir(join(framesDir, "keep"), { recursive: true, mode: 0o700 });
     await writeFile(join(framesDir, "keep", "notes.txt"), "user data", "utf8");
 
     expect(await prepareFramesDir(framesDir, { force: true, callerSupplied: true })).toEqual({ ok: true });
@@ -188,7 +209,7 @@ describe("prepareOutputFile", () => {
   it("never deletes a directory to make room for a file, even with --force", async () => {
     const root = await temp();
     const outputPath = join(root, "final.mp4");
-    await mkdir(outputPath, { recursive: true });
+    await mkdir(outputPath, { recursive: true, mode: 0o700 });
     await writeFile(join(outputPath, "inside.txt"), "user data", "utf8");
 
     expect(await prepareOutputFile(outputPath, { force: true }))
@@ -206,7 +227,7 @@ describe("refuseUnsafeOutputDirReuse", () => {
     await expect(lstat(missing)).rejects.toMatchObject({ code: "ENOENT" });
 
     const populated = join(root, "populated");
-    await mkdir(populated, { recursive: true });
+    await mkdir(populated, { recursive: true, mode: 0o700 });
     await writeFile(join(populated, "user.txt"), "user data", "utf8");
     expect(await refuseUnsafeOutputDirReuse(populated)).toMatchObject({ code: "output_dir_not_empty" });
     expect(await readFile(join(populated, "user.txt"), "utf8")).toBe("user data");
@@ -215,11 +236,122 @@ describe("refuseUnsafeOutputDirReuse", () => {
   it("agrees with prepareOutputDir, which prepares what it accepts", async () => {
     const root = await temp();
     const outDir = join(root, "out");
-    await mkdir(outDir, { recursive: true });
+    await mkdir(outDir, { recursive: true, mode: 0o700 });
     await writeFile(join(outDir, "user.txt"), "user data", "utf8");
 
     expect(await prepareOutputDir(outDir, { force: false })).toMatchObject({ ok: false, error: { code: "output_dir_not_empty" } });
     expect(await prepareOutputDir(outDir, { force: true })).toEqual({ ok: true });
     expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it("refuses a POSIX shared-writable output parent without creating the destination", async ({ skip }) => {
+    if (process.platform === "win32") {
+      skip("Windows ACL authority is not represented by Node uid/mode fields.");
+      return;
+    }
+    const root = await temp();
+    const sharedParent = join(root, "shared");
+    const outDir = join(sharedParent, "out");
+    await mkdir(sharedParent, { mode: 0o700 });
+    await chmod(sharedParent, 0o777);
+
+    expect(await prepareOutputDir(outDir, { force: false }))
+      .toMatchObject({ ok: false, error: { code: "output_path_unsafe_parent", path: sharedParent } });
+    await expect(lstat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.skipIf(process.platform === "win32")("accepts an existing empty current-user 0755 output directory", async () => {
+    const root = await temp();
+    const outDir = join(root, "out");
+    await mkdir(outDir, { mode: 0o700 });
+    await chmod(outDir, 0o755);
+
+    expect(await refuseUnsafeOutputDirReuse(outDir)).toBeNull();
+    expect(await prepareOutputDir(outDir, { force: false })).toEqual({ ok: true });
+    expect(Number((await lstat(outDir)).mode) & 0o777).toBe(0o755);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses an empty group-writable output leaf and preserves its identity", async () => {
+    const root = await temp();
+    const outDir = join(root, "out");
+    const sentinel = join(root, "sentinel.txt");
+    await mkdir(outDir, { mode: 0o700 });
+    await chmod(outDir, 0o775);
+    await writeFile(sentinel, "preserve this sibling", "utf8");
+    const before = await lstat(outDir);
+
+    expect(await refuseUnsafeOutputDirReuse(outDir))
+      .toMatchObject({ code: "output_path_unsafe_parent", path: outDir });
+    expect(await prepareOutputDir(outDir, { force: false }))
+      .toMatchObject({ ok: false, error: { code: "output_path_unsafe_parent", path: outDir } });
+    const after = await lstat(outDir);
+    expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    expect(await readFile(sentinel, "utf8")).toBe("preserve this sibling");
+  });
+
+  it("refuses a symlinked force target parent before recursive removal can reach its target", async ({ skip }) => {
+    const root = await temp();
+    const outside = await temp();
+    const linkedParent = join(root, "linked-parent");
+    const externalOutput = join(outside, "out");
+    await mkdir(externalOutput, { recursive: true });
+    await writeFile(join(externalOutput, "preserve.txt"), "outside user data", "utf8");
+    try {
+      await symlink(outside, linkedParent, "dir");
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create directory symbolic links.");
+        return;
+      }
+      throw error;
+    }
+
+    expect(await prepareOutputDir(join(linkedParent, "out"), { force: true }))
+      .toMatchObject({ ok: false, error: { code: "output_path_unsafe_parent", path: linkedParent } });
+    expect(await readFile(join(externalOutput, "preserve.txt"), "utf8")).toBe("outside user data");
+  });
+
+  it("refuses a symlinked force file parent before unlink can remove an outside leaf", async ({ skip }) => {
+    const root = await temp();
+    const outside = await temp();
+    const linkedParent = join(root, "linked-parent");
+    const externalOutput = join(outside, "final.mp4");
+    await writeFile(externalOutput, "outside user data", "utf8");
+    try {
+      await symlink(outside, linkedParent, "dir");
+    } catch (error) {
+      if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+        skip("The standard Windows test account cannot create directory symbolic links.");
+        return;
+      }
+      throw error;
+    }
+
+    expect(await prepareOutputFile(join(linkedParent, "final.mp4"), { force: true }))
+      .toMatchObject({ ok: false, error: { code: "output_path_unsafe_parent", path: linkedParent } });
+    expect(await readFile(externalOutput, "utf8")).toBe("outside user data");
+  });
+});
+
+describe("assertOutputDirGuard", () => {
+  it("preserves a typed refusal for connector callers and leaves safe results alone", async () => {
+    const root = await temp();
+    const occupied = join(root, "final.mp4");
+    await writeFile(occupied, "user data", "utf8");
+
+    const refusal = await prepareOutputFile(occupied, { force: false });
+    if (refusal.ok) throw new Error("Expected an occupied output path to be refused.");
+
+    expect(() => assertOutputDirGuard(refusal)).toThrow(MotionOutputGuardError);
+    try {
+      assertOutputDirGuard(refusal);
+    } catch (error) {
+      expect(error).toMatchObject({ code: "output_path_exists", path: occupied });
+    }
+    expect(await readFile(occupied, "utf8")).toBe("user data");
+
+    const safe = await prepareOutputFile(join(root, "new.mp4"), { force: false });
+    expect(safe).toEqual({ ok: true });
+    expect(() => assertOutputDirGuard(safe)).not.toThrow();
   });
 });

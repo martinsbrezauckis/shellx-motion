@@ -2,7 +2,8 @@ import type { MotionDebugCommand, MotionDebugDomain, MotionDebugResult } from ".
 import { dispatchAuthoringCommand, type AuthoringDomainServices } from "./authoring.js";
 import { dispatchAgentCommand, type AgentDomainServices } from "./agent.js";
 import { dispatchCapabilitiesCommand } from "./capabilities.js";
-import { dispatchIntegrationCommand, type IntegrationDomainServices } from "./integration.js";
+import { dispatchIntegrationCommand } from "./integration.js";
+import type { IntegrationDomainServices } from "./integration-services.js";
 import { dispatchRenderCommand, type RenderDomainServices } from "./render.js";
 import { dispatchSurfaceCommand, type SurfaceDomainServices } from "./surface.js";
 import { dispatchWorkspaceCommand, type WorkspaceDomainServices } from "./workspace.js";

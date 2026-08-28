@@ -6,8 +6,24 @@
  * A caller then has no way to learn the arguments except by reading TypeScript source.
  */
 import { describe, expect, it } from "vitest";
-import { readSupportedKeyframeTarget, isSupportedEasing, readSupportedTransitionType } from "@shellx-motion/core";
+import {
+  MOTION_BEHAVIOR_MAX_COORDINATE,
+  MOTION_BEHAVIOR_MAX_GRAVITY,
+  MOTION_BEHAVIOR_MAX_RESTITUTION,
+  MOTION_BEHAVIOR_MAX_SQUASH_AMOUNT,
+  MOTION_BEHAVIOR_MAX_VELOCITY,
+  MOTION_BEHAVIOR_MIN_BOUNCE_GRAVITY,
+  MOTION_BEHAVIOR_MIN_COORDINATE,
+  MOTION_BEHAVIOR_MIN_GRAVITY,
+  MOTION_BEHAVIOR_MIN_RESTITUTION,
+  MOTION_BEHAVIOR_MIN_SQUASH_AMOUNT,
+  MOTION_BEHAVIOR_MIN_VELOCITY,
+  readSupportedKeyframeTarget,
+  isSupportedEasing,
+  readSupportedTransitionType,
+} from "@shellx-motion/core";
 import { COMPOSITING_COMMAND_METADATA } from "./command-metadata-compositing.js";
+import { CHECKPOINT_STORYBOARD_RECORD_COMMAND_METADATA } from "./command-metadata-checkpoint-storyboard.js";
 import { CORE_COMMAND_METADATA } from "./command-metadata-core.js";
 import { MOTION_DEBUG_ARG_ENUMS, debugArgEnum } from "./command-metadata-enums.js";
 import { KEYING_COMMAND_METADATA } from "./command-metadata-keying.js";
@@ -15,6 +31,17 @@ import { SCENE3D_COMMAND_METADATA } from "./command-metadata-scene3d.js";
 import { SURFACE_COMMAND_METADATA } from "./command-metadata-surfaces.js";
 import { TIMELINE_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-keyframes.js";
 import { TIMELINE_LAYER_COMMAND_METADATA } from "./command-metadata-timeline-layers.js";
+import { TIMELINE_GROUP_COMMAND_METADATA } from "./command-metadata-timeline-groups.js";
+import { TIMELINE_LAYOUT_COMMAND_METADATA } from "./command-metadata-timeline-layout.js";
+import { TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA } from "./command-metadata-timeline-adjustments.js";
+import { TIMELINE_BEHAVIOR_COMMAND_METADATA } from "./command-metadata-timeline-behaviors.js";
+import { TIMELINE_RELATION_COMMAND_METADATA } from "./command-metadata-timeline-relations.js";
+import { TIMELINE_RELATION_ACTION_COMMAND_METADATA } from "./command-metadata-timeline-relation-actions.js";
+import { TIMELINE_GRADIENT_COLOR_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-gradient-color-keyframes.js";
+import { TIMELINE_POINT_COMMAND_METADATA } from "./command-metadata-timeline-points.js";
+import { TIMELINE_PARTICLE_STRUCTURAL_COMMAND_METADATA } from "./command-metadata-timeline-particle-structural.js";
+import { TIMELINE_SHAPE_GEOMETRY_COMMAND_METADATA } from "./command-metadata-timeline-shape-geometry.js";
+import { TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-shape-geometry-keyframes.js";
 import { TIMELINE_STRUCTURE_COMMAND_METADATA } from "./command-metadata-timeline-structure.js";
 import { TIMELINE_TRACK_COMMAND_METADATA } from "./command-metadata-timeline-tracks.js";
 import { TRACKING_COMMAND_METADATA } from "./command-metadata-tracking.js";
@@ -29,6 +56,7 @@ import { annotatePlanWithArgumentContracts } from "./domains/agent-plan-argument
 import { unsupportedEnumValue } from "./domains/enum-error.js";
 
 const METADATA_MODULES = [
+  ["checkpoint-storyboard", CHECKPOINT_STORYBOARD_RECORD_COMMAND_METADATA],
   ["scene3d", SCENE3D_COMMAND_METADATA],
   ["compositing", COMPOSITING_COMMAND_METADATA],
   ["tracking", TRACKING_COMMAND_METADATA],
@@ -36,12 +64,128 @@ const METADATA_MODULES = [
   ["core", CORE_COMMAND_METADATA],
   ["surfaces", SURFACE_COMMAND_METADATA],
   ["timeline-layers", TIMELINE_LAYER_COMMAND_METADATA],
+  ["timeline-groups", TIMELINE_GROUP_COMMAND_METADATA],
+  ["timeline-layout", TIMELINE_LAYOUT_COMMAND_METADATA],
+  ["timeline-fixed-adjustments", TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA],
+  ["timeline-behaviors", TIMELINE_BEHAVIOR_COMMAND_METADATA],
+  ["timeline-relations", TIMELINE_RELATION_COMMAND_METADATA],
+  ["timeline-relation-actions", TIMELINE_RELATION_ACTION_COMMAND_METADATA],
+  ["timeline-gradient-color-keyframes", TIMELINE_GRADIENT_COLOR_KEYFRAME_COMMAND_METADATA],
+  ["timeline-points", TIMELINE_POINT_COMMAND_METADATA],
+  ["timeline-particle-structural", TIMELINE_PARTICLE_STRUCTURAL_COMMAND_METADATA],
+  ["timeline-shape-geometry", TIMELINE_SHAPE_GEOMETRY_COMMAND_METADATA],
+  ["timeline-shape-geometry-keyframes", TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA],
   ["timeline-keyframes", TIMELINE_KEYFRAME_COMMAND_METADATA],
   ["timeline-structure", TIMELINE_STRUCTURE_COMMAND_METADATA],
   ["timeline-tracks", TIMELINE_TRACK_COMMAND_METADATA]
 ] as const;
 
 describe("published debug argument contracts", () => {
+  it("keeps fixed adjustment set closed and behind the package COW boundary", () => {
+    for (const command of ["motion.timeline.adjustment.fixed.set", "motion.timeline.adjustment.fixed.remove"] as const) {
+      const schema = TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA[command].argsSchema;
+      expect(schema.properties, command).not.toHaveProperty("receiptsRoot");
+      expect(schema.required ?? [], command).not.toContain("receiptsRoot");
+      expect(schema.properties.packageRoot?.description, command).toContain("trusted Debug host");
+      expect(schema.properties.packageRoot?.description, command).toContain("must not supply receiptsRoot");
+    }
+    const set = TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA["motion.timeline.adjustment.fixed.set"].argsSchema;
+    expect(set.required).toEqual(["packageRoot", "outDir", "adjustment"]);
+    expect(set.properties.adjustment).toMatchObject({ type: "object", additionalProperties: false, required: ["id", "startMs", "durationMs", "effects"] });
+    expect(set.properties.adjustment?.properties?.effects?.description).toContain("vignette-then-filmGrain");
+  });
+
+  it("keeps layout apply/remove receipt authority host-configured", () => {
+    for (const command of ["motion.timeline.layout.apply", "motion.timeline.layout.remove"] as const) {
+      const schema = TIMELINE_LAYOUT_COMMAND_METADATA[command].argsSchema;
+      expect(schema.properties, command).not.toHaveProperty("receiptsRoot");
+      expect(schema.required ?? [], command).not.toContain("receiptsRoot");
+      expect(schema.properties.packageRoot?.description, command).toContain("trusted Debug host");
+      expect(schema.properties.packageRoot?.description, command).toContain("must not supply receiptsRoot");
+    }
+  });
+
+  it("keeps behavior mutations behind a host-configured receipt root", () => {
+    for (const command of ["motion.timeline.behaviors.upsert", "motion.timeline.behaviors.remove"] as const) {
+      const schema = TIMELINE_BEHAVIOR_COMMAND_METADATA[command].argsSchema;
+      expect(schema.properties, command).not.toHaveProperty("receiptsRoot");
+      expect(schema.required ?? [], command).not.toContain("receiptsRoot");
+      expect(schema.properties.packageRoot?.description, command).toContain("trusted Debug host");
+      expect(schema.properties.packageRoot?.description, command).toContain("must not supply receiptsRoot");
+    }
+  });
+
+  it("publishes the exact 16-entry relation-action binding-map caps", () => {
+    const request = TIMELINE_RELATION_ACTION_COMMAND_METADATA["motion.timeline.relation-actions.apply"].argsSchema.properties.request!;
+    for (const name of ["roleBindings", "parameterValues"] as const) {
+      const map = request.properties?.[name];
+      expect(map, name).toMatchObject({ type: "object", additionalProperties: true, maxProperties: 16 });
+      expect(map, name).not.toHaveProperty("maxLength");
+    }
+  });
+
+  it("keeps relation lifecycle mutations behind host receipt authority", () => {
+    for (const command of [
+      "motion.timeline.relations.upsert",
+      "motion.timeline.relations.enabled.set",
+      "motion.timeline.relations.remove",
+      "motion.timeline.relations.detach",
+      "motion.timeline.relations.bake",
+    ] as const) {
+      const schema = TIMELINE_RELATION_COMMAND_METADATA[command].argsSchema;
+      expect(schema.properties, command).not.toHaveProperty("receiptsRoot");
+      expect(schema.required ?? [], command).not.toContain("receiptsRoot");
+      expect(schema.properties.packageRoot?.description, command).toContain("trusted Debug host");
+    }
+    expect(TIMELINE_RELATION_COMMAND_METADATA["motion.timeline.relations.inspect"]).not.toHaveProperty("expectedReceipts");
+  });
+
+  it("keeps exact shape geometry snapshots off generic keyframes and behind host receipt authority", () => {
+    for (const command of ["motion.timeline.shape.geometry-keyframes.upsert", "motion.timeline.shape.geometry-keyframes.delete", "motion.timeline.shape.geometry-keyframes.move"] as const) {
+      const schema = TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA[command].argsSchema;
+      expect(schema.properties, command).not.toHaveProperty("receiptsRoot");
+      expect(schema.properties.packageRoot?.description, command).toContain("trusted Debug host");
+      expect(schema.properties.packageRoot?.description, command).toContain("must not supply receiptsRoot");
+    }
+    expect(TIMELINE_SHAPE_GEOMETRY_KEYFRAME_COMMAND_METADATA["motion.timeline.shape.geometry-keyframes.upsert"].argsSchema.required)
+      .toEqual(["packageRoot", "outDir", "layerId", "snapshot"]);
+  });
+
+  it("mirrors the shared transform bounds and leaves unbounded spring scalars unbounded", () => {
+    const binding = TIMELINE_BEHAVIOR_COMMAND_METADATA["motion.timeline.behaviors.upsert"].argsSchema.properties.binding!;
+    const path = binding.oneOf![0]!, transform = binding.oneOf![1]!;
+    const spring = path.properties!.easing!.oneOf![1]!.properties!;
+    expect(spring.stiffness).toMatchObject({ exclusiveMinimum: 0 });
+    expect(spring.damping).toMatchObject({ exclusiveMinimum: 0 });
+    expect(spring.mass).toMatchObject({ exclusiveMinimum: 0 });
+    expect(spring.stiffness).not.toHaveProperty("maximum");
+    expect(spring.damping).not.toHaveProperty("maximum");
+    expect(spring.mass).not.toHaveProperty("maximum");
+    expect(spring.initialVelocity).not.toHaveProperty("minimum");
+    expect(spring.initialVelocity).not.toHaveProperty("maximum");
+    const [gravity, bounce] = transform.properties!.motion!.oneOf!;
+    expect(gravity!.properties).toMatchObject({
+      velocityX: { minimum: MOTION_BEHAVIOR_MIN_VELOCITY, maximum: MOTION_BEHAVIOR_MAX_VELOCITY },
+      velocityY: { minimum: MOTION_BEHAVIOR_MIN_VELOCITY, maximum: MOTION_BEHAVIOR_MAX_VELOCITY },
+      gravityY: { minimum: MOTION_BEHAVIOR_MIN_GRAVITY, maximum: MOTION_BEHAVIOR_MAX_GRAVITY },
+    });
+    expect(bounce!.properties).toMatchObject({
+      floorY: { minimum: MOTION_BEHAVIOR_MIN_COORDINATE, maximum: MOTION_BEHAVIOR_MAX_COORDINATE },
+      velocityY: { minimum: MOTION_BEHAVIOR_MIN_VELOCITY, maximum: MOTION_BEHAVIOR_MAX_VELOCITY },
+      gravityY: { minimum: MOTION_BEHAVIOR_MIN_BOUNCE_GRAVITY, maximum: MOTION_BEHAVIOR_MAX_GRAVITY },
+      restitution: { minimum: MOTION_BEHAVIOR_MIN_RESTITUTION, maximum: MOTION_BEHAVIOR_MAX_RESTITUTION },
+    });
+    expect(transform.properties!.squash!.properties!.amount).toMatchObject({
+      minimum: MOTION_BEHAVIOR_MIN_SQUASH_AMOUNT, maximum: MOTION_BEHAVIOR_MAX_SQUASH_AMOUNT,
+    });
+  });
+
+  it("describes path reveal through the existing rich setter rather than inventing a new verb", () => {
+    const metadata = TIMELINE_LAYER_COMMAND_METADATA["motion.timeline.layer.rich.set"];
+    expect(metadata?.argsSchema?.properties.property?.description).toContain("pathReveal.start");
+    expect(metadata?.argsSchema?.properties.property?.description).toContain("pathReveal.end");
+  });
+
   it("covers every registered command", () => {
     expect(debugCommandsWithoutArgumentContracts()).toEqual([]);
     expect(DEBUG_COMMAND_CONTRACTS).toHaveLength(DEBUG_COMMANDS.length);
@@ -54,6 +198,17 @@ describe("published debug argument contracts", () => {
       .filter((contract) => Object.keys(contract.argsSchema?.properties ?? {}).length === 0)
       .map((contract) => contract.command);
     expect(emptyMutations).toEqual([]);
+  });
+
+  it("keeps every edit_motion package mutation behind packageRoot and outDir", () => {
+    const unfenced = DEBUG_COMMAND_CONTRACTS
+      .filter((contract) => contract.permission === "edit_motion" && contract.mutates)
+      .filter((contract) => {
+        const required = new Set(contract.argsSchema?.required ?? []);
+        return !required.has("packageRoot") || !required.has("outDir");
+      })
+      .map((contract) => contract.command);
+    expect(unfenced).toEqual([]);
   });
 
   it("defines each command in exactly one metadata module", () => {
@@ -98,6 +253,12 @@ describe("published debug argument contracts", () => {
     }
     expect(undocumented).toEqual([]);
   });
+
+  it("does not publish a renderer-host execution policy to an agent command", () => {
+    for (const contract of DEBUG_COMMAND_CONTRACTS) {
+      expect(contract.argsSchema?.properties ?? {}, contract.command).not.toHaveProperty("untrustedExecution");
+    }
+  });
 });
 
 describe("published argument enumerations", () => {
@@ -137,6 +298,7 @@ describe("action plans carry argument contracts", () => {
       ],
       verify: [],
       cautions: [],
+      examples: [],
       related: []
     });
 
@@ -164,10 +326,32 @@ describe("action plans carry argument contracts", () => {
       steps: [{ order: 1, call: "motion.timeline.easing.presets", purpose: "list presets" }],
       verify: [],
       cautions: [],
+      examples: [],
       related: []
     });
     expect(annotated.steps[0].takesNoArguments).toBe(true);
     expect(annotated.steps[0].args).toEqual([]);
+  });
+
+  it("keeps metadata-defined alternative requirements visible instead of advertising a zero-argument call", () => {
+    const annotated = annotatePlanWithArgumentContracts({
+      ok: true,
+      topic: "connector",
+      action: null,
+      steps: [{ order: 1, call: "motion.connector.script_to_cut", purpose: "connect" }],
+      verify: [],
+      cautions: [],
+      examples: [],
+      related: []
+    });
+
+    expect(annotated.steps[0]).toMatchObject({
+      requiredArgs: ["outDir"],
+      requiredArgGroups: [{
+        mode: "oneOf",
+        alternatives: [["scriptPath"], ["script"], ["storyboard"]]
+      }]
+    });
   });
 });
 
@@ -182,8 +366,11 @@ describe("rejected enum values name the fix", () => {
   });
 
   it("names the frame-lane fix rather than only the rejected value", () => {
-    const contract = debugCommandContract("motion.render.final");
-    expect(contract?.argsSchema?.properties.frameLane.enum).toEqual(["browser"]);
+    const finalContract = debugCommandContract("motion.render.final");
+    const cachePlanContract = debugCommandContract("motion.render.cache.plan");
+    expect(finalContract?.argsSchema?.properties.frameLane.enum).toEqual(["browser", "native", "gpu"]);
+    expect(cachePlanContract?.argsSchema?.properties.frameLane.enum).toEqual(["browser", "native"]);
+    expect(cachePlanContract?.argsSchema?.properties.frameLane.description).toContain("GPU post-render identity is completed-render evidence only");
     expect(MOTION_DEBUG_ARG_ENUMS.deliveryLane.values).toEqual(["native", "ffmpeg"]);
     expect(MOTION_DEBUG_ARG_ENUMS.deliveryLane.description).toContain("--frame-lane");
   });

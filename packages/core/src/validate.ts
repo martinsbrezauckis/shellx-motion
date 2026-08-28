@@ -1,22 +1,38 @@
 import { MAX_BROWSER_WORKFLOW_TOTAL_WAIT_MS, MAX_BROWSER_WORKFLOW_WAIT_MS } from "./browser-workflow";
 import { isSupportedMotionColorString } from "./color";
+import { validateMotionDocumentAudioMaster } from "./motion-document-audio-validation";
+import { GENERATED_VISUAL_LAYER_TYPE_SET } from "./generated-visual-layer-types";
+import { validateMotionPointCloudLayers } from "./motion-points";
+import { validateMotionShapeGeometryLayers } from "./motion-shape-geometry";
+import { validateMotionGradientColorKeyframes } from "./motion-gradient-color-keyframes";
+import { validateMotionTextRunsLayers } from "./motion-text-runs";
+import { validateMotionTrailLayers } from "./motion-trail-validation";
+import { validateMotionGroups } from "./motion-group-validation"; import { validateMotionEffectModuleLayers } from "./effect-module";
 import { isJobInFlight } from "./generated/job-status";
 // Keyframe wrong-field-name diagnosis is core's, shared with the evaluator's readability gate and
 // with `unreadableKeyframesRefusal`, so validate and the refusal name the same mistake.
 import { motionKeyframeTimeAlias, motionKeyframeValueAlias } from "./keyframe-readability";
 import { ENVIRONMENT_KINDS, ENVIRONMENT_QUALITY_TIERS, ENVIRONMENT_SCHEMA, MAX_ENVIRONMENT_LAYERS, MAX_FOG_DEPTH_LAYERS, MAX_RAIN_DEPTH_LAYERS, MAX_SNOW_DEPTH_LAYERS, MAX_WATER_WAVE_OCTAVES } from "./environment";
 import { parseMotionPathViewBox, validateMotionPathData } from "./path-contract";
+import { assertMotionPathRevealLayer, isPathRevealKeyframeTarget } from "./path-reveal";
 import { validateMotionDocumentGraphs } from "./motion-document-graphs";
+import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
+import { validateMotionLayoutApplicationRecords } from "./motion-layout-application-validation";
 import { validateLayerMattes } from "./motion-matte-validate";
 import { isSafeShaderUniformName, MAX_RESTRICTED_SHADER_UNIFORMS, RESTRICTED_SHADER_LANGUAGE, RESTRICTED_SHADER_SCHEMA } from "./shader-plugin";
+import { validateGpuMaterialExtension } from "./gpu-material-contract";
 import { validateScene3DLayers } from "./scene-3d-validate";
 import { validateSpatialKeyframes } from "./spatial-path";
 import { readEasingValidationError } from "./timeline";
 import { validateTrackingAnalysis, validateTrackingAnalysisLifecycle } from "./tracking-analysis";
 import { validateLayerKeyingAndRoto } from "./keying";
 import { validatePackageRenderLineage } from "./package-render-lineage";
+import { validateParticleEmitterV2Extensions, validateParticleField } from "./particle-field-validate";
+import { validateParticleComputeDensity } from "./particle-compute-validation";
 // The schema registry data lives in ./validate-schemas to satisfy the module-size gate.
 import { SCHEMAS } from "./validate-schemas";
+import { validatePlatformVerificationEvidenceFields } from "./validate-platform-verification";
+import { validateSupportBundleDocument } from "./support-bundle-validation";
 export type SchemaName =
   | "motion"
   | "packageManifest"
@@ -129,6 +145,8 @@ const SUPPORTED_KEYFRAME_TARGETS = new Set([
   "effects.grayscale",
   "effects.glow.radius",
   "effects.glow.color",
+  "pathReveal.start",
+  "pathReveal.end",
   "gradient.angle",
   "environment.intensity",
   "environment.wind",
@@ -255,18 +273,6 @@ const POSITIVE_KEYFRAME_TARGETS = new Set(["playbackRate", "style.fontSize", "st
 const COLOR_KEYFRAME_TARGETS = new Set(["fill", "style.fill", "style.color", "style.stroke", "style.borderColor", "style.backgroundColor", "style.background", "style.shadow.color", "style.textShadow.color", "effects.glow.color"]);
 const TEXT_ALIGN_KEYFRAME_VALUES = ["left", "center", "right"] as const;
 const VERTICAL_ALIGN_KEYFRAME_VALUES = ["top", "middle", "center", "bottom"] as const;
-/**
- * Layer types that draw generated pixels of their own, which is what depth ordering and per-layer
- * motion blur are defined over.
- *
- * NOT the same question as `renderableLayerTypes()` in capabilities.ts (which answers "will any lane
- * draw this type"): `audio` renders nothing, and `camera`/`adjustment`/`web` are drawn but are not
- * things a camera can be parallaxed against, so the two sets legitimately differ. Written once here
- * because validate.ts previously carried this identical list in two places — `validateDepthLayers`
- * and the motion-blur branch — which is the same two-copies-of-one-truth hazard the keyframe
- * readability check was hoisted into core to remove.
- */
-const GENERATED_VISUAL_LAYER_TYPES = new Set(["shape", "text", "caption", "image", "video", "particles", "shader", "scene3d", "environment"]);
 const SUPPORTED_TRANSITIONS = new Set(["fade", "slide", "wipe"]);
 const SUPPORTED_SLIDE_DIRECTIONS = new Set(["left", "right", "up", "down"]);
 const SUPPORTED_WIPE_DIRECTIONS = new Set(["left", "right", "up", "down"]);
@@ -276,7 +282,6 @@ const MAX_MOTION_BLUR_SAMPLE_BUDGET = 64;
 const MAX_MOTION_BLUR_VIDEO_SAMPLES = 4;
 const MAX_MOTION_BLUR_VIDEO_SAMPLE_BUDGET = 16;
 const MAX_ADJUSTMENT_LAYERS = 8;
-const MAX_PARTICLE_COUNT = 1000;
 const MAX_PARTICLE_LIFETIME_MS = 60_000;
 const SUPPORTED_BLEND_MODES = new Set([
   "normal",
@@ -330,10 +335,18 @@ const SCRIPTED_VIDEO_MAX_FRAME_COUNT = 120;
 const SCRIPTED_VIDEO_MAX_TOTAL_DURATION_MS = 600_000;
 
 export async function loadSchema(name: SchemaName): Promise<LoadedSchema> {
-  return SCHEMAS[name];
+  return loadSchemaSync(name);
 }
 
+/** Synchronous form used by pure Core mutations before they return a new document value. */
+export function loadSchemaSync(name: SchemaName): LoadedSchema { return SCHEMAS[name]; }
+
 export async function validateDocument(schema: LoadedSchema, document: unknown): Promise<ValidationResult> {
+  return validateDocumentSync(schema, document);
+}
+
+export function validateDocumentSync(schema: LoadedSchema, document: unknown): ValidationResult {
+  if (schema.name === "motion") { const rootProblem = motionDocumentRootPreflight(document); if (rootProblem) return { ok: false, errors: [rootProblem] }; }
   const record = readRecord(document);
   if (!record) {
     return { ok: false, errors: [{ path: "", message: "must be an object" }] };
@@ -351,6 +364,7 @@ export async function validateDocument(schema: LoadedSchema, document: unknown):
   }
   if (schema.name === "motion") {
     validateMotionDocumentScalars(record, errors);
+    validateMotionLayoutApplicationRecords(record, errors);
     if ("layers" in record && !Array.isArray(record.layers)) {
       errors.push({ path: "/layers", message: "must be an array" });
     }
@@ -359,6 +373,7 @@ export async function validateDocument(schema: LoadedSchema, document: unknown):
     }
     if (Array.isArray(record.assets)) validateMotionAssets(record.assets, errors);
     const layerIds = Array.isArray(record.layers) ? validateMotionLayers(record.layers, errors) : new Set<string>();
+    if (Array.isArray(record.layers)) validateMotionGroups(record.layers, errors);
     validateMotionDocumentGraphs(record, errors);
     if (Array.isArray(record.layers)) validateLayerMattes(record.layers, layerIds, errors);
     if (Array.isArray(record.layers)) validateCameraLayers(record.layers, errors);
@@ -373,8 +388,14 @@ export async function validateDocument(schema: LoadedSchema, document: unknown):
       );
     }
     if (Array.isArray(record.layers)) validateDepthLayers(record.layers, errors);
-    if (Array.isArray(record.layers)) validateAdjustmentLayers(record.layers, errors);
+    if (Array.isArray(record.layers)) { validateMotionEffectModuleLayers(record.layers, errors); validateAdjustmentLayers(record.layers, errors); }
     if (Array.isArray(record.layers)) validateMotionBlurBudget(record.layers, errors);
+    if (Array.isArray(record.layers)) validateMotionTrailLayers(record.layers, errors);
+    if (Array.isArray(record.layers)) {
+      validateMotionPointCloudLayers(record.layers, readPositiveFiniteNumber(record.durationMs) ?? undefined, errors);
+    }
+    if (Array.isArray(record.layers)) validateMotionShapeGeometryLayers(record.layers, errors);
+    if (Array.isArray(record.layers)) validateMotionTextRunsLayers(record.layers, Array.isArray(record.assets) ? record.assets : [], errors);
     const durationMs = readPositiveFiniteNumber(record.durationMs) ?? undefined;
     const trackIds = validateTimelineTracks(record, layerIds, errors);
     const markerIds = collectTimelineMarkerIds(record);
@@ -387,6 +408,7 @@ export async function validateDocument(schema: LoadedSchema, document: unknown):
         validateLayerTransform(layer, `/layers/${layerIndex}`, errors);
         validateLayerTextFit(layer, `/layers/${layerIndex}`, record.safeAreas, errors);
         validateLayerCrop(layer, `/layers/${layerIndex}`, errors);
+        validateLayerPathReveal(layer, `/layers/${layerIndex}`, errors);
         validateLayerKeyframes(layer, `/layers/${layerIndex}`, errors);
         validateLayerTransitions(layer, `/layers/${layerIndex}`, errors);
         validateLayerMask(layer, `/layers/${layerIndex}`, errors);
@@ -1606,249 +1628,6 @@ function validateCutDocumentMetadata(
   }
 }
 
-function validateSupportBundleDocument(
-  record: Record<string, unknown>,
-  errors: Array<{ path: string; message: string }>
-): void {
-  validateNonEmptyStringField(record, "createdAt", "/createdAt", errors);
-  if ("package" in record) validateSupportBundlePackage(record.package, "/package", errors);
-  validateSupportBundleReceipts(record.receipts, "/receipts", errors);
-  if ("platformVerification" in record) validateSupportBundlePlatformVerification(record.platformVerification, "/platformVerification", errors);
-  validateSupportBundleDebug(record.debug, "/debug", errors);
-  validateSupportBundleRuntime(record.runtime, "/runtime", errors);
-  validateSupportBundleRedactions(record.redactions, "/redactions", errors);
-}
-
-function validateSupportBundlePackage(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    errors.push({ path, message: "must be an object" });
-    return;
-  }
-  for (const field of ["id", "name", "motionId", "sourceApp"]) {
-    validateNonEmptyStringField(record, field, `${path}/${field}`, errors);
-  }
-  if ("compatibility" in record && !readRecord(record.compatibility)) {
-    errors.push({ path: `${path}/compatibility`, message: "must be an object" });
-  }
-  if ("motion" in record) validateSupportBundleMotionSummary(record.motion, `${path}/motion`, errors);
-  for (const field of ["layerCount", "assetCount"]) {
-    if (field in record && !isNonNegativeInteger(record[field])) {
-      errors.push({ path: `${path}/${field}`, message: "must be a non-negative integer" });
-    }
-  }
-  if ("timeline" in record) validateSupportBundleTimeline(record.timeline, `${path}/timeline`, errors);
-  if ("inputHashes" in record) validateStringRecord(record.inputHashes, `${path}/inputHashes`, errors);
-}
-
-function validateSupportBundleMotionSummary(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    errors.push({ path, message: "must be an object" });
-    return;
-  }
-  for (const field of ["durationMs", "fps", "width", "height"]) {
-    if (field in record && !isPositiveFiniteNumber(record[field])) {
-      errors.push({ path: `${path}/${field}`, message: "must be a positive finite number" });
-    }
-  }
-}
-
-function validateSupportBundleTimeline(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    errors.push({ path, message: "must be an object" });
-    return;
-  }
-  for (const field of ["trackCount", "sceneCount", "markerCount"]) {
-    if (field in record && !isNonNegativeInteger(record[field])) {
-      errors.push({ path: `${path}/${field}`, message: "must be a non-negative integer" });
-    }
-  }
-}
-
-function validateSupportBundleReceipts(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    if (value !== undefined) errors.push({ path, message: "must be an object" });
-    return;
-  }
-  if ("receiptsRoot" in record && !readNonEmptyString(record.receiptsRoot)) {
-    errors.push({ path: `${path}/receiptsRoot`, message: "must be a non-empty string" });
-  }
-  if ("receiptCount" in record && !isNonNegativeInteger(record.receiptCount)) {
-    errors.push({ path: `${path}/receiptCount`, message: "must be a non-negative integer" });
-  }
-  if ("receipts" in record) validateSupportBundleReceiptSummaries(record.receipts, `${path}/receipts`, errors);
-}
-
-function validateSupportBundleReceiptSummaries(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  if (!Array.isArray(value)) {
-    errors.push({ path, message: "must be an array" });
-    return;
-  }
-  value.forEach((entry, index) => {
-    const receiptPath = `${path}/${index}`;
-    const receipt = readRecord(entry);
-    if (!receipt) {
-      errors.push({ path: receiptPath, message: "must be an object" });
-      return;
-    }
-    for (const field of ["id", "operation", "status", "packageId", "lane", "createdAt", "path"]) {
-      validateNonEmptyStringField(receipt, field, `${receiptPath}/${field}`, errors);
-    }
-    if ("outputPath" in receipt && !readNonEmptyString(receipt.outputPath)) {
-      errors.push({ path: `${receiptPath}/outputPath`, message: "must be a non-empty string" });
-    }
-    if ("qualityManifest" in receipt && !readRecord(receipt.qualityManifest)) {
-      errors.push({ path: `${receiptPath}/qualityManifest`, message: "must be an object" });
-    }
-    if ("warnings" in receipt) validateStandaloneStringArray(receipt.warnings, `${receiptPath}/warnings`, errors);
-  });
-}
-
-function validateSupportBundlePlatformVerification(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    errors.push({ path, message: "must be an object" });
-    return;
-  }
-  if ("receiptCount" in record && !isNonNegativeInteger(record.receiptCount)) {
-    errors.push({ path: `${path}/receiptCount`, message: "must be a non-negative integer" });
-  }
-  if ("receipts" in record) validateSupportBundlePlatformReceipts(record.receipts, `${path}/receipts`, errors);
-}
-
-function validateSupportBundlePlatformReceipts(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  if (!Array.isArray(value)) {
-    errors.push({ path, message: "must be an array" });
-    return;
-  }
-  value.forEach((entry, index) => {
-    const receiptPath = `${path}/${index}`;
-    const receipt = readRecord(entry);
-    if (!receipt) {
-      errors.push({ path: receiptPath, message: "must be an object" });
-      return;
-    }
-    for (const field of ["schema", "path", "status"]) {
-      validateNonEmptyStringField(receipt, field, `${receiptPath}/${field}`, errors);
-    }
-    if ("dryRun" in receipt && typeof receipt.dryRun !== "boolean") {
-      errors.push({ path: `${receiptPath}/dryRun`, message: "must be a boolean" });
-    }
-    for (const field of ["commandCount", "failedCommandCount", "requiredFailedCommandCount", "receiptCount"]) {
-      if (field in receipt && !isNonNegativeInteger(receipt[field])) {
-        errors.push({ path: `${receiptPath}/${field}`, message: "must be a non-negative integer" });
-      }
-    }
-  });
-}
-
-function validateSupportBundleDebug(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    if (value !== undefined) errors.push({ path, message: "must be an object" });
-    return;
-  }
-  if ("commandCount" in record && !isNonNegativeInteger(record.commandCount)) {
-    errors.push({ path: `${path}/commandCount`, message: "must be a non-negative integer" });
-  }
-  if ("commands" in record) validateStandaloneStringArray(record.commands, `${path}/commands`, errors);
-  if ("actionCount" in record && !isNonNegativeInteger(record.actionCount)) {
-    errors.push({ path: `${path}/actionCount`, message: "must be a non-negative integer" });
-  }
-  if ("actions" in record) validateSupportBundleActions(record.actions, `${path}/actions`, errors);
-}
-
-function validateSupportBundleActions(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  if (!Array.isArray(value)) {
-    errors.push({ path, message: "must be an array" });
-    return;
-  }
-  value.forEach((entry, index) => {
-    const actionPath = `${path}/${index}`;
-    const action = readRecord(entry);
-    if (!action) {
-      errors.push({ path: actionPath, message: "must be an object" });
-      return;
-    }
-    validateNonEmptyStringField(action, "id", `${actionPath}/id`, errors);
-    validateNonEmptyStringField(action, "permission", `${actionPath}/permission`, errors);
-    if ("mutates" in action && typeof action.mutates !== "boolean") {
-      errors.push({ path: `${actionPath}/mutates`, message: "must be a boolean" });
-    }
-    if ("calls" in action) validateStandaloneStringArray(action.calls, `${actionPath}/calls`, errors);
-    if ("surfaces" in action) validateStandaloneStringArray(action.surfaces, `${actionPath}/surfaces`, errors);
-  });
-}
-
-function validateSupportBundleRuntime(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    if (value !== undefined) errors.push({ path, message: "must be an object" });
-    return;
-  }
-  for (const field of ["node", "platform", "arch"]) {
-    validateNonEmptyStringField(record, field, `${path}/${field}`, errors);
-  }
-}
-
-function validateSupportBundleRedactions(
-  value: unknown,
-  path: string,
-  errors: Array<{ path: string; message: string }>
-): void {
-  const record = readRecord(value);
-  if (!record) {
-    if (value !== undefined) errors.push({ path, message: "must be an object" });
-    return;
-  }
-  if ("envValues" in record && record.envValues !== "omitted") {
-    errors.push({ path: `${path}/envValues`, message: "must equal omitted" });
-  }
-}
-
 function validateScriptedVideoDocument(
   record: Record<string, unknown>,
   errors: Array<{ path: string; message: string }>
@@ -2531,6 +2310,7 @@ function validatePlatformVerificationDocument(
     errors.push({ path: "/dryRun", message: "must be a boolean" });
   }
   validatePlatformHost(record.host, "/host", errors);
+  validatePlatformVerificationEvidenceFields(record, errors);
   if ("hostMatrix" in record) validatePlatformHostMatrix(record.hostMatrix, "/hostMatrix", errors);
   validateNonEmptyStringField(record, "repoRoot", "/repoRoot", errors);
   validateNonEmptyStringField(record, "startedAt", "/startedAt", errors);
@@ -2550,7 +2330,7 @@ function validatePlatformHost(
     if (value !== undefined) errors.push({ path, message: "must be an object" });
     return;
   }
-  validateRequiredFields(record, path, ["id"], errors);
+  validateRequiredFields(record, path, ["id", "hostname", "platform", "arch", "release", "node"], errors);
   validateNonEmptyStringField(record, "id", `${path}/id`, errors);
   for (const field of ["hostname", "platform", "arch", "release", "node"]) {
     if (field in record && !readNonEmptyString(record[field])) {
@@ -2896,6 +2676,7 @@ function validateMotionDocumentScalars(
   if ("provenance" in record && !readRecord(record.provenance)) {
     errors.push({ path: "/provenance", message: "must be an object" });
   }
+  validateMotionDocumentAudioMaster(record.audio, errors, record.durationMs);
 }
 
 function validateMotionLayers(
@@ -3581,6 +3362,9 @@ function validateAudioLayerControls(
   if ("fadeOutMs" in record && !isNonNegativeFiniteNumber(record.fadeOutMs)) {
     errors.push({ path: `${path}/fadeOutMs`, message: "must be a non-negative finite number" });
   }
+  if ("fadeCurve" in record && record.fadeCurve !== "linear" && record.fadeCurve !== "equal-power") {
+    errors.push({ path: `${path}/fadeCurve`, message: 'must be "linear" or "equal-power"' });
+  }
   if ("normalizeLoudness" in record && typeof record.normalizeLoudness !== "boolean") {
     errors.push({ path: `${path}/normalizeLoudness`, message: "must be a boolean" });
   }
@@ -4027,7 +3811,7 @@ function validateDepthLayers(
   errors: Array<{ path: string; message: string }>
 ): void {
   const hasCamera = layers.some((value) => readRecord(value)?.type === "camera");
-  const visualTypes = GENERATED_VISUAL_LAYER_TYPES;
+  const visualTypes = GENERATED_VISUAL_LAYER_TYPE_SET;
   const hasDepth = layers.some((value) => "depth" in (readRecord(value) ?? {}));
   layers.forEach((value, index) => {
     const layer = readRecord(value);
@@ -4130,6 +3914,7 @@ function validateShaderLayers(
         }
       }
     }
+    validateGpuMaterialExtension(shader,path,errors);
     const unsupportedFields = ["text", "shape", "fill", "source", "src", "assetId", "assetRef", "label", "gradient", "emitter"] as const;
     for (const field of unsupportedFields) {
       if (field in layer) errors.push({ path: `${path}/${field}`, message: "is not supported on shader layers" });
@@ -4542,7 +4327,7 @@ function validateLayerEffects(
       if (shutterAngle === null || shutterAngle <= 0 || shutterAngle > 360) {
         errors.push({ path: `${path}/effects/motionBlur/shutterAngle`, message: "must be a finite number greater than 0 and at most 360" });
       }
-      if (!GENERATED_VISUAL_LAYER_TYPES.has(String(record.type))) {
+      if (!GENERATED_VISUAL_LAYER_TYPE_SET.has(String(record.type))) {
         errors.push({ path: `${path}/effects/motionBlur`, message: "is supported only on generated visual layers" });
       }
     }
@@ -4594,10 +4379,11 @@ function validateAdjustmentLayers(
   const adjustments = layers
     .map((value, index) => ({ layer: readRecord(value), index }))
     .filter((entry) => entry.layer?.type === "adjustment");
-  const firstAdjustmentIndex = layers.findIndex((value) => readRecord(value)?.type === "adjustment");
+  const owned = new Set(layers.map(readRecord).filter((layer) => layer?.type === "group").flatMap((layer) => Array.isArray(layer?.childLayerIds) ? layer.childLayerIds : []).filter((id): id is string => typeof id === "string"));
+  const firstAdjustmentIndex = layers.findIndex((value) => { const layer = readRecord(value); return layer?.type === "adjustment" && !owned.has(String(layer.id)); });
   if (firstAdjustmentIndex >= 0) {
     layers.slice(firstAdjustmentIndex + 1).forEach((value, offset) => {
-      if (readRecord(value)?.type !== "adjustment") {
+      const layer = readRecord(value); if (!owned.has(String(layer?.id)) && layer?.type !== "adjustment") {
         errors.push({
           path: `/layers/${firstAdjustmentIndex + 1 + offset}/type`,
           message: "non-adjustment layers must precede adjustment layers"
@@ -4620,6 +4406,7 @@ function validateAdjustmentLayers(
     for (const field of unsupportedFields) {
       if (field in layer) errors.push({ path: `${path}/${field}`, message: "is not supported on adjustment layers" });
     }
+    if ("effectModule" in layer) continue;
     const effects = readRecord(layer.effects);
     if (!effects || (!("vignette" in effects) && !("filmGrain" in effects))) {
       errors.push({ path: `${path}/effects`, message: "adjustment layers require vignette or filmGrain" });
@@ -4736,9 +4523,14 @@ function validateLayerGradient(
       errors.push({ path: `${stopPath}/color`, message: "must be a supported color string" });
     }
   });
+  if ("colorKeyframes" in gradient) {
+    const problem = validateMotionGradientColorKeyframes(gradient);
+    if (problem) errors.push({ path: `${path}/gradient/colorKeyframes`, message: problem });
+  }
 }
 
-function validateParticleEmitter(
+/** Shared synchronous particle-emitter semantic authority for bounded authoring mutations. */
+export function validateParticleEmitter(
   layer: unknown,
   path: string,
   errors: Array<{ path: string; message: string }>
@@ -4757,9 +4549,7 @@ function validateParticleEmitter(
   if (!isNonNegativeInteger(emitter.seed) || (typeof emitter.seed === "number" && emitter.seed > 0xffff_ffff)) {
     errors.push({ path: `${path}/emitter/seed`, message: "must be an integer between 0 and 4294967295" });
   }
-  if (!isPositiveInteger(emitter.count) || (typeof emitter.count === "number" && emitter.count > MAX_PARTICLE_COUNT)) {
-    errors.push({ path: `${path}/emitter/count`, message: `must be an integer between 1 and ${MAX_PARTICLE_COUNT}` });
-  }
+  validateParticleComputeDensity(emitter, path, errors);
   if (!isPositiveFiniteNumber(emitter.lifetimeMs) || (typeof emitter.lifetimeMs === "number" && emitter.lifetimeMs > MAX_PARTICLE_LIFETIME_MS)) {
     errors.push({ path: `${path}/emitter/lifetimeMs`, message: `must be a finite number between 0 and ${MAX_PARTICLE_LIFETIME_MS}` });
   }
@@ -4801,7 +4591,10 @@ function validateParticleEmitter(
   if ("fadeOut" in emitter && typeof emitter.fadeOut !== "boolean") {
     errors.push({ path: `${path}/emitter/fadeOut`, message: "must be a boolean" });
   }
+  if ("field" in emitter) validateParticleField(emitter.field, `${path}/emitter/field`, errors);
+  validateParticleEmitterV2Extensions(emitter, `${path}/emitter`, errors);
 }
+
 
 function validateLayerBlendMode(
   layer: unknown,
@@ -4893,6 +4686,14 @@ function validateLayerKeyframes(
       errors.push({ path: targetPath, message: "unsupported keyframe target" });
       continue;
     }
+    if (isPathRevealKeyframeTarget(target)) {
+      try {
+        assertMotionPathRevealLayer(record as never, `Motion layer ${String(record.id ?? path)}`);
+      } catch (error) {
+        errors.push({ path: targetPath, message: validationErrorMessage(error) });
+        continue;
+      }
+    }
     const environmentRange = ENVIRONMENT_KEYFRAME_RANGES[target];
     const declaredEnvironment = readRecord(record.environment);
     if (environmentRange && (record.type !== "environment" || !declaredEnvironment)) {
@@ -4950,6 +4751,7 @@ function validateLayerKeyframes(
     entries.forEach((entry, entryIndex) => {
       validateKeyframe(entry, `${targetPath}/${entryIndex}`, errors, {
         nonNegativeValue: NON_NEGATIVE_KEYFRAME_TARGETS.has(target),
+        unitIntervalValue: isPathRevealKeyframeTarget(target),
         panValue: PAN_KEYFRAME_TARGETS.has(target),
         blendModeValue: BLEND_MODE_KEYFRAME_TARGETS.has(target),
         positiveValue: POSITIVE_KEYFRAME_TARGETS.has(target),
@@ -4987,7 +4789,7 @@ function validateKeyframe(
   entry: unknown,
   path: string,
   errors: Array<{ path: string; message: string }>,
-  options: { nonNegativeValue?: boolean; panValue?: boolean; blendModeValue?: boolean; positiveValue?: boolean; colorValue?: boolean; allowedStringValues?: readonly string[] } = {}
+  options: { nonNegativeValue?: boolean; unitIntervalValue?: boolean; panValue?: boolean; blendModeValue?: boolean; positiveValue?: boolean; colorValue?: boolean; allowedStringValues?: readonly string[] } = {}
 ): void {
   const record = readRecord(entry);
   if (!record) {
@@ -5026,6 +4828,11 @@ function validateKeyframe(
     if (!isNonNegativeFiniteNumber(record.value)) {
       errors.push({ path: `${path}/value`, message: "must be a non-negative finite number" });
     }
+  } else if (options.unitIntervalValue) {
+    const value = readFiniteNumber(record.value);
+    if (value === null || value < 0 || value > 1) {
+      errors.push({ path: `${path}/value`, message: "must be a finite number between 0 and 1" });
+    }
   } else if (!isFiniteNumber(record.value)) {
     const alias = motionKeyframeValueAlias(entry);
     errors.push({ path: `${path}/value`, message: alias ? `must be a finite number; this keyframe writes its value as "${alias}"` : "must be a finite number" });
@@ -5033,6 +4840,20 @@ function validateKeyframe(
   if ("easing" in record) {
     const easingError = readEasingValidationError(record.easing);
     if (easingError) errors.push({ path: `${path}/easing`, message: easingError });
+  }
+}
+
+function validateLayerPathReveal(
+  layer: unknown,
+  path: string,
+  errors: Array<{ path: string; message: string }>
+): void {
+  const record = readRecord(layer);
+  if (!record || !("pathReveal" in record)) return;
+  try {
+    assertMotionPathRevealLayer(record as never, `Motion layer ${String(record.id ?? path)}`);
+  } catch (error) {
+    errors.push({ path: `${path}/pathReveal`, message: validationErrorMessage(error) });
   }
 }
 

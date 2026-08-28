@@ -1,0 +1,6 @@
+{
+  "relativePath": "packages/core/src/new-unreviewed-domain.ts",
+  "lines": 351,
+  "expectedExit": 1,
+  "expectedOutput": "packages/core/src/new-unreviewed-domain.ts: 351 lines exceeds 350"
+}

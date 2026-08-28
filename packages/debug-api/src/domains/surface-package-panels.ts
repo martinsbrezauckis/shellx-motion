@@ -33,7 +33,7 @@ interface AudioPanel {
   counts: {
     layers: number; resolvedInputs: number; ducking: number; volumeAutomationKeyframes: number;
     panAutomationKeyframes: number; playbackRateControls: number; audioTracks: number;
-    mutedTracks: number; soloTracks: number;
+    mutedTracks: number; soloTracks: number; documentMaster: number; documentMasterLoudnessTarget: number;
   };
   warnings: string[];
 }
@@ -133,6 +133,8 @@ async function audio(args: unknown, services: SurfacePackagePanelServices): Prom
       panAutomationKeyframeCount: panel.counts.panAutomationKeyframes,
       playbackRateControlCount: panel.counts.playbackRateControls, audioTrackCount: panel.counts.audioTracks,
       mutedTrackCount: panel.counts.mutedTracks, soloTrackCount: panel.counts.soloTracks,
+      documentMasterCount: panel.counts.documentMaster,
+      documentMasterLoudnessTargetCount: panel.counts.documentMasterLoudnessTarget,
       warningCount: panel.warnings.length, ...(base.preset ? { preset: base.preset } : {})
     },
     result: { ok: true, ...panel }, warnings: panel.warnings

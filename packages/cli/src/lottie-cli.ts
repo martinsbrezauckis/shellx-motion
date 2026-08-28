@@ -9,6 +9,7 @@
  */
 import { dirname, resolve } from "node:path";
 import type { MotionDebugCommand } from "@shellx-motion/debug-api";
+import { resolveCliInputPath, resolveCliOutputPath } from "./cli-path-resolution";
 
 export const LOTTIE_DEBUG_COMMANDS = {
   "lottie-import": "motion.lottie.import",
@@ -29,8 +30,8 @@ export function lottieDebugArgs(
   const animationId = option(argv, "--animation");
   const themeId = option(argv, "--theme");
   return {
-    ...(sourcePath ? { sourcePath: resolve(sourcePath) } : {}),
-    ...(outDir ? { outDir: resolve(outDir) } : {}),
+    ...(sourcePath ? { sourcePath: resolveCliInputPath(sourcePath) } : {}),
+    ...(outDir ? { outDir: resolveCliOutputPath(outDir) } : {}),
     // Only the container format accepts a selection; passing them to plain Lottie would be
     // rejected by its argument contract, which is the behaviour we want.
     ...(command === "motion.dotlottie.import" && animationId ? { animationId } : {}),

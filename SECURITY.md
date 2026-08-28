@@ -103,8 +103,14 @@ itself a reportable finding:
   connection, redirects are revalidated, and HTTPS downgrade is refused.
 - FFmpeg and FFprobe invoked with `shell:false` through argument arrays, with validated input and
   output roots.
-- Render and agent subprocesses contained in process groups (Unix) or Job Objects (Windows), so a
-  deadline or cancellation terminates the whole tree.
+- PID-visible render and agent subprocesses use process groups on Unix. On Windows, native Job
+  Object containment is proved only when the receipt reports `mode: windows-job-object`,
+  `status: enforced`, and `killTree: true`; setup failures may instead report the weaker
+  `windows-taskkill-fallback`, which a security-sensitive host can reject with
+  `SHELLX_MOTION_REQUIRE_NATIVE_WINDOWS_JOB_OBJECT`. Playwright does not expose
+  Chromium's worker PID to Motion: the browser lane therefore reports
+  `cooperative-browser-session`, `status: fallback`, and `killTree: false`, and cancellation closes
+  the browser session cooperatively. A security-sensitive host may reject either fallback evidence.
 - Receipts that state what was actually verified. Where Motion cannot prove an enforcement — kernel
   sandboxing, for instance — the receipt records `requested` rather than claiming a guarantee.
 

@@ -1,20 +1,44 @@
-import { existsSync, readFileSync } from "node:fs";
 import { isDirectEntry } from "./entry-point.js";
 import { SIGINT_EXIT_CODE, withInterruptSignal } from "./interrupt";
 import { throwIfCancelled, withRenderCancellation } from "./render-cancelled";
+import { exportPresetsCommand, isHelpCommand, isVersionCommand, versionCommand } from "./cli-command-metadata";
+import { connectorDiscoveryCommand, runtimeProbeCommand } from "./connector-discovery-cli";
+import { parseBooleanOption, parseStrictBooleanOption } from "./cli-boolean-options";
+import { receiptRootIsInsidePackage } from "./cli-receipt-root-safety";
 import { nativeDeliveryRefusal, unsupportedFrameLaneMessage, unsupportedPreviewLaneMessage, unsupportedRenderLaneMessage } from "./lane-errors";
 import { resolveCallerId } from "./caller-identity";
 import { doctorCommand } from "./doctor-command";
 import { jobCommand } from "./job-command";
 import { retiredSimulationRefusal } from "./retired-options";
-import { batchResumeSourceReceiptPath, readBatchResumeJobs, readBatchResumeMatch } from "./batch-resume";
+import { batchResumeSourceReceiptPath, readBatchResumeMatch } from "./batch-resume";
+import { admitCliBatchOutput } from "./batch-output-admission";
+import { batchTemplateQualityManifestRef } from "./batch-package-sidecar";
+import {
+  batchRenderErrorEnvelope,
+  readRenderBatchChildDelivery,
+  readRenderCommitUncertainDelivery,
+  renderBatchBookkeepingDeliveryFields,
+  renderBatchChildDeliveryJobFields,
+  renderBatchFailureReceipt,
+  renderCommitUncertainJobFields,
+  renderCommitUncertainReceiptJobFields,
+  renderCommitUncertainResponseFields,
+  renderCommitUncertainWarnings
+} from "./render-batch-delivery-uncertainty";
+import { gpuBatchFrameTransport, gpuBatchPreflightRefusal, readBatchFrameLane, type BatchFrameLane } from "./gpu-batch-policy";
+import { activeScriptCliRefusal } from "./agent-script-cli-refusal";
+import { batchQualityInputEvidence, prepareBatchQualityManifestSnapshot, publishBatchQualityManifestSnapshot, type BatchQualityInputEvidence, type PublishedBatchQualityManifestSnapshot } from "./batch-quality-manifest";
+import { enrichRenderReceiptWithQualityManifest, remapRetainedQualityInputPaths, retainQualityManifestForEvaluation } from "./quality-manifest-retention";
 import { unhandledFailure } from "./unhandled-failure";
 import { packageValidationResult } from "./package-refusals";
 import { withHostJob } from "./render-host-job";
-import { copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { findAction, guideAction, planAction, type MotionPermissionTier } from "@shellx-motion/actions";
+import { renderFpsArgumentRefusal } from "./render-cli-options";
+import { templateToCutArgumentRefusal } from "./template-to-cut-cli-options";
+import { p2bConnectorArgumentRefusal, redactP2bConnectorInputError } from "./p2b-connector-cli-options";
+import { NamedConnectorRegistryError, runNamedP2ConnectorThroughRegistry } from "./named-p2-connector-registry";
+import { copyFile, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { findActionMatch, guideAction, planAction, type MotionPermissionTier } from "@shellx-motion/actions";
 import { planCutImport } from "@shellx-motion/adapters-cut";
 import { importHtmlSnippetToMotionPackage, writeHtmlSnippetExport } from "@shellx-motion/adapters-html";
 import { exportMotionPackageToOtio, importOtioTimelineToMotionPackage } from "@shellx-motion/adapters-otio";
@@ -22,6 +46,7 @@ import { buildAgentRuntime, type AgentRuntime } from "@shellx-motion/agent-runti
 import {
   runCanvasBridgeFrameSelectionExport,
   runCanvasToCutConnector,
+  runCutGenerateToCutConnector,
   runCanvasMp4Export,
   runScriptToCutConnector,
   runSourceToCutConnector,
@@ -32,6 +57,7 @@ import {
 } from "@shellx-motion/connectors";
 import {
   createMotionPackage,
+  createPackageValidationReceipt,
   MotionOutputGuardError,
   createPreviewReceipt,
   audioQualityMeasurementRequired,
@@ -40,6 +66,8 @@ import {
   comparePngFiles,
   expandMotionPackageRows,
   filterMotionDataRows,
+  canonicalJsonSha256,
+  acquireDerivedOutputPublication,
   hashBuffer,
   hashFile,
   hashPackageFile,
@@ -52,75 +80,121 @@ import {
   escalateReceiptStatusForWarnings,
   jobOutcomeForReceiptStatus,
   loadMotionPackage,
+  loadStableRenderPackage,
+  bindFinalRenderReceiptLineage,
   loadPackageDataRows,
   negotiateIntegrationCapabilities,
   parseIntegrationCapabilities,
   buildBrowserRecordingManifest,
   browserRecordingSampleTimes,
+  copyVerifiedPackageAssetSnapshots,
   replaceTemplateMedia,
   resolvePackageAsset,
+  validatePackageAssetReferences,
   summarizeFrameQuality,
   applyTemplateValues,
+  applyReceiptActor,
+  activeScriptLayers,
   listTemplateControls,
   timelineLayerMutedTrackId,
   timelineLayerSoloedTrackId,
-  upsertBrowserWorkflowCatalog,
+  materializedFrameSequenceStaticRefusal,
+  preflightMaterializedFrameSequence,
   extractMotionPackageArchive,
   writeMotionPackageArchive,
   writeReviewBundle,
   type BrowserWorkflowDriftSummary,
   type AudioQualityThresholds,
-  type BrowserRecordingManifest,
-  type BrowserRecordingManifestFrame,
   type ExpandedMotionJob,
   type MotionDataRow,
+  type MaterializedFrameSequencePreflightOptions,
   type NetworkAddressResolver,
   type OperationReceipt,
   type ReceiptArtifact,
   type SourceImportFetcher
 } from "@shellx-motion/core";
-import { annotatePlanWithArgumentContracts, dispatchDebugCommand, recordReceiptFfprobeProvenance, type BrowserFrameRenderer, type MotionDebugCommand, type ReceiptActor } from "@shellx-motion/debug-api";
-import { MODULAR_DEBUG_COMMANDS, modularDebugArgs, modularDebugAuthoringRoots } from "./modular-debug-cli";
+import { annotatePlanWithArgumentContracts, dispatchDebugCommand, hasStableReceiptStoreCapability, rawPromptRetentionAdmissionError, recordReceiptFfprobeProvenance, reserveStableReceiptRoot, type BrowserFrameRenderer, type MotionDebugCommand, type ReceiptActor } from "@shellx-motion/debug-api";
+import { assertPackageEditSourceTree, commitPackageEdit } from "@shellx-motion/debug-api/internal/package-edit-transaction";
+import { MODULAR_DEBUG_COMMANDS, hydrateModularDebugArgs, invalidModularDebugArgs, modularDebugArgs } from "./modular-debug-cli";
+import { promptRetentionFromCli } from "./prompt-retention-cli";
+import { revisionTransactionDebugArgs, revisionTransactionPlanDebugArgs } from "./revision-transaction-cli";
+import { cliAuthoringRoots } from "./debug-authoring-roots";
 import { debugCommandName } from "./debug-subcommands";
-import { debugScratchRoot } from "./debug-context-cli";
-// The static `help` command catalog lives in ./help-command to satisfy the module-size gate.
+import { debugRenderCachePlanArgs } from "./debug-render-cache-plan-args"; import { debugPackageAssetImportArgs } from "./debug-package-asset-import-cli";
+import { timelineTransitionDebugArgs } from "./timeline-transition-cli";
+import { cliDebugDispatchContext, debugRenderRoots, debugScratchRoot, debugTrustedInputRoots, sourceWorkspaceOperationPaths, withCliSourceWorkspaceAnchor } from "./debug-context-cli"; import { createCliTimelineHostReceiptStore } from "./shape-geometry-keyframes-host-receipt";
 import { helpCommand } from "./help-command";
+import { renderGpuPointsPreviewCli } from "./gpu-preview-cli";
+import { previewCommandAdmissionRefusal } from "./gpu-preview-scene3d-refusal";
+import { mediaTypeForPath, publishJsonSidecar } from "./sidecar-publication";
+import { PairedOutputReceiptCommitUncertainError, PairedOutputReceiptPublication } from "./paired-output-receipt-publication";
+import {
+  corePublicationUncertaintyFields,
+  pairedPublicationUncertaintyError,
+  pairedPublicationUncertaintyFields
+} from "./cli-publication-uncertainty";
+import { batchRenderCounts, renderBatchBookkeepingFailure } from "./render-batch-bookkeeping";
+import { batchJobIdempotencyKey, batchPresetSummary, batchWorkflowIdempotencyHash, planBatchRenderPresets } from "./render-batch-plan";
+import { DirectoryBundleCommitUncertainError, publishGovernedDirectoryBundle } from "./governed-directory-delivery";
+import { captureBrowserCommand as captureBrowserCommandImpl } from "./browser-capture-command";
+import { resolveCliInputPath as resolveInputPath, resolveCliOutputPath as resolveOutputPath } from "./cli-path-resolution";
 // Browser-capture workflow decoding lives in ./browser-workflow-decode to satisfy the module-size gate.
 import { readBrowserCaptureWorkflow } from "./browser-workflow-decode";
 // Shared non-destructive output policy: `--out` directories (the output-directory ownership invariant), the encode lane's `--out` file
 // (the file-output ownership invariant) and the encoder's frame scratch (the frame-output ownership invariant).
-import { framesDirRefusal, outputFileRefusal, prepareOutputDir } from "./output-dir-guard";
+import { materializedDeliveryRefusal, outputFileRefusal, prepareOutputDir } from "./output-dir-guard";
 import { FrameLaneWarnings } from "./frame-lane-warnings";
 import {
-  browserWorkflowDriftWarning,
+  browserWorkflowEvidenceFromFrame,
+  browserWorkflowResultFields,
+  enrichRenderReceiptWithBrowserWorkflow,
+  renderBrowserFrameBatch
+} from "./render-browser-frame-batch";
+import { renderMaterializedFinalVideo, withoutTransientFrameSourcePaths } from "./render-final-video-materialized";
+import {
+  abortPreparedRenderCatalog,
+  commitPreparedRenderCatalog,
   dedupeReceiptArtifacts,
-  finalizeRenderReceipt,
+  prepareRenderReceipt,
   renderReceiptPathForOutput,
   writeRenderReceiptFile,
   type BrowserWorkflowRenderEvidence,
   type RenderReceiptFinalizeResult
 } from "./render-receipt-file";
 import {
+  availableRendererArtifacts,
+  bindDirectoryRendererArtifacts,
+  closedDirectoryBundleInventory,
+  prepareImageSequencePublication,
+  publishFailedImageSequenceBundle,
+  readMinUniqueFrameHashes,
+  rebindDirectoryReceiptPaths,
+  relativeBundleFilePath,
+  remapFfmpegOutputPath,
+  remapPrivatePublicationResultPaths,
+  remapReceiptOutputPath,
+  renderQualityManifestFailure,
+  workflowCatalogFields
+} from "./render-delivery-publication-support";
+import {
+  redactExpiredRawPrompt,
   runMotionPrompt,
   type MotionPromptRuntime,
-  type PromptRawRetentionPurpose,
-  type PromptRetentionInput
+  type PromptRunReceipt
 } from "@shellx-motion/prompt";
 import {
-  BrowserWorkflowReplayError,
+  browserTypographyAttestationRefusal,
   createMotionBrowserRenderSession,
-  type MotionBrowserRenderSession,
   renderMotionBrowserFrame,
   type BrowserCaptureWorkflow
 } from "@shellx-motion/renderer-browser";
+import { withRendererPrivateOutputPublication } from "@shellx-motion/renderer-browser/internal/private-output-publication";
 import {
   audioWarningsForExportPreset,
   checkFfmpeg,
-  buildEncodeImageSequenceCommand,
   createImageSequenceReceipt,
   createGovernedFfmpegRunner,
   createStillFrameReceipt,
-  encodeImageSequenceWithPolicy,
   ffmpegPresetOutputPathError,
   frameExtractionArgs,
   frameExtractionInputArgs,
@@ -129,24 +203,44 @@ import {
   readImageSequenceExportPreset,
   readMotionExportPreset,
   readStillFrameExportPreset,
-  listMotionExportPresets,
   measureAudioLevels,
   probeMedia,
   resolveExportPreset,
   resolveMotionExportPreset,
   resolveFfmpegExecutable,
+  planFinalVideoFrameTransport,
+  planStreamingFinalCommand,
+  preliminaryGpuAudio,
+  renderSegmentedFinal,
+  renderStreamingFinal,
   stillFrameOutputPathError,
   type MotionExportPreset,
   type FfmpegExportPreset,
   type FfmpegCommand,
   type FfmpegProcessResult,
-  type FfmpegRunner
+  type FfmpegRunner,
+  type StreamingFinalToolPolicy
 } from "@shellx-motion/renderer-ffmpeg";
-import { createNativeRenderSession, INTERMEDIATE_FRAME_PNG_COMPRESSION_LEVEL, renderNativePreviewFrame } from "@shellx-motion/renderer-native";
+import { withSegmentedFinalCliPublication } from "@shellx-motion/renderer-ffmpeg/internal/segmented-final-cli-publication";
+import { createNativeRenderSession, renderNativePreviewFrame } from "@shellx-motion/renderer-native";
+import { withNativePrivateOutputPublication } from "@shellx-motion/renderer-native/internal/private-output-publication";
 export type CliResult = Record<string, unknown> & { ok: boolean; command?: string };
 export interface RunCliOptions {
   ffmpegRunner?: FfmpegRunner;
+  /**
+   * Optional host override for prompt commands. The source CLI deliberately supplies its real local
+   * runtime when this is absent; raw Debug API/MCP hosts must inject one themselves and fail closed.
+   */
   promptRuntime?: MotionPromptRuntime;
+  /**
+   * Host-only raw-retention admission seam. The shell CLI always uses the descriptor-relative
+   * receipt-store capability; callers cannot select this with a command-line argument.
+   */
+  hasStableReceiptPurgeCapability?: () => boolean;
+  /** Host-only prompt clock seam for direct-CLI retention tests; the shell CLI uses wall time. */
+  promptNow?: () => string;
+  /** Test-only host hook before each direct raw-prompt receipt write; never CLI input. */
+  promptReceiptWriteTestHook?: (receipt: OperationReceipt) => Promise<void> | void;
   /**
    * Agent runtime for `agent health` / `debug agent-health`.
    *
@@ -176,6 +270,21 @@ export interface RunCliOptions {
    * running one command is the most specific statement of intent.
    */
   jobId?: string;
+  /** Host-owned resource evidence/override; CLI arguments and packages cannot set this. */
+  materializedFrameSequencePreflight?: MaterializedFrameSequencePreflightOptions;
+  /**
+   * Programmatic test/host seam for the streamed FFmpeg stdin process. There is deliberately no
+   * command-line flag: the shell CLI always uses the contained production process launcher.
+   */
+  streamingProcessFactory?: StreamingFinalToolPolicy["processFactory"];
+  retainedBatchQualityManifest?: { published: PublishedBatchQualityManifestSnapshot; evidence: BatchQualityInputEvidence };
+  /** Internal integration-test seams; the shell surface never admits fault injection. */
+  batchTestHooks?: {
+    beforePostRenderAssert?: () => Promise<void> | void;
+    beforeRowReceiptWrite?: () => Promise<void> | void;
+    beforeNextRow?: () => Promise<void> | void;
+    beforeAggregateReceiptWrite?: () => Promise<void> | void;
+  };
 }
 export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Promise<CliResult> {
   const argv = normalizeArgv(rawArgv);
@@ -192,6 +301,10 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
 
   if (command === "integration-capabilities") {
     return integrationCapabilitiesCommand(rest);
+  }
+
+  if (command === "runtime-probe") {
+    return runtimeProbeCommand(rest);
   }
 
   if (command === "validate") {
@@ -219,15 +332,14 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
     return promptCommand(rest, options);
   }
   if (command === "preview") {
-    return previewCommand(rest);
+    return previewCommand(rest, options);
   }
   if (command === "capture-browser") {
-    return captureBrowserCommand(rest, options);
+    return captureBrowserCommandImpl(rest, options);
   }
   if (command === "render") {
-    // One invocation, one observable job — see render-host-job.ts for why this wraps the whole
-    // command rather than tagging one of the governed operations underneath it.
-    return withHostJob({
+    // One invocation is one observable job; internal governed operations do not become host jobs.
+    return renderFpsArgumentRefusal(rest) ?? await (withHostJob({
       ...(optionValue(rest, "--job-id") ? { jobId: optionValue(rest, "--job-id")! } : {}),
       ...(resolveCallerId(rest, options) ? { callerId: resolveCallerId(rest, options)! } : {}),
       lane: optionValue(rest, "--lane") ?? "ffmpeg",
@@ -237,11 +349,11 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
       lane: optionValue(rest, "--lane") ?? "ffmpeg",
       frameLane: optionValue(rest, "--frame-lane"),
       outputPath: optionValue(rest, "--out")
-    }) as Promise<CliResult>) as Promise<CliResult>;
+    }) as Promise<CliResult>) as Promise<CliResult>);
   }
   if (command === "doctor") {
     // Answers "why does nothing work" before a render is ever attempted.
-    return doctorCommand(rest) as Promise<CliResult>;
+    return doctorCommand(rest, { ...(options.ffmpegRunner ? { ffmpegRunner: options.ffmpegRunner } : {}), ...(options.scratchRoot ? { scratchRoot: options.scratchRoot } : {}), ...(options.signal ? { signal: options.signal } : {}) }) as Promise<CliResult>;
   }
   if (command === "job") {
     // Answers from the per-user job stores, so a host can ask about a render started by a
@@ -258,7 +370,12 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
     return htmlSnippetExportCommand(rest);
   }
   if (command === "html-snippet-import") {
-    return htmlSnippetImportCommand(rest);
+    const htmlPath = rest[0];
+    const packageDir = optionValue(rest, "--out") ?? optionValue(rest, "--package") ?? optionValue(rest, "--package-dir");
+    return await withCliSourceWorkspaceAnchor(
+      htmlPath && packageDir ? [resolveInputPath(htmlPath), resolveOutputPath(packageDir)] : undefined,
+      async () => await htmlSnippetImportCommand(rest),
+    );
   }
   if (command === "otio-export") {
     return otioExportCommand(rest);
@@ -287,10 +404,13 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
     return planImportCommand(rest);
   }
   if (command === "connector") {
-    // The path ShellX Cut actually drives. `render`/`render-batch` were wrapped first and the
-    // connectors were not, so --job-id and --caller-id were accepted here and bound to nothing:
-    // a 50-second `connector template-to-cut` polled 60 times reported jobCount 0 every time.
-    // One connector invocation is one observable job; its browser and ffmpeg work stays internal.
+    const discovery = connectorDiscoveryCommand(rest);
+    if (discovery) return discovery;
+    // One connector invocation is one observable job; P2A/P2B invalid options are refused first so rejected flags never become polling artifacts. Browser/FFmpeg work stays internal.
+    const p2bArgumentRefusal = p2bConnectorArgumentRefusal(rest);
+    if (p2bArgumentRefusal) return p2bArgumentRefusal;
+    const templateArgumentRefusal = templateToCutArgumentRefusal(rest);
+    if (templateArgumentRefusal) return templateArgumentRefusal;
     const connectorOperation = CONNECTOR_HOST_JOB_OPERATIONS[rest[0] ?? ""];
     if (!connectorOperation) return connectorCommand(rest, options);
     return withHostJob({
@@ -307,51 +427,6 @@ export async function runCli(rawArgv: string[], options: RunCliOptions = {}): Pr
       code: "unknown_command",
       message: `Unknown command: ${command ?? "(missing)"}.`
     }
-  };
-}
-
-function isHelpCommand(command: string | undefined): boolean {
-  return command === undefined || command === "help" || command === "--help" || command === "-h";
-}
-
-/**
- * Whether the token requests the CLI version banner. Kept as its own predicate (not folded into
- * isHelpCommand) so `--version`/`-v`/`version` return a machine-readable version payload rather than
- * the full help listing. This is the verb the Design Studio host probes with (probeMotionCli invokes
- * the resolved launcher with `--version`); without it a valid, render-capable Motion root would be
- * reported as "not found" in the Canvas Settings Motion status pill.
- */
-function isVersionCommand(command: string | undefined): boolean {
-  return command === "--version" || command === "-v" || command === "version";
-}
-
-/**
- * Resolve this CLI package's own version from its package.json, next to the compiled/executed entry
- * (src/main.ts → ../package.json). Read lazily + defensively: a read/parse failure degrades to
- * "0.0.0" rather than throwing, so `--version` never crashes the probe path. No side effects.
- */
-function cliVersion(): string {
-  try {
-    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
-    const raw = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
-    return typeof raw.version === "string" && raw.version.trim() ? raw.version.trim() : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
-
-/**
- * `--version` / `-v` / `version` — emit a stable, machine-readable version banner. The `version`
- * field carries a semver-ish token (extractable by the Canvas probe's version regex) so the Canvas
- * Settings pill can render "found · <version>". ok:true so the probe (and main()'s exit code) treat
- * a version query as success, never a spurious failure.
- */
-function versionCommand(): CliResult {
-  return {
-    ok: true,
-    command: "version",
-    name: "@shellx-motion/cli",
-    version: cliVersion()
   };
 }
 
@@ -416,6 +491,8 @@ async function packageCreateCommand(argv: string[]): Promise<CliResult> {
     });
     return { ok: true, command: "package-create", ...created };
   } catch (error) {
+    const uncertain = publicationCommitUncertainCliFailure("package-create", error);
+    if (uncertain) return uncertain;
     return {
       ok: false,
       command: "package-create",
@@ -429,12 +506,77 @@ async function packageCreateCommand(argv: string[]): Promise<CliResult> {
 }
 
 async function validateCommand(argv: string[]): Promise<CliResult> {
-  const root = argv[0];
-  if (!root) return missingArgument("validate", "package root");
+  const root = argv[0]; if (!root) return missingArgument("validate", "package root");
+  const packageRoot = resolveInputPath(root);
+  const receiptsRoot = optionValue(argv, "--receipts-root");
+  try {
+    const governedReceiptsRoot = receiptsRoot ? resolveOutputPath(receiptsRoot) : undefined;
+    if (governedReceiptsRoot && await receiptRootIsInsidePackage(packageRoot, governedReceiptsRoot)) {
+      return {
+        ok: false,
+        command: "validate",
+        error: {
+          code: "invalid_args",
+          message: "validate --receipts-root must be outside the package being inspected.",
+          suggestedAction: "Choose a host-governed receipts directory outside the package; validate never creates receipts inside its source package."
+        }
+      };
+    }
+    const { pkg, result } = await withCliSourceWorkspaceAnchor([packageRoot], async () => {
+      const pkg = await loadMotionPackage(packageRoot);
+      return { pkg, result: await packageValidationResult(pkg, "validate") };
+    });
+    return await persistCliValidationReceipt(result, packageRoot, pkg, governedReceiptsRoot, argv);
+  } catch (error) {
+    const result: CliResult = {
+      ok: false,
+      command: "validate",
+      error: {
+        code: "invalid_args",
+        message: error instanceof Error ? error.message : "Motion package is not valid.",
+        suggestedAction: "Fix the named field in motion.json or manifest.json, then validate again."
+      }
+    };
+    return await persistCliValidationReceipt(result, packageRoot, undefined, receiptsRoot ? resolveOutputPath(receiptsRoot) : undefined, argv);
+  }
+}
 
-  const pkg = await loadMotionPackage(resolveInputPath(root));
-  // Same verdicts and warnings the Debug API and SDK answer with; see ./package-refusals.ts.
-  return packageValidationResult(pkg, "validate");
+/** Persist validation evidence only in the explicit host store, never inside the inspected package. */
+async function persistCliValidationReceipt(
+  result: CliResult,
+  packageRoot: string,
+  pkg: Awaited<ReturnType<typeof loadMotionPackage>> | undefined,
+  receiptsRoot: string | undefined,
+  argv: string[]
+): Promise<CliResult> {
+  if (!receiptsRoot) return result;
+  const resultError = result.error;
+  const failure = result.ok || !resultError || typeof resultError !== "object"
+    ? undefined
+    : resultError as { code: string; message: string; suggestedAction?: string };
+  try {
+    const receipt = applyReceiptActor(await createPackageValidationReceipt({
+      packageRoot,
+      ...(pkg ? { package: pkg } : {}),
+      valid: result.ok,
+      validation: result,
+      ...(failure ? { error: failure } : {}),
+      warnings: Array.isArray(result.warnings) ? result.warnings.filter((warning): warning is string => typeof warning === "string") : []
+    }), readCliActor(argv, "read_motion"));
+    const receiptPath = await writeHostReceiptFile(receiptsRoot, receipt);
+    return { ...result, receiptId: receipt.id, receiptPath, receipt };
+  } catch (error) {
+    return {
+      ok: false,
+      command: "validate",
+      error: {
+        code: "receipt_persistence_failed",
+        message: error instanceof Error ? `Package validation finished but its receipt could not be persisted: ${error.message}` : "Package validation finished but its receipt could not be persisted.",
+        suggestedAction: "Choose a writable --receipts-root outside the package and validate again."
+      },
+      validation: result
+    };
+  }
 }
 
 async function inspectCommand(argv: string[]): Promise<CliResult> {
@@ -501,6 +643,8 @@ async function reviewHtmlBundleCommand(argv: string[]): Promise<CliResult> {
       ...(result.omittedArtifacts.length > 0 ? { omittedArtifacts: result.omittedArtifacts } : {})
     };
   } catch (error) {
+    const uncertain = publicationCommitUncertainCliFailure("review-html-bundle", error);
+    if (uncertain) return uncertain;
     return {
       ok: false,
       command: "review-html-bundle",
@@ -692,6 +836,8 @@ async function packageArchiveCommand(argv: string[]): Promise<CliResult> {
       entries: result.entries
     };
   } catch (error) {
+    const uncertain = publicationCommitUncertainCliFailure("package-archive", error);
+    if (uncertain) return uncertain;
     return {
       ok: false,
       command: "package-archive",
@@ -730,6 +876,8 @@ async function packageExtractCommand(argv: string[]): Promise<CliResult> {
       entries: result.entries
     };
   } catch (error) {
+    const uncertain = publicationCommitUncertainCliFailure("package-extract", error);
+    if (uncertain) return uncertain;
     return {
       ok: false,
       command: "package-extract",
@@ -758,7 +906,8 @@ async function actionsCommand(argv: string[]): Promise<CliResult> {
   if (!request) return missingArgument(`actions.${subcommand}`, "request");
 
   if (subcommand === "find") {
-    return { ok: true, command: "actions.find", action: findAction(request) };
+    const match = findActionMatch(request);
+    return { ok: true, command: "actions.find", action: match.action, matched: match.matched, ...(match.message ? { message: match.message } : {}), related: match.nearest };
   }
 
   // Enrich the steps the same way `debug actions-guide` does. Without this the plain subcommand
@@ -772,12 +921,15 @@ async function actionsCommand(argv: string[]): Promise<CliResult> {
     actionId: plan.action?.id ?? null,
     steps: plan.steps,
     verify: plan.verify,
-    cautions: plan.cautions
+    cautions: plan.cautions, examples: plan.examples, related: plan.related
   };
 }
 
 async function debugCommand(argv: string[], options: RunCliOptions = {}): Promise<CliResult> {
-  const subcommand = argv[0];
+  // pnpm runs a filtered source-checkout command from packages/cli. Preserve the caller's
+  // output authority before the typed Debug adapters read --out, matching the package-root rule.
+  const debugArgv = resolveDebugOutputOptions(argv);
+  const subcommand = debugArgv[0];
   const debugName = debugCommandName(subcommand);
   if (!debugName) {
     return {
@@ -786,60 +938,42 @@ async function debugCommand(argv: string[], options: RunCliOptions = {}): Promis
       error: { code: "unknown_subcommand", message: `Unknown debug subcommand: ${subcommand ?? "(missing)"}.` }
     };
   }
-  const tier = readCliTier(argv, "read_motion", options);
+  const tier = readCliTier(debugArgv, "read_motion", options);
   if (!tier.ok) return { ok: false, command: `debug.${subcommand}`, error: tier.error, warnings: [] };
-
   let args: unknown;
   try {
-    args = await debugArgs(debugName, argv);
+    args = await debugArgs(debugName, debugArgv);
   } catch (error) {
-    return {
-      ok: false,
-      command: `debug.${subcommand}`,
-      error: {
-        code: "invalid_args",
-        message: error instanceof Error ? error.message : String(error)
-      }
-    };
+    return invalidModularDebugArgs(subcommand, error);
   }
   const scratchRoot = debugScratchRoot(debugName, args, options.scratchRoot);
-  const authoringRoots = modularDebugAuthoringRoots(debugName, args);
-  // Runtimes are supplied by the embedding host, never selected by a command-line flag. `--fake`
-  // used to construct a stubbed agent here, so `debug motion.prompt.run --fake` returned a receipt
-  // pair no consumer could tell from a real agent run.
-  const promptRuntime = debugName === "motion.prompt.run" ? options.promptRuntime : undefined;
-  const agentRuntime = debugName === "motion.agent.health" ? options.agentRuntime : undefined;
+  const trustedInputRoots = debugTrustedInputRoots(args);
+  const renderRoots = debugRenderRoots(debugName, args);
+  const authoringRoots = cliAuthoringRoots(debugName, args);
+  try { args = await hydrateModularDebugArgs(debugName, args, authoringRoots?.inputRoots); } catch (error) {
+    return invalidModularDebugArgs(subcommand, error);
+  }
+  // The CLI is the trusted local host for these commands. Debug API/MCP transports never construct
+  // runtimes themselves: their embedding host must inject one and otherwise receives capability_unavailable.
+  const promptRuntime = debugName === "motion.prompt.run" ? options.promptRuntime ?? buildAgentRuntime() : undefined;
+  const agentRuntime = debugName === "motion.agent.health" ? options.agentRuntime ?? buildAgentRuntime() : undefined;
   const debugArgumentRecord = readRecord(args);
-  const cliReceiptsRoot = typeof debugArgumentRecord?.receiptsRoot === "string"
-    ? debugArgumentRecord.receiptsRoot
+  const cliHostReceiptStore = createCliTimelineHostReceiptStore(debugName);
+  const cliReceiptsRoot = typeof debugArgumentRecord?.receiptsRoot === "string" ? resolveInputPath(debugArgumentRecord.receiptsRoot) : undefined;
+  if (cliReceiptsRoot && debugArgumentRecord) args = { ...debugArgumentRecord, receiptsRoot: cliReceiptsRoot };
+  const cliDefaultPlatformReceiptsRoot = debugName === "motion.export.panel"
+    || debugName === "motion.export.plan"
+    || debugName === "motion.platform.verification.panel"
+    ? resolveOutputPath(".scratch/receipts")
     : undefined;
-  const result = await dispatchDebugCommand(debugName, args, {
-    tier: tier.tier,
-    // The CLI is the observed transport; stamp cli + tier (+ optional --actor/env label) so History
-    // attributes command-line operations. A per-command createdBy still wins for the label.
-    actor: readCliActor(argv, tier.tier),
-    // A receipts root the OPERATOR typed on the command line is nominated by the host, because on
-    // this surface the operator IS the host. The receipts fence exists to stop a Debug API caller --
-    // which reaches Motion across a privilege boundary -- naming somewhere Motion then writes to.
-    // Someone at a shell has no such boundary to cross: they could create the file directly, so
-    // refusing their own `--receipts-root` would be configuration without a boundary.
-    //
-    // Same reasoning the Cut-root policy already encodes, where `undefined` trusted roots means "this
-    // caller has no privilege boundary to defend" and is documented as being for the CLI.
-    ...(scratchRoot
-      ? { scratchRoot }
-      : cliReceiptsRoot
-        ? { scratchRoot: cliReceiptsRoot }
-        : {}),
-    ...(authoringRoots ? { authoringInputRoots: authoringRoots.inputRoots } : {}),
-    ...(authoringRoots ? { authoringOutputRoots: authoringRoots.outputRoots } : {}),
-    ...(promptRuntime ? { promptRuntime } : {}),
-    ...(agentRuntime ? { agentRuntime } : {}),
-    ...(options.ffmpegRunner ? { ffmpegRunner: options.ffmpegRunner } : {}),
-    ...(options.browserFrameRenderer ? { browserFrameRenderer: options.browserFrameRenderer } : {}),
-    ...(options.sourceFetcher ? { sourceFetcher: options.sourceFetcher } : {}),
-    ...(options.sourceResolver ? { sourceResolver: options.sourceResolver } : {})
+  const context = cliDebugDispatchContext({
+    debugName, tier: tier.tier, actor: readCliActor(debugArgv, tier.tier), scratchRoot,
+    cliHostReceiptStore, cliReceiptsRoot, cliDefaultPlatformReceiptsRoot,
+    authoringRoots, trustedInputRoots, renderRoots, promptRuntime, agentRuntime,
+    ffmpegRunner: options.ffmpegRunner, browserFrameRenderer: options.browserFrameRenderer,
+    sourceFetcher: options.sourceFetcher, sourceResolver: options.sourceResolver
   });
+  const result = await withCliSourceWorkspaceAnchor(sourceWorkspaceOperationPaths(debugName, args, cliHostReceiptStore?.receiptsRoot), async () => await dispatchDebugCommand(debugName, args, context));
   return result.ok
     ? {
         ok: true,
@@ -853,6 +987,7 @@ async function debugCommand(argv: string[], options: RunCliOptions = {}): Promis
         ok: false,
         command: `debug.${subcommand}`,
         error: result.error,
+        ...(result.result ? { result: result.result } : {}),
         warnings: result.warnings
       };
 }
@@ -871,6 +1006,7 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
   const command = `template.${subcommand}`;
   if (!root) return missingArgument(command, "package root");
   const packageRoot = resolveInputPath(root);
+  if (subcommand !== "controls") await assertPackageEditSourceTree(packageRoot);
   const pkg = await loadMotionPackage(packageRoot);
 
   if (subcommand === "controls") {
@@ -908,15 +1044,8 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
     // holds files unless the caller opted in with `--force` (policy in ./output-dir-guard).
     const outDirGuard = await prepareOutputDir(outDir, { force: hasFlag(argv, "--force") });
     if (!outDirGuard.ok) return { ok: false, command, packageDir: outDir, error: outDirGuard.error };
-    await cp(packageRoot, outDir, { recursive: true });
     const copiedAssetPath = resolvePackageAsset({ root: outDir }, replaced.assetRef);
-    await mkdir(dirname(copiedAssetPath), { recursive: true });
-    await copyFile(sourceAssetPath, copiedAssetPath);
-    await writeJson(join(outDir, "manifest.json"), replaced.manifest);
-    await writeJson(join(outDir, pkg.manifest.motion), replaced.motion);
-    const receiptsRoot = join(outDir, "receipts");
-    await mkdir(receiptsRoot, { recursive: true });
-    const receiptPath = join(receiptsRoot, "template-media-replace.receipt.json");
+    const receiptPath = join(outDir, "receipts", "template-media-replace.receipt.json");
     const artifacts: ReceiptArtifact[] = [
       { role: "motion_package", path: outDir, status: "available", primary: true },
       { role: "template_media_asset", path: copiedAssetPath, status: "available", mediaType: mediaTypeForPath(copiedAssetPath) },
@@ -950,7 +1079,20 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
       artifacts,
       warnings: replaced.warnings
     };
-    await writeJson(receiptPath, receipt);
+    await commitPackageEdit({
+      sourceRoot: packageRoot,
+      outputRoot: outDir,
+      edit: async (stagedRoot) => {
+        const stagedAssetPath = resolvePackageAsset({ root: stagedRoot }, replaced.assetRef);
+        await mkdir(dirname(stagedAssetPath), { recursive: true });
+        await copyFile(sourceAssetPath, stagedAssetPath);
+        await writeJson(join(stagedRoot, "manifest.json"), replaced.manifest);
+        await writeJson(join(stagedRoot, pkg.manifest.motion), replaced.motion);
+        await mkdir(join(stagedRoot, "receipts"), { recursive: true });
+        await writeJson(join(stagedRoot, "receipts", "template-media-replace.receipt.json"), receipt);
+      },
+      validate: async (stagedRoot) => await assertValidTemplatePackage(stagedRoot),
+    });
 
     return {
       ok: true,
@@ -988,11 +1130,7 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
   // the output-directory ownership invariant: same guard as `media-replace` — a non-empty `--out` is refused instead of wiped.
   const outDirGuard = await prepareOutputDir(outDir, { force: hasFlag(argv, "--force") });
   if (!outDirGuard.ok) return { ok: false, command, packageDir: outDir, error: outDirGuard.error };
-  await cp(packageRoot, outDir, { recursive: true });
-  await writeJson(join(outDir, pkg.manifest.motion), applied.motion);
-  const receiptsRoot = join(outDir, "receipts");
-  await mkdir(receiptsRoot, { recursive: true });
-  const receiptPath = join(receiptsRoot, "template-apply.receipt.json");
+  const receiptPath = join(outDir, "receipts", "template-apply.receipt.json");
   const artifacts: ReceiptArtifact[] = [
     { role: "motion_package", path: outDir, status: "available", primary: true },
     { role: "template_apply_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
@@ -1024,7 +1162,16 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
     artifacts,
     warnings: applied.warnings
   };
-  await writeJson(receiptPath, receipt);
+  await commitPackageEdit({
+    sourceRoot: packageRoot,
+    outputRoot: outDir,
+    edit: async (stagedRoot) => {
+      await writeJson(join(stagedRoot, pkg.manifest.motion), applied.motion);
+      await mkdir(join(stagedRoot, "receipts"), { recursive: true });
+      await writeJson(join(stagedRoot, "receipts", "template-apply.receipt.json"), receipt);
+    },
+    validate: async (stagedRoot) => await assertValidTemplatePackage(stagedRoot),
+  });
 
   return {
     ok: true,
@@ -1036,6 +1183,13 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
     artifacts,
     warnings: applied.warnings
   };
+}
+
+async function assertValidTemplatePackage(packageRoot: string): Promise<void> {
+  const validation = await validatePackageAssetReferences(await loadMotionPackage(packageRoot));
+  if (validation.ok) return;
+  const problem = validation.problems[0]!;
+  throw new Error(`Template output contains an invalid package asset reference at ${problem.path} (${problem.code}).`);
 }
 
 async function agentCommand(argv: string[], options: RunCliOptions = {}): Promise<CliResult> {
@@ -1087,11 +1241,11 @@ async function promptCommand(argv: string[], options: RunCliOptions = {}): Promi
   const executeAgentCommands = hasFlag(argv, "--execute-agent-commands") || hasFlag(argv, "--execute");
   // No flag can substitute a stubbed agent: `--fake` made `prompt run` emit an `ok: true` receipt
   // pair over an agent that never ran (the tool-provenance invariant). A host that wants one injects it deliberately.
-  const promptRuntime = options.promptRuntime;
   const retention = promptRetentionFromCli(argv);
   if (!retention.ok) return { ok: false, command: "prompt.run", error: retention.error, warnings: [] };
 
-  if (executeAgentCommands) {
+  if (executeAgentCommands) { const authoringRoots = cliAuthoringRoots("motion.prompt.run", { cwd });
+    const promptRuntime = options.promptRuntime ?? buildAgentRuntime();
     const debugResult = await dispatchDebugCommand("motion.prompt.run", {
       request,
       packageId,
@@ -1116,7 +1270,10 @@ async function promptCommand(argv: string[], options: RunCliOptions = {}): Promi
       ...(options.scratchRoot
         ? { scratchRoot: options.scratchRoot }
         : receiptsRoot ? { scratchRoot: receiptsRoot } : {}),
+      ...(authoringRoots ? { promptCwdRoots: authoringRoots.inputRoots, authoringInputRoots: authoringRoots.inputRoots, authoringOutputRoots: authoringRoots.outputRoots } : {}),
       ...(promptRuntime ? { promptRuntime } : {}),
+      ...(options.promptNow ? { promptNow: options.promptNow } : {}),
+      ...(options.promptReceiptWriteTestHook ? { rawPromptReceiptWriteTestHook: options.promptReceiptWriteTestHook } : {}),
       ...(options.browserFrameRenderer ? { browserFrameRenderer: options.browserFrameRenderer } : {})
     });
     return debugResult.ok
@@ -1136,45 +1293,60 @@ async function promptCommand(argv: string[], options: RunCliOptions = {}): Promi
         };
   }
 
-  const result = await runMotionPrompt({
-    request,
-    tier: tier.tier,
-    agentId,
-    packageId,
-    cwd,
-    runtime: promptRuntime,
-    retention: retention.value
+  // Keep the portable summary-only CLI path direct. Raw retention is different: its returned
+  // receipt would carry literal request bytes, so refuse before runtime or write unless the
+  // host can later read and purge the governed receipt through the stable store.
+  const rawRetentionAdmission = rawPromptRetentionAdmissionError(retention.value, {
+    receiptsRoot,
+    receiptPersistenceAvailable: Boolean(receiptsRoot),
+    hasStableReceiptPurgeCapability: options.hasStableReceiptPurgeCapability ?? hasStableReceiptStoreCapability
   });
+  if (rawRetentionAdmission) return { ok: false, command: "prompt.run", error: rawRetentionAdmission, warnings: [] };
+  const stableReceiptRoot = retention.value.mode === "raw_request" ? await reserveStableReceiptRoot(receiptsRoot!) : null;
+  if (retention.value.mode === "raw_request" && !stableReceiptRoot) return { ok: false, command: "prompt.run", error: { code: "capability_unavailable", message: "Raw prompt retention requires a no-follow stable receipt root that can be retained for persistence.", suggestedAction: "Configure an existing non-symlink Linux receipt root and retry." }, warnings: [] };
+  const promptRuntime = options.promptRuntime ?? buildAgentRuntime();
+  try {
+    const result = await runMotionPrompt({ request, tier: tier.tier, agentId, packageId, cwd, runtime: promptRuntime, retention: retention.value, ...(options.promptNow ? { now: options.promptNow } : {}) });
+    const persist = async (receipt: OperationReceipt) => {
+      if (retention.value.mode === "raw_request") await options.promptReceiptWriteTestHook?.(receipt);
+      return stableReceiptRoot
+        ? await stableReceiptRoot.writeJson(`${safeFileToken(receipt.id)}.receipt.json`, receipt)
+        : await writeHostReceiptFile(receiptsRoot!, receipt);
+    };
 
-  const receiptPaths = result.ok && receiptsRoot
-    ? [
-        await writeHostReceiptFile(receiptsRoot, result.agent.receipt),
-        await writeHostReceiptFile(receiptsRoot, result.receipt)
-      ]
-    : result.receipt && receiptsRoot
-      ? [await writeHostReceiptFile(receiptsRoot, result.receipt)]
-      : [];
-
-  return result.ok
-    ? {
+    if (result.ok) {
+      const agentReceiptPath = receiptsRoot ? await persist(result.agent.receipt) : undefined;
+      const promptReceipt = redactPromptReceiptForBoundary(result.receipt, options.promptNow);
+      const receiptPath = receiptsRoot ? await persist(promptReceipt) : undefined;
+      return {
         ok: true,
         command: "prompt.run",
         actionId: result.plan.action?.id ?? null,
-        receipts: [result.agent.receipt.id, result.receipt.id],
-        ...(receiptPaths.length > 0 ? { receiptPaths } : {}),
-        debugCommands: result.receipt.output.debugCommands,
-        promptRetention: result.receipt.output.promptRetention
-      }
-    : {
+        receipts: [result.agent.receipt.id, promptReceipt.id],
+        ...(agentReceiptPath && receiptPath ? { receiptPaths: [agentReceiptPath, receiptPath] } : {}),
+        debugCommands: promptReceipt.output.debugCommands,
+        promptRetention: promptReceipt.output.promptRetention
+      };
+    }
+    const promptReceipt = result.receipt && redactPromptReceiptForBoundary(result.receipt, options.promptNow);
+    const receiptPath = promptReceipt && receiptsRoot ? await persist(promptReceipt) : undefined;
+    return {
         ok: false,
         command: "prompt.run",
         error: result.error,
-        receipts: result.receipt ? [result.receipt.id] : [],
-        ...(receiptPaths.length > 0 ? { receiptPaths } : {})
+        receipts: promptReceipt ? [promptReceipt.id] : [],
+        ...(receiptPath ? { receiptPaths: [receiptPath] } : {})
       };
+  } finally {
+    await stableReceiptRoot?.close();
+  }
 }
 
-async function previewCommand(argv: string[]): Promise<CliResult> {
+function redactPromptReceiptForBoundary(receipt: PromptRunReceipt, now: (() => string) | undefined): PromptRunReceipt {
+  return redactExpiredRawPrompt(receipt, now?.()).receipt;
+}
+
+async function previewCommand(argv: string[], options: RunCliOptions = {}): Promise<CliResult> {
   const root = argv[0];
   if (!root) return missingArgument("preview", "package root");
   if (root === "--help") return helpCommand();
@@ -1186,10 +1358,9 @@ async function previewCommand(argv: string[]): Promise<CliResult> {
       error: { code: "invalid_args", message: `Unsupported preview option: ${unsupportedOption}. Use --at-ms for the capture time.` }
     };
   }
-
   const outDir = optionValue(argv, "--out") ?? ".scratch/previews";
   const lane = optionValue(argv, "--lane") ?? "native";
-  if (lane !== "native" && lane !== "browser") {
+  if (lane !== "native" && lane !== "browser" && lane !== "gpu") {
     return { ok: false, command: "preview", error: { code: "unsupported_lane", message: unsupportedPreviewLaneMessage(lane) } };
   }
   const atMs = Number(optionValue(argv, "--at-ms") ?? 0);
@@ -1197,13 +1368,55 @@ async function previewCommand(argv: string[]): Promise<CliResult> {
     return { ok: false, command: "preview", error: { code: "invalid_args", message: "--at-ms must be a non-negative finite number." } };
   }
   const pkg = await loadMotionPackage(resolveInputPath(root));
+  const admissionRefusal = previewCommandAdmissionRefusal(pkg.motion, lane);
+  if (admissionRefusal) return admissionRefusal;
   const outputDir = resolveOutputPath(outDir);
-  await mkdir(outputDir, { recursive: true });
+  await mkdir(outputDir, { recursive: true, mode: 0o700 });
 
   if (lane === "browser") {
-    const result = await renderMotionBrowserFrame(pkg, { atMs, outDir: outputDir });
+    const outputPath = join(outputDir, `${pkg.manifest.id}-browser-${atMs}.png`);
     const receiptPath = join(outputDir, `${pkg.manifest.id}-browser-preview.receipt.json`);
-    await writeJson(receiptPath, result.receipt);
+    const publication = await PairedOutputReceiptPublication.acquire({
+      outputPath, receiptPath,
+      outputArtifact: { role: "preview_frame", mediaType: "image/png", primary: true },
+      receiptArtifact: { role: "preview_receipt", mediaType: "application/json" }
+    });
+    let result: Awaited<ReturnType<typeof renderMotionBrowserFrame>>;
+    try {
+      result = await renderMotionBrowserFrame(pkg, withRendererPrivateOutputPublication({
+        // Browser composition HTML is renderer evidence, so keep its generated companion under
+        // the output reservation until it has its own receipt-bound no-clobber publication.
+        atMs, outDir: dirname(publication.outputPublication.stagingPath), outputPath: publication.outputPublication.stagingPath,
+      }, publication.outputPublication));
+      const rendererArtifacts = [...(result.output.artifacts ?? []), ...(result.receipt.artifacts ?? [])];
+      const stagedArtifactPaths = new Set<string>();
+      const remappedArtifacts: ReceiptArtifact[] = [];
+      for (const artifact of rendererArtifacts) {
+        if (artifact.status !== "available") throw new Error("Browser renderer returned a non-available companion artifact for a successful preview.");
+        if (stagedArtifactPaths.has(resolve(artifact.path))) continue;
+        stagedArtifactPaths.add(resolve(artifact.path));
+        const remapped = await publication.stageSecondaryArtifact({
+          stagedPath: artifact.path,
+          outputPath: join(outputDir, `${pkg.manifest.id}-${artifact.role}-${basename(artifact.path)}`),
+          artifact: { ...artifact, primary: false },
+          inputHashKey: artifact.role === "browser_capture_html" ? "browser-capture-html" : `renderer-artifact:${artifact.role}:${basename(artifact.path)}`
+        });
+        remappedArtifacts.push(remapped);
+      }
+      if (remappedArtifacts.length > 0) {
+        result.output.artifacts = remappedArtifacts;
+        result.receipt.artifacts = remappedArtifacts;
+      }
+      result.output.path = outputPath;
+      await publication.stageReceipt(result.receipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+    } catch (error) {
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "preview", lane: "browser", ...pairedPublicationUncertaintyFields(error, "previewCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
     return {
       ok: true,
       command: "preview",
@@ -1215,15 +1428,68 @@ async function previewCommand(argv: string[]): Promise<CliResult> {
     };
   }
 
+  if (lane === "gpu") {
+    const outputPath = join(outputDir, `${pkg.manifest.id}-gpu-${atMs}.png`);
+    const receiptPath = join(outputDir, `${pkg.manifest.id}-gpu-preview.receipt.json`);
+    const publication = await PairedOutputReceiptPublication.acquire({
+      outputPath, receiptPath,
+      outputArtifact: { role: "preview_frame", mediaType: "image/png", primary: true },
+      receiptArtifact: { role: "preview_receipt", mediaType: "application/json" }
+    });
+    try {
+      const result = await renderGpuPointsPreviewCli(pkg, atMs, outputDir, {
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(resolveCallerId(argv, options) ? { callerId: resolveCallerId(argv, options)! } : {}),
+        ...(options.scratchRoot ? { scratchRoot: options.scratchRoot } : {}),
+        ...(options.ffmpegRunner ? { ffmpegRunner: options.ffmpegRunner } : {}),
+        outputPath: publication.outputPublication.stagingPath,
+        privateOutputPublication: publication.outputPublication
+      });
+      if (!result.ok) {
+        await publication.abort();
+        return result;
+      }
+      await publication.stageReceipt(result.receipt as OperationReceipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+      return { ...result, output: { ...(result.output as Record<string, unknown>), path: outputPath }, outputPath, receiptPath };
+    } catch (error) {
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "preview", lane: "gpu", ...pairedPublicationUncertaintyFields(error, "previewCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
+  }
+
   const previewPath = join(outputDir, `${pkg.manifest.id}-native-${atMs}.png`);
   const receiptPath = join(outputDir, `${pkg.manifest.id}-native-preview.receipt.json`);
-  const result = await renderNativePreviewFrame({
-    packageRoot: resolveInputPath(root),
-    outputPath: previewPath,
-    outputRoots: [outputDir],
-    atMs
+  const publication = await PairedOutputReceiptPublication.acquire({
+    outputPath: previewPath, receiptPath,
+    outputArtifact: { role: "preview_frame", mediaType: "image/png", primary: true },
+    receiptArtifact: { role: "preview_receipt", mediaType: "application/json" }
   });
-  await writeJson(receiptPath, result.receipt);
+  let result: Awaited<ReturnType<typeof renderNativePreviewFrame>>;
+  try {
+    result = await renderNativePreviewFrame(withNativePrivateOutputPublication({
+      packageRoot: resolveInputPath(root),
+      outputPath: publication.outputPublication.stagingPath,
+      outputRoots: [outputDir],
+      atMs
+    }, publication.outputPublication));
+    if (result.ok) {
+      await publication.stageReceipt(result.receipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+    } else {
+      await publication.abort();
+      await publishJsonSidecar(receiptPath, result.receipt);
+    }
+  } catch (error) {
+    await publication.abort().catch(() => undefined);
+    if (error instanceof PairedOutputReceiptCommitUncertainError) {
+      return { ok: false, command: "preview", lane: "native", ...pairedPublicationUncertaintyFields(error, "previewCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+    }
+    throw error;
+  }
   if (!result.ok) {
     return {
       ok: false,
@@ -1241,7 +1507,7 @@ async function previewCommand(argv: string[]): Promise<CliResult> {
     command: "preview",
     lane: "native",
     output: {
-      path: result.frame.path,
+      path: previewPath,
       sha256: result.frame.sha256,
       width: result.frame.width,
       height: result.frame.height,
@@ -1253,328 +1519,6 @@ async function previewCommand(argv: string[]): Promise<CliResult> {
   };
 }
 
-async function captureBrowserCommand(argv: string[], options: RunCliOptions = {}): Promise<CliResult> {
-  const callerIdForRun = resolveCallerId(argv, options);
-  const root = argv[0];
-  if (!root) return missingArgument("capture-browser", "package root");
-  const outDir = optionValue(argv, "--out");
-  if (!outDir) return missingArgument("capture-browser", "--out");
-
-  const pkg = await loadMotionPackage(resolveInputPath(root));
-  const outputDir = resolveOutputPath(outDir);
-  const workflowPath = optionValue(argv, "--workflow");
-  const workflow = workflowPath ? await readBrowserCaptureWorkflow(resolveInputPath(workflowPath)) : undefined;
-  const workflowCatalogPath = optionValue(argv, "--catalog") ?? optionValue(argv, "--workflow-catalog") ?? optionValue(argv, "--workflow-catalog-path");
-  const failOnDrift = hasFlag(argv, "--fail-on-drift");
-  const recordingManifestRef = optionValue(argv, "--recording-manifest") ?? optionValue(argv, "--recording-manifest-path");
-  const recordingManifestPath = recordingManifestRef ? resolveOutputPath(recordingManifestRef) : undefined;
-  const recordingFramesDir = recordingManifestPath
-    ? resolveOutputPath(optionValue(argv, "--recording-frames-dir") ?? join(outputDir, "browser-recording-frames"))
-    : undefined;
-  const recordingSampleCountOption = readPositiveIntegerOption(
-    optionValue(argv, "--recording-samples") ?? optionValue(argv, "--recording-sample-count"),
-    "--recording-samples",
-    3
-  );
-  if (!recordingSampleCountOption.ok) return recordingSampleCountOption.result;
-  await mkdir(outputDir, { recursive: true });
-  const session = options.browserFrameRenderer ? undefined : await createMotionBrowserRenderSession(pkg, callerIdForRun ? { callerId: callerIdForRun } : {});
-  const renderer: BrowserFrameRenderer = options.browserFrameRenderer
-    ?? ((_pkg, frameOptions) => session!.renderFrame(frameOptions));
-  try {
-    let result: Awaited<ReturnType<typeof renderMotionBrowserFrame>>;
-    try {
-      result = await renderer(pkg, {
-        atMs: Number(optionValue(argv, "--at-ms") ?? 0),
-        outDir: outputDir,
-        workflow
-      });
-    } catch (error) {
-      if (error instanceof BrowserWorkflowReplayError) {
-        return writeBrowserWorkflowReplayFailureResult({
-          pkg,
-          outputDir,
-          workflowPath: workflowPath ? resolveInputPath(workflowPath) : undefined,
-          error
-        });
-      }
-      throw error;
-    }
-    result.receipt.operation = "browser.workflow.capture";
-  const workflowTracePath = result.output.workflowTrace
-    ? join(outputDir, `${pkg.manifest.id}-browser-workflow.trace.json`)
-    : undefined;
-  if (workflowTracePath && result.output.workflowTrace) {
-    await writeJson(workflowTracePath, result.output.workflowTrace);
-    result.output.workflowTracePath = workflowTracePath;
-  }
-  const receiptPath = join(outputDir, `${pkg.manifest.id}-browser-capture.receipt.json`);
-  const workflowCatalog = workflowCatalogPath
-    ? await upsertBrowserWorkflowCatalog({
-        catalogPath: resolveOutputPath(workflowCatalogPath),
-        capture: {
-          packageId: pkg.manifest.id,
-          workflowHash: result.output.workflowTrace?.workflowHash ?? String(result.receipt.inputHashes.workflow ?? ""),
-          atMs: result.output.atMs,
-          outputSha256: result.output.sha256,
-          outputPath: result.output.path,
-          receiptPath,
-          ...(workflowTracePath ? { tracePath: workflowTracePath } : {}),
-          createdAt: result.receipt.createdAt,
-          browser: result.output.browser,
-          viewport: result.output.viewport,
-          workflow: {
-            stepCount: result.output.workflow?.stepCount ?? 0,
-            networkPolicy: result.output.workflow?.networkPolicy ?? workflow?.networkPolicy ?? "blocked-unless-declared"
-          }
-        }
-      })
-    : undefined;
-  if (workflowCatalog) {
-    result.output.workflowCatalogPath = workflowCatalog.catalogPath;
-    result.output.workflowDrift = workflowCatalog.drift;
-    if (workflowCatalog.drift.status === "changed") {
-      result.receipt.warnings.push(browserWorkflowDriftWarning(workflowCatalog.drift));
-    }
-  }
-  let recordingManifest: BrowserRecordingManifest | undefined;
-  if (recordingManifestPath && recordingFramesDir) {
-    recordingManifest = await writeBrowserRecordingManifest({
-      pkg,
-      renderer,
-      workflow,
-      framesDir: recordingFramesDir,
-      manifestPath: recordingManifestPath,
-      sampleCount: recordingSampleCountOption.value ?? 3,
-      primaryCapture: result,
-      ...(workflowTracePath ? { workflowTracePath } : {}),
-      ...(workflowCatalog ? { workflowCatalogPath: workflowCatalog.catalogPath } : {})
-    });
-    const output = result.output as typeof result.output & {
-      recordingManifestPath?: string;
-      recordingManifest?: BrowserRecordingManifest;
-    };
-    output.recordingManifestPath = recordingManifestPath;
-    output.recordingManifest = recordingManifest;
-  }
-  const artifacts: ReceiptArtifact[] = [
-    { role: "preview_frame", path: result.output.path, status: "available", mediaType: "image/png", primary: true }
-  ];
-  if (workflowTracePath) {
-    artifacts.push({ role: "browser_workflow_trace", path: workflowTracePath, status: "available", mediaType: "application/json" });
-  }
-  if (workflowCatalog) {
-    artifacts.push({ role: "browser_workflow_catalog", path: workflowCatalog.catalogPath, status: "available", mediaType: "application/json" });
-  }
-  if (recordingManifestPath) {
-    artifacts.push({ role: "browser_recording_manifest", path: recordingManifestPath, status: "available", mediaType: "application/json" });
-  }
-  artifacts.push({ role: "preview_receipt", path: receiptPath, status: "available" });
-  result.output.artifacts = artifacts;
-  result.receipt.artifacts = artifacts;
-  result.receipt.output = result.output;
-  await writeJson(receiptPath, result.receipt);
-  if (workflowCatalog?.drift.status === "changed" && failOnDrift) {
-    return {
-      ok: false,
-      command: "capture-browser",
-      lane: "browser",
-      workflowCatalogPath: workflowCatalog.catalogPath,
-      workflowDrift: workflowCatalog.drift,
-      output: result.output,
-      outputPath: result.output.path,
-      receiptId: result.receipt.id,
-      receiptPath,
-      artifacts,
-      warnings: result.receipt.warnings,
-      error: {
-        code: "browser_workflow_drift_detected",
-        message: browserWorkflowDriftWarning(workflowCatalog.drift)
-      }
-    };
-  }
-    return {
-      ok: true,
-      command: "capture-browser",
-      lane: "browser",
-      deterministic: {
-        network: workflow?.networkPolicy ?? "blocked-unless-declared",
-        animations: "disabled",
-        caret: "hide",
-        deviceScaleFactor: result.output.viewport.deviceScaleFactor
-      },
-      ...(workflowPath ? { workflowPath: resolveInputPath(workflowPath) } : {}),
-      ...(result.output.workflow ? { workflow: result.output.workflow } : {}),
-      ...(workflowTracePath ? { workflowTracePath } : {}),
-      ...(workflowCatalog ? { workflowCatalogPath: workflowCatalog.catalogPath, workflowDrift: workflowCatalog.drift } : {}),
-      ...(recordingManifest ? { recordingManifestPath, recordingManifest } : {}),
-      artifacts,
-      output: result.output,
-      outputPath: result.output.path,
-      receiptId: result.receipt.id,
-      receiptPath,
-      warnings: result.receipt.warnings
-    };
-  } finally {
-    await session?.close();
-  }
-}
-
-async function writeBrowserWorkflowReplayFailureResult(input: {
-  pkg: Awaited<ReturnType<typeof loadMotionPackage>>;
-  outputDir: string;
-  workflowPath?: string;
-  error: BrowserWorkflowReplayError;
-}): Promise<CliResult> {
-  const workflowTracePath = join(input.outputDir, `${input.pkg.manifest.id}-browser-workflow.trace.json`);
-  const receiptPath = join(input.outputDir, `${input.pkg.manifest.id}-browser-capture.receipt.json`);
-  const artifacts: ReceiptArtifact[] = [
-    { role: "browser_workflow_trace", path: workflowTracePath, status: "failed", mediaType: "application/json" },
-    { role: "preview_receipt", path: receiptPath, status: "available", mediaType: "application/json" }
-  ];
-  const receipt: OperationReceipt = {
-    schema: "shellx-motion/receipt@1",
-    id: `browser-workflow-failed-${hashBuffer(Buffer.from(JSON.stringify(input.error.trace), "utf8")).slice(0, 16)}`,
-    operation: "browser.workflow.capture",
-    status: "failed",
-    packageId: input.pkg.manifest.id,
-    inputHashes: {
-      motion: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-      workflow: input.error.trace.workflowHash
-    },
-    createdAt: new Date().toISOString(),
-    lane: "browser",
-    output: {
-      workflowTracePath,
-      workflowTrace: input.error.trace
-    },
-    artifacts,
-    warnings: [input.error.message]
-  };
-
-  await writeJson(workflowTracePath, input.error.trace);
-  await writeJson(receiptPath, receipt);
-
-  return {
-    ok: false,
-    command: "capture-browser",
-    lane: "browser",
-    ...(input.workflowPath ? { workflowPath: input.workflowPath } : {}),
-    workflowTracePath,
-    workflowTrace: input.error.trace,
-    receiptId: receipt.id,
-    receiptPath,
-    artifacts,
-    warnings: receipt.warnings,
-    error: {
-      code: input.error.code,
-      message: input.error.message
-    }
-  };
-}
-
-function readPositiveIntegerOption(
-  raw: string | undefined,
-  option: string,
-  defaultValue: number
-): { ok: true; value: number } | { ok: false; result: CliResult } {
-  if (raw === undefined) return { ok: true, value: defaultValue };
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    return {
-      ok: false,
-      result: {
-        ok: false,
-        command: "capture-browser",
-        error: {
-          code: "invalid_args",
-          message: `${option} must be a positive integer.`
-        }
-      }
-    };
-  }
-  return { ok: true, value };
-}
-
-async function writeBrowserRecordingManifest(input: {
-  pkg: Awaited<ReturnType<typeof loadMotionPackage>>;
-  renderer: BrowserFrameRenderer;
-  workflow?: BrowserCaptureWorkflow;
-  framesDir: string;
-  manifestPath: string;
-  sampleCount: number;
-  primaryCapture: Awaited<ReturnType<BrowserFrameRenderer>>;
-  workflowTracePath?: string;
-  workflowCatalogPath?: string;
-}): Promise<BrowserRecordingManifest> {
-  await mkdir(input.framesDir, { recursive: true });
-  const sampleTimes = browserRecordingSampleTimes({
-    durationMs: input.pkg.motion.durationMs,
-    sampleCount: input.sampleCount
-  });
-  const frames: BrowserRecordingManifestFrame[] = [];
-  for (const [index, atMs] of sampleTimes.entries()) {
-    const outputPath = join(input.framesDir, `${String(index).padStart(6, "0")}.png`);
-    const frame = await input.renderer(input.pkg, {
-      atMs,
-      outDir: input.framesDir,
-      outputPath,
-      ...(input.workflow ? { workflow: input.workflow } : {})
-    });
-    frames.push({
-      index,
-      atMs: frame.output.atMs,
-      path: frame.output.path,
-      sha256: frame.output.sha256,
-      width: frame.output.width,
-      height: frame.output.height,
-      format: frame.output.format ?? "png"
-    });
-  }
-  const workflowHash = typeof input.primaryCapture.output.workflowTrace?.workflowHash === "string"
-    ? input.primaryCapture.output.workflowTrace.workflowHash
-    : typeof input.primaryCapture.receipt.inputHashes.workflow === "string"
-      ? input.primaryCapture.receipt.inputHashes.workflow
-      : undefined;
-  const workflow = workflowHash || input.workflowTracePath || input.workflowCatalogPath
-    ? {
-        ...(workflowHash ? { hash: workflowHash } : {}),
-        ...(input.workflowTracePath ? { tracePath: input.workflowTracePath } : {}),
-        ...(input.workflowCatalogPath ? { catalogPath: input.workflowCatalogPath } : {})
-      }
-    : undefined;
-  const manifest = buildBrowserRecordingManifest({
-    packageId: input.pkg.manifest.id,
-    motionId: input.pkg.motion.id,
-    width: input.pkg.motion.width,
-    height: input.pkg.motion.height,
-    durationMs: input.pkg.motion.durationMs,
-    fps: input.pkg.motion.fps,
-    frames,
-    browser: input.primaryCapture.output.browser,
-    viewport: input.primaryCapture.output.viewport,
-    deterministic: {
-      network: input.workflow?.networkPolicy ?? "blocked-unless-declared",
-      animations: "disabled",
-      caret: "hide",
-      deviceScaleFactor: input.primaryCapture.output.viewport.deviceScaleFactor
-    },
-    ...(workflow ? { workflow } : {})
-  });
-  await mkdir(dirname(input.manifestPath), { recursive: true });
-  await writeJson(input.manifestPath, manifest);
-  return manifest;
-}
-
-async function exportPresetsCommand(): Promise<CliResult> {
-  return {
-    ok: true,
-    command: "export-presets",
-    defaultPreset: "mp4-h264",
-    presets: listMotionExportPresets()
-  };
-}
-
 async function renderCommand(argv: string[], options: RunCliOptions = {}): Promise<CliResult> {
   const callerIdForRun = resolveCallerId(argv, options);
   const root = argv[0];
@@ -1582,18 +1526,41 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
 
   const packageRoot = resolveInputPath(root);
   const lane = optionValue(argv, "--lane") ?? "ffmpeg";
+  const keepFrames = hasFlag(argv, "--keep-frames");
   const outputPath = optionValue(argv, "--out");
   if (!outputPath) return missingArgument("render", "--out");
-
   if (lane === "native") {
+    if (keepFrames) return keepFramesFinalVideoOnlyRefusal();
     const resolvedOutputPath = resolveOutputPath(outputPath);
     await mkdir(dirname(resolvedOutputPath), { recursive: true });
-    const result = await renderNativePreviewFrame({
-      packageRoot,
+    const receiptPath = renderReceiptPathForOutput((await loadMotionPackage(packageRoot)).manifest.id, resolvedOutputPath, "image");
+    const publication = await PairedOutputReceiptPublication.acquire({
       outputPath: resolvedOutputPath,
-      outputRoots: [dirname(resolvedOutputPath)],
-      atMs: Number(optionValue(argv, "--at-ms") ?? 0)
+      receiptPath,
+      outputArtifact: { role: "preview_frame", mediaType: "image/png", primary: true },
+      receiptArtifact: { role: "render_receipt", mediaType: "application/json" }
     });
+    let result: Awaited<ReturnType<typeof renderNativePreviewFrame>>;
+    try {
+      result = await renderNativePreviewFrame(withNativePrivateOutputPublication({
+        packageRoot,
+        outputPath: publication.outputPublication.stagingPath,
+        outputRoots: [dirname(resolvedOutputPath)],
+        atMs: Number(optionValue(argv, "--at-ms") ?? 0)
+      }, publication.outputPublication));
+      if (result.ok) {
+        await publication.stageReceipt(result.receipt);
+        await publication.commit({ cancelled: () => options.signal?.aborted === true });
+      } else {
+        await publication.abort();
+      }
+    } catch (error) {
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "render", lane: "native", ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
     return result.ok
       ? {
           ok: true,
@@ -1601,13 +1568,14 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           lane: "native",
           outputPath: resolvedOutputPath,
           output: {
-            path: result.frame.path,
+            path: resolvedOutputPath,
             sha256: result.frame.sha256,
             width: result.frame.width,
             height: result.frame.height,
             atMs: result.frame.atMs
           },
-          receipt: result.receipt
+          receipt: result.receipt,
+          receiptPath
         }
       : {
           ok: false,
@@ -1617,22 +1585,27 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           receipt: result.receipt
         };
   }
-
   if (lane !== "ffmpeg") {
     // --lane selects the DELIVERY lane; browser is a FRAME lane. Naming the fix matters here
     // because "--lane browser" is the single most natural wrong guess an agent makes.
     return { ok: false, command: "render", error: { code: "unsupported_lane", message: unsupportedRenderLaneMessage(lane) } };
   }
 
-  const pkg = await loadMotionPackage(packageRoot);
-  const frameLane = optionValue(argv, "--frame-lane") ?? "browser";
-  if (!["browser", "native"].includes(frameLane)) {
+  const { pkg, lineage } = await loadStableRenderPackage(packageRoot);
+  const frameLaneValue = optionValue(argv, "--frame-lane") ?? "browser";
+  if (frameLaneValue !== "browser" && frameLaneValue !== "native" && frameLaneValue !== "gpu") {
     return {
       ok: false,
       command: "render",
-      error: { code: "unsupported_frame_lane", message: unsupportedFrameLaneMessage(frameLane) }
+      error: { code: "unsupported_frame_lane", message: unsupportedFrameLaneMessage(frameLaneValue) }
     };
   }
+  const frameLane: "browser" | "native" | "gpu" = frameLaneValue;
+  const browserTypographyRefusal = frameLane === "browser" ? browserTypographyAttestationRefusal(pkg) : null;
+  if (browserTypographyRefusal) {
+    return { ok: false, command: "render", frameLane, error: browserTypographyRefusal };
+  }
+  if (frameLane === "browser" && activeScriptLayers(pkg.motion).length > 0) return activeScriptCliRefusal("render");
   const workflowPath = optionValue(argv, "--workflow");
   const resolvedWorkflowPath = workflowPath ? resolveInputPath(workflowPath) : undefined;
   if (resolvedWorkflowPath && frameLane !== "browser") {
@@ -1646,6 +1619,7 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
   const workflowCatalogRef = optionValue(argv, "--catalog") ?? optionValue(argv, "--workflow-catalog") ?? optionValue(argv, "--workflow-catalog-path");
   const workflowCatalogPath = workflowCatalogRef ? resolveOutputPath(workflowCatalogRef) : undefined;
   const failOnDrift = hasFlag(argv, "--fail-on-drift");
+  const forceOutput = hasFlag(argv, "--force");
   // Hardware encoding is preferred for the ffmpeg lane when a usable encoder is proved: the
   // encode probes for a usable hardware encoder and prefers it. `--force-software-encode` (or the
   // SHELLX_MOTION_FORCE_SOFTWARE_ENCODE env flag, read inside the encoder) forces the software path
@@ -1695,6 +1669,7 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     ? { path: resolveInputPath(audioPath) }
     : packageAudio.audio;
   const audioTracks = audioPath ? undefined : packageAudio.audioTracks;
+  const audioMaster = packageAudio.audioMaster;
   const audioInputCount = audioTracks?.length ?? (audio ? 1 : 0);
   const resolvedAudioPath = audio?.path;
   const resolvedOutputPath = resolveOutputPath(outputPath);
@@ -1709,7 +1684,12 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     : [framesDir, pkg.root];
   const frameCount = frameCountFor(pkg.motion.durationMs, pkg.motion.fps);
   const stillFramePreset = readStillFrameExportPreset(preset);
+  const imageSequencePreset = readImageSequenceExportPreset(preset);
+  if (keepFrames && (stillFramePreset || imageSequencePreset)) return keepFramesFinalVideoOnlyRefusal();
   if (stillFramePreset) {
+    if (frameLane === "gpu") {
+      return { ok: false, command: "render", frameLane, error: { code: "unsupported_frame_lane", message: "GPU final rendering supports streamed FFmpeg video only, not still-frame presets." } };
+    }
     const atMs = Number(optionValue(argv, "--at-ms") ?? 0);
     if (!Number.isFinite(atMs) || atMs < 0) {
       return {
@@ -1764,12 +1744,24 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     }
 
     await mkdir(dirname(resolvedOutputPath), { recursive: true });
+    const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image");
+    const publication = await PairedOutputReceiptPublication.acquire({
+      outputPath: resolvedOutputPath,
+      receiptPath,
+      outputArtifact: { role: "still_frame", mediaType: mediaTypeForPath(resolvedOutputPath), primary: true },
+      receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
+      ...(forceOutput ? { forceOutput: true, forceReceipt: true } : {})
+    });
+    let preparedWorkflowCatalog: RenderReceiptFinalizeResult | undefined;
+    try {
     let frameReceipt: unknown = null;
     // A still frame is one frame, but it warns the same way a sequence frame does.
     const frameLaneWarnings = new FrameLaneWarnings();
     let workflowEvidence: BrowserWorkflowRenderEvidence | undefined;
+    let browserRendererArtifacts: ReceiptArtifact[] = [];
     if (frameLane === "native") {
       if (stillFramePreset !== "png-frame") {
+        await publication.abort();
         return {
           ok: false,
           command: "render",
@@ -1779,10 +1771,16 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           }
         };
       }
-      const frame = await renderNativePreviewFrame({ packageRoot, outputPath: resolvedOutputPath, outputRoots: [dirname(resolvedOutputPath)], atMs });
+      const frame = await renderNativePreviewFrame(withNativePrivateOutputPublication({
+        packageRoot,
+        outputPath: publication.outputPublication.stagingPath,
+        outputRoots: [dirname(resolvedOutputPath)],
+        atMs
+      }, publication.outputPublication));
       frameReceipt = frame.receipt;
       frameLaneWarnings.observe(frame.receipt);
       if (!frame.ok) {
+        await publication.abort();
         return {
           ok: false,
           command: "render",
@@ -1793,21 +1791,22 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         };
       }
     } else {
-      const frame = await renderMotionBrowserFrame(pkg, {
-        outDir: dirname(resolvedOutputPath),
-        outputPath: resolvedOutputPath,
+      const frame = await renderMotionBrowserFrame(pkg, withRendererPrivateOutputPublication({
+        outDir: dirname(publication.outputPublication.stagingPath),
+        outputPath: publication.outputPublication.stagingPath,
         atMs,
         ...(workflow ? { workflow } : {}),
         format: stillFramePreset === "jpeg-frame" ? "jpeg" : "png"
-      });
+      }, publication.outputPublication));
       frameReceipt = frame.receipt;
       frameLaneWarnings.observe(frame.receipt);
       workflowEvidence = browserWorkflowEvidenceFromFrame(frame);
+      browserRendererArtifacts = availableRendererArtifacts(frame, publication.outputPublication.stagingPath);
     }
 
     const receipt = await createStillFrameReceipt({
       packageId: pkg.manifest.id,
-      outputPath: resolvedOutputPath,
+      outputPath: publication.outputPublication.stagingPath,
       preset: stillFramePreset,
       width: pkg.motion.width,
       height: pkg.motion.height,
@@ -1818,9 +1817,9 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     // a font-fallback warning raised while drawing is invisible once the frames are encoded away.
     frameLaneWarnings.applyTo(receipt);
     enrichRenderReceiptWithBrowserWorkflow(receipt, workflowEvidence);
-    const qualityCheck = qualityManifestPath
+    const rawQualityCheck = qualityManifestPath
       ? await qualityCheckRenderManifest({
-          inputPath: resolvedOutputPath,
+          inputPath: publication.outputPublication.stagingPath,
           manifestPath: qualityManifestPath,
           preset: stillFramePreset,
           packageRoot,
@@ -1830,9 +1829,13 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           options
         })
       : undefined;
+    const qualityCheck = rawQualityCheck ? remapPrivatePublicationResultPaths(rawQualityCheck, publication.outputPublication.stagingPath, resolvedOutputPath) : undefined;
     if (qualityManifestPath && qualityCheck) {
       await enrichRenderReceiptWithQualityManifest(receipt, qualityManifestPath, qualityCheck);
       if (!qualityCheck.ok) {
+        await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+        remapReceiptOutputPath(receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
+        await publication.abort();
         return await renderQualityManifestFailure({
           packageId: pkg.manifest.id,
           lane: "image",
@@ -1843,21 +1846,29 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           frameReceipt,
           qualityManifestPath,
           qualityCheck,
+          force: forceOutput,
           extra: { stillFrame }
         });
       }
     }
-    const workflowCatalog = await finalizeRenderReceipt({
+    await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+    const workflowCatalog = preparedWorkflowCatalog = await prepareRenderReceipt({
       packageId: pkg.manifest.id,
       receipt,
       outputPath: resolvedOutputPath,
-      receiptPath: renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image"),
+      receiptPath,
       atMs,
       workflowEvidence,
       workflowCatalogPath,
-      failOnDrift
+      failOnDrift, force: forceOutput
     });
     if (workflowCatalog.error) {
+      await abortPreparedRenderCatalog(workflowCatalog);
+      receipt.status = "failed";
+      remapReceiptOutputPath(receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
+      await publication.abort();
+      workflowCatalog.receiptPath = await writeRenderReceiptFile(receipt, receiptPath, { force: forceOutput });
+      workflowCatalog.artifacts = receipt.artifacts;
       return {
         ok: false,
         command: "render",
@@ -1879,6 +1890,53 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       };
     }
 
+    try {
+      for (const artifact of browserRendererArtifacts) {
+        const remapped = await publication.stageSecondaryArtifact({
+          stagedPath: artifact.path,
+          outputPath: join(dirname(resolvedOutputPath), `${pkg.manifest.id}-${artifact.role}-${basename(artifact.path)}`),
+          artifact: { role: artifact.role, ...(artifact.mediaType ? { mediaType: artifact.mediaType } : {}), primary: false },
+          inputHashKey: artifact.role === "browser_capture_html" ? "browser-capture-html" : `renderer-artifact:${artifact.role}:${basename(artifact.path)}`
+        });
+        receipt.artifacts = dedupeReceiptArtifacts([...(receipt.artifacts ?? []), remapped]);
+      }
+      await publication.stageReceipt(receipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+    } catch (error) {
+      await abortPreparedRenderCatalog(workflowCatalog).catch(() => undefined);
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "render", lane: "image", frameLane, preset: stillFramePreset, ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
+
+    let committedCatalog: RenderReceiptFinalizeResult;
+    try {
+      committedCatalog = await commitPreparedRenderCatalog(workflowCatalog, receipt);
+    } catch (error) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "image",
+        frameLane,
+        preset: stillFramePreset,
+        renderCommitted: true,
+        ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
+        ...browserWorkflowResultFields(workflowEvidence),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        outputPath: resolvedOutputPath,
+        output: receipt.output,
+        receipt,
+        receiptPath,
+        frameReceipt,
+        ...(qualityCheck ? { qualityCheck } : {}),
+        warnings: receipt.warnings,
+        stillFrame,
+        error: { code: "render_catalog_update_failed", message: error instanceof Error ? error.message : String(error) }
+      };
+    }
+
     return {
       ok: true,
       command: "render",
@@ -1887,33 +1945,37 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       preset: stillFramePreset,
       ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
       ...browserWorkflowResultFields(workflowEvidence),
-      ...workflowCatalogFields(workflowCatalog),
+      ...workflowCatalogFields(committedCatalog),
       ...(qualityManifestPath ? { qualityManifestPath } : {}),
       outputPath: resolvedOutputPath,
       output: receipt.output,
       receipt,
+      receiptPath,
       frameReceipt,
       ...(qualityCheck ? { qualityCheck } : {}),
       warnings: receipt.warnings,
       stillFrame
     };
+    } catch (error) {
+      await abortPreparedRenderCatalog(preparedWorkflowCatalog).catch(() => undefined);
+      await publication.abort().catch(() => undefined);
+      throw error;
+    }
   }
-  const frameBudgetError = renderFrameSequenceBudgetError(
-    frameCount,
-    pkg.motion.width,
-    pkg.motion.height
-  );
-  if (frameBudgetError) {
-    return {
-      ok: false,
-      command: "render",
-      lane: "ffmpeg",
-      frameLane,
-      error: { code: "render_budget_exceeded", message: frameBudgetError }
-    };
-  }
-  const imageSequencePreset = readImageSequenceExportPreset(preset);
   if (imageSequencePreset) {
+    if (frameLane === "gpu") {
+      return { ok: false, command: "render", frameLane, error: { code: "unsupported_frame_lane", message: "GPU final rendering supports streamed FFmpeg video only, not image-sequence presets." } };
+    }
+    const resourcePreflight = preflightMaterializedFrameSequence({
+      frameCount,
+      width: pkg.motion.width,
+      height: pkg.motion.height,
+      frameLane,
+      motion: pkg.motion
+    }, options.materializedFrameSequencePreflight);
+    if (resourcePreflight.status === "refused") {
+      return materializedFrameSequencePreflightRefusal(resourcePreflight, frameLane);
+    }
     const sequenceWarnings = audioInputCount > 0
       ? [`Export preset ${imageSequencePreset} does not support audio; ${audioInputCount} requested audio ${audioInputCount === 1 ? "track" : "tracks"} will be ignored.`]
       : [];
@@ -1941,15 +2003,15 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         ...(qualityManifestPath ? { qualityManifestPath } : {}),
         ...(sequenceWarnings.length > 0 ? { warnings: sequenceWarnings } : {}),
         dryRun: true,
+        resourcePreflight,
         sequence
       };
     }
 
-    // the output-directory ownership invariant: the PNG sequence lands directly in the caller-supplied `--out` directory. Refuse a
-    // non-empty target instead of wiping it; `--force` restores the previous behavior. Placed after
-    // the `--dry-run` return above so planning still never touches the filesystem.
-    const outputDirGuard = await prepareOutputDir(resolvedOutputPath, { force: hasFlag(argv, "--force") });
-    if (!outputDirGuard.ok) {
+    // Preserve the established CLI destination contract first: absent and existing-empty outputs
+    // are valid, while --force may replace only the exact admitted caller-selected directory.
+    const preparedSequence = await prepareImageSequencePublication(resolvedOutputPath, forceOutput);
+    if (!preparedSequence.ok) {
       return {
         ok: false,
         command: "render",
@@ -1957,22 +2019,26 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         frameLane,
         preset: imageSequencePreset,
         outputPath: resolvedOutputPath,
-        error: outputDirGuard.error
+        error: preparedSequence.error
       };
     }
+    const sequencePublication = preparedSequence.publication;
+    let preparedWorkflowCatalog: RenderReceiptFinalizeResult | undefined;
+    try {
     let lastFrameReceipt: unknown = null;
     // Every frame contributes its warnings, not just the last one: keeping only the final frame's
     // receipt silently dropped a warning raised on frame 1 of 270.
     const frameLaneWarnings = new FrameLaneWarnings();
     let workflowEvidence: BrowserWorkflowRenderEvidence | undefined;
     const framePaths = Array.from({ length: frameCount }, (_, frameIndex) =>
-      join(resolvedOutputPath, frameFileName(frameIndex))
+      join(sequencePublication.stagingPath, frameFileName(frameIndex))
     );
+    let browserRendererArtifacts: ReceiptArtifact[] = [];
     if (frameLane === "native") {
       // Load the native render session once: the PNG sequence is a user-facing
       // deliverable, so frames keep the default (max) PNG compression; only the load/decode work is
       // shared via a single session.
-      const nativeSession = await createNativeRenderSession({ packageRoot, outputRoots: [resolvedOutputPath], renderTarget: "delivery" });
+      const nativeSession = await createNativeRenderSession({ packageRoot, outputRoots: [sequencePublication.stagingPath], renderTarget: "delivery" });
       try {
         for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
           const framePath = framePaths[frameIndex];
@@ -1982,6 +2048,7 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           lastFrameReceipt = frame.receipt;
           frameLaneWarnings.observe(frame.receipt);
           if (!frame.ok) {
+            await sequencePublication.abort();
             return {
               ok: false,
               command: "render",
@@ -2003,16 +2070,23 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       const browserSession = options.browserFrameRenderer ? undefined : await createMotionBrowserRenderSession(pkg, callerIdForRun ? { callerId: callerIdForRun } : {});
       try {
         const frameRequests = framePaths.map((outputPath, frameIndex) => ({
-          outDir: resolvedOutputPath,
+          outDir: join(sequencePublication.stagingPath, ".browser-render-evidence", String(frameIndex).padStart(6, "0")),
           outputPath,
           atMs: frameTimestampMs(frameIndex, pkg.motion.fps, pkg.motion.durationMs),
           ...(workflow ? { workflow } : {})
         }));
-        const frames = await renderBrowserFrameBatch(pkg, frameRequests, browserSession, options.browserFrameRenderer, options.signal);
+        const frames = await renderBrowserFrameBatch(
+          pkg,
+          frameRequests.map((frame) => withRendererPrivateOutputPublication(frame, sequencePublication)),
+          browserSession,
+          options.browserFrameRenderer,
+          options.signal
+        );
         const lastFrame = frames.at(-1);
         lastFrameReceipt = lastFrame?.receipt ?? null;
         for (const frame of frames) frameLaneWarnings.observe(frame.receipt);
         if (lastFrame) workflowEvidence = browserWorkflowEvidenceFromFrame(lastFrame);
+        browserRendererArtifacts = frames.flatMap((frame) => availableRendererArtifacts(frame, frame.output.path));
       } finally {
         await browserSession?.close();
       }
@@ -2024,6 +2098,7 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       ...quality
     });
     if (!sequenceQuality.ok) {
+      await sequencePublication.abort();
       return {
         ok: false,
         command: "render",
@@ -2045,21 +2120,22 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
 
     const receipt = await createImageSequenceReceipt({
       packageId: pkg.manifest.id,
-      framesDir: resolvedOutputPath,
+      framesDir: sequencePublication.stagingPath,
       fps: pkg.motion.fps,
       width: pkg.motion.width,
       height: pkg.motion.height,
       durationMs: pkg.motion.durationMs,
       frameCount,
+      resourcePreflight,
       warnings: [...sequenceWarnings, ...sequenceQuality.warnings]
     });
     // Fold what the frame lane reported into the receipt an agent actually reads. Without this
     // a font-fallback warning raised while drawing is invisible once the frames are encoded away.
     frameLaneWarnings.applyTo(receipt);
     enrichRenderReceiptWithBrowserWorkflow(receipt, workflowEvidence);
-    const qualityCheck = qualityManifestPath
+    const rawQualityCheck = qualityManifestPath
       ? await qualityCheckRenderManifest({
-          inputPath: resolvedOutputPath,
+          inputPath: sequencePublication.stagingPath,
           manifestPath: qualityManifestPath,
           preset: imageSequencePreset,
           packageRoot,
@@ -2069,35 +2145,49 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
           options
         })
       : undefined;
+    const qualityCheck = rawQualityCheck ? remapPrivatePublicationResultPaths(rawQualityCheck, sequencePublication.stagingPath, resolvedOutputPath) : undefined;
     if (qualityManifestPath && qualityCheck) {
       await enrichRenderReceiptWithQualityManifest(receipt, qualityManifestPath, qualityCheck);
       if (!qualityCheck.ok) {
-        return await renderQualityManifestFailure({
-          packageId: pkg.manifest.id,
-          lane: "image-sequence",
-          frameLane,
-          preset: imageSequencePreset,
+        await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+        await sequencePublication.abort();
+        const failedReceiptPath = await publishFailedImageSequenceBundle({
           outputPath: resolvedOutputPath,
-          receipt,
-          frameReceipt: lastFrameReceipt,
-          frames: { dir: resolvedOutputPath, count: frameCount },
-          qualityManifestPath,
-          qualityCheck,
-          extra: { sequence }
+          receiptPath: renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image-sequence"),
+          receipt
         });
+        const qualityError = readRecord(qualityCheck.error);
+        return {
+          ok: false, command: "render", receiptPath: failedReceiptPath, lane: "image-sequence", frameLane, preset: imageSequencePreset,
+          outputPath: resolvedOutputPath, receipt, frameReceipt: lastFrameReceipt, frames: { dir: resolvedOutputPath, count: frameCount },
+          qualityManifestPath, qualityCheck,
+          error: { code: typeof qualityError?.code === "string" ? qualityError.code : "quality_check_failed", message: typeof qualityError?.message === "string" ? qualityError.message : "Final render quality manifest check failed." },
+          warnings: receipt.warnings, sequence
+        };
       }
     }
-    const workflowCatalog = await finalizeRenderReceipt({
+    await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+    const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image-sequence");
+    const workflowCatalog = preparedWorkflowCatalog = await prepareRenderReceipt({
       packageId: pkg.manifest.id,
       receipt,
       outputPath: resolvedOutputPath,
-      receiptPath: renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image-sequence"),
+      receiptPath,
       atMs: 0,
       workflowEvidence,
       workflowCatalogPath,
-      failOnDrift
+      failOnDrift, force: forceOutput
     });
     if (workflowCatalog.error) {
+      await abortPreparedRenderCatalog(workflowCatalog);
+      receipt.status = "failed";
+      await sequencePublication.abort();
+      workflowCatalog.receiptPath = await publishFailedImageSequenceBundle({
+        outputPath: resolvedOutputPath,
+        receiptPath,
+        receipt
+      });
+      workflowCatalog.artifacts = receipt.artifacts;
       return {
         ok: false,
         command: "render",
@@ -2120,6 +2210,46 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       };
     }
 
+    const rendererEvidence = await bindDirectoryRendererArtifacts(receipt, browserRendererArtifacts, sequencePublication.stagingPath, resolvedOutputPath);
+    receipt.artifacts = dedupeReceiptArtifacts([...(receipt.artifacts ?? []), ...rendererEvidence.artifacts]);
+    rebindDirectoryReceiptPaths(receipt, sequencePublication.stagingPath, resolvedOutputPath);
+    const receiptRelativePath = relativeBundleFilePath(resolvedOutputPath, receiptPath);
+    if (!receiptRelativePath) throw new Error("Image-sequence receipt must remain inside the governed directory bundle.");
+    receipt.artifacts = dedupeReceiptArtifacts([...(receipt.artifacts ?? []), { role: "render_receipt", path: receiptPath, status: "available", mediaType: "application/json" }]);
+    await writeFile(join(sequencePublication.stagingPath, receiptRelativePath), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    const inventory = closedDirectoryBundleInventory([
+      ...framePaths.map((path) => relativeBundleFilePath(sequencePublication.stagingPath, path)!),
+      ...rendererEvidence.inventory,
+      receiptRelativePath
+    ]);
+    await publishGovernedDirectoryBundle(sequencePublication, inventory);
+    let committedCatalog: RenderReceiptFinalizeResult;
+    try {
+      committedCatalog = await commitPreparedRenderCatalog(workflowCatalog, receipt);
+    } catch (error) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "image-sequence",
+        frameLane,
+        preset: imageSequencePreset,
+        renderCommitted: true,
+        ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
+        ...browserWorkflowResultFields(workflowEvidence),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        outputPath: resolvedOutputPath,
+        output: receipt.output,
+        receipt,
+        receiptPath,
+        frameReceipt: lastFrameReceipt,
+        frames: { dir: resolvedOutputPath, count: frameCount },
+        ...(qualityCheck ? { qualityCheck } : {}),
+        warnings: receipt.warnings,
+        sequence,
+        error: { code: "render_catalog_update_failed", message: error instanceof Error ? error.message : String(error) }
+      };
+    }
+
     return {
       ok: true,
       command: "render",
@@ -2128,17 +2258,40 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       preset: imageSequencePreset,
       ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
       ...browserWorkflowResultFields(workflowEvidence),
-      ...workflowCatalogFields(workflowCatalog),
+      ...workflowCatalogFields(committedCatalog),
       ...(qualityManifestPath ? { qualityManifestPath } : {}),
       outputPath: resolvedOutputPath,
       output: receipt.output,
       receipt,
+      receiptPath,
       frameReceipt: lastFrameReceipt,
       frames: { dir: resolvedOutputPath, count: frameCount },
       ...(qualityCheck ? { qualityCheck } : {}),
       warnings: receipt.warnings,
       sequence
     };
+    } catch (error) {
+      await abortPreparedRenderCatalog(preparedWorkflowCatalog).catch(() => undefined);
+      await sequencePublication.abort().catch(() => undefined);
+      if (error instanceof DirectoryBundleCommitUncertainError) {
+        return {
+          ok: false,
+          command: "render",
+          lane: "image-sequence",
+          frameLane,
+          preset: imageSequencePreset,
+          renderCommitUncertain: true,
+          possiblyCommitted: true,
+          publicationCommitPhase: "output",
+          publicPaths: [error.outputPath],
+          expectedPublications: [error.expectedPublication],
+          outputPath: resolvedOutputPath,
+          receiptPath: renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "image-sequence"),
+          error: { code: error.code, message: error.message }
+        };
+      }
+      throw error;
+    }
   }
 
   const ffmpegPreset = readFfmpegExportPreset(preset);
@@ -2164,21 +2317,364 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     };
   }
   const warnings = audioWarningsForExportPreset(ffmpegPreset, audioInputCount);
-  const planned = buildEncodeImageSequenceCommand({
+  const segmentFramesValue = optionValue(argv, "--segment-frames"), resumeSegments = hasFlag(argv, "--resume-segments");
+  if (resumeSegments && segmentFramesValue === undefined) return { ok: false, command: "render", error: { code: "invalid_args", message: "--resume-segments requires --segment-frames <positive integer>." } };
+  const segmented = segmentFramesValue === undefined ? undefined : Number(segmentFramesValue);
+  if (segmented !== undefined && (!Number.isSafeInteger(segmented) || segmented <= 0)) return { ok: false, command: "render", error: { code: "invalid_args", message: "--segment-frames must be a positive safe integer." } };
+  if (segmented !== undefined) {
+    const segmentRequest = { segmentFrames: segmented, resume: resumeSegments, store: "derived-from-output" as const };
+    if (keepFrames || optionValue(argv, "--frames-dir") !== undefined) return { ok: false, command: "render", error: { code: "invalid_args", message: "Segmented final delivery owns a derived durable checkpoint store; omit --keep-frames and --frames-dir." } };
+    if (workflow || resolvedWorkflowPath) return { ok: false, command: "render", error: { code: "invalid_args", message: "Segmented final delivery does not support browser workflows." } };
+    if (qualityManifestPath) return { ok: false, command: "render", error: { code: "invalid_args", message: "Segmented final delivery does not support exact-source quality manifests." } };
+    if (forceOutput) return { ok: false, command: "render", error: { code: "invalid_args", message: "Segmented final delivery never overwrites an existing output; omit --force and choose a new output path." } };
+    if (hasFlag(argv, "--dry-run")) return { ok: true, command: "render", lane: "ffmpeg", frameLane, preset: ffmpegPreset, ...(quality ? { quality } : {}), ...(warnings.length ? { warnings } : {}), dryRun: true, segmented: segmentRequest };
+    const health = await checkFfmpeg({ ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
+    if (!health.ok) return { ok: false, command: "render", lane: "ffmpeg", frameLane, error: health.error };
+    const outputFileGuard = await outputFileRefusal(resolvedOutputPath, { force: false });
+    if (outputFileGuard) return { ok: false, command: "render", lane: "ffmpeg", frameLane, error: outputFileGuard };
+    await mkdir(dirname(resolvedOutputPath), { recursive: true });
+    const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg");
+    const publication = await PairedOutputReceiptPublication.acquire({
+      outputPath: resolvedOutputPath, receiptPath,
+      outputArtifact: { role: "rendered_media", mediaType: mediaTypeForPath(resolvedOutputPath), primary: true },
+      receiptArtifact: { role: "render_receipt", mediaType: "application/json" }
+    });
+    try {
+      const result = await renderSegmentedFinal(withSegmentedFinalCliPublication({ pkg, frameLane, outputPath: resolvedOutputPath, preset: ffmpegPreset, segmented: { segmentFrames: segmented, ...(resumeSegments ? { resume: true } : {}) }, ...(audio ? { audio } : {}), ...(audioTracks ? { audioTracks } : {}), ...(audioMaster ? { audioMaster } : {}), inputRoots: audioPath && resolvedAudioPath ? [dirname(resolvedAudioPath)] : [pkg.root], outputRoots: [dirname(resolvedOutputPath)], ...(quality ? { quality } : {}), signal: options.signal, ...(options.scratchRoot ? { scratchRoot: options.scratchRoot } : {}),
+        ...(callerIdForRun ? { callerId: callerIdForRun } : {}), toolPolicy: { runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, callerIdForRun), ...(forceSoftwareEncode ? { forceSoftwareEncode: true } : {}), ...(health.version ? { ffmpegVersion: health.version } : {}), ...(options.streamingProcessFactory ? { processFactory: options.streamingProcessFactory } : {}) } }, publication.outputPublication));
+      if (!result.ok) {
+        await publication.abort();
+        return { ok: false, command: "render", lane: "ffmpeg", frameLane, segmented: segmentRequest, error: result.error };
+      }
+      await bindFinalRenderReceiptLineage(result.receipt, pkg, lineage);
+      await publication.stageReceipt(result.receipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+      return { ok: true, command: "render", lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath: resolvedOutputPath, output: result.receipt.output, receipt: result.receipt, receiptPath, warnings: result.receipt.warnings, frameTransport: result.transport, segmented: segmentRequest };
+    } catch (error) {
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "render", lane: "ffmpeg", frameLane, segmented: segmentRequest, ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
+  }
+  const retainedBatchQualityManifest = retainedBatchQualityManifestFor(qualityManifestPath, options), gpuDeliveredQuality = frameLane === "gpu" && retainedBatchQualityManifest !== undefined;
+  const frameTransport = planFinalVideoFrameTransport({ keepFrames, capturedBrowserWorkflow: Boolean(workflow),
+    // Exact-source comparison retains the PNG sequence consumed by the encoder.
+    exactSourceQuality: Boolean(qualityManifestPath) && !gpuDeliveredQuality,
+    ...(quality ? { minUniqueFrameHashes: quality.minUniqueFrameHashes } : {}),
+    injectedFrameRenderer: options.browserFrameRenderer !== undefined });
+  const qualityManifest = qualityManifestPath && !gpuDeliveredQuality ? { exactSourceComparison: "required" as const } : undefined;
+  const streamingInputRoots = audioPath && resolvedAudioPath ? [dirname(resolvedAudioPath)] : [pkg.root];
+  const dryRun = hasFlag(argv, "--dry-run");
+  // A dry run refuses the same native delivery incompatibility without touching output state.
+  const dryRunRefusal = nativeDeliveryRefusal(pkg, frameLane);
+  if (dryRunRefusal && dryRun) return dryRunRefusal;
+
+  if (frameTransport.delivery === "streamed") {
+    const plannedAudio = frameLane === "gpu"
+      ? preliminaryGpuAudio({ pkg, ...(audio ? { audio } : {}), ...(audioTracks ? { audioTracks } : {}), ...(audioMaster ? { audioMaster } : {}) })
+      : { ...(audio ? { audio } : {}), ...(audioTracks ? { audioTracks } : {}), ...(audioMaster ? { audioMaster } : {}) };
+    const streamingPlan = planStreamingFinalCommand({
+      fps: pkg.motion.fps,
+      width: pkg.motion.width,
+      height: pkg.motion.height,
+      durationMs: pkg.motion.durationMs,
+      ...(frameLane === "gpu" ? { frameFormat: "rgba" as const } : {}),
+      outputPath: resolvedOutputPath,
+      preset: ffmpegPreset,
+      ...plannedAudio,
+      inputRoots: streamingInputRoots,
+      outputRoots: [dirname(resolvedOutputPath)],
+      ...(quality ? { quality } : {}),
+      ...(qualityManifest ? { qualityManifest } : {}),
+      keepFrames,
+      transport: frameTransport,
+      capturedBrowserWorkflow: Boolean(workflow),
+      injectedFrameRenderer: options.browserFrameRenderer !== undefined
+    });
+    if (!streamingPlan.ok) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        frameTransport: streamingPlan.transport,
+        error: streamingPlan.error
+      };
+    }
+    if (dryRun) {
+      return {
+        ok: true,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        preset: ffmpegPreset,
+        ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+        ...(audio ? { audio } : {}),
+        ...(audioTracks ? { audioTracks } : {}),
+        ...(quality ? { quality } : {}),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
+        dryRun: true,
+        frameTransport: streamingPlan.transport,
+        ffmpeg: streamingPlan.command
+      };
+    }
+    const health = await checkFfmpeg({ ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
+    if (!health.ok) return { ok: false, command: "render", lane: "ffmpeg", frameTransport, error: health.error };
+    const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg");
+    const publication = await PairedOutputReceiptPublication.acquire({
+      outputPath: resolvedOutputPath, receiptPath,
+      outputArtifact: { role: "rendered_media", mediaType: mediaTypeForPath(resolvedOutputPath), primary: true },
+      receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
+      ...(forceOutput ? { forceOutput: true, forceReceipt: true } : {})
+    });
+    let streamed: Awaited<ReturnType<typeof renderStreamingFinal>>;
+    try {
+      streamed = await renderStreamingFinal({
+      pkg,
+      frameLane,
+      outputPath: resolvedOutputPath,
+      preset: ffmpegPreset,
+      ...(audio ? { audio } : {}),
+      ...(audioTracks ? { audioTracks } : {}),
+      ...(audioMaster ? { audioMaster } : {}),
+      inputRoots: streamingInputRoots,
+      outputRoots: [dirname(resolvedOutputPath)],
+      ...(quality ? { quality } : {}),
+      ...(qualityManifest ? { qualityManifest } : {}),
+      keepFrames,
+      ...(forceOutput ? { force: true } : {}),
+      outputPublication: publication.outputPublication,
+      transport: frameTransport,
+      signal: options.signal,
+      toolPolicy: {
+        runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, callerIdForRun),
+        ...(forceSoftwareEncode ? { forceSoftwareEncode: true } : {}),
+        ...(health.version ? { ffmpegVersion: health.version } : {}),
+        ...(options.streamingProcessFactory ? { processFactory: options.streamingProcessFactory } : {})
+      }
+      });
+    } catch (error) {
+      await publication.abort().catch(() => undefined);
+      throw error;
+    }
+    if (!streamed.ok) {
+      await publication.abort().catch(() => undefined);
+      return {
+        ok: false,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        frameTransport,
+        ffmpegPlan: streamingPlan.command,
+        error: streamed.error
+      };
+    }
+    const finalCommand = { ...streamed.command, args: streamed.command.args.map((arg) => arg === publication.outputPublication.stagingPath ? resolvedOutputPath : arg) };
+    const rawQualityCheck = qualityManifestPath ? await qualityCheckRenderManifest({ inputPath: publication.outputPublication.stagingPath, manifestPath: qualityManifestPath, preset: ffmpegPreset, packageRoot, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps, options }) : undefined;
+    const qualityCheck = rawQualityCheck
+      ? remapPrivatePublicationResultPaths(rawQualityCheck, publication.outputPublication.stagingPath, resolvedOutputPath)
+      : undefined;
+    if (qualityManifestPath && qualityCheck) {
+      await enrichRenderReceiptWithQualityManifest(streamed.receipt, qualityManifestPath, qualityCheck);
+      await recordReceiptFfprobeProvenance(streamed.receipt, { contributed: true, ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
+      if (!qualityCheck.ok) {
+        await bindFinalRenderReceiptLineage(streamed.receipt, pkg, lineage);
+        remapReceiptOutputPath(streamed.receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
+        await publication.abort();
+        return await renderQualityManifestFailure({ packageId: pkg.manifest.id, lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath: resolvedOutputPath, receipt: streamed.receipt, qualityManifestPath, qualityCheck, force: forceOutput, extra: { frameTransport, ffmpeg: finalCommand } });
+      }
+    }
+    await bindFinalRenderReceiptLineage(streamed.receipt, pkg, lineage);
+    let workflowCatalog: RenderReceiptFinalizeResult | undefined;
+    try {
+      const preparedCatalog = await prepareRenderReceipt({
+        packageId: pkg.manifest.id,
+        receipt: streamed.receipt,
+        outputPath: resolvedOutputPath,
+        receiptPath,
+        atMs: 0,
+        workflowCatalogPath,
+        failOnDrift, force: forceOutput
+      });
+      workflowCatalog = preparedCatalog;
+      if (preparedCatalog.error) {
+        await abortPreparedRenderCatalog(preparedCatalog);
+        streamed.receipt.status = "failed";
+        remapReceiptOutputPath(streamed.receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
+        await publication.abort();
+        preparedCatalog.receiptPath = await writeRenderReceiptFile(streamed.receipt, receiptPath, { force: forceOutput });
+        preparedCatalog.artifacts = streamed.receipt.artifacts;
+        return {
+          ok: false,
+          command: "render",
+          lane: "ffmpeg",
+          frameLane,
+          preset: ffmpegPreset,
+          ...workflowCatalogFields(preparedCatalog),
+          ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+          ...(audio ? { audio } : {}),
+          ...(audioTracks ? { audioTracks } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          outputPath: resolvedOutputPath,
+          output: streamed.receipt.output,
+          receipt: streamed.receipt,
+          ...(qualityCheck ? { qualityCheck } : {}),
+          warnings: streamed.receipt.warnings,
+          frameTransport,
+          ffmpeg: finalCommand,
+          error: preparedCatalog.error
+        };
+      }
+      await publication.stageReceipt(streamed.receipt);
+      await publication.commit({ cancelled: () => options.signal?.aborted === true });
+    } catch (error) {
+      await abortPreparedRenderCatalog(workflowCatalog).catch(() => undefined);
+      await publication.abort().catch(() => undefined);
+      if (error instanceof PairedOutputReceiptCommitUncertainError) {
+        return { ok: false, command: "render", lane: "ffmpeg", frameLane, preset: ffmpegPreset, ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+      }
+      throw error;
+    }
+    let committedCatalog: RenderReceiptFinalizeResult;
+    try {
+      committedCatalog = await commitPreparedRenderCatalog(workflowCatalog!, streamed.receipt);
+    } catch (error) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        preset: ffmpegPreset,
+        renderCommitted: true,
+        ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+        ...(audio ? { audio } : {}),
+        ...(audioTracks ? { audioTracks } : {}),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        outputPath: resolvedOutputPath,
+        output: streamed.receipt.output,
+        receipt: streamed.receipt,
+        receiptPath,
+        ...(qualityCheck ? { qualityCheck } : {}),
+        warnings: streamed.receipt.warnings,
+        frameTransport,
+        ffmpeg: finalCommand,
+        error: { code: "render_catalog_update_failed", message: error instanceof Error ? error.message : String(error) }
+      };
+    }
+    return {
+      ok: true,
+      command: "render",
+      lane: "ffmpeg",
+      frameLane,
+      preset: ffmpegPreset,
+      ...workflowCatalogFields(committedCatalog),
+      ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+      ...(audio ? { audio } : {}),
+      ...(audioTracks ? { audioTracks } : {}),
+      ...(qualityManifestPath ? { qualityManifestPath } : {}),
+      outputPath: resolvedOutputPath,
+      output: streamed.receipt.output,
+      receipt: streamed.receipt,
+      receiptPath,
+      ...(qualityCheck ? { qualityCheck } : {}),
+      warnings: streamed.receipt.warnings,
+      frameTransport,
+      ffmpeg: finalCommand
+    };
+  }
+
+  if (frameLane === "gpu") {
+    return {
+      ok: false,
+      command: "render",
+      lane: "ffmpeg",
+      frameLane,
+      frameTransport,
+      error: {
+        code: "unsupported_frame_lane",
+        message: `GPU final rendering requires the strict streamed FFmpeg path; ${frameTransport.reason} requires materialized frames and GPU never falls back.`
+      }
+    };
+  }
+
+  const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg");
+  let materializedPublication: PairedOutputReceiptPublication | undefined;
+  if (!dryRun) {
+    const framesRefusal = await materializedDeliveryRefusal(resolvedOutputPath, framesDir, {
+      force: forceOutput,
+      callerSupplied: framesDirCallerSupplied,
+      withinRoot: framesRoot
+    });
+    if (framesRefusal) {
+      return { ok: false, command: "render", lane: "ffmpeg", frameLane, frameTransport, error: framesRefusal };
+    }
+    try {
+      materializedPublication = await PairedOutputReceiptPublication.acquire({
+        outputPath: resolvedOutputPath,
+        receiptPath,
+        outputArtifact: { role: "rendered_media", mediaType: mediaTypeForPath(resolvedOutputPath), primary: true },
+        receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
+        ...(forceOutput ? { forceOutput: true, forceReceipt: true } : {})
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        frameTransport,
+        error: {
+          code: (error as { code?: string }).code ?? "derived_output_publish_failed",
+          message: error instanceof Error ? error.message : String(error)
+        }
+      };
+    }
+  }
+  const materialized = await renderMaterializedFinalVideo({
+    pkg,
+    packageRoot,
+    frameLane,
+    frameCount,
     framesDir,
-    fps: pkg.motion.fps,
-    durationMs: pkg.motion.durationMs,
+    framesRoot,
+    framesDirCallerSupplied,
     outputPath: resolvedOutputPath,
     preset: ffmpegPreset,
-    audio,
-    audioTracks,
+    ...(audio ? { audio } : {}),
+    ...(audioTracks ? { audioTracks } : {}),
+    ...(audioMaster ? { audioMaster } : {}),
     inputRoots: ffmpegInputRoots,
-    outputRoots: [dirname(resolvedOutputPath)]
+    outputRoots: [dirname(resolvedOutputPath)],
+    ...(quality ? { quality } : {}),
+    forceSoftwareEncode,
+    force: forceOutput,
+    keepFrames,
+    dryRun,
+    ...(materializedPublication ? { outputPublication: materializedPublication.outputPublication, deferOutputPublication: true } : {}),
+    ...(workflow ? { workflow } : {}),
+    ...(callerIdForRun ? { callerId: callerIdForRun } : {}),
+    ...(options.browserFrameRenderer ? { browserFrameRenderer: options.browserFrameRenderer } : {}),
+    ...(options.ffmpegRunner ? { ffmpegRunner: options.ffmpegRunner } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.materializedFrameSequencePreflight ? { preflight: options.materializedFrameSequencePreflight } : {})
   });
-  // A dry run must refuse what execution would refuse.
-  const dryRunRefusal = nativeDeliveryRefusal(pkg, frameLane);
-  if (dryRunRefusal && argv.includes("--dry-run")) return dryRunRefusal;
-  if (argv.includes("--dry-run")) {
+  if (materialized.kind === "refused") {
+    await materializedPublication?.abort().catch(() => undefined);
+    const failedReceipt = materialized.response.receipt;
+    if (!failedReceipt) return { ...materialized.response, frameTransport };
+    await bindFinalRenderReceiptLineage(failedReceipt, pkg, lineage);
+    failedReceipt.output = { ...(readRecord(failedReceipt.output) ?? {}), frameTransportPlan: frameTransport };
+    const failedReceiptPath = await writeRenderReceiptFile(
+      failedReceipt,
+      receiptPath,
+      { force: forceOutput }
+    );
+    return { ...materialized.response, receipt: failedReceipt, receiptPath: failedReceiptPath, frameTransport, warnings: failedReceipt.warnings };
+  }
+  if (materialized.kind === "dry-run") {
     return {
       ok: true,
       command: "render",
@@ -2192,198 +2688,183 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       ...(qualityManifestPath ? { qualityManifestPath } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
       dryRun: true,
-      ffmpeg: planned
+      frameTransport,
+      resourcePreflight: materialized.resourcePreflight,
+      ffmpeg: materialized.command
     };
   }
-
-  const health = await checkFfmpeg({ runner: options.ffmpegRunner });
-  if (!health.ok) {
-    return { ok: false, command: "render", lane: "ffmpeg", error: health.error };
-  }
-
-  // the file-output ownership invariant: `--out` as a DIRECTORY was guarded while `--out` as a FILE was handed to FFmpeg's `-y`.
-  // Checked before any frame is drawn so a refusal costs no render.
-  const outputFileGuard = await outputFileRefusal(resolvedOutputPath, { force: hasFlag(argv, "--force") });
-  if (outputFileGuard) return { ok: false, command: "render", lane: "ffmpeg", frameLane, error: outputFileGuard };
-  // the frame-output ownership invariant: this was an unguarded `rm(framesDir, { recursive: true })` justified by a comment claiming
-  // Motion owns the path — but `--frames-dir` is caller-supplied, and pointing it at a directory of
-  // the caller's own files deleted them while the run reported success. The scratch must still start
-  // clean (a stale frame from a longer previous render would be encoded), so ownership is now proven
-  // per policy in core rather than assumed: Motion's DEFAULT root wipes, a caller-named path must
-  // hold only Motion's own frames or be empty, and `--force` covers the rest.
-  const framesGuard = await framesDirRefusal(framesDir, {
-    force: hasFlag(argv, "--force"),
-    callerSupplied: framesDirCallerSupplied,
-    // framesDir is `join(framesRoot, pkg.manifest.id)`, so the id is a path component supplied by
-    // the PACKAGE. Even with the id now charset-validated at the loader, the sink states its own
-    // containment independently at the filesystem sink.
-    withinRoot: framesRoot
-  });
-  if (framesGuard) return { ok: false, command: "render", lane: "ffmpeg", frameLane, error: framesGuard };
-  await mkdir(dirname(resolvedOutputPath), { recursive: true });
-  let lastFrameReceipt: unknown = null;
-  // Every frame contributes its warnings, not just the last one: keeping only the final frame's
-  // receipt silently dropped a warning raised on frame 1 of 270.
-  const frameLaneWarnings = new FrameLaneWarnings();
-  let workflowEvidence: BrowserWorkflowRenderEvidence | undefined;
-  if (frameLane === "native") {
-    // Open one native render session so the package,
-    // structural hashes and image assets are loaded/decoded once, then render every frame from that
-    // in-memory snapshot instead of reloading + re-decoding per frame. These frames are transient
-    // FFmpeg encoder input (re-decoded away by the encode step), so encode them at a fast PNG
-    // compression level — it remains lossless, so the encoded video is unchanged.
-    const nativeSession = await createNativeRenderSession({
-      packageRoot,
-      outputRoots: [framesDir],
-      pngCompressionLevel: INTERMEDIATE_FRAME_PNG_COMPRESSION_LEVEL,
-      // These frames are encoded into the delivered video, so the native lane's text gate applies
-      // (the text-delivery invariant): refuse rather than ship case-folded / noise-boxed text inside an MP4.
-      renderTarget: "delivery"
-    });
-    try {
-      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-        const outputPath = join(framesDir, frameFileName(frameIndex));
-        const atMs = frameTimestampMs(frameIndex, pkg.motion.fps, pkg.motion.durationMs);
-        throwIfCancelled(options.signal, "native frame rendering");
-        const frame = await nativeSession.renderFrameAtMs(atMs, outputPath);
-        lastFrameReceipt = frame.receipt;
-        frameLaneWarnings.observe(frame.receipt);
-        if (!frame.ok) {
-          return {
-            ok: false,
-            command: "render",
-            lane: "ffmpeg",
-            frameLane,
-            error: frame.error,
-            frameReceipt: frame.receipt,
-            frames: { dir: framesDir, count: frameIndex }
-          };
+  const { encoded, lastFrameReceipt, frames, workflowEvidence, cleanup } = materialized;
+  const pairedOutput = materializedPublication;
+  if (!dryRun && !pairedOutput) throw new Error("Materialized final render lost its paired output reservation.");
+  let cleanedFrames = false;
+  try {
+    // Streaming receipts expose bounded execution evidence under `frameTransport`. The materialized
+    // route has its existing source-frame / resource evidence, so it records only the planner result.
+    encoded.receipt.output = { ...(readRecord(encoded.receipt.output) ?? {}), frameTransportPlan: frameTransport };
+    enrichRenderReceiptWithBrowserWorkflow(encoded.receipt, workflowEvidence);
+    const rawQualityCheck = qualityManifestPath
+      ? await qualityCheckRenderManifest({
+          inputPath: pairedOutput?.outputPublication.stagingPath ?? resolvedOutputPath,
+          manifestPath: qualityManifestPath,
+          preset: ffmpegPreset,
+          packageRoot,
+          // The pre-encode frames the encoder consumed are still on disk here (both native and browser
+          // frame lanes write them to framesDir), so the manifest compares each delivered frame against
+          // its exact source frame — deterministic pre-encode renderer identity, no re-render.
+          sourceFramesDir: framesDir,
+          durationMs: pkg.motion.durationMs,
+          fps: pkg.motion.fps,
+          options
+        })
+      : undefined;
+    // A materialized planner route can use scratch PNGs without retaining them. Once those are
+    // cleaned, receipt/result evidence must not point callers at a deleted source frame.
+    const publicQualityCheck = rawQualityCheck && pairedOutput
+      ? remapPrivatePublicationResultPaths(rawQualityCheck, pairedOutput.outputPublication.stagingPath, resolvedOutputPath)
+      : rawQualityCheck;
+    const qualityCheck = publicQualityCheck && !frames
+      ? withoutTransientFrameSourcePaths(publicQualityCheck, framesDir)
+      : publicQualityCheck;
+    if (qualityManifestPath && qualityCheck) {
+      await enrichRenderReceiptWithQualityManifest(encoded.receipt, qualityManifestPath, qualityCheck);
+      // FFprobe read this media back to produce the quality evidence above, so it belongs in the
+      // receipt's tool provenance alongside the encoder that wrote it (the tool-identity invariant, the tool-provenance invariant):
+      // two FFmpeg builds pick different filters, muxers and defaults, so "libx264" alone cannot
+      // reproduce or vouch for an encode. The rule (probe only where FFprobe contributed; record only
+      // when the probe answered) lives in debug-api's `recordReceiptFfprobeProvenance` so this
+      // receipt and the one an agent gets from `motion.render.final` carry the same evidence.
+      await recordReceiptFfprobeProvenance(encoded.receipt, {
+        // Reaching this line means the ffmpeg lane's manifest ran, which reads the delivered media
+        // back through FFprobe.
+        contributed: true,
+        ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {})
+      });
+      if (!qualityCheck.ok) {
+        await bindFinalRenderReceiptLineage(encoded.receipt, pkg, lineage);
+        if (pairedOutput) {
+          remapReceiptOutputPath(encoded.receipt, pairedOutput.outputPublication.stagingPath, resolvedOutputPath);
+          await pairedOutput.abort().catch(() => undefined);
         }
+        return await renderQualityManifestFailure({
+          packageId: pkg.manifest.id,
+          lane: "ffmpeg",
+          frameLane,
+          preset: ffmpegPreset,
+          outputPath: resolvedOutputPath,
+          receipt: encoded.receipt,
+          ...(frames ? { frameReceipt: lastFrameReceipt } : {}),
+          ...(frames ? { frames } : {}),
+          qualityManifestPath,
+          qualityCheck,
+          force: forceOutput,
+          extra: { frameTransport, ffmpeg: encoded.command }
+        });
       }
-    } finally {
-      nativeSession.close();
     }
-  } else {
-    const browserSession = options.browserFrameRenderer ? undefined : await createMotionBrowserRenderSession(pkg, callerIdForRun ? { callerId: callerIdForRun } : {});
-    try {
-      const frameRequests = Array.from({ length: frameCount }, (_, frameIndex) => ({
-        outDir: framesDir,
-        outputPath: join(framesDir, frameFileName(frameIndex)),
-        atMs: frameTimestampMs(frameIndex, pkg.motion.fps, pkg.motion.durationMs),
-        ...(workflow ? { workflow } : {})
-      }));
-      const frames = await renderBrowserFrameBatch(pkg, frameRequests, browserSession, options.browserFrameRenderer, options.signal);
-      const lastFrame = frames.at(-1);
-      lastFrameReceipt = lastFrame?.receipt ?? null;
-      for (const frame of frames) frameLaneWarnings.observe(frame.receipt);
-      if (lastFrame) workflowEvidence = browserWorkflowEvidenceFromFrame(lastFrame);
-    } finally {
-      await browserSession?.close();
-    }
-  }
-
-  const encoded = await encodeImageSequenceWithPolicy({
-    packageId: pkg.manifest.id,
-    framesDir,
-    fps: pkg.motion.fps,
-    width: pkg.motion.width,
-    height: pkg.motion.height,
-    durationMs: pkg.motion.durationMs,
-    outputPath: resolvedOutputPath,
-    preset: ffmpegPreset,
-    audio,
-    audioTracks,
-    inputRoots: ffmpegInputRoots,
-    outputRoots: [dirname(resolvedOutputPath)],
-    quality,
-    // Hardware-encode by default through the shared encode policy: the probe is cached across
-    // renders on this host, and the software override is honored. Bind the checkFfmpeg version to the
-    // cache/receipt provenance.
-    ...(forceSoftwareEncode ? { forceSoftwareEncode: true } : {}),
-    ...(health.version ? { ffmpegVersion: health.version } : {}),
-    runner: options.ffmpegRunner
-  });
-  if (!encoded.ok) {
-    return {
-      ok: false,
-      command: "render",
-      lane: "ffmpeg",
-      frameLane,
-      error: encoded.error,
-      ffmpeg: encoded.command,
-      frameReceipt: lastFrameReceipt,
-      frames: { dir: framesDir, count: frameCount }
-    };
-  }
-  // Fold what the frame lane reported into the receipt an agent actually reads. Without this
-  // a font-fallback warning raised while drawing is invisible once the frames are encoded away.
-  frameLaneWarnings.applyTo(encoded.receipt);
-  enrichRenderReceiptWithBrowserWorkflow(encoded.receipt, workflowEvidence);
-  const qualityCheck = qualityManifestPath
-    ? await qualityCheckRenderManifest({
-        inputPath: resolvedOutputPath,
-        manifestPath: qualityManifestPath,
-        preset: ffmpegPreset,
-        packageRoot,
-        // The pre-encode frames the encoder consumed are still on disk here (both native and browser
-        // frame lanes write them to framesDir), so the manifest compares each delivered frame against
-        // its exact source frame — deterministic pre-encode renderer identity, no re-render.
-        sourceFramesDir: framesDir,
-        durationMs: pkg.motion.durationMs,
-        fps: pkg.motion.fps,
-        options
-      })
-    : undefined;
-  if (qualityManifestPath && qualityCheck) {
-    await enrichRenderReceiptWithQualityManifest(encoded.receipt, qualityManifestPath, qualityCheck);
-    // FFprobe read this media back to produce the quality evidence above, so it belongs in the
-    // receipt's tool provenance alongside the encoder that wrote it (the tool-identity invariant, the tool-provenance invariant):
-    // two FFmpeg builds pick different filters, muxers and defaults, so "libx264" alone cannot
-    // reproduce or vouch for an encode. The rule (probe only where FFprobe contributed; record only
-    // when the probe answered) lives in debug-api's `recordReceiptFfprobeProvenance` so this
-    // receipt and the one an agent gets from `motion.render.final` carry the same evidence.
-    await recordReceiptFfprobeProvenance(encoded.receipt, {
-      // Reaching this line means the ffmpeg lane's manifest ran, which reads the delivered media
-      // back through FFprobe.
-      contributed: true,
-      ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {})
+    await bindFinalRenderReceiptLineage(encoded.receipt, pkg, lineage);
+    const workflowCatalog = await prepareRenderReceipt({
+      packageId: pkg.manifest.id,
+      receipt: encoded.receipt,
+      outputPath: resolvedOutputPath,
+      receiptPath,
+      atMs: 0,
+      workflowEvidence,
+      workflowCatalogPath,
+      failOnDrift, force: forceOutput
     });
-    if (!qualityCheck.ok) {
-      return await renderQualityManifestFailure({
-        packageId: pkg.manifest.id,
+    if (workflowCatalog.error) {
+      await abortPreparedRenderCatalog(workflowCatalog);
+      encoded.receipt.status = "failed";
+      if (pairedOutput) {
+        remapReceiptOutputPath(encoded.receipt, pairedOutput.outputPublication.stagingPath, resolvedOutputPath);
+        await pairedOutput.abort().catch(() => undefined);
+        workflowCatalog.receiptPath = await writeRenderReceiptFile(encoded.receipt, receiptPath, { force: forceOutput });
+        workflowCatalog.artifacts = encoded.receipt.artifacts;
+      }
+      return {
+        ok: false,
+        command: "render",
         lane: "ffmpeg",
         frameLane,
         preset: ffmpegPreset,
+        ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
+        ...browserWorkflowResultFields(workflowEvidence),
+        ...workflowCatalogFields(workflowCatalog),
+        ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+        ...(audio ? { audio } : {}),
+        ...(audioTracks ? { audioTracks } : {}),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
         outputPath: resolvedOutputPath,
+        output: encoded.receipt.output,
         receipt: encoded.receipt,
-        frameReceipt: lastFrameReceipt,
-        frames: { dir: framesDir, count: frameCount },
-        qualityManifestPath,
-        qualityCheck,
-        extra: { ffmpeg: encoded.command }
-      });
+        ...(frames ? { frameReceipt: lastFrameReceipt } : {}),
+        ...(frames ? { frames } : {}),
+        ...(qualityCheck ? { qualityCheck } : {}),
+        warnings: encoded.receipt.warnings,
+        frameTransport,
+        ffmpeg: pairedOutput ? remapFfmpegOutputPath(encoded.command, pairedOutput.outputPublication.stagingPath, resolvedOutputPath) : encoded.command,
+        error: workflowCatalog.error
+      };
     }
-  }
-  const workflowCatalog = await finalizeRenderReceipt({
-    packageId: pkg.manifest.id,
-    receipt: encoded.receipt,
-    outputPath: resolvedOutputPath,
-    receiptPath: renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg"),
-    atMs: 0,
-    workflowEvidence,
-    workflowCatalogPath,
-    failOnDrift
-  });
-  if (workflowCatalog.error) {
+
+    if (pairedOutput) {
+      try {
+        await pairedOutput.stageReceipt(encoded.receipt);
+        // The output must be the final potentially-public I/O.  Cleanup can fail, so finish it
+        // while the media is still private and the paired receipt can still be safely revoked.
+        await cleanup();
+        cleanedFrames = true;
+        await pairedOutput.commit({ cancelled: () => options.signal?.aborted === true });
+      } catch (error) {
+        await abortPreparedRenderCatalog(workflowCatalog).catch(() => undefined);
+        await pairedOutput.abort().catch(() => undefined);
+        if (error instanceof PairedOutputReceiptCommitUncertainError) {
+          return { ok: false, command: "render", lane: "ffmpeg", frameLane, preset: ffmpegPreset, ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
+        }
+        throw error;
+      }
+    }
+
+    let committedCatalog: RenderReceiptFinalizeResult;
+    try {
+      committedCatalog = await commitPreparedRenderCatalog(workflowCatalog, encoded.receipt);
+    } catch (error) {
+      return {
+        ok: false,
+        command: "render",
+        lane: "ffmpeg",
+        frameLane,
+        preset: ffmpegPreset,
+        renderCommitted: true,
+        ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
+        ...browserWorkflowResultFields(workflowEvidence),
+        ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
+        ...(audio ? { audio } : {}),
+        ...(audioTracks ? { audioTracks } : {}),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        outputPath: resolvedOutputPath,
+        output: encoded.receipt.output,
+        receipt: encoded.receipt,
+        receiptPath,
+        ...(frames ? { frameReceipt: lastFrameReceipt } : {}),
+        ...(frames ? { frames } : {}),
+        ...(qualityCheck ? { qualityCheck } : {}),
+        warnings: encoded.receipt.warnings,
+        frameTransport,
+        ffmpeg: pairedOutput ? remapFfmpegOutputPath(encoded.command, pairedOutput.outputPublication.stagingPath, resolvedOutputPath) : encoded.command,
+        error: { code: "render_catalog_update_failed", message: error instanceof Error ? error.message : String(error) }
+      };
+    }
+
     return {
-      ok: false,
+      ok: true,
       command: "render",
       lane: "ffmpeg",
       frameLane,
       preset: ffmpegPreset,
       ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
       ...browserWorkflowResultFields(workflowEvidence),
-      ...workflowCatalogFields(workflowCatalog),
+      ...workflowCatalogFields(committedCatalog),
       ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
       ...(audio ? { audio } : {}),
       ...(audioTracks ? { audioTracks } : {}),
@@ -2391,38 +2872,20 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
       outputPath: resolvedOutputPath,
       output: encoded.receipt.output,
       receipt: encoded.receipt,
-      frameReceipt: lastFrameReceipt,
-      frames: { dir: framesDir, count: frameCount },
+      receiptPath,
+      ...(frames ? { frameReceipt: lastFrameReceipt } : {}),
+      ...(frames ? { frames } : {}),
       ...(qualityCheck ? { qualityCheck } : {}),
       warnings: encoded.receipt.warnings,
-      ffmpeg: encoded.command,
-      error: workflowCatalog.error
+      frameTransport,
+      ffmpeg: pairedOutput ? remapFfmpegOutputPath(encoded.command, pairedOutput.outputPublication.stagingPath, resolvedOutputPath) : encoded.command
     };
+  } finally {
+    if (!cleanedFrames) await cleanup();
   }
-
-  return {
-    ok: true,
-    command: "render",
-    lane: "ffmpeg",
-    frameLane,
-    preset: ffmpegPreset,
-    ...(resolvedWorkflowPath ? { workflowPath: resolvedWorkflowPath } : {}),
-    ...browserWorkflowResultFields(workflowEvidence),
-    ...workflowCatalogFields(workflowCatalog),
-    ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
-    ...(audio ? { audio } : {}),
-    ...(audioTracks ? { audioTracks } : {}),
-    ...(qualityManifestPath ? { qualityManifestPath } : {}),
-    outputPath: resolvedOutputPath,
-    output: encoded.receipt.output,
-    receipt: encoded.receipt,
-    frameReceipt: lastFrameReceipt,
-    frames: { dir: framesDir, count: frameCount },
-    ...(qualityCheck ? { qualityCheck } : {}),
-    warnings: encoded.receipt.warnings,
-    ffmpeg: encoded.command
-  };
 }
+
+function retainedBatchQualityManifestFor(manifestPath: string | undefined, options: RunCliOptions): RunCliOptions["retainedBatchQualityManifest"] | undefined { const retained = options.retainedBatchQualityManifest; return manifestPath && retained && resolve(manifestPath) === resolve(retained.published.appliedPath) ? retained : undefined; }
 
 async function qualityCheckRenderManifest(input: {
   inputPath: string;
@@ -2438,32 +2901,46 @@ async function qualityCheckRenderManifest(input: {
 }): Promise<CliResult> {
   const qualityRoot = resolveOutputPath(input.options.scratchRoot ? join(input.options.scratchRoot, "quality") : ".scratch/quality");
   const runner = input.options.ffmpegRunner ?? defaultFfmpegRunner(input.options.signal, input.options.callerId);
-  if (input.preset === "png-frame") {
-    return qualityCheckPngStillFrameManifest({
-      inputPath: input.inputPath,
+  const batchRetained = retainedBatchQualityManifestFor(input.manifestPath, input.options);
+  let retained: Awaited<ReturnType<typeof retainQualityManifestForEvaluation>> | undefined;
+  if (!batchRetained) try { retained = await retainQualityManifestForEvaluation(input.manifestPath, join(qualityRoot, "inputs"), { packageId: basename(input.packageRoot), packageDir: input.packageRoot, outputPath: input.inputPath }); } catch (error) { return invalidQualityArgs(error instanceof Error ? error.message : String(error)); }
+  const appliedPath = batchRetained?.published.appliedPath ?? retained!.published.appliedPath;
+  const qualityInputs = batchRetained?.evidence ?? retained!.evidence;
+  const finish = (result: CliResult): CliResult => {
+    if (retained) remapRetainedQualityInputPaths(result, retained, input.manifestPath);
+    return {
+      ...result,
       manifestPath: input.manifestPath,
+      qualityManifestAppliedPath: appliedPath,
+      qualityInputs,
+    };
+  };
+  if (input.preset === "png-frame") {
+    return finish(await qualityCheckPngStillFrameManifest({
+      inputPath: input.inputPath,
+      manifestPath: appliedPath,
       qualityRoot,
       runner,
       ...(input.previewPackageRoot ? { previewPackageRoot: input.previewPackageRoot } : {}),
       previewLane: "browser"
-    });
+    }));
   }
   if (input.preset === "png-sequence") {
-    return qualityCheckPngSequenceManifest({
+    return finish(await qualityCheckPngSequenceManifest({
       inputPath: input.inputPath,
-      manifestPath: input.manifestPath,
+      manifestPath: appliedPath,
       qualityRoot,
       runner,
       durationMs: input.durationMs,
       fps: input.fps,
       ...(input.previewPackageRoot ? { previewPackageRoot: input.previewPackageRoot } : {}),
       previewLane: "browser"
-    });
+    }));
   }
   const args = [
     input.inputPath,
     "--manifest",
-    input.manifestPath
+    appliedPath
   ];
   // Prefer the deterministic pre-encode renderer baseline (video lane). Fall back to a re-rendered
   // browser preview only when the pre-encode frames are unavailable.
@@ -2472,206 +2949,7 @@ async function qualityCheckRenderManifest(input: {
   } else if (input.previewPackageRoot) {
     args.push("--preview-package", input.previewPackageRoot, "--preview-lane", "browser");
   }
-  return qualityCheckCommand(args, input.options);
-}
-
-async function enrichRenderReceiptWithQualityManifest(
-  receipt: OperationReceipt,
-  qualityManifestPath: string,
-  qualityCheck: CliResult
-): Promise<void> {
-  receipt.inputHashes = {
-    ...receipt.inputHashes,
-    qualityManifest: await hashFile(qualityManifestPath)
-  };
-  const output = readRecord(receipt.output) ?? {};
-  receipt.output = {
-    ...output,
-    qualityManifestPath,
-    qualityCheck: {
-      status: qualityCheck.ok ? "passed" : "failed",
-      // On failure, persist the metric breakdown and diff-image path of the offending sample so the
-      // receipt distinguishes a colour/range offset from a content/timing regression without a rerun.
-      ...(qualityCheck.ok ? {} : { failedSample: summarizeFailedQualitySample(qualityCheck) })
-    }
-  };
-  receipt.status = qualityCheck.ok ? receipt.status : "failed";
-  receipt.warnings = dedupeWarnings([...receipt.warnings, ...resultWarnings(qualityCheck)]);
-}
-
-/**
- * Extract a compact, receipt-safe breakdown of the first failing quality-manifest sample: its id,
- * delivered-frame identity, the full visual-diff metrics, and the on-disk frame/baseline/diff image
- * paths. Returns undefined when no sample-level detail is available (e.g. a manifest-parse failure).
- */
-function summarizeFailedQualitySample(qualityCheck: CliResult): Record<string, unknown> | undefined {
-  const samples = Array.isArray(qualityCheck.samples) ? qualityCheck.samples : [];
-  const failed = samples.map((sample) => readRecord(sample)).find((sample) => sample && sample.ok === false);
-  if (!failed) return undefined;
-  const error = readRecord(failed.error);
-  const visualDiff = readRecord(failed.visualDiff);
-  return {
-    id: failed.id,
-    ...(typeof failed.atMs === "number" ? { atMs: failed.atMs } : {}),
-    ...(typeof failed.deliveryFrameIndex === "number" ? { deliveryFrameIndex: failed.deliveryFrameIndex } : {}),
-    ...(error ? { code: error.code, message: error.message } : {}),
-    ...(typeof failed.framePath === "string" ? { framePath: failed.framePath } : {}),
-    ...(typeof failed.baselinePath === "string" ? { baselinePath: failed.baselinePath } : {}),
-    ...(typeof failed.diffPath === "string" ? { diffPath: failed.diffPath } : {}),
-    ...(visualDiff
-      ? {
-          metrics: {
-            changedPixels: visualDiff.changedPixels,
-            meanAbsoluteError: visualDiff.meanAbsoluteError,
-            rootMeanSquaredError: visualDiff.rootMeanSquaredError,
-            psnrDb: visualDiff.psnrDb,
-            ssim: visualDiff.ssim,
-            maxChannelDelta: visualDiff.maxChannelDelta
-          }
-        }
-      : {})
-  };
-}
-
-/**
- * A render that produced media but failed its quality manifest.
- *
- * The receipt is still written to disk: a failed quality gate is precisely when an agent needs
- * durable evidence of what was produced and why it was rejected. `packageId` is required so the
- * receipt lands on the same path a successful render would have used.
- */
-async function renderQualityManifestFailure(input: {
-  packageId: string;
-  lane: "ffmpeg" | "image-sequence" | "image";
-  frameLane: string;
-  preset: MotionExportPreset;
-  outputPath: string;
-  receipt: OperationReceipt;
-  frameReceipt: unknown;
-  frames?: { dir: string; count: number };
-  qualityManifestPath: string;
-  qualityCheck: CliResult;
-  extra?: Record<string, unknown>;
-}): Promise<CliResult> {
-  const qualityError = readRecord(input.qualityCheck.error);
-  const receiptPath = await writeRenderReceiptFile(
-    input.receipt,
-    renderReceiptPathForOutput(input.packageId, input.outputPath, input.lane)
-  );
-  return {
-    ok: false,
-    command: "render",
-    receiptPath,
-    lane: input.lane,
-    frameLane: input.frameLane,
-    preset: input.preset,
-    outputPath: input.outputPath,
-    receipt: input.receipt,
-    frameReceipt: input.frameReceipt,
-    ...(input.frames ? { frames: input.frames } : {}),
-    qualityManifestPath: input.qualityManifestPath,
-    qualityCheck: input.qualityCheck,
-    error: {
-      code: typeof qualityError?.code === "string" ? qualityError.code : "quality_check_failed",
-      message: typeof qualityError?.message === "string"
-        ? qualityError.message
-        : "Final render quality manifest check failed."
-    },
-    warnings: input.receipt.warnings,
-    ...(input.extra ?? {})
-  };
-}
-
-function readMinUniqueFrameHashes(raw: string): { minUniqueFrameHashes: number } | null {
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) return null;
-  return { minUniqueFrameHashes: value };
-}
-
-
-/**
- * Render a batch of browser frames through whichever renderer is in play.
- *
- * A real session renders the whole batch in one call so the page is loaded once. An injected
- * renderer (tests, hosts supplying their own browser) has no batch entry point, so frames go
- * through it one at a time — same results, no shared page to reuse.
- */
-async function renderBrowserFrameBatch(
-  pkg: Awaited<ReturnType<typeof loadMotionPackage>>,
-  frames: Array<{ outDir: string; outputPath: string; atMs: number; workflow?: unknown }>,
-  session: MotionBrowserRenderSession | undefined,
-  injected: BrowserFrameRenderer | undefined,
-  signal: AbortSignal | undefined
-): Promise<Awaited<ReturnType<typeof renderMotionBrowserFrame>>[]> {
-  if (!injected) {
-    return session!.renderFrames(
-      frames as Parameters<MotionBrowserRenderSession["renderFrames"]>[0],
-      signal ? { signal } : {}
-    );
-  }
-  const results: Awaited<ReturnType<typeof renderMotionBrowserFrame>>[] = [];
-  for (const frame of frames) {
-    // A real session checks the signal itself; an injected renderer has no such contract, so the
-    // loop has to. Without this a cancelled render drew every remaining frame and reported success.
-    throwIfCancelled(signal, "browser frame rendering");
-    results.push(await injected(pkg, frame as Parameters<BrowserFrameRenderer>[1]));
-  }
-  return results;
-}
-
-function browserWorkflowEvidenceFromFrame(frame: { output?: unknown; receipt?: unknown }): BrowserWorkflowRenderEvidence | undefined {
-  const output = readRecord(frame.output);
-  const receipt = readRecord(frame.receipt);
-  const inputHashes = readRecord(receipt?.inputHashes);
-  const workflow = output?.workflow;
-  const workflowTrace = output?.workflowTrace;
-  const workflowHash = typeof inputHashes?.workflow === "string"
-    ? inputHashes.workflow
-    : workflowHashFromTrace(workflowTrace);
-  if (workflow === undefined && workflowTrace === undefined && !workflowHash) return undefined;
-  return {
-    ...(workflow !== undefined ? { workflow } : {}),
-    ...(workflowTrace !== undefined ? { workflowTrace } : {}),
-    ...(workflowHash ? { workflowHash } : {})
-  };
-}
-
-function workflowHashFromTrace(value: unknown): string | undefined {
-  const trace = readRecord(value);
-  return typeof trace?.workflowHash === "string" ? trace.workflowHash : undefined;
-}
-
-function enrichRenderReceiptWithBrowserWorkflow(
-  receipt: OperationReceipt,
-  evidence: BrowserWorkflowRenderEvidence | undefined
-): void {
-  if (!evidence) return;
-  if (evidence.workflowHash) {
-    receipt.inputHashes = { ...receipt.inputHashes, workflow: evidence.workflowHash };
-  }
-  const output = readRecord(receipt.output) ?? {};
-  receipt.output = {
-    ...output,
-    ...(evidence.workflow !== undefined ? { workflow: evidence.workflow } : {}),
-    ...(evidence.workflowTrace !== undefined ? { workflowTrace: evidence.workflowTrace } : {})
-  };
-}
-
-function browserWorkflowResultFields(evidence: BrowserWorkflowRenderEvidence | undefined): Record<string, unknown> {
-  if (!evidence) return {};
-  return {
-    ...(evidence.workflow !== undefined ? { workflow: evidence.workflow } : {}),
-    ...(evidence.workflowTrace !== undefined ? { workflowTrace: evidence.workflowTrace } : {})
-  };
-}
-
-function workflowCatalogFields(result: RenderReceiptFinalizeResult): Record<string, unknown> {
-  return {
-    ...(result.workflowCatalogPath ? { workflowCatalogPath: result.workflowCatalogPath } : {}),
-    ...(result.workflowDrift ? { workflowDrift: result.workflowDrift } : {}),
-    ...(result.receiptPath ? { receiptPath: result.receiptPath } : {}),
-    ...(result.artifacts ? { artifacts: result.artifacts } : {})
-  };
+  return finish(await qualityCheckCommand(args, input.options));
 }
 
 function audioLayerAssetRef(layer: Awaited<ReturnType<typeof loadMotionPackage>>["motion"]["layers"][number]): string | undefined {
@@ -2760,10 +3038,13 @@ async function qualityCheckCommand(argv: string[], options: RunCliOptions = {}):
   const runner = options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, resolveCallerId(argv, options));
   const qualityRoot = resolveOutputPath(options.scratchRoot ? join(options.scratchRoot, "quality") : ".scratch/quality");
   const framePath = join(qualityRoot, `${basename(inputPath).replace(/\.[^.]+$/, "") || "media"}-frame.png`);
+  const batchRetainedManifest = manifestPath ? retainedBatchQualityManifestFor(manifestPath, options) : undefined;
+  let retainedManifest: Awaited<ReturnType<typeof retainQualityManifestForEvaluation>> | undefined;
+  if (manifestPath && !batchRetainedManifest) try { retainedManifest = await retainQualityManifestForEvaluation(manifestPath, join(qualityRoot, "inputs"), { packageId: "quality_check", packageDir: qualityRoot, outputPath: inputPath }); } catch (error) { return invalidQualityArgs(error instanceof Error ? error.message : String(error)); }
 
   let media: Awaited<ReturnType<typeof probeMedia>>;
   try {
-    media = await probeMedia(inputPath, { runner });
+    media = await probeMedia(inputPath, { runner, inputRoots: [dirname(inputPath)], admittedQualityInput: true });
   } catch (error) {
     return {
       ok: false,
@@ -2817,9 +3098,10 @@ async function qualityCheckCommand(argv: string[], options: RunCliOptions = {}):
   const audioLevels = audioCheck.audioLevels;
 
   if (manifestPath) {
-    return qualityCheckManifest({
+    const appliedManifestPath = batchRetainedManifest?.published.appliedPath ?? retainedManifest!.published.appliedPath, qualityInputs = batchRetainedManifest?.evidence ?? retainedManifest!.evidence;
+    const result = await qualityCheckManifest({
       inputPath,
-      manifestPath,
+      manifestPath: appliedManifestPath,
       media,
       qualityRoot,
       runner,
@@ -2836,13 +3118,20 @@ async function qualityCheckCommand(argv: string[], options: RunCliOptions = {}):
       defaultMinSsim: minSsim.value,
       cliAudioLevels: audioLevels
     });
+    if (retainedManifest) remapRetainedQualityInputPaths(result, retainedManifest, manifestPath);
+    return {
+      ...result,
+      manifestPath,
+      qualityManifestAppliedPath: appliedManifestPath,
+      qualityInputs,
+    };
   }
 
-  await mkdir(dirname(framePath), { recursive: true });
+  await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
   const seekArgs = (atMs.value ?? 0) > 0 ? ["-ss", formatSeconds((atMs.value ?? 0) / 1000)] : [];
   const extractCommand: FfmpegCommand = {
     executable: resolveFfmpegExecutable(),
-    args: ["-y", ...seekArgs, ...frameExtractionInputArgs(media, inputPath), ...frameExtractionPngOutputArgs(media, framePath)],
+    args: ["-y", ...seekArgs, ...frameExtractionInputArgs(media, inputPath, { admittedQualityInput: true }), ...frameExtractionPngOutputArgs(media, framePath)],
     shell: false
   };
   const extracted = await runner(extractCommand);
@@ -3076,7 +3365,7 @@ async function renderQualityPreviewBaseline(input: {
   atMs: number;
   framePath: string;
 }): Promise<QualityPreviewBaseline> {
-  await mkdir(dirname(input.framePath), { recursive: true });
+  await mkdir(dirname(input.framePath), { recursive: true, mode: 0o700 });
   if (input.lane === "browser") {
     const pkg = await loadMotionPackage(input.packageRoot);
     const result = await renderMotionBrowserFrame(pkg, {
@@ -3543,14 +3832,14 @@ async function qualityCheckSample(input: {
     };
   }
   if (!input.sourceFramePath) {
-    await mkdir(dirname(framePath), { recursive: true });
+    await mkdir(dirname(framePath), { recursive: true, mode: 0o700 });
     // Frame-accurate + colour-normalized extraction when a delivered-frame index is known (the
     // representative-frame manifest path); otherwise fall back to the wall-clock seek used by the
     // standalone single-frame quality-check.
     const extractArgs = input.deliveryFrameIndex !== undefined
-      ? ["-y", ...frameExtractionArgs(input.media, input.inputPath, framePath, { frameIndex: input.deliveryFrameIndex })]
+      ? ["-y", ...frameExtractionArgs(input.media, input.inputPath, framePath, { frameIndex: input.deliveryFrameIndex, admittedQualityInput: true })]
       : ["-y", ...(input.atMs > 0 ? ["-ss", formatSeconds(input.atMs / 1000)] : []),
-        ...frameExtractionInputArgs(input.media, input.inputPath), ...frameExtractionPngOutputArgs(input.media, framePath)];
+        ...frameExtractionInputArgs(input.media, input.inputPath, { admittedQualityInput: true }), ...frameExtractionPngOutputArgs(input.media, framePath)];
     const extractCommand: FfmpegCommand = {
       executable: resolveFfmpegExecutable(),
       args: extractArgs,
@@ -3968,7 +4257,7 @@ async function qualityCheckAudioPolicy(input: {
 
   let audioLevels: Awaited<ReturnType<typeof measureAudioLevels>>;
   try {
-    audioLevels = await measureAudioLevels(input.inputPath, { runner: input.runner });
+    audioLevels = await measureAudioLevels(input.inputPath, { runner: input.runner, inputRoots: [dirname(input.inputPath)], admittedQualityInput: true });
   } catch (error) {
     return audioPolicyFailure(input, "ffmpeg_failed", error instanceof Error ? error.message : String(error));
   }
@@ -4138,6 +4427,11 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readCliResult(value: unknown): CliResult | undefined {
+  const result = readRecord(value);
+  return result && typeof result.ok === "boolean" ? result as CliResult : undefined;
+}
+
 function readNonNegativeNumber(value: unknown, path: string, fallback: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -4206,6 +4500,8 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
   const outDir = resolveOutputPath(outDirArg);
   const dryRun = argv.includes("--dry-run");
   const resume = argv.includes("--resume");
+  const frameLaneValue = optionValue(argv, "--frame-lane") ?? "browser", frameLane = readBatchFrameLane(frameLaneValue);
+  if (!frameLane) return { ok: false, command: "render-batch", error: { code: "unsupported_frame_lane", message: unsupportedFrameLaneMessage(frameLaneValue) } };
   const rowsRef = optionValue(argv, "--rows");
   const qualityManifestRef = optionValue(argv, "--quality-manifest");
   const qualityManifestPath = qualityManifestRef ? resolveInputPath(qualityManifestRef) : undefined;
@@ -4252,7 +4548,7 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
   const workflowIdempotencyHash = workflowPath ? await batchWorkflowIdempotencyHash(workflowPath) : undefined;
   const pkg = await loadMotionPackage(packageRoot);
   const allRows = rowsRef
-    ? await loadDataRowsFile(resolveInputPath(rowsRef))
+    ? await loadDataRowsFile(resolveInputPath(rowsRef), { withinRoot: dirname(resolveInputPath(rowsRef)) })
     : await loadPackageDataRows(pkg);
   const rowFilter = filterMotionDataRows(allRows, requestedRowIds);
   if (!rowFilter.ok) {
@@ -4271,6 +4567,16 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
   }
   const rows = rowFilter.rows;
   const expanded = expandMotionPackageRows(pkg, rows);
+  const activeJob = expanded.find((job) => activeScriptLayers(job.motion).length > 0); if (activeJob) {
+    return {
+      ok: false,
+      command: "render-batch",
+      error: {
+        code: "script_provenance_unresolved",
+        message: `render-batch refuses active-content row ${activeJob.row.id} before package copy; provenance does not transfer to a copied package.`
+      }
+    };
+  }
   const presetPlan = planBatchRenderPresets(expanded, preset, Boolean(presetArg));
   if (!presetPlan.ok) {
     return {
@@ -4283,6 +4589,8 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
     };
   }
   const presetSummary = batchPresetSummary(preset, presetPlan.uniquePresets);
+  const gpuRefusal = gpuBatchPreflightRefusal({ frameLane, resume, workflowPath, presets: presetPlan.presets, quality });
+  if (gpuRefusal) return { ok: false, command: "render-batch", frameLane, error: { code: frameLane === "gpu" && resume ? "invalid_args" : "unsupported_frame_lane", message: gpuRefusal } };
   if (qualityManifestPath) {
     const unsupportedQualityPreset = presetPlan.presets.find((candidate) => !supportsBatchQualityManifestPreset(candidate));
     if (unsupportedQualityPreset) {
@@ -4296,245 +4604,228 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
       };
     }
   }
-  const packagesRoot = join(outDir, "packages");
-  const renderRoot = join(outDir, "render");
-  const receiptsRoot = join(outDir, "receipts");
-  const previousBatchJobs = resume ? await readBatchResumeJobs(join(receiptsRoot, "batch-render.receipt.json")) : new Map<string, Record<string, unknown>>();
-  await mkdir(packagesRoot, { recursive: true });
-  await mkdir(renderRoot, { recursive: true });
-  await mkdir(receiptsRoot, { recursive: true });
+  const admittedOutput = await admitCliBatchOutput(outDir, resume);
+  if (!admittedOutput.ok) {
+    return {
+      ok: false,
+      command: "render-batch",
+      error: {
+        code: "invalid_args",
+        message: admittedOutput.message
+      }
+    };
+  }
+  const { batchOutput, packagesRoot, renderRoot, receiptsRoot, previousBatchJobs } = admittedOutput;
 
   const jobs: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < expanded.length; index += 1) {
-    const job = expanded[index];
-    const jobPreset = presetPlan.presets[index];
-    const packageDir = join(packagesRoot, job.manifest.id);
-    const outputPath = batchRenderOutputPath(renderRoot, job.manifest.id, jobPreset);
-    const idempotencyKey = batchJobIdempotencyKey({
-      packageId: job.manifest.id,
-      rowId: job.row.id,
-      rowHash: job.row.hash,
-      manifest: job.manifest,
-      motion: job.motion,
-      preset: jobPreset,
-      quality,
-      qualityManifestPath,
-      workflowIdempotencyHash
-    });
-    await writeExpandedPackage(job, pkg, packageDir);
-    const audioPresetWarnings = audioWarningsForMotionExportPreset(jobPreset, audioInputCountForMotion(job.motion));
-    const planReceiptPath = await writeBatchRowPlanReceipt({
-      receiptsRoot,
-      dryRun,
-      packageId: job.manifest.id,
-      row: job.row,
-      manifest: job.manifest,
-      motion: job.motion,
-      packageDir,
-      outputPath,
-      preset: jobPreset,
-      status: "not_run",
-      idempotencyKey,
-      quality,
-      qualityManifestPath,
-      warnings: audioPresetWarnings
-    });
-    if (dryRun) {
-      jobs.push({
-        rowId: job.row.id,
-        rowHash: job.row.hash,
-        rowKey: job.row.key,
-        idempotencyKey,
-        packageId: job.manifest.id,
-        packageDir,
-        outputPath,
-        preset: jobPreset,
-        status: "not_run",
-        planReceiptPath,
-        receiptPath: planReceiptPath,
-        ...(quality ? { quality } : {}),
-        ...(qualityManifestPath ? { qualityManifestPath } : {}),
-        ...(audioPresetWarnings.length > 0 ? { warnings: audioPresetWarnings } : {})
-      });
-      continue;
-    }
-
-    const resumeMatch = resume ? readBatchResumeMatch(previousBatchJobs, idempotencyKey, outputPath) : null;
-    if (resumeMatch) {
-      const sourceReceiptPath = batchResumeSourceReceiptPath(resumeMatch);
-      jobs.push({
-        rowId: job.row.id,
-        rowHash: job.row.hash,
-        rowKey: job.row.key,
-        idempotencyKey,
-        packageId: job.manifest.id,
-        packageDir,
-        outputPath,
-        preset: jobPreset,
-        status: "skipped",
-        planReceiptPath,
-        receiptPath: sourceReceiptPath,
-        resume: { matched: true, sourceReceiptPath },
-        ...(quality ? { quality } : {}),
-        ...(qualityManifestPath ? { qualityManifestPath } : {}),
-        ...(audioPresetWarnings.length > 0 ? { warnings: audioPresetWarnings } : {})
-      });
-      continue;
-    }
-
-    // `outputPath` is `<out>/render/<packageId>`, a path this batch derives and owns — not a
-    // caller-chosen directory — so it explicitly opts into guarded replacement to keep re-running a batch
-    // into the same `--out` working. The batch's own `--out` is only mkdir'd, never wiped.
-    const renderArgs = [packageDir, "--lane", "ffmpeg", "--out", outputPath, "--preset", jobPreset, "--force"];
-    if (quality) renderArgs.push("--min-unique-frames", String(quality.minUniqueFrameHashes));
-    if (workflowPath) renderArgs.push("--workflow", workflowPath);
-    const renderResult = await renderCommand(renderArgs, options);
-    let qualityCheck: CliResult | undefined;
-    const warnings = resultWarnings(renderResult);
-    const receiptPath = join(receiptsRoot, `${job.manifest.id}.render.receipt.json`);
-    await writeJson(receiptPath, renderResult.receipt ?? {
-      schema: "shellx-motion/receipt@1",
-      id: `render-failed-${job.manifest.id}`,
-      operation: "render.final",
-      status: "failed",
-      packageId: job.manifest.id,
-      inputHashes: { row: job.row.hash },
-      createdAt: new Date().toISOString(),
-      lane: "ffmpeg",
-      output: { preset: jobPreset },
-      warnings: []
-    });
-    let qualityManifestForCheckPath = qualityManifestPath;
-    let qualityManifestAppliedPath: string | undefined;
-    if (renderResult.ok && qualityManifestPath) {
-      const materialized = await materializeBatchQualityManifest({
+  try {
+    for (let index = 0; index < expanded.length; index += 1) {
+      if (index > 0) await options.batchTestHooks?.beforeNextRow?.();
+      await batchOutput.assertCurrent();
+      const job = expanded[index];
+      const jobPreset = presetPlan.presets[index];
+      const packageDir = join(packagesRoot, job.manifest.id);
+      const outputPath = batchRenderOutputPath(renderRoot, job.manifest.id, jobPreset);
+      const qualitySnapshot = qualityManifestPath ? await prepareBatchQualityManifestSnapshot({
         sourcePath: qualityManifestPath,
-        targetPath: join(receiptsRoot, "quality-manifests", `${job.manifest.id}.quality-manifest.json`),
-        row: job.row,
+        context: { values: job.row.values, rowId: job.row.id, rowIndex: job.row.index, rowHash: job.row.hash, rowKey: job.row.key, packageId: job.manifest.id, packageDir, outputPath }
+      }) : undefined;
+      const qualityInputs = qualitySnapshot ? batchQualityInputEvidence(qualitySnapshot) : undefined;
+      const frameTransport = frameLane === "gpu" ? gpuBatchFrameTransport(quality) : undefined;
+      const idempotencyKey = batchJobIdempotencyKey({ packageId: job.manifest.id, rowId: job.row.id, rowHash: job.row.hash, manifest: job.manifest, motion: job.motion, preset: jobPreset, quality, qualityInputs, frameLane, workflowIdempotencyHash });
+      const packageAssetInputHashes = await writeExpandedPackage(job, pkg, packageDir);
+      await batchOutput.assertCurrent();
+      const audioPresetWarnings = audioWarningsForMotionExportPreset(jobPreset, audioInputCountForMotion(job.motion));
+      const planReceiptPath = await writeBatchRowPlanReceipt({
+        receiptsRoot, dryRun, packageId: job.manifest.id, row: job.row, manifest: job.manifest, motion: job.motion,
+        packageDir, outputPath, preset: jobPreset,
+        status: "not_run",
+        idempotencyKey,
+        quality,
+        qualityManifestPath,
+        qualityInputs, frameLane, frameTransport,
+        packageAssetInputHashes,
+        warnings: audioPresetWarnings
+      });
+      await batchOutput.assertCurrent();
+      if (dryRun) {
+        jobs.push({
+          rowId: job.row.id,
+          rowHash: job.row.hash,
+          rowKey: job.row.key,
+          idempotencyKey,
+          packageId: job.manifest.id,
+          packageDir,
+          outputPath,
+          preset: jobPreset, frameLane, ...(frameTransport ? { frameTransport } : {}),
+          status: "not_run",
+          planReceiptPath,
+          receiptPath: planReceiptPath,
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          ...(qualityInputs ? { qualityInputs } : {}),
+          ...(audioPresetWarnings.length > 0 ? { warnings: audioPresetWarnings } : {})
+        });
+        continue;
+      }
+
+      const resumeMatch = resume ? readBatchResumeMatch(previousBatchJobs, idempotencyKey, outputPath) : null;
+      if (resumeMatch) {
+        const sourceReceiptPath = batchResumeSourceReceiptPath(resumeMatch);
+        jobs.push({
+          rowId: job.row.id,
+          rowHash: job.row.hash,
+          rowKey: job.row.key,
+          idempotencyKey,
+          packageId: job.manifest.id,
+          packageDir,
+          outputPath,
+          preset: jobPreset, frameLane, ...(frameTransport ? { frameTransport } : {}),
+          status: "skipped",
+          planReceiptPath,
+          receiptPath: sourceReceiptPath,
+          resume: { matched: true, sourceReceiptPath },
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          ...(qualityInputs ? { qualityInputs } : {}),
+          ...(audioPresetWarnings.length > 0 ? { warnings: audioPresetWarnings } : {})
+        });
+        continue;
+      }
+
+      const materializedQualityManifest = qualitySnapshot ? await publishBatchQualityManifestSnapshot({ snapshot: qualitySnapshot, targetRoot: join(receiptsRoot, "quality-manifests", `${job.manifest.id}-${qualitySnapshot.closureSha256.slice(0, 24)}`) }) : undefined;
+      const qualityManifestForCheckPath = materializedQualityManifest?.path;
+      const qualityManifestAppliedPath = materializedQualityManifest?.appliedPath;
+      const renderArgs = [packageDir, "--lane", "ffmpeg", "--frame-lane", frameLane, "--out", outputPath, "--preset", jobPreset, "--force"];
+      if (quality) renderArgs.push("--min-unique-frames", String(quality.minUniqueFrameHashes));
+      if (qualityManifestForCheckPath) renderArgs.push("--quality-manifest", qualityManifestForCheckPath);
+      if (workflowPath) renderArgs.push("--workflow", workflowPath);
+      const renderResult = await renderCommand(renderArgs, { ...options, ...(materializedQualityManifest && qualityInputs ? { retainedBatchQualityManifest: { published: materializedQualityManifest, evidence: qualityInputs } } : {}) });
+      const uncertainDelivery = readRenderCommitUncertainDelivery(renderResult);
+      const childDelivery = readRenderBatchChildDelivery(renderResult);
+      const qualityCheck = readCliResult(renderResult.qualityCheck);
+      const warnings = resultWarnings(renderResult);
+      const receiptPath = join(receiptsRoot, `${job.manifest.id}.render.receipt.json`);
+      const qualityOk = qualityCheck ? qualityCheck.ok : true;
+      const rowWarnings = dedupeWarnings([
+        ...warnings,
+        ...renderCommitUncertainWarnings(uncertainDelivery),
+        ...(childDelivery?.kind === "evidence_uncertain" ? ["Render receipt or secondary evidence may have committed; inspect the reported public evidence before retrying."] : []),
+        ...(qualityCheck ? resultWarnings(qualityCheck) : [])
+      ]);
+      const rowStatus = escalateReceiptStatusForWarnings(
+        childDelivery?.kind === "primary_uncertain" || childDelivery?.kind === "evidence_uncertain" ? "warning" : renderResult.ok && qualityOk ? "passed" : "failed",
+        rowWarnings
+      );
+      // Record the child *before* the first post-render assertion or write.  The renderer may have
+      // already committed its public pair, and batch bookkeeping must never erase that fact.
+      jobs.push({
+        rowId: job.row.id,
+        rowHash: job.row.hash,
+        rowKey: job.row.key,
+        idempotencyKey,
         packageId: job.manifest.id,
         packageDir,
-        outputPath
+        outputPath,
+        preset: jobPreset, frameLane, ...(frameTransport ? { frameTransport } : {}),
+        status: rowStatus,
+        planReceiptPath,
+        receiptPath,
+        ...renderBatchChildDeliveryJobFields(childDelivery),
+        ...(quality ? { quality } : {}),
+        ...(qualityManifestPath ? { qualityManifestPath } : {}),
+        ...(qualityInputs ? { qualityInputs } : {}),
+        ...(qualityManifestAppliedPath ? { qualityManifestAppliedPath } : {}),
+        ...(qualityCheck ? { qualityCheck } : {}),
+        ...(rowWarnings.length > 0 ? { warnings: rowWarnings } : {}),
+        render: renderResult
       });
-      qualityManifestForCheckPath = materialized.path;
-      qualityManifestAppliedPath = materialized.appliedPath;
-      qualityCheck = jobPreset === "png-frame"
-        ? await qualityCheckPngStillFrameManifest({
-            inputPath: outputPath,
-            manifestPath: qualityManifestForCheckPath,
-            qualityRoot: resolveOutputPath(options.scratchRoot ? join(options.scratchRoot, "quality") : ".scratch/quality"),
-            runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, resolveCallerId(argv, options)),
-            previewPackageRoot: packageDir,
-            previewLane: "browser"
-          })
-        : jobPreset === "png-sequence"
-          ? await qualityCheckPngSequenceManifest({
-              inputPath: outputPath,
-              manifestPath: qualityManifestForCheckPath,
-              qualityRoot: resolveOutputPath(options.scratchRoot ? join(options.scratchRoot, "quality") : ".scratch/quality"),
-              runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, resolveCallerId(argv, options)),
-              durationMs: job.motion.durationMs,
-              fps: job.motion.fps,
-              previewPackageRoot: packageDir,
-              previewLane: "browser"
-            })
-        : await qualityCheckCommand([
-            outputPath,
-            "--manifest",
-            qualityManifestForCheckPath,
-            "--preview-package",
-            packageDir,
-            "--preview-lane",
-            "browser"
-          ], options);
+      await options.batchTestHooks?.beforePostRenderAssert?.();
+      await batchOutput.assertCurrent();
+      await options.batchTestHooks?.beforeRowReceiptWrite?.();
+      await writeJson(receiptPath, renderResult.receipt ?? renderBatchFailureReceipt({
+        packageId: job.manifest.id, rowHash: job.row.hash, preset: jobPreset, delivery: childDelivery
+      }));
+      await batchOutput.assertCurrent();
+      if (!renderResult.ok) {
+        const batchCounts = batchRenderCounts(jobs, dryRun);
+        await batchOutput.assertCurrent();
+        const receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: childDelivery?.kind === "primary_uncertain" || childDelivery?.kind === "evidence_uncertain" ? "warning" : "failed" });
+        const warnings = receiptWarnings(receipt);
+        const error = batchRenderErrorEnvelope({ result: renderResult, rowId: job.row.id, packageId: job.manifest.id });
+        return {
+          ok: false,
+          command: "render-batch",
+          dryRun,
+          ...(resume ? { resume, ...batchCounts } : {}),
+          preset,
+          ...presetSummary,
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          error,
+          packageId: pkg.manifest.id,
+          rows: rows.length,
+          jobs,
+          receipt,
+          receiptPath: join(receiptsRoot, "batch-render.receipt.json"),
+          ...renderCommitUncertainResponseFields(uncertainDelivery),
+          ...renderBatchBookkeepingDeliveryFields(jobs),
+          ...(warnings.length > 0 ? { warnings } : {})
+        };
+      }
+      if (!qualityOk && qualityCheck) {
+        const batchCounts = batchRenderCounts(jobs, dryRun);
+        await batchOutput.assertCurrent();
+        const receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: "failed" });
+        const warnings = receiptWarnings(receipt);
+        const error = batchQualityError(job, qualityCheck);
+        return {
+          ok: false,
+          command: "render-batch",
+          dryRun,
+          ...(resume ? { resume, ...batchCounts } : {}),
+          preset,
+          ...presetSummary,
+          ...(quality ? { quality } : {}),
+          ...(qualityManifestPath ? { qualityManifestPath } : {}),
+          error,
+          packageId: pkg.manifest.id,
+          rows: rows.length,
+          jobs,
+          receipt,
+          receiptPath: join(receiptsRoot, "batch-render.receipt.json"),
+          ...(warnings.length > 0 ? { warnings } : {})
+        };
+      }
     }
-    const qualityOk = qualityCheck ? qualityCheck.ok : true;
-    const rowWarnings = dedupeWarnings([
-      ...warnings,
-      ...(qualityCheck ? resultWarnings(qualityCheck) : [])
-    ]);
-    // Same rule as the row's own receipt. This field is computed independently of that receipt but
-    // is typed in RECEIPT vocabulary (passed/failed/not_run, not the job outcomes succeeded/failed/
-    // cancelled/skipped), so it answers the same question and must answer it the same way. Without
-    // this, one batch receipt contradicted itself: output.jobs[].status said `passed` for a row
-    // whose own render receipt said `warning` on the identical advisory.
-    const rowStatus = escalateReceiptStatusForWarnings(
-      renderResult.ok && qualityOk ? "passed" : "failed",
-      rowWarnings
-    );
-    jobs.push({
-      rowId: job.row.id,
-      rowHash: job.row.hash,
-      rowKey: job.row.key,
-      idempotencyKey,
-      packageId: job.manifest.id,
-      packageDir,
-      outputPath,
-      preset: jobPreset,
-      status: rowStatus,
-      planReceiptPath,
-      receiptPath,
-      ...(quality ? { quality } : {}),
-      ...(qualityManifestPath ? { qualityManifestPath } : {}),
-      ...(qualityManifestAppliedPath ? { qualityManifestAppliedPath } : {}),
-      ...(qualityCheck ? { qualityCheck } : {}),
-      ...(rowWarnings.length > 0 ? { warnings: rowWarnings } : {}),
-      render: renderResult
-    });
-    if (!renderResult.ok) {
-      const batchCounts = batchRenderCounts(jobs, dryRun);
-      const receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: "failed" });
-      const warnings = receiptWarnings(receipt);
-      const error = batchRenderError(job, renderResult);
-      return {
-        ok: false,
-        command: "render-batch",
-        dryRun,
-        ...(resume ? { resume, ...batchCounts } : {}),
-        preset,
-        ...presetSummary,
-        ...(quality ? { quality } : {}),
-        ...(qualityManifestPath ? { qualityManifestPath } : {}),
-        error,
-        packageId: pkg.manifest.id,
-        rows: rows.length,
-        jobs,
-        receipt,
-        receiptPath: join(receiptsRoot, "batch-render.receipt.json"),
-        ...(warnings.length > 0 ? { warnings } : {})
-      };
+  } catch (error) {
+    if (jobs.some((job) => job.renderCommitted === true || job.renderCommitUncertain === true || job.possiblyCommitted === true)) {
+      return renderBatchBookkeepingFailure({
+        error, jobs, dryRun, resume, preset, presetSummary, quality, qualityManifestPath,
+        packageId: pkg.manifest.id, rows: rows.length, phase: "row_bookkeeping"
+      });
     }
-    if (!qualityOk && qualityCheck) {
-      const batchCounts = batchRenderCounts(jobs, dryRun);
-      const receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: "failed" });
-      const warnings = receiptWarnings(receipt);
-      const error = batchQualityError(job, qualityCheck);
-      return {
-        ok: false,
-        command: "render-batch",
-        dryRun,
-        ...(resume ? { resume, ...batchCounts } : {}),
-        preset,
-        ...presetSummary,
-        ...(quality ? { quality } : {}),
-        ...(qualityManifestPath ? { qualityManifestPath } : {}),
-        error,
-        packageId: pkg.manifest.id,
-        rows: rows.length,
-        jobs,
-        receipt,
-        receiptPath: join(receiptsRoot, "batch-render.receipt.json"),
-        ...(warnings.length > 0 ? { warnings } : {})
-      };
-    }
+    throw error;
   }
 
   const batchCounts = batchRenderCounts(jobs, dryRun);
-  const receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: dryRun ? "not_run" : "passed" });
+  let receipt: Record<string, unknown>;
+  try {
+    await options.batchTestHooks?.beforeAggregateReceiptWrite?.();
+    await batchOutput.assertCurrent();
+    receipt = await writeBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane, ...batchCounts, preset, ...presetSummary, quality, qualityManifestPath, jobs, status: dryRun ? "not_run" : "passed" });
+  } catch (error) {
+    return renderBatchBookkeepingFailure({
+      error, jobs, dryRun, resume, preset, presetSummary, quality, qualityManifestPath,
+      packageId: pkg.manifest.id, rows: rows.length, phase: "aggregate_receipt"
+    });
+  }
   const warnings = receiptWarnings(receipt);
   return {
     ok: true,
     command: "render-batch",
     dryRun,
+    frameLane,
     ...(resume ? { resume, ...batchCounts } : {}),
     preset,
     ...presetSummary,
@@ -4547,83 +4838,6 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
     receiptPath: join(receiptsRoot, "batch-render.receipt.json"),
     ...(warnings.length > 0 ? { warnings } : {})
   };
-}
-
-function planBatchRenderPresets(jobs: ExpandedMotionJob[], fallbackPreset: MotionExportPreset, forcePreset: boolean): {
-  ok: true;
-  presets: MotionExportPreset[];
-  uniquePresets: MotionExportPreset[];
-} | {
-  ok: false;
-  rowId: string;
-  preset: string;
-} {
-  const presets: MotionExportPreset[] = [];
-  for (const job of jobs) {
-    const rowPresetValue = forcePreset ? undefined : readBatchRowRenderPreset(job.row);
-    if (!rowPresetValue) {
-      presets.push(fallbackPreset);
-      continue;
-    }
-    const rowPreset = readMotionExportPreset(rowPresetValue);
-    if (!rowPreset) {
-      return { ok: false, rowId: job.row.id, preset: rowPresetValue };
-    }
-    presets.push(rowPreset);
-  }
-  return { ok: true, presets, uniquePresets: uniqueMotionExportPresets(presets) };
-}
-
-function readBatchRowRenderPreset(row: MotionDataRow): string | undefined {
-  const flatPreset = row.values["render.preset"];
-  if (typeof flatPreset === "string" && flatPreset.trim()) return flatPreset.trim();
-  const render = readRecord(row.values.render);
-  const preset = render?.preset;
-  return typeof preset === "string" && preset.trim() ? preset.trim() : undefined;
-}
-
-function uniqueMotionExportPresets(presets: MotionExportPreset[]): MotionExportPreset[] {
-  return presets.filter((preset, index) => presets.indexOf(preset) === index);
-}
-
-function batchPresetSummary(basePreset: MotionExportPreset, actualPresets: MotionExportPreset[]): { presets?: MotionExportPreset[] } {
-  return actualPresets.length === 1 && actualPresets[0] === basePreset ? {} : { presets: actualPresets };
-}
-
-function batchJobIdempotencyKey(input: {
-  packageId: string;
-  rowId: string;
-  rowHash: string;
-  manifest: unknown;
-  motion: unknown;
-  preset: MotionExportPreset;
-  quality?: { minUniqueFrameHashes: number };
-  qualityManifestPath?: string;
-  workflowIdempotencyHash?: string;
-}): string {
-  const digest = hashBuffer(Buffer.from(JSON.stringify({
-    packageId: input.packageId,
-    rowId: input.rowId,
-    rowHash: input.rowHash,
-    manifest: input.manifest,
-    motion: input.motion,
-    preset: input.preset,
-    quality: input.quality,
-    qualityManifestPath: input.qualityManifestPath,
-    workflowIdempotencyHash: input.workflowIdempotencyHash
-  }), "utf8")).slice(0, 24);
-  return `${input.packageId}:${input.rowId}:${input.preset}:${digest}`;
-}
-
-async function batchWorkflowIdempotencyHash(workflowPath: string): Promise<string> {
-  const workflowBytes = await readFile(workflowPath);
-  return hashBuffer(workflowBytes);
-}
-
-
-function batchRenderCounts(jobs: Array<Record<string, unknown>>, dryRun: boolean): { resumedRows: number; renderedRows: number } {
-  const resumedRows = jobs.filter((job) => job.status === "skipped").length;
-  return { resumedRows, renderedRows: dryRun ? 0 : jobs.length - resumedRows };
 }
 
 async function writeBatchRowPlanReceipt(input: {
@@ -4640,6 +4854,10 @@ async function writeBatchRowPlanReceipt(input: {
   idempotencyKey: string;
   quality?: { minUniqueFrameHashes: number };
   qualityManifestPath?: string;
+  qualityInputs?: BatchQualityInputEvidence;
+  frameLane: BatchFrameLane;
+  frameTransport?: ReturnType<typeof planFinalVideoFrameTransport>;
+  packageAssetInputHashes?: Readonly<Record<string, string>>;
   warnings?: string[];
 }): Promise<string> {
   const receiptPath = join(input.receiptsRoot, `${input.packageId}.batch-row.receipt.json`);
@@ -4654,7 +4872,14 @@ async function writeBatchRowPlanReceipt(input: {
       row: input.row.hash,
       manifest: hashBuffer(Buffer.from(JSON.stringify(input.manifest), "utf8")),
       motion: hashBuffer(Buffer.from(JSON.stringify(input.motion), "utf8")),
-      idempotencyKey: hashBuffer(Buffer.from(input.idempotencyKey, "utf8"))
+      idempotencyKey: hashBuffer(Buffer.from(input.idempotencyKey, "utf8")),
+      ...input.packageAssetInputHashes,
+      ...(input.qualityInputs ? {
+        qualityManifest: input.qualityInputs.manifestSha256,
+        qualityMaterializedManifest: input.qualityInputs.materializedManifestSha256,
+        qualityBaselines: input.qualityInputs.baselinesSha256,
+        qualityClosure: input.qualityInputs.closureSha256
+      } : {})
     },
     createdAt: new Date().toISOString(),
     lane: "batch",
@@ -4668,9 +4893,12 @@ async function writeBatchRowPlanReceipt(input: {
       packageDir: input.packageDir,
       outputPath: input.outputPath,
       preset: input.preset,
+      frameLane: input.frameLane,
+      ...(input.frameTransport ? { frameTransport: input.frameTransport } : {}),
       status: input.status,
       ...(input.quality ? { quality: input.quality } : {}),
-      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {})
+      ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {}),
+      ...(input.qualityInputs ? { qualityInputs: input.qualityInputs } : {})
     },
     artifacts: [
       { role: "row_package", path: input.packageDir, status: "available", mediaType: "application/vnd.shellx-motion.package+directory" },
@@ -4682,46 +4910,21 @@ async function writeBatchRowPlanReceipt(input: {
   return receiptPath;
 }
 
-async function writeExpandedPackage(job: ExpandedMotionJob, sourcePkg: Awaited<ReturnType<typeof loadMotionPackage>>, packageDir: string): Promise<void> {
-  await mkdir(packageDir, { recursive: true });
+async function writeExpandedPackage(job: ExpandedMotionJob, sourcePkg: Awaited<ReturnType<typeof loadMotionPackage>>, packageDir: string): Promise<Readonly<Record<string, string>>> {
+  await mkdir(packageDir, { recursive: true, mode: 0o700 });
   await writeJson(join(packageDir, "manifest.json"), job.manifest);
   await writeJson(join(packageDir, "motion.json"), job.motion);
-  if (job.manifest.template) {
-    const targetPath = join(packageDir, job.manifest.template);
-    await mkdir(dirname(targetPath), { recursive: true });
-    await copyFile(resolvePackageAsset(sourcePkg, job.manifest.template), targetPath);
-  }
-  for (const assetRef of job.manifest.assets ?? []) {
-    const targetPath = join(packageDir, assetRef);
-    await mkdir(dirname(targetPath), { recursive: true });
-    await copyFile(resolvePackageAsset(sourcePkg, assetRef), targetPath);
-  }
   // Template sidecars referenced from template.metadata are part of the package contract:
   // assertTemplatePackageSemantics() rejects a package whose declared quality manifest is
   // missing. They are NOT listed in manifest.assets, so copying manifest/motion/template
   // alone produced an expanded package that could not be loaded back. Every promoted family
   // declares qualityTargets.manifest, so this broke render-batch for the whole product pack.
-  const qualityManifestRef = readTemplateQualityManifestRef(sourcePkg);
-  if (qualityManifestRef) {
-    const targetPath = join(packageDir, qualityManifestRef);
-    await mkdir(dirname(targetPath), { recursive: true });
-    await copyFile(resolvePackageAsset(sourcePkg, qualityManifestRef), targetPath);
-  }
-}
-
-/**
- * Reads `template.metadata.qualityTargets.manifest` from a loaded package, if declared.
- * Returns a package-relative ref, or null when the package declares no quality manifest.
- */
-function readTemplateQualityManifestRef(pkg: Awaited<ReturnType<typeof loadMotionPackage>>): string | null {
-  const template = (pkg as { template?: unknown }).template;
-  if (!template || typeof template !== "object") return null;
-  const metadata = (template as { metadata?: unknown }).metadata;
-  if (!metadata || typeof metadata !== "object") return null;
-  const qualityTargets = (metadata as { qualityTargets?: unknown }).qualityTargets;
-  if (!qualityTargets || typeof qualityTargets !== "object") return null;
-  const manifestRef = (qualityTargets as { manifest?: unknown }).manifest;
-  return typeof manifestRef === "string" && manifestRef.length > 0 ? manifestRef : null;
+  const qualityManifestRef = batchTemplateQualityManifestRef(sourcePkg);
+  return await copyVerifiedPackageAssetSnapshots(sourcePkg, packageDir, [
+    ...(job.manifest.template ? [job.manifest.template] : []),
+    ...(job.manifest.assets ?? []),
+    ...(qualityManifestRef ? [qualityManifestRef] : [])
+  ], "CLI batch package snapshot");
 }
 
 async function writeBatchReceipt(input: {
@@ -4732,34 +4935,28 @@ async function writeBatchReceipt(input: {
   resume?: boolean;
   resumedRows?: number;
   renderedRows?: number;
+  frameLane: "browser" | "native" | "gpu";
   preset: MotionExportPreset;
   presets?: MotionExportPreset[];
   quality?: { minUniqueFrameHashes: number };
   qualityManifestPath?: string;
   jobs: Array<Record<string, unknown>>;
-  status: "passed" | "failed" | "not_run";
+  status: OperationReceipt["status"];
 }): Promise<Record<string, unknown>> {
-  // The batch receipt goes through the same door as every other receipt. Without this it reported
-  // `passed` while the ROW receipts it aggregates reported `warning` on that identical warning --
-  // The aggregate batch receipt must use the same warning-derived status as each row.
-  // carrying the same motion-density advisory that made pkg_batch_card_grace.render.receipt.json say
-  // `warning`.
-  //
-  // Only the batch's own top-level verdict is derived here. `output.jobs[].status` is a per-row
-  // MIRROR of each row's own receipt and is not touched: those rows are built by the render door,
-  // which already applies this rule, so they arrive correct. Deriving both here would compute the
-  // same answer twice from two sources and let them drift.
   const batchStatus = escalateReceiptStatusForWarnings(
     input.status,
     dedupeWarnings(input.jobs.flatMap((job) => resultWarnings(job)))
   );
-  const rowHash = hashBuffer(Buffer.from(JSON.stringify({
+  const qualityInputs = input.jobs.map((job) => job.qualityInputs).filter(Boolean);
+  const rowHash = canonicalJsonSha256({
     rows: input.rows.map((row) => ({ id: row.id, hash: row.hash })),
     preset: input.preset,
     presets: input.presets,
     quality: input.quality,
-    qualityManifestPath: input.qualityManifestPath
-  }), "utf8"));
+    frameLane: input.frameLane,
+    qualityManifestPath: input.qualityManifestPath,
+    ...(qualityInputs.length > 0 ? { qualityInputs } : {})
+  });
   const receipt = {
     schema: "shellx-motion/receipt@1",
     id: `batch-render-${input.pkg.manifest.id}-${rowHash.slice(0, 16)}`,
@@ -4768,7 +4965,8 @@ async function writeBatchReceipt(input: {
     packageId: input.pkg.manifest.id,
     inputHashes: {
       motion: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-      rows: rowHash
+      rows: rowHash,
+      ...(qualityInputs.length > 0 ? { qualityInputs: canonicalJsonSha256(qualityInputs) } : {})
     },
     createdAt: new Date().toISOString(),
     lane: "batch",
@@ -4776,6 +4974,7 @@ async function writeBatchReceipt(input: {
       dryRun: input.dryRun,
       ...(input.resume ? { resume: true, resumedRows: input.resumedRows ?? 0, renderedRows: input.renderedRows ?? 0 } : {}),
       preset: input.preset,
+      frameLane: input.frameLane,
       ...(input.presets ? { presets: input.presets } : {}),
       ...(input.quality ? { quality: input.quality } : {}),
       ...(input.qualityManifestPath ? { qualityManifestPath: input.qualityManifestPath } : {}),
@@ -4788,12 +4987,16 @@ async function writeBatchReceipt(input: {
         packageId: job.packageId,
         outputPath: job.outputPath,
         preset: job.preset,
+        ...(typeof job.frameLane === "string" ? { frameLane: job.frameLane } : {}),
+        ...(job.frameTransport ? { frameTransport: job.frameTransport } : {}),
         status: job.status,
         ...(job.planReceiptPath ? { planReceiptPath: job.planReceiptPath } : {}),
         receiptPath: job.receiptPath,
+        ...renderCommitUncertainReceiptJobFields(job),
         ...(job.resume ? { resume: job.resume } : {}),
         ...(job.quality ? { quality: job.quality } : {}),
         ...(job.qualityManifestPath ? { qualityManifestPath: job.qualityManifestPath } : {}),
+        ...(job.qualityInputs ? { qualityInputs: job.qualityInputs } : {}),
         ...(job.qualityManifestAppliedPath ? { qualityManifestAppliedPath: job.qualityManifestAppliedPath } : {}),
         ...qualityCheckReceiptOutput(job),
         ...(resultWarnings(job).length > 0 ? { warnings: resultWarnings(job) } : {})
@@ -4815,6 +5018,7 @@ function supportsBatchQualityManifestPreset(preset: MotionExportPreset): boolean
   return Boolean(readFfmpegExportPreset(preset)) || preset === "png-frame" || preset === "png-sequence";
 }
 
+
 function audioWarningsForMotionExportPreset(preset: MotionExportPreset, audioInputCount: number): string[] {
   const ffmpegPreset = readFfmpegExportPreset(preset);
   if (ffmpegPreset) return audioWarningsForExportPreset(ffmpegPreset, audioInputCount);
@@ -4832,73 +5036,6 @@ function audioInputCountForMotion(motion: ExpandedMotionJob["motion"]): number {
     !timelineLayerMutedTrackId(motion, layer) &&
     layerHasLocalAudioInput(layer)
   ).length;
-}
-
-async function materializeBatchQualityManifest(input: {
-  sourcePath: string;
-  targetPath: string;
-  row: ExpandedMotionJob["row"];
-  packageId: string;
-  packageDir: string;
-  outputPath: string;
-}): Promise<{ path: string; appliedPath?: string }> {
-  const sourceText = await readFile(input.sourcePath, "utf8");
-  if (!sourceText.includes("{{")) return { path: input.sourcePath };
-  const source = JSON.parse(sourceText);
-  const context: Record<string, unknown> = {
-    ...input.row.values,
-    rowId: input.row.id,
-    rowIndex: input.row.index,
-    rowHash: input.row.hash,
-    rowKey: input.row.key,
-    packageId: input.packageId,
-    packageDir: input.packageDir,
-    outputPath: input.outputPath
-  };
-  const materialized = resolveQualityManifestBaselinePaths(
-    interpolateQualityManifestValue(source, context),
-    dirname(input.sourcePath)
-  );
-  await mkdir(dirname(input.targetPath), { recursive: true });
-  await writeJson(input.targetPath, materialized);
-  return { path: input.targetPath, appliedPath: input.targetPath };
-}
-
-function interpolateQualityManifestValue(value: unknown, context: Record<string, unknown>): unknown {
-  if (typeof value === "string") return interpolateQualityManifestString(value, context);
-  if (Array.isArray(value)) return value.map((entry) => interpolateQualityManifestValue(entry, context));
-  const record = readRecord(value);
-  if (record) {
-    return Object.fromEntries(
-      Object.entries(record).map(([key, entry]) => [key, interpolateQualityManifestValue(entry, context)])
-    );
-  }
-  return value;
-}
-
-function interpolateQualityManifestString(value: string, context: Record<string, unknown>): string {
-  return value.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
-    const replacement = context[key];
-    if (replacement === undefined || replacement === null) return "";
-    return typeof replacement === "string" ? replacement : JSON.stringify(replacement);
-  });
-}
-
-function resolveQualityManifestBaselinePaths(value: unknown, sourceDir: string): unknown {
-  const record = readRecord(value);
-  if (!record) return value;
-  if (!Array.isArray(record.samples)) return value;
-  return {
-    ...record,
-    samples: record.samples.map((sample) => {
-      const sampleRecord = readRecord(sample);
-      if (!sampleRecord || typeof sampleRecord.baseline !== "string" || !sampleRecord.baseline.trim()) return sample;
-      return {
-        ...sampleRecord,
-        baseline: isAbsolute(sampleRecord.baseline) ? sampleRecord.baseline : resolve(sourceDir, sampleRecord.baseline)
-      };
-    })
-  };
 }
 
 function layerHasLocalAudioInput(layer: ExpandedMotionJob["motion"]["layers"][number]): boolean {
@@ -4926,16 +5063,6 @@ function stringArray(value: unknown): string[] {
     if (typeof item === "string") values.push(item);
   }
   return values;
-}
-
-function batchRenderError(job: ExpandedMotionJob, renderResult: unknown): Record<string, unknown> {
-  const renderRecord = readRecord(renderResult);
-  const error = readRecord(renderRecord?.error) ?? { code: "render_failed", message: "Batch row render failed." };
-  return {
-    ...error,
-    rowId: job.row.id,
-    packageId: job.manifest.id
-  };
 }
 
 function batchQualityError(job: ExpandedMotionJob, qualityResult: unknown): Record<string, unknown> {
@@ -5011,10 +5138,13 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
   }
 
   const inputPath = argv[1];
-  // Opt-in overwrite, same convention as `render --force`. Without it a caller cannot proceed past
-  // a guard refusal, which would make the guard a wall rather than a safety rail.
+  // Template-to-Cut P2A is a no-clobber whole-directory transaction; legacy routes may replace.
   const forceOverwrite = argv.includes("--force");
   const command = `connector.${subcommand}`;
+  const p2bArgumentRefusal = p2bConnectorArgumentRefusal(argv);
+  if (p2bArgumentRefusal) return p2bArgumentRefusal;
+  const templateArgumentRefusal = templateToCutArgumentRefusal(argv);
+  if (templateArgumentRefusal) return templateArgumentRefusal;
   if (!inputPath) {
     const inputLabel = isScriptedVideoConnector
       ? "scripted video JSON path"
@@ -5030,6 +5160,7 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
 
   const outDir = optionValue(argv, "--out");
   if (!outDir) return missingArgument(command, "--out");
+  if (subcommand === "template-to-cut" && forceOverwrite) return { ok: false, command, error: { code: "invalid_args", message: "connector template-to-cut does not support --force; choose an absent or empty --out directory." } };
 
   const dryRunRender = argv.includes("--dry-run-render");
   const cutImportModeArg = optionValue(argv, "--cut-import-mode") ?? "rendered_media";
@@ -5043,6 +5174,9 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
         message: `Unsupported Cut import mode: ${cutImportModeArg}.`
       }
     };
+  }
+  if (subcommand === "template-to-cut" && cutImportMode !== "rendered_media") {
+    return { ok: false, command, error: { code: "invalid_args", message: "connector template-to-cut accepts only --cut-import-mode rendered_media in P2A." } };
   }
   const cutStartMsRaw = optionValue(argv, "--start-ms");
   const cutDurationMsRaw = optionValue(argv, "--duration-ms");
@@ -5172,70 +5306,33 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
       };
     }
   }
-  let canvasToCutPreset: FfmpegExportPreset | undefined;
-  if (subcommand === "canvas-to-cut") {
-    const presetValue = optionValue(argv, "--preset") ?? "mp4-h264";
-    const preset = readFfmpegExportPreset(presetValue);
-    if (!preset) {
-      return {
-        ok: false,
-        command,
-        error: {
-          code: "unsupported_preset",
-          message: `Unsupported export preset: ${presetValue}.`
-        }
-      };
-    }
-    canvasToCutPreset = preset;
-  }
   let result:
     | Awaited<ReturnType<typeof runCanvasToCutConnector>>
     | Awaited<ReturnType<typeof runScriptToCutConnector>>
+    | Awaited<ReturnType<typeof runCutGenerateToCutConnector>>
     | Awaited<ReturnType<typeof runSourceToCutConnector>>
     | Awaited<ReturnType<typeof runTemplateToCutConnector>>;
   try {
-    result = subcommand === "canvas-to-cut"
-      ? await runCanvasToCutConnector({
-          canvasSelectionPath: resolveInputPath(inputPath),
-          outDir: resolveOutputPath(outDir),
-          force: forceOverwrite,
-          previewLane: "native",
-          renderLane: "ffmpeg",
-          preset: canvasToCutPreset,
-          dryRunRender,
-          cutImportMode,
-          ffmpegRunner: options.ffmpegRunner
+    result = subcommand === "canvas-to-cut" || subcommand === "source-to-cut" || subcommand === "template-to-cut" || subcommand === "script-to-cut"
+      ? await runNamedP2ConnectorThroughRegistry({
+          subcommand,
+          inputPath: resolveInputPath(inputPath),
+          outputPath: resolveOutputPath(outDir),
+          signal: options.signal ?? new AbortController().signal,
+          namedCompatibilityOptions: {
+            ...(Object.keys(cutPlacement).length > 0 ? { cutPlacement } : {}),
+            ...(subcommand === "template-to-cut" ? { values: parseTemplateSetOptions(argv) } : {}),
+            ...(subcommand === "source-to-cut" ? {
+              maxFrames: numberOption(argv, "--max-frames") ?? numberOption(argv, "--maxFrames"),
+              frameDurationMs: numberOption(argv, "--frame-duration-ms") ?? numberOption(argv, "--frameDurationMs"),
+              width: numberOption(argv, "--width"),
+              height: numberOption(argv, "--height"),
+              fps: numberOption(argv, "--fps")
+            } : {})
+          }
         })
-      : subcommand === "source-to-cut"
-      ? await runSourceToCutConnector({
-          sourcePath: resolveInputPath(inputPath),
-          outDir: resolveOutputPath(outDir),
-          force: forceOverwrite,
-          maxFrames: numberOption(argv, "--max-frames") ?? numberOption(argv, "--maxFrames"),
-          frameDurationMs: numberOption(argv, "--frame-duration-ms") ?? numberOption(argv, "--frameDurationMs"),
-          width: numberOption(argv, "--width"),
-          height: numberOption(argv, "--height"),
-          fps: numberOption(argv, "--fps"),
-          previewLane: "native",
-          renderLane: "ffmpeg",
-          dryRunRender,
-          cutImportMode,
-          ffmpegRunner: options.ffmpegRunner
-        })
-      : subcommand === "template-to-cut"
-      ? await runTemplateToCutConnector({
-          packageRoot: resolveInputPath(inputPath),
-          values: parseTemplateSetOptions(argv),
-          outDir: resolveOutputPath(outDir),
-          previewLane: "auto",
-          renderLane: "ffmpeg",
-          dryRunRender,
-          force: forceOverwrite,
-          cutImportMode,
-          ...(Object.keys(cutPlacement).length > 0 ? { cutPlacement } : {}),
-          ffmpegRunner: options.ffmpegRunner
-        })
-      : await runScriptToCutConnector({
+      : subcommand === "cut-generate-to-cut"
+      ? await runCutGenerateToCutConnector({
           scriptPath: resolveInputPath(inputPath),
           outDir: resolveOutputPath(outDir),
           force: forceOverwrite,
@@ -5244,23 +5341,34 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
           dryRunRender,
           cutImportMode,
           ...(Object.keys(cutPlacement).length > 0 ? { cutPlacement } : {}),
-          ...(subcommand === "cut-generate-to-cut" ? { receiptOperation: "connector.cut_generate_to_cut" as const } : {}),
           ffmpegRunner: options.ffmpegRunner
-        });
+        })
+      : (() => { throw new Error(`Unsupported connector subcommand: ${String(subcommand)}.`); })();
   } catch (error) {
+    const uncertainty = corePublicationUncertaintyFields(error);
+    if (uncertainty) {
+      return { ok: false, command, ...uncertainty };
+    }
     return {
       ok: false,
       command,
       error: {
-        code: error instanceof MotionOutputGuardError ? error.code : "connector_failed",
-        message: error instanceof Error ? error.message : String(error),
+        code: error instanceof MotionOutputGuardError || error instanceof NamedConnectorRegistryError
+          ? error.code
+          : "connector_failed",
+        message: ["canvas-to-cut", "script-to-cut", "source-to-cut"].includes(subcommand ?? "")
+          ? redactP2bConnectorInputError(error, inputPath)
+          : error instanceof Error ? error.message : String(error),
         ...(error instanceof MotionOutputGuardError
-          ? { suggestedAction: "Choose an empty --out directory, or pass --force to overwrite it." }
+          ? { suggestedAction: subcommand === "template-to-cut"
+            ? "Choose an absent or empty --out directory; Template-to-Cut accepted delivery never overwrites it."
+            : "Choose an empty --out directory, or pass --force to overwrite it." }
           : {})
       }
     };
   }
 
+  const error = result.ok ? undefined : await connectorFailureEnvelope(result.render);
   const response = {
     ok: result.ok,
     command,
@@ -5272,7 +5380,8 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
     cutPlanPath: result.cutPlanPath,
     ...("artifacts" in result ? { artifacts: result.artifacts } : {}),
     receiptPath: result.receiptPath,
-    warnings: result.warnings
+    warnings: result.warnings,
+    ...(error ? { error } : {})
   };
 
   // Motion's connector boundary ends at artifacts, receipts, and the Cut import plan. The caller
@@ -5280,8 +5389,35 @@ async function connectorCommand(argv: string[], options: RunCliOptions = {}): Pr
   return response;
 }
 
+/**
+ * Promote a failed connector render receipt into the CLI's failure envelope.
+ *
+ * Connectors retain their detailed, typed streaming evidence in the owned render receipt. The CLI
+ * must still give callers a stable command-level failure instead of returning only `ok: false`.
+ */
+async function connectorFailureEnvelope(render: unknown): Promise<{ code: "connector_failed"; message: string }> {
+  const receiptPath = readRecord(render)?.receiptPath;
+  if (typeof receiptPath === "string") {
+    try {
+      const receipt = readRecord(JSON.parse(await readFile(receiptPath, "utf8")));
+      const failure = readRecord(readRecord(receipt?.output)?.error);
+      if (typeof failure?.message === "string" && failure.message.trim()) {
+        return { code: "connector_failed", message: failure.message };
+      }
+    } catch {
+      // Preserve the connector result even if a caller or interrupted process removed its receipt.
+    }
+  }
+  return { code: "connector_failed", message: "Connector rendering failed; inspect its render receipt for evidence." };
+}
+
 function normalizeArgv(argv: string[]): string[] {
   return argv[0] === "--" ? argv.slice(1) : argv;
+}
+
+/** Resolve Debug --out before its typed adapter receives the caller-supplied path. */
+function resolveDebugOutputOptions(argv: string[]): string[] {
+  return argv.map((value, index) => argv[index - 1] === "--out" ? resolveOutputPath(value) : value);
 }
 
 function collectPositionals(argv: string[]): string[] {
@@ -5300,7 +5436,7 @@ function collectPositionals(argv: string[]): string[] {
 // `--fake` was removed from this set with the fake runtimes it used to enable (the tool-provenance invariant). It is not a
 // flag at all now: `retiredSimulationRefusal` in `./retired-options` rejects it before dispatch, so
 // it never reaches this scan.
-const VALUELESS_FLAGS = new Set(["--expect-audio", "--fail-on-drift", "--needs-alpha", "--needs-audio", "--needs-subtitles", "--dry-run", "--dry-run-render", "--resume", "--trusted-local-tier", "--commercial-use", "--retain-raw-prompt"]);
+const VALUELESS_FLAGS = new Set(["--expect-audio", "--fail-on-drift", "--needs-alpha", "--needs-audio", "--needs-subtitles", "--dry-run", "--dry-run-render", "--resume", "--resume-segments", "--trusted-local-tier", "--commercial-use", "--retain-raw-prompt", "--keep-frames"]);
 const CLI_TIER_ORDER: MotionPermissionTier[] = ["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"];
 
 function hasFlag(argv: string[], option: string): boolean {
@@ -5358,43 +5494,6 @@ function optionValues(argv: string[], option: string): string[] {
     if (value !== undefined && !value.startsWith("--")) values.push(value);
   }
   return values;
-}
-
-function promptRetentionFromCli(
-  argv: string[]
-): { ok: true; value: PromptRetentionInput } | { ok: false; error: { code: string; message: string } } {
-  const retainRawRequest = hasFlag(argv, "--retain-raw-prompt");
-  const deleteAfter = optionValue(argv, "--raw-prompt-delete-after");
-  const purpose = optionValue(argv, "--raw-prompt-purpose");
-  if (!retainRawRequest) {
-    if (deleteAfter || purpose) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_prompt_retention",
-          message: "--raw-prompt-delete-after and --raw-prompt-purpose require --retain-raw-prompt."
-        }
-      };
-    }
-    return { ok: true, value: { mode: "summary_only" } };
-  }
-  if (!deleteAfter) {
-    return { ok: false, error: { code: "invalid_prompt_retention", message: "--retain-raw-prompt requires --raw-prompt-delete-after." } };
-  }
-  if (!isPromptRawRetentionPurpose(purpose)) {
-    return {
-      ok: false,
-      error: {
-        code: "invalid_prompt_retention",
-        message: "--retain-raw-prompt requires --raw-prompt-purpose debugging or user_requested_replay."
-      }
-    };
-  }
-  return { ok: true, value: { mode: "raw_request", deleteAfter, purpose } };
-}
-
-function isPromptRawRetentionPurpose(value: unknown): value is PromptRawRetentionPurpose {
-  return value === "debugging" || value === "user_requested_replay";
 }
 
 function readCliTier(
@@ -5674,25 +5773,32 @@ function frameCountFor(durationMs: number, fps: number): number {
   return Math.max(1, Math.ceil((durationMs / 1000) * fps));
 }
 
-const MAX_RENDER_FRAME_COUNT = 36_000;
-const MAX_RENDER_PIXEL_FRAMES = 80_000_000_000;
-
 export function renderFrameSequenceBudgetError(
   frameCount: number,
   width: number,
   height: number
 ): string | undefined {
-  if (!Number.isSafeInteger(frameCount) || frameCount < 1) {
-    return "Frame sequence size is invalid.";
-  }
-  if (frameCount > MAX_RENDER_FRAME_COUNT) {
-    return `Frame sequence requires ${frameCount} frames; the local safety limit is ${MAX_RENDER_FRAME_COUNT}. Split the motion or lower its duration/FPS.`;
-  }
-  const pixelFrames = frameCount * width * height;
-  if (!Number.isSafeInteger(pixelFrames) || pixelFrames > MAX_RENDER_PIXEL_FRAMES) {
-    return `Frame sequence requires ${pixelFrames} pixel-frames; the local safety limit is ${MAX_RENDER_PIXEL_FRAMES}. Split the motion or lower its resolution/duration/FPS.`;
-  }
-  return undefined;
+  return materializedFrameSequenceStaticRefusal({ frameCount, width, height })?.message;
+}
+
+function materializedFrameSequencePreflightRefusal(
+  resourcePreflight: ReturnType<typeof preflightMaterializedFrameSequence>,
+  frameLane: "browser" | "native"
+): CliResult {
+  return {
+    ok: false,
+    command: "render",
+    lane: "ffmpeg",
+    frameLane,
+    error: {
+      code: resourcePreflight.refusal?.code === "render_static_sequence_limit_exceeded"
+        ? "render_budget_exceeded"
+        : resourcePreflight.refusal?.code ?? "render_resource_preflight_exceeded",
+      message: resourcePreflight.refusal?.message ?? "Materialized frame sequence was refused.",
+      ...(resourcePreflight.refusal?.suggestedAction ? { suggestedAction: resourcePreflight.refusal.suggestedAction } : {}),
+      resourcePreflight
+    }
+  };
 }
 
 function frameTimestampMs(frameIndex: number, fps: number, durationMs: number): number {
@@ -5964,11 +6070,13 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       ...(hasFlag(argv, "--fail-on-drift") ? { failOnDrift: true } : {})
     };
   }
+  if (command === "motion.render.cache.plan") return debugRenderCachePlanArgs(argv, debugPackageRoot, optionValue, resolveInputPath);
   if (command === "motion.render.final") {
     const atMs = optionValue(argv, "--at-ms");
     const minUniqueFrameHashes = optionValue(argv, "--min-unique-frames") ?? optionValue(argv, "--min-unique-frame-hashes");
     const workflowPath = optionValue(argv, "--workflow") ?? optionValue(argv, "--workflow-path");
     const qualityManifestPath = optionValue(argv, "--quality-manifest") ?? optionValue(argv, "--quality-manifest-path") ?? optionValue(argv, "--manifest");
+    const segmentFrames = optionValue(argv, "--segment-frames");
     return {
       packageRoot: debugPackageRoot(argv),
       outputPath: optionValue(argv, "--output") ?? optionValue(argv, "--output-path") ?? optionValue(argv, "--out"),
@@ -5980,7 +6088,9 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       ...(minUniqueFrameHashes !== undefined ? { minUniqueFrameHashes: Number(minUniqueFrameHashes) } : {}),
       ...(workflowPath ? { workflowPath: resolveInputPath(workflowPath) } : {}),
       ...(qualityManifestPath ? { qualityManifestPath: resolveInputPath(qualityManifestPath) } : {}),
-      ...(hasFlag(argv, "--dry-run") ? { dryRun: true } : {})
+      ...(segmentFrames !== undefined ? { segmented: { segmentFrames: Number(segmentFrames), ...(hasFlag(argv, "--resume-segments") ? { resume: true } : {}) } } : {}),
+      ...(hasFlag(argv, "--dry-run") ? { dryRun: true } : {}),
+      ...(hasFlag(argv, "--reuse-attested") ? { reuseAttested: true } : {})
     };
   }
   if (command === "motion.render.batch") {
@@ -6118,8 +6228,7 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       packageRoot: debugPackageRoot(argv),
       outDir: optionValue(argv, "--out"),
       values,
-      cutImportMode: optionValue(argv, "--cut-import-mode"),
-      ...(hasFlag(argv, "--dry-run-render") ? { dryRunRender: true } : {})
+      cutImportMode: optionValue(argv, "--cut-import-mode")
     };
   }
   if (command === "motion.quality.panel") {
@@ -6213,6 +6322,8 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       patch
     };
   }
+  if (command === "motion.package.asset.import") return debugPackageAssetImportArgs(argv, debugPackageRoot, optionValue); if (command === "motion.revision.transaction") return revisionTransactionDebugArgs(argv, debugPackageRoot(argv), optionValue);
+  if (command === "motion.revision.transaction.plan") return revisionTransactionPlanDebugArgs(argv, debugPackageRoot(argv), optionValue);
   if (command === "motion.timeline.playhead.set") {
     const atMs = optionValue(argv, "--at-ms") ?? optionValue(argv, "--playhead-ms");
     return {
@@ -6962,6 +7073,8 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
     const duckToVolume = optionValue(argv, "--duck-to-volume") ?? optionValue(argv, "--duckToVolume");
     const attackMs = optionValue(argv, "--attack-ms") ?? optionValue(argv, "--attackMs");
     const releaseMs = optionValue(argv, "--release-ms") ?? optionValue(argv, "--releaseMs");
+    const threshold = optionValue(argv, "--threshold");
+    const ratio = optionValue(argv, "--ratio");
     return {
       packageRoot: debugPackageRoot(argv),
       outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
@@ -6971,7 +7084,49 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       triggerLayerIds: layerDuckingTriggerOptions(argv),
       ...(duckToVolume !== undefined ? { duckToVolume: Number(duckToVolume) } : {}),
       ...(attackMs !== undefined ? { attackMs: Number(attackMs) } : {}),
-      ...(releaseMs !== undefined ? { releaseMs: Number(releaseMs) } : {})
+      ...(releaseMs !== undefined ? { releaseMs: Number(releaseMs) } : {}),
+      ...(optionValue(argv, "--mode") !== undefined ? { mode: optionValue(argv, "--mode") } : {}),
+      ...(threshold !== undefined ? { threshold: Number(threshold) } : {}),
+      ...(ratio !== undefined ? { ratio: Number(ratio) } : {})
+    };
+  }
+  if (command === "motion.audio.master.set") {
+    const master = readRecord(jsonOption(argv, "--master-json"));
+    return {
+      packageRoot: debugPackageRoot(argv),
+      outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
+      receiptsRoot: optionValue(argv, "--receipts-root"),
+      createdBy: optionValue(argv, "--created-by"),
+      ...(master ? { master } : {}),
+      ...(hasFlag(argv, "--clear") ? { clear: true } : {})
+    };
+  }
+  if (command === "motion.audio.crossfade.set") {
+    const durationMs = optionValue(argv, "--duration-ms");
+    const curve = optionValue(argv, "--curve");
+    return {
+      packageRoot: debugPackageRoot(argv),
+      outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
+      receiptsRoot: optionValue(argv, "--receipts-root"),
+      createdBy: optionValue(argv, "--created-by"),
+      fromLayerId: optionValue(argv, "--from-layer") ?? optionValue(argv, "--from-layer-id"),
+      toLayerId: optionValue(argv, "--to-layer") ?? optionValue(argv, "--to-layer-id"),
+      ...(durationMs !== undefined ? { durationMs: Number(durationMs) } : {}),
+      ...(curve !== undefined ? { curve } : {})
+    };
+  }
+  if (command === "motion.procedural.audio-envelope.produce") {
+    const sampleEveryMs = optionValue(argv, "--sample-every-ms");
+    const channel = optionValue(argv, "--channel");
+    return {
+      packageRoot: debugPackageRoot(argv),
+      outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
+      receiptsRoot: optionValue(argv, "--receipts-root"),
+      createdBy: optionValue(argv, "--created-by"),
+      sourceLayerId: optionValue(argv, "--source-layer") ?? optionValue(argv, "--source-layer-id"),
+      envelopeId: optionValue(argv, "--envelope-id") ?? optionValue(argv, "--id"),
+      ...(sampleEveryMs !== undefined ? { sampleEveryMs: Number(sampleEveryMs) } : {}),
+      ...(channel !== undefined ? { channel } : {})
     };
   }
   if (command === "motion.timeline.layer.track.assign") {
@@ -7013,33 +7168,8 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
       trackName: optionValue(argv, "--track-name")
     };
   }
-  if (command === "motion.timeline.transition.upsert") {
-    const durationMs = optionValue(argv, "--duration-ms");
-    const distance = optionValue(argv, "--distance");
-    return {
-      packageRoot: debugPackageRoot(argv),
-      outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
-      receiptsRoot: optionValue(argv, "--receipts-root"),
-      createdBy: optionValue(argv, "--created-by"),
-      layerId: optionValue(argv, "--layer") ?? optionValue(argv, "--layer-id"),
-      edge: optionValue(argv, "--edge"),
-      type: optionValue(argv, "--type"),
-      ...(durationMs !== undefined ? { durationMs: Number(durationMs) } : {}),
-      easing: optionValue(argv, "--easing"),
-      direction: optionValue(argv, "--direction"),
-      ...(distance !== undefined ? { distance: Number(distance) } : {})
-    };
-  }
-  if (command === "motion.timeline.transition.delete") {
-    return {
-      packageRoot: debugPackageRoot(argv),
-      outDir: optionValue(argv, "--out") ?? optionValue(argv, "--package-dir"),
-      receiptsRoot: optionValue(argv, "--receipts-root"),
-      createdBy: optionValue(argv, "--created-by"),
-      layerId: optionValue(argv, "--layer") ?? optionValue(argv, "--layer-id"),
-      edge: optionValue(argv, "--edge")
-    };
-  }
+  const transitionArgs = timelineTransitionDebugArgs(command, argv, optionValue, debugPackageRoot);
+  if (transitionArgs) return transitionArgs;
   if (command === "motion.support.bundle") {
     return {
       packageRoot: debugPackageRoot(argv),
@@ -7208,16 +7338,6 @@ async function debugArgs(command: MotionDebugCommand, argv: string[]): Promise<u
   return {};
 }
 
-function parseBooleanOption(value: string): boolean {
-  return value === "true" || value === "1" || value === "yes";
-}
-
-function parseStrictBooleanOption(value: string): boolean | undefined {
-  if (value === "true" || value === "1" || value === "yes") return true;
-  if (value === "false" || value === "0" || value === "no") return false;
-  return undefined;
-}
-
 // `debugAgentRuntime`, `fakeAgentRuntime` and `fakeAdapter` used to live here: a stubbed
 // `shellx-motion-fake-agent` selected by `--adapter fake`, reporting itself ready in the same JSON a
 // real probe produces. Removed with the tool-provenance invariant — scripted adapters now come from
@@ -7225,31 +7345,7 @@ function parseStrictBooleanOption(value: string): boolean | undefined {
 // binary cannot manufacture an agent, and a caller that wants one has to say so in code. The
 // refusal for the removed flags lives in `./retired-options`.
 
-export function normalizeWindowsExtendedPath(path: string): string {
-  return path
-    .replace(/^\\+\?\\+UNC\\+/i, "\\\\")
-    .replace(/^\\+\?\\+/, "");
-}
-
-function isWindowsAbsolutePath(path: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\]/.test(path);
-}
-
-function resolveInputPath(path: string): string {
-  const normalizedPath = normalizeWindowsExtendedPath(path);
-  if (isAbsolute(normalizedPath) || isWindowsAbsolutePath(normalizedPath)) return normalizedPath;
-
-  const cwdPath = resolve(normalizedPath);
-  if (existsSync(cwdPath)) return cwdPath;
-
-  return process.env.INIT_CWD ? resolve(process.env.INIT_CWD, normalizedPath) : cwdPath;
-}
-
-function resolveOutputPath(path: string): string {
-  const normalizedPath = normalizeWindowsExtendedPath(path);
-  if (isAbsolute(normalizedPath) || isWindowsAbsolutePath(normalizedPath)) return normalizedPath;
-  return process.env.INIT_CWD ? resolve(process.env.INIT_CWD, normalizedPath) : resolve(normalizedPath);
-}
+export { normalizeWindowsExtendedPath } from "./cli-path-resolution";
 
 function missingArgument(command: string, argument: string): CliResult {
   return {
@@ -7262,8 +7358,32 @@ function missingArgument(command: string, argument: string): CliResult {
   };
 }
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+function keepFramesFinalVideoOnlyRefusal(): CliResult {
+  return {
+    ok: false,
+    command: "render",
+    error: {
+      code: "invalid_args",
+      message: "--keep-frames is only supported for final-video FFmpeg renders."
+    }
+  };
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> { await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8"); }
+
+/**
+ * Core authenticates uncertainty only after a final link or rename was attempted.  Preserve that
+ * evidence for non-render delivery commands too, without assigning the render-specific primary
+ * uncertainty flag to a receipt, archive, or package-directory publication.
+ */
+function publicationCommitUncertainCliFailure(command: string, error: unknown): CliResult | undefined {
+  const fields = corePublicationUncertaintyFields(error);
+  if (!fields) return undefined;
+  return {
+    ok: false,
+    command,
+    ...fields
+  };
 }
 
 async function writeHostReceiptFile(receiptsRoot: string, receipt: OperationReceipt): Promise<string> {
@@ -7271,18 +7391,6 @@ async function writeHostReceiptFile(receiptsRoot: string, receipt: OperationRece
   const receiptPath = join(receiptsRoot, `${safeFileToken(receipt.id)}.receipt.json`);
   await writeJson(receiptPath, receipt);
   return receiptPath;
-}
-
-function mediaTypeForPath(path: string): string | undefined {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".gif")) return "image/gif";
-  if (lower.endsWith(".mp4")) return "video/mp4";
-  if (lower.endsWith(".webm")) return "video/webm";
-  if (lower.endsWith(".mov")) return "video/quicktime";
-  return undefined;
 }
 
 /** Entry point: run the requested command with Ctrl-C wired to real cancellation. */
@@ -7300,6 +7408,4 @@ async function main(): Promise<void> {
   });
 }
 
-if (isDirectEntry(import.meta.url, process.argv[1])) {
-  await main();
-}
+if (isDirectEntry(import.meta.url, process.argv[1])) await main();

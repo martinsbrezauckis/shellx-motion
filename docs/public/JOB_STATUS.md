@@ -2,7 +2,7 @@
 
 # Job status — what Motion tells you about work you asked for
 
-The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Nothing else states the contract.
+The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.
 
 **Design principle.** A state earns its existence only if it changes what the caller does next. Anything that changes only latency or detail is a field, not a state.
 
@@ -111,9 +111,9 @@ has no state; saying it "failed" would be a lie about work that never ran.
 
 ## Failure codes
 
-`retryable` is what separates "try again" from "change approach". It is a property of
-the code, declared once here, never decided per throw site. Never parse `message` — it
-is for humans.
+`retryable` is what separates "try again" from "change approach". For the shared core
+codes below it is declared once here, never decided per throw site. Never parse `message`
+— it is for humans.
 
 | code | retryable | remedy | means |
 |---|---|---|---|
@@ -128,9 +128,27 @@ is for humans.
 | `unsupported_preset` | no | `change_input` | The requested export preset does not exist on this build. |
 | `capability_unavailable` | no | `grant_permission` | The operation needs a capability this caller's permission tier does not carry. |
 | `invalid_args` | no | `change_input` | The request did not satisfy the command's argument contract. |
+| `unsafe_input_path` | no | `change_input` | A final audio input was not a regular package-local WAV, FLAC, MP3, Ogg, or Opus file; M4A/MP4/MOV/Matroska/WebM and reference-capable inputs are refused before FFmpeg starts. |
+| `derived_output_busy` | yes | `wait` | Another final render holds the exact output path's private publication reservation. |
+| `derived_output_exists` | no | `change_input` | The requested final path already exists; it was preserved rather than overwritten. |
+| `derived_output_stage_invalid` | no | `change_input` | Private staged output changed or contained an unexpected file before publication. |
 | `output_dir_not_empty` | no | `change_input` | The output directory already holds files, and overwriting was not requested. |
 | `frame_lane_refused` | no | `change_input` | The chosen frame lane cannot draw this package faithfully; a different lane can. |
 | `quality_gate_failed` | no | `change_input` | The delivered artifact did not satisfy the quality manifest it was rendered against. |
+| `cache_integrity_failed` | no | `change_input` | An opt-in attested-reuse output, descriptor, receipt, or current input did not prove the exact requested identity, so Motion refused to overwrite or rerender it. |
+| `cache_busy` | yes | `wait` | An exact opt-in attested-reuse fill holds its root-local exclusive lock. A stale lock needs host inspection; Motion never breaks it automatically. |
+| `segment_store_busy` | yes | `wait` | Another durable segmented render owns the checkpoint store deterministically derived from this output path. Motion never breaks this lock automatically. |
+| `segment_checkpoint_invalid` | no | `change_input` | A retained segmented checkpoint, source fingerprint, concat proof, or no-clobber publication proof was invalid, so Motion did not publish the requested output. |
+| `segment_source_changed` | no | `change_input` | The package changed while durable segmented checkpoints were being produced. Start a fresh render from stable package bytes. |
+| `segmented_final_unsupported` | no | `change_input` | The selected segmented delivery mode does not support this renderer, preset, workflow, script, or quality contract. |
+| `segmented_final_failed` | yes | `wait` | Segmented delivery stopped without a completed no-clobber publication. Only verified checkpoints, if any, remain for an explicit resume. |
+
+### Future capability-owned codes
+
+A newer capability may return or raise a typed code an older consumer does not enumerate. Motion preserves that bounded code, message, retryable flag, optional retryAfterMs, remedy and suggestedAction through events and terminal job state rather than collapsing it to invalid_args or connector_failed. Exception stacks, details and path-bearing text are never terminal job metadata.
+
+- **Bound:** 96 characters matching `^[a-z][a-z0-9_.:-]{0,95}$`.
+- **Consumer rule:** Treat the code as an opaque category. Branch on the explicit retryable flag and optional remedy/retryAfterMs fields; never infer policy from an unknown code name or parse its human message.
 
 ### Remedies
 
@@ -183,8 +201,8 @@ Words that must never appear as a receipt status: `succeeded`, `cancelled`, `ski
 Decisions this contract depends on. Any marked provisional were taken to keep the
 contract shippable and use the reversible option; they are awaiting confirmation.
 
-- **Should render ever gain an opt-in asynchronous mode?** Open. Render blocks, and there is no --async flag to opt out of that. *(provisional)*
-  Blocking is what ships, and it keeps every existing script and connector working. The cost is real: a caller that wants to start a render and return immediately cannot, and a render in flight is observable only from a second process, through the job registry. An opt-in flag is the reversible way to close that gap if it ever needs closing, which is why the option is recorded here instead of dropped. Treat it as an open question, not a commitment: do not build against a flag that does not exist.
+- **What is Motion's shipped asynchronous render route?** The persistent local coordinator accepts `motion.job.submit` and returns a durable jobId before expensive work starts; `motion.render.final` and the CLI `render` command remain blocking compatibility calls.
+  The coordinator owns the submitted worker's AbortSignal, terminal record, and ordered event stream, so its `motion.job.get/list/events/cancel/retry` controls describe the same submitted work. Submission is intentionally limited to ordinary streamed or closed segmented final-video delivery; stills, image sequences, workflows, quality-manifest routes, retained frames, dry runs, and other materialized compatibility paths stay blocking under `motion.render.final`. This is the shipped asynchronous route, not a promise of a future `--async` flag.
 - **Where does the runtime job registry live?** Per-user, under the platform's runtime directory. *(provisional)*
   A shared machine-wide location would give true machine-wide truth but needs a permissions model and is a security-boundary decision. The accepted gap is that two different users on one machine can still overcommit it; that gap is documented rather than silently carried.
 - **Does a warned success need its own outcome?** No. outcome 'succeeded' with a non-empty warnings array. *(provisional)*

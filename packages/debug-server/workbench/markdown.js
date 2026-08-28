@@ -15,10 +15,11 @@
  *      text, never as live markup.
  *   2. The renderer only ever emits a fixed whitelist of structural tags; it never
  *      copies source bytes into an attribute or tag position unescaped.
- *   3. Links accept only `http://`, `https://`, and same-document `#anchor` hrefs;
- *      any other scheme (e.g. `javascript:`) is dropped and the link text is shown
- *      as plain escaped text. Emitted links always carry
- *      `target="_blank" rel="noopener noreferrer"`.
+ *   3. The default link policy accepts only `http://`, `https://`, and same-document
+ *      `#anchor` hrefs. The authenticated Docs reader supplies its indexed-link
+ *      resolver, which additionally admits only manifest-backed internal targets;
+ *      every other relative value and every unsafe scheme stays literal text.
+ *      External links always carry `target="_blank" rel="noopener noreferrer"`.
  * The returned string is therefore safe to assign via `innerHTML` — that is the
  * contract this module exists to guarantee.
  *
@@ -80,6 +81,103 @@ export function isSafeHref(href) {
 }
 
 /**
+ * Resolve a relative Markdown href against the authenticated Workbench documentation
+ * index. This performs no filesystem access and never produces a URL: its only
+ * successful output is a declared page id plus an optional bounded heading anchor.
+ *
+ * `pages` intentionally comes from the human-filtered index response, rather than
+ * the repository's full index, so an authored link cannot surface an agent-only
+ * page in the human Workbench. Relative values must resolve to an exact declared
+ * `file`; a path that is syntactically relative but absent from the index is inert.
+ *
+ * @param {string} href Raw href text from Markdown source.
+ * @param {{ currentPageId: string, pages: Array<{ id?: unknown, file?: unknown }> }} context Authenticated index view.
+ * @returns {{ pageId: string, anchor: string } | null} A bounded Workbench target, or null when the href is not allowed.
+ */
+export function resolveIndexedDocumentationLink(href, context) {
+  const raw = String(href).trim();
+  const pages = Array.isArray(context?.pages) ? context.pages : [];
+  const currentPage = pages.find((page) => page
+    && page.id === context?.currentPageId
+    && isSafeDocumentationPageId(page.id)
+    && isSafeDocumentationFile(page.file));
+  if (!currentPage || !raw || /[\u0000-\u001f]/.test(raw)) return null;
+
+  if (raw.startsWith("#")) {
+    const anchor = boundedDocumentationAnchor(raw.slice(1));
+    return anchor ? { pageId: currentPage.id, anchor } : null;
+  }
+
+  // A Docs target is always an index-backed relative document reference. Absolute
+  // paths, protocol-relative URLs, backslashes, queries, and every scheme remain
+  // literal Markdown so the browser never treats them as navigation candidates.
+  if (
+    raw.startsWith("/")
+    || raw.includes("\\")
+    || raw.includes("?")
+    || /^[a-z][a-z0-9+.-]*:/i.test(raw)
+  ) return null;
+
+  const hash = raw.indexOf("#");
+  const fileReference = hash < 0 ? raw : raw.slice(0, hash);
+  const anchor = hash < 0 ? "" : boundedDocumentationAnchor(raw.slice(hash + 1));
+  if (!fileReference || (hash >= 0 && !anchor) || raw.indexOf("#", hash + 1) >= 0) return null;
+
+  const file = resolveRelativeDocumentationFile(currentPage.file, fileReference);
+  if (!file) return null;
+  const target = pages.find((page) => page && page.file === file && isSafeDocumentationPageId(page.id));
+  return target ? { pageId: target.id, anchor } : null;
+}
+
+/**
+ * Normalise a relative documentation file without consulting the filesystem. The
+ * output must still be an exact declared index file before it becomes a target.
+ * @param {string} currentFile Declared file for the page being rendered.
+ * @param {string} reference Relative Markdown file reference.
+ * @returns {string | null} Normalised relative file, or null when it leaves the virtual docs root.
+ */
+function resolveRelativeDocumentationFile(currentFile, reference) {
+  if (!isSafeDocumentationFile(currentFile) || !reference || reference.startsWith("/")) return null;
+  const parts = currentFile.split("/").slice(0, -1);
+  for (const part of reference.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) return null;
+      parts.pop();
+      continue;
+    }
+    if (!isSafeDocumentationPathSegment(part)) return null;
+    parts.push(part);
+  }
+  const result = parts.join("/");
+  return isSafeDocumentationFile(result) ? result : null;
+}
+
+/** @param {unknown} value @returns {value is string} */
+function isSafeDocumentationFile(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && !value.startsWith("/")
+    && !value.includes("\\")
+    && value.split("/").every(isSafeDocumentationPathSegment);
+}
+
+/** @param {string} value @returns {boolean} */
+function isSafeDocumentationPathSegment(value) {
+  return value !== "" && value !== "." && value !== ".." && !/[\u0000-\u001f?#]/.test(value);
+}
+
+/** @param {unknown} value @returns {value is string} */
+function isSafeDocumentationPageId(value) {
+  return typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,127}$/i.test(value);
+}
+
+/** @param {string} value @returns {string} */
+function boundedDocumentationAnchor(value) {
+  return /^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(value) ? value : "";
+}
+
+/**
  * Apply inline formatting to a single already-plain (unescaped) source string and
  * return safe HTML. Order matters: inline code spans are extracted first and
  * carried as opaque placeholders so their contents are never re-interpreted as
@@ -89,7 +187,7 @@ export function isSafeHref(href) {
  * @param {string} source Raw inline source (one paragraph/line's worth).
  * @returns {string} Safe inline HTML.
  */
-export function renderInline(source) {
+export function renderInline(source, options = {}) {
   // Strip any stray PLACEHOLDER sentinel from the source up front so it cannot be
   // used to forge a token boundary; the parser then owns every sentinel occurrence.
   const text = String(source).split(PLACEHOLDER).join("");
@@ -107,7 +205,17 @@ export function renderInline(source) {
   //    (escape + emphasis) but never re-parsed for nested links.
   const linkSpans = [];
   const withoutLinks = withoutCode.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (match, label, href) => {
-    if (!isSafeHref(href)) {
+    const internalTarget = resolveDocumentationTarget(href, options.documentationLinkResolver);
+    if (internalTarget) {
+      const token = `${PLACEHOLDER}LINK${linkSpans.length}${PLACEHOLDER}`;
+      linkSpans.push(renderInternalDocumentationLink(label, internalTarget));
+      return token;
+    }
+    const hasDocumentationResolver = typeof options.documentationLinkResolver === "function";
+    // The Docs reader must not fall back to the default #anchor policy: anchors
+    // there are useful only when the authenticated resolver has bounded them to
+    // the current indexed page. Generic renderer callers retain the old policy.
+    if (!isSafeHref(href) || (hasDocumentationResolver && !isExternalHttpHref(href))) {
       // Disallowed scheme: keep the ORIGINAL literal text, escaped, no live href.
       const token = `${PLACEHOLDER}LINK${linkSpans.length}${PLACEHOLDER}`;
       linkSpans.push(escapeHtml(match));
@@ -128,6 +236,40 @@ export function renderInline(source) {
   html = html.replace(/\uE000LINK(\d+)\uE000/g, (_m, index) => linkSpans[Number(index)] ?? "");
   html = html.replace(/\uE000CODE(\d+)\uE000/g, (_m, index) => codeSpans[Number(index)] ?? "");
   return html;
+}
+
+/**
+ * Ask the caller-owned resolver for an internal reader target, rejecting malformed
+ * answers so untrusted Markdown can never manufacture Workbench data attributes.
+ * @param {string} href Raw source href.
+ * @param {unknown} resolver Optional Docs reader resolver.
+ * @returns {{ pageId: string, anchor: string } | null} Valid internal target or null.
+ */
+function resolveDocumentationTarget(href, resolver) {
+  if (typeof resolver !== "function") return null;
+  const target = resolver(href);
+  if (!target || !isSafeDocumentationPageId(target.pageId)) return null;
+  if (typeof target.anchor !== "string" || (target.anchor && !boundedDocumentationAnchor(target.anchor))) return null;
+  return { pageId: target.pageId, anchor: target.anchor };
+}
+
+/** @param {string} href @returns {boolean} */
+function isExternalHttpHref(href) {
+  return /^https?:\/\//i.test(String(href).trim());
+}
+
+/**
+ * Render an internal Docs reader link. Its `href` is deliberately only a local
+ * fragment; the page id lives in an escaped data attribute and docs.js intercepts
+ * activation to select through the already authenticated in-memory index.
+ */
+function renderInternalDocumentationLink(label, target) {
+  const safeLabel = applyEmphasis(escapeHtml(label));
+  const safePageId = escapeHtml(target.pageId);
+  const safeAnchor = target.anchor ? escapeHtml(target.anchor) : "";
+  const fragment = safeAnchor ? `#${safeAnchor}` : "#docs";
+  const anchorAttribute = safeAnchor ? ` data-doc-anchor="${safeAnchor}"` : "";
+  return `<a href="${fragment}" data-doc-page-id="${safePageId}"${anchorAttribute}>${safeLabel}</a>`;
 }
 
 /**
@@ -155,10 +297,12 @@ function applyEmphasis(escaped) {
  * @param {string} source Markdown source text.
  * @returns {string} Safe HTML string suitable for innerHTML assignment.
  */
-export function renderMarkdown(source) {
+export function renderMarkdown(source, options = {}) {
   const lines = String(source ?? "").replace(/\r\n?/g, "\n").split("\n");
   const html = [];
   let index = 0;
+  const headingIds = new Map();
+  const inline = (value) => renderInline(value, options);
 
   while (index < lines.length) {
     const line = lines[index];
@@ -189,7 +333,10 @@ export function renderMarkdown(source) {
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
       const level = heading[1].length;
-      html.push(`<h${level}>${renderInline(heading[2].trim())}</h${level}>`);
+      const headingSource = heading[2].trim();
+      const headingId = options.headingIds ? uniqueHeadingId(headingSource, headingIds) : "";
+      const idAttribute = headingId ? ` id="${escapeHtml(headingId)}"` : "";
+      html.push(`<h${level}${idAttribute}>${inline(headingSource)}</h${level}>`);
       index += 1;
       continue;
     }
@@ -203,7 +350,7 @@ export function renderMarkdown(source) {
 
     // Table: a header row followed by a divider row of ---|--- cells.
     if (line.includes("|") && index + 1 < lines.length && isTableDivider(lines[index + 1])) {
-      const consumed = renderTable(lines, index);
+      const consumed = renderTable(lines, index, options);
       html.push(consumed.html);
       index = consumed.nextIndex;
       continue;
@@ -211,7 +358,7 @@ export function renderMarkdown(source) {
 
     // Unordered list.
     if (/^\s*[-*+]\s+/.test(line)) {
-      const consumed = renderList(lines, index, "ul");
+      const consumed = renderList(lines, index, "ul", options);
       html.push(consumed.html);
       index = consumed.nextIndex;
       continue;
@@ -219,7 +366,7 @@ export function renderMarkdown(source) {
 
     // Ordered list.
     if (/^\s*\d+\.\s+/.test(line)) {
-      const consumed = renderList(lines, index, "ol");
+      const consumed = renderList(lines, index, "ol", options);
       html.push(consumed.html);
       index = consumed.nextIndex;
       continue;
@@ -232,7 +379,7 @@ export function renderMarkdown(source) {
         quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
         index += 1;
       }
-      html.push(`<blockquote>${renderInline(quoteLines.join(" "))}</blockquote>`);
+      html.push(`<blockquote>${inline(quoteLines.join(" "))}</blockquote>`);
       continue;
     }
 
@@ -251,11 +398,30 @@ export function renderMarkdown(source) {
       index += 1;
     }
     if (paragraph.length > 0) {
-      html.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
+      html.push(`<p>${inline(paragraph.join(" "))}</p>`);
     }
   }
 
   return html.join("\n");
+}
+
+/**
+ * Produce a stable, bounded heading id for Docs reader anchors. This mirrors the
+ * authored ASCII fragments used by bundled docs without exposing raw heading text
+ * as an attribute. Duplicate headings retain deterministic numeric suffixes.
+ */
+function uniqueHeadingId(source, seen) {
+  const base = String(source)
+    .trim()
+    .toLowerCase()
+    .replace(/<[^>]*>/g, "")
+    .replace(/[\\`~!@#$%^&*()+={}\[\]|:;"'<>,.?/]/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 120);
+  if (!base || !boundedDocumentationAnchor(base)) return "";
+  const count = seen.get(base) || 0;
+  seen.set(base, count + 1);
+  return count === 0 ? base : `${base}-${count}`;
 }
 
 /**
@@ -288,9 +454,10 @@ function splitTableRow(line) {
  *
  * @param {string[]} lines All document lines.
  * @param {number} start Index of the header row.
+ * @param {object} options Inline-render options from the document caller.
  * @returns {{ html: string, nextIndex: number }} Rendered table and next index.
  */
-function renderTable(lines, start) {
+function renderTable(lines, start, options) {
   const header = splitTableRow(lines[start]);
   let index = start + 2; // skip header + divider
   const bodyRows = [];
@@ -298,9 +465,9 @@ function renderTable(lines, start) {
     bodyRows.push(splitTableRow(lines[index]));
     index += 1;
   }
-  const head = `<thead><tr>${header.map((cell) => `<th>${renderInline(cell)}</th>`).join("")}</tr></thead>`;
+  const head = `<thead><tr>${header.map((cell) => `<th>${renderInline(cell, options)}</th>`).join("")}</tr></thead>`;
   const body = bodyRows
-    .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell, options)}</td>`).join("")}</tr>`)
     .join("");
   return { html: `<table>${head}<tbody>${body}</tbody></table>`, nextIndex: index };
 }
@@ -311,16 +478,17 @@ function renderTable(lines, start) {
  * @param {string[]} lines All document lines.
  * @param {number} start Index of the first list item.
  * @param {"ul"|"ol"} tag List element to emit.
+ * @param {object} options Inline-render options from the document caller.
  * @returns {{ html: string, nextIndex: number }} Rendered list and next index.
  */
-function renderList(lines, start, tag) {
+function renderList(lines, start, tag, options) {
   const marker = tag === "ul" ? /^\s*[-*+]\s+(.*)$/ : /^\s*\d+\.\s+(.*)$/;
   const items = [];
   let index = start;
   while (index < lines.length) {
     const match = marker.exec(lines[index]);
     if (!match) break;
-    items.push(`<li>${renderInline(match[1].trim())}</li>`);
+    items.push(`<li>${renderInline(match[1].trim(), options)}</li>`);
     index += 1;
   }
   return { html: `<${tag}>${items.join("")}</${tag}>`, nextIndex: index };

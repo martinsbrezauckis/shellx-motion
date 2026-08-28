@@ -8,7 +8,9 @@ import {
   type AttestedArtifactHandle,
   type MotionPackage,
   type PackageRenderLineage,
+  type RetainedDirectoryAuthority,
 } from "@shellx-motion/core";
+import { resolve } from "node:path";
 
 export async function loadStableRenderPackage(
   packageRoot: string,
@@ -41,13 +43,16 @@ export function renderReceiptInputHashes(
 export async function readCachedRenderArtifact(input: {
   root: string;
   path: string;
+  expectedOutputPath: string;
   pkg: MotionPackage;
   preset: string;
   operationHash: string;
   sdkCacheKey: string;
   lineage: PackageRenderLineage;
+  authority: RetainedDirectoryAuthority;
 }): Promise<AttestedArtifactHandle | null> {
   try {
+    await input.authority.assertCurrent();
     const handle = await readAttestedArtifactHandle(input.path);
     await verifyAttestedArtifactHandle(input.root, handle, {
       expected: {
@@ -63,7 +68,11 @@ export async function readCachedRenderArtifact(input: {
     if (handle.qualityEvidence?.sdkCacheKey !== input.sdkCacheKey) {
       throw new Error("SDK idempotency key was already used for a different render request.");
     }
+    if (resolve(input.root, handle.rootRelativePath) !== resolve(input.expectedOutputPath)) {
+      throw new Error("SDK cached render output does not match the requested outputPath.");
+    }
     await assertRenderPackageLineage(input.pkg.root, input.lineage);
+    await input.authority.assertCurrent();
     return handle;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

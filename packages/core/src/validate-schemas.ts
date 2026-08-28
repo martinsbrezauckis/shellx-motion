@@ -11,12 +11,13 @@
  * Primary callers: `packages/core/src/validate.ts` (loadSchema, action/debug required-field validation).
  */
 import type { LoadedSchema, SchemaName } from "./validate";
+import { MOTION_DOCUMENT_REQUIRED, MOTION_DOCUMENT_SCHEMA } from "./motion-public-schema";
 
 export const SCHEMAS: Record<SchemaName, LoadedSchema> = {
   motion: {
     name: "motion",
-    schema: "shellx-motion/motion@1",
-    required: ["schema", "id", "name", "durationMs", "fps", "width", "height", "layers", "assets", "provenance"]
+    schema: MOTION_DOCUMENT_SCHEMA,
+    required: [...MOTION_DOCUMENT_REQUIRED]
   },
   packageManifest: {
     name: "packageManifest",
@@ -141,7 +142,7 @@ export const SCHEMAS: Record<SchemaName, LoadedSchema> = {
   platformVerification: {
     name: "platformVerification",
     schema: "shellx-motion/platform-verification@1",
-    required: ["schema", "status", "dryRun", "host", "repoRoot", "startedAt", "commands"]
+    required: ["schema", "status", "dryRun", "host", "toolchain", "repoRoot", "startedAt", "finishedAt", "commandSummary", "commands"]
   },
   platformVerificationAggregate: {
     name: "platformVerificationAggregate",

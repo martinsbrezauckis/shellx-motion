@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/runtime-probe@1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "engine", "cli", "runtime", "protocols", "catalog", "provenance"],
+  "properties": {
+    "schema": { "const": "shellx-motion/runtime-probe@1" },
+    "engine": { "$ref": "#/$defs/engineVersion" },
+    "cli": { "$ref": "#/$defs/cliVersion" },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "architecture", "nodeVersion"],
+      "properties": {
+        "platform": { "enum": ["darwin", "linux", "win32"] },
+        "architecture": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "nodeVersion": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "protocols": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integration", "capabilityCatalog", "connectorJob"],
+      "properties": {
+        "integration": { "$ref": "#/$defs/protocolOne" },
+        "capabilityCatalog": { "oneOf": [{ "$ref": "#/$defs/protocolOne" }, { "$ref": "#/$defs/protocolOneToTwo" }] },
+        "connectorJob": { "oneOf": [{ "$ref": "#/$defs/protocolOne" }, { "$ref": "#/$defs/protocolOneToTwo" }] }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "fingerprint", "descriptorCount"],
+      "properties": {
+        "schema": { "enum": ["shellx-motion/capability-catalog@1", "shellx-motion/capability-catalog@2"] },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "descriptorCount": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution", "managedDistribution", "distributionQualification", "cleanHostQualification"],
+      "properties": {
+        "execution": { "enum": ["source", "packed"] },
+        "managedDistribution": { "const": "unmanaged" },
+        "distributionQualification": { "const": "unverified" },
+        "cleanHostQualification": { "const": "unverified" }
+      }
+    }
+  },
+  "$defs": {
+    "engineVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "@shellx-motion/core" },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", "maxLength": 64 }
+      }
+    },
+    "cliVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "@shellx-motion/cli" },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", "maxLength": 64 }
+      }
+    },
+    "protocolOne": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "preferred"],
+      "properties": {
+        "min": { "const": 1 },
+        "max": { "const": 1 },
+        "preferred": { "const": 1 }
+      }
+    },
+    "protocolOneToTwo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "preferred"],
+      "properties": {
+        "min": { "const": 1 },
+        "max": { "const": 2 },
+        "preferred": { "const": 2 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "properties": {
+        "protocols": {
+          "properties": { "integration": { "$ref": "#/$defs/protocolOne" } },
+          "required": ["integration"]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "catalog": { "properties": { "schema": { "const": "shellx-motion/capability-catalog@1" } }, "required": ["schema"] } }, "required": ["catalog"] },
+      "then": {
+        "properties": {
+          "protocols": {
+            "properties": {
+              "capabilityCatalog": { "$ref": "#/$defs/protocolOne" },
+              "connectorJob": { "$ref": "#/$defs/protocolOne" }
+            },
+            "required": ["capabilityCatalog", "connectorJob"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "protocols": {
+            "properties": {
+              "capabilityCatalog": { "$ref": "#/$defs/protocolOneToTwo" },
+              "connectorJob": { "$ref": "#/$defs/protocolOneToTwo" }
+            },
+            "required": ["capabilityCatalog", "connectorJob"]
+          }
+        }
+      }
+    }
+  ]
+}

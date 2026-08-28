@@ -1,8 +1,10 @@
-import { loadMotionPackage } from "@shellx-motion/core";
+import { hashBuffer, loadMotionPackage } from "@shellx-motion/core";
+import type { FfmpegCommand } from "@shellx-motion/renderer-ffmpeg";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withTestAuthoringRoots } from "../authoring-test-context.test-support.js";
 import { dispatchProceduralAuthoringCommand } from "./authoring-procedural.js";
 
 const roots: string[] = [];
@@ -22,7 +24,7 @@ describe("procedural relationship authoring commands", () => {
     const detachedRoot = join(root, "detached");
     await writePackage(sourceRoot);
     const sourceText = await readFile(join(sourceRoot, "motion.json"), "utf8");
-    const services = { packageLoader: loadMotionPackage };
+    const services = authoringServices(root);
 
     const set = await dispatchProceduralAuthoringCommand(
       "motion.procedural.relationship.set",
@@ -133,7 +135,7 @@ describe("procedural relationship authoring commands", () => {
     const rejected = await dispatchProceduralAuthoringCommand(
       "motion.procedural.relationship.set",
       { packageRoot: sourceRoot, outDir: invalidRoot, relationship: unsafe },
-      { packageLoader: loadMotionPackage },
+      authoringServices(root),
     );
     expect(rejected).toMatchObject({
       ok: false,
@@ -144,12 +146,12 @@ describe("procedural relationship authoring commands", () => {
     });
     expect(await stat(invalidRoot).catch(() => null)).toBeNull();
 
-    await mkdir(occupiedRoot);
+    await mkdir(occupiedRoot, { mode: 0o700 });
     await writeFile(join(occupiedRoot, "keep.txt"), "user-owned", "utf8");
     const occupied = await dispatchProceduralAuthoringCommand(
       "motion.procedural.relationship.set",
       { packageRoot: sourceRoot, outDir: occupiedRoot, relationship: relationship() },
-      { packageLoader: loadMotionPackage },
+      authoringServices(root),
     );
     expect(occupied).toMatchObject({ ok: false, error: { code: "output_not_empty" } });
     expect(await readFile(join(occupiedRoot, "keep.txt"), "utf8")).toBe("user-owned");
@@ -164,7 +166,7 @@ describe("procedural relationship authoring commands", () => {
     const outsideSource = join(outsideRoot, "source");
     const linkedSource = join(inputRoot, "linked-source");
     const linkedOutputParent = join(outputRoot, "linked-output");
-    await Promise.all([mkdir(outputRoot), mkdir(outsideRoot)]);
+    await Promise.all([mkdir(outputRoot, { mode: 0o700 }), mkdir(outsideRoot, { mode: 0o700 })]);
     await Promise.all([writePackage(sourceRoot), writePackage(outsideSource)]);
     await symlink(outsideSource, linkedSource, process.platform === "win32" ? "junction" : "dir");
     await symlink(outsideRoot, linkedOutputParent, process.platform === "win32" ? "junction" : "dir");
@@ -218,6 +220,139 @@ describe("procedural relationship authoring commands", () => {
     expect(rejectedOutputSymlink).toMatchObject({ ok: false, error: { code: "authoring_path_not_approved" } });
     expect(await stat(join(outsideRoot, "escaped")).catch(() => null)).toBeNull();
   });
+
+  it("produces a bounded data-only audio envelope and preserves only supplied decoder evidence", async () => {
+    const root = await fixtureRoot();
+    const sourceRoot = join(root, "source");
+    const evidencedRoot = join(root, "evidenced");
+    const unevidencedRoot = join(root, "unevidenced");
+    await writeAudioEnvelopePackage(sourceRoot);
+    const resources = localDecodeResources();
+    const commands: Array<{ args: string[]; shell: false }> = [];
+    const result = await dispatchProceduralAuthoringCommand(
+      "motion.procedural.audio-envelope.produce",
+      { packageRoot: sourceRoot, outDir: evidencedRoot, sourceLayerId: "music", envelopeId: "music-rms", sampleEveryMs: 50 },
+      withTestAuthoringRoots({
+        packageLoader: loadMotionPackage,
+        ffmpegRunner: async (command: FfmpegCommand) => {
+          commands.push(command);
+          return {
+            exitCode: 0,
+            stdout: "lavfi.astats.Overall.RMS_level=-20.0\n",
+            stderr: "",
+            resources,
+          };
+        },
+      }, { inputRoots: [root], outputRoots: [root] }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        envelope: { id: "music-rms", sourceLayerId: "music", sampleCount: 1, samplesSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+        resources,
+        receipt: { output: { resources } },
+      },
+    });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ shell: false });
+    expect(commands[0]?.args).toEqual(expect.arrayContaining([
+      "-protocol_whitelist", "file", "-format_whitelist", "wav", "-t", "1", "-vn", "-sn", "-dn"
+    ]));
+
+    const withoutEvidence = await dispatchProceduralAuthoringCommand(
+      "motion.procedural.audio-envelope.produce",
+      { packageRoot: sourceRoot, outDir: unevidencedRoot, sourceLayerId: "music", envelopeId: "music-rms-plain", sampleEveryMs: 50 },
+      withTestAuthoringRoots({
+        packageLoader: loadMotionPackage,
+        ffmpegRunner: async () => ({ exitCode: 0, stdout: "lavfi.astats.Overall.RMS_level=-20.0\n", stderr: "" }),
+      }, { inputRoots: [root], outputRoots: [root] }),
+    );
+    expect(withoutEvidence).toMatchObject({ ok: true, result: { envelope: { id: "music-rms-plain" } } });
+    if (!withoutEvidence || !withoutEvidence.ok) throw new Error("audio envelope fixture should succeed");
+    const output = withoutEvidence.result as Record<string, unknown>;
+    expect(output.resources).toBeUndefined();
+    expect((output.receipt as { output: Record<string, unknown> }).output.resources).toBeUndefined();
+  });
+
+  it("binds procedural envelope decoding and its source receipt hash to one private audio snapshot after RED substitution", async () => {
+    const root = await fixtureRoot();
+    const sourceRoot = join(root, "source");
+    const outputRoot = join(root, "output");
+    const sourcePath = join(sourceRoot, "assets", "tone.wav");
+    const admittedBytes = Buffer.from("fixture audio bytes", "utf8");
+    await writeAudioEnvelopePackage(sourceRoot);
+    const commands: Array<{ args: string[] }> = [];
+    const result = await dispatchProceduralAuthoringCommand(
+      "motion.procedural.audio-envelope.produce",
+      { packageRoot: sourceRoot, outDir: outputRoot, sourceLayerId: "music", envelopeId: "snapshot-envelope", sampleEveryMs: 50 },
+      withTestAuthoringRoots({
+        packageLoader: loadMotionPackage,
+        ffmpegRunner: async (command: FfmpegCommand) => {
+          commands.push(command);
+          await writeFile(sourcePath, "RED replacement bytes", "utf8");
+          return { exitCode: 0, stdout: "lavfi.astats.Overall.RMS_level=-20.0\n", stderr: "" };
+        }
+      }, { inputRoots: [root], outputRoots: [root] })
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        receipt: { inputHashes: { "audio-source:music": hashBuffer(admittedBytes) } }
+      }
+    });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.args).not.toContain(sourcePath);
+    expect(commands[0]?.args).toEqual(expect.arrayContaining([
+      "-format_whitelist", "wav", "-i",
+      expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.wav$/)
+    ]));
+  });
+
+  it("refuses an envelope decode before runner invocation when its duration would exceed the sample budget", async () => {
+    const root = await fixtureRoot();
+    const sourceRoot = join(root, "long-source");
+    await writeAudioEnvelopePackage(sourceRoot, 4_096_001);
+    let runnerCalls = 0;
+    const result = await dispatchProceduralAuthoringCommand(
+      "motion.procedural.audio-envelope.produce",
+      { packageRoot: sourceRoot, outDir: join(root, "rejected"), sourceLayerId: "music", envelopeId: "too-long", sampleEveryMs: 1_000 },
+      withTestAuthoringRoots({
+        packageLoader: loadMotionPackage,
+        ffmpegRunner: async () => {
+          runnerCalls += 1;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      }, { inputRoots: [root], outputRoots: [root] }),
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "procedural_audio_envelope_produce_failed", message: expect.stringMatching(/4096 samples/) } });
+    expect(runnerCalls).toBe(0);
+  });
+
+  it("refuses reference-bearing procedural audio containers before the decoder or output transaction starts", async () => {
+    const root = await fixtureRoot();
+    const sourceRoot = join(root, "hostile-source");
+    const outDir = join(root, "rejected");
+    await writeAudioEnvelopePackage(sourceRoot, 1_000, "attack.mp4");
+    let runnerCalls = 0;
+    const result = await dispatchProceduralAuthoringCommand(
+      "motion.procedural.audio-envelope.produce",
+      { packageRoot: sourceRoot, outDir, sourceLayerId: "music", envelopeId: "rejected", sampleEveryMs: 50 },
+      withTestAuthoringRoots({
+        packageLoader: loadMotionPackage,
+        ffmpegRunner: async () => {
+          runnerCalls += 1;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      }, { inputRoots: [root], outputRoots: [root] }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "procedural_audio_envelope_produce_failed", message: expect.stringMatching(/WAV, FLAC, MP3, Ogg, or Opus/) },
+    });
+    expect(runnerCalls).toBe(0);
+    expect(await stat(outDir).catch(() => null)).toBeNull();
+  });
 });
 
 function relationship() {
@@ -243,8 +378,15 @@ async function fixtureRoot(): Promise<string> {
   return root;
 }
 
+function authoringServices(root: string) {
+  return withTestAuthoringRoots({ packageLoader: loadMotionPackage }, {
+    inputRoots: [root],
+    outputRoots: [root],
+  });
+}
+
 async function writePackage(root: string): Promise<void> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",
     id: "procedural-fixture",
@@ -289,6 +431,44 @@ async function writePackage(root: string): Promise<void> {
     assets: [],
     provenance: { sourceApp: "shellx-motion", createdBy: "test" },
   });
+}
+
+async function writeAudioEnvelopePackage(root: string, durationMs = 1_000, sourceFileName = "tone.wav"): Promise<void> {
+  await writePackage(root);
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
+  await writeFile(join(root, "assets", sourceFileName), "fixture audio bytes", "utf8");
+  const motion = JSON.parse(await readFile(join(root, "motion.json"), "utf8")) as Record<string, unknown>;
+  motion.durationMs = durationMs;
+  const layers = motion.layers as Array<Record<string, unknown>>;
+  for (const layer of layers) layer.durationMs = durationMs;
+  layers.push({ id: "music", type: "audio", source: `assets/${sourceFileName}`, startMs: 0, durationMs });
+  await writeJson(join(root, "motion.json"), motion);
+}
+
+function localDecodeResources() {
+  return {
+    schema: "shellx-motion/local-job-resources@1" as const,
+    jobId: "audio-envelope-test",
+    lane: "ffmpeg" as const,
+    operation: "ffmpeg",
+    state: "passed" as const,
+    queueWaitMs: 0,
+    durationMs: 1,
+    policy: {
+      maxConcurrentJobs: 1,
+      maxQueueDepth: 1,
+      maxQueueWaitMs: 1_000,
+      maxWallClockMs: 1_000,
+      minFreeScratchBytes: 0,
+      scratchReservationBytes: 0,
+      maxProcessTreeRssBytes: 1_024,
+      rssPollIntervalMs: 50,
+    },
+    scratch: { pathSafety: "canonical-no-symlink" as const, freeBytesAtStart: 1, reservedBytes: 0, minFreeBytes: 0 },
+    peakProcessTreeRssBytes: 0,
+    watchedProcessCount: 1,
+    rssScope: "process-tree" as const,
+  };
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {

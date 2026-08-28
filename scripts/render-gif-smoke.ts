@@ -32,6 +32,7 @@ import {
   assertReceiptSucceeded,
   assertWarningFreeSuccess,
   FONT_FALLBACK_ADVISORY,
+  GIF_PALETTEGEN_DUPLICATE_COLOUR_ADVISORY,
   MOTION_DENSITY_ADVISORY,
   readDeliveredMedia,
   smokeJobIdentity
@@ -99,7 +100,11 @@ const renderReceipt = readObject(readObjectField(render, "receipt", "render.rece
 assert(readObjectField(renderReceipt, "operation", "render.receipt.operation") === "render.final", "render receipt operation mismatch");
 const renderSuccess = assertReceiptSucceeded(renderReceipt, {
   label: "GIF render",
-  expectedAdvisories: [FONT_FALLBACK_ADVISORY, MOTION_DENSITY_ADVISORY]
+  expectedAdvisories: [
+    FONT_FALLBACK_ADVISORY,
+    MOTION_DENSITY_ADVISORY,
+    GIF_PALETTEGEN_DUPLICATE_COLOUR_ADVISORY
+  ]
 });
 const renderJob = await assertJobSucceeded(jobId, callerId, "GIF render");
 const renderArtifacts = readArray(readObjectField(renderReceipt, "artifacts", "render.receipt.artifacts"));

@@ -24,27 +24,49 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { platformVerificationCommandContract } from "@shellx-motion/core";
 import { dispatchDebugCommand } from "./index";
 
 /** A host receipt that PASSES, with one required command skipped for an absent capability. */
 function hostReceiptWithCapabilitySkip(): Record<string, unknown> {
+  const commands: Array<Record<string, unknown>> = platformVerificationCommandContract().map((command) => ({
+    id: command.id,
+    command: command.command,
+    required: command.required,
+    status: "passed",
+    durationMs: 1,
+    exitCode: 0,
+    signal: null
+  }));
+  const hevc = commands.find((command) => command.id === "render-hevc:smoke")!;
+  hevc.status = "skipped";
+  hevc.durationMs = 0;
+  delete hevc.exitCode;
+  delete hevc.signal;
+  Object.assign(hevc, {
+    skipKind: "capability-absent",
+    skipReason: "Host FFmpeg does not advertise encoder capability: hevc.",
+    missingEncoders: ["hevc"]
+  });
   return {
     schema: "shellx-motion/platform-verification@1",
     status: "passed",
     dryRun: false,
-    host: { id: "linux", platform: "linux", arch: "x64" },
-    hostMatrix: { status: "satisfied", required: ["linux"], satisfied: ["linux"], missing: [] },
-    commands: [
-      { id: "typecheck", required: true, status: "passed" },
-      {
-        id: "render-hevc-smoke",
-        required: true,
-        status: "skipped",
-        skipKind: "capability-absent",
-        skipReason: "Host FFmpeg does not advertise encoder capability: hevc_nvenc.",
-        missingEncoders: ["hevc_nvenc"]
-      }
-    ]
+    host: {
+      id: "linux",
+      hostname: "test-host",
+      platform: "linux",
+      arch: "x64",
+      release: "test-release",
+      node: "v24.0.0"
+    },
+    toolchain: { status: "verified", exact: true, bundledCodecs: false, encoders: { status: "passed", capabilities: { hevc: false } } },
+    repoRoot: "/workspace/ShellX Motion",
+    startedAt: "2026-08-21T00:00:00.000Z",
+    finishedAt: "2026-08-21T00:01:00.000Z",
+    hostMatrix: { status: "complete", current: "linux", currentRequired: true, required: ["linux"], satisfied: ["linux"], missing: [], complete: true },
+    commandSummary: { total: commands.length, passed: commands.length - 1, failed: 0, skipped: 1, skippedByKind: { "capability-absent": 1 } },
+    commands
   };
 }
 
@@ -57,7 +79,7 @@ async function panelFor(receipt: Record<string, unknown>): Promise<Record<string
     const result = await dispatchDebugCommand(
       "motion.platform.verification.panel",
       { receiptsRoot, requiredHosts: ["linux"] },
-      { tier: "read_motion" }
+      { tier: "read_motion", receiptsRoot }
     );
     expect(result.ok, `panel failed: ${JSON.stringify(result, null, 2)}`).toBe(true);
     return (result as { result: Record<string, any> }).result;
@@ -67,7 +89,7 @@ async function panelFor(receipt: Record<string, unknown>): Promise<Record<string
 }
 
 describe("platform verification panel", () => {
-  it("keeps a passing host satisfied when a required command is skipped for an absent capability", async () => {
+  it.runIf(process.platform === "linux")("keeps a passing host satisfied when a required command is skipped for an absent capability", async () => {
     const panel = await panelFor(hostReceiptWithCapabilitySkip());
 
     expect(panel.satisfiedHosts, "an intentional capability skip must not unsatisfy the host").toContain("linux");
@@ -80,16 +102,18 @@ describe("platform verification panel", () => {
     expect(summary?.requiredFailedCommandCount).toBe(0);
     // Reported rather than hidden: an operator must still be able to see WHAT was skipped.
     expect(summary?.skippedCommandCount).toBe(1);
-    expect(summary?.skippedCommandIds).toEqual(["render-hevc-smoke"]);
+    expect(summary?.skippedCommandIds).toEqual(["render-hevc:smoke"]);
   });
 
-  it("still fails the host when the same capability gap is recorded as a failure", async () => {
+  it.runIf(process.platform === "linux")("still fails the host when the same capability gap is recorded as a failure", async () => {
     // `--require-modern-codecs` writes `status: "failed"` for the identical condition. The panel must
     // distinguish the two, or the flag that exists to make codecs mandatory would mean nothing.
     const receipt = hostReceiptWithCapabilitySkip();
     const commands = receipt.commands as Array<Record<string, unknown>>;
-    commands[1] = { ...commands[1], status: "failed", skipKind: "capability-absent" };
+    const hevcIndex = commands.findIndex((command) => command.id === "render-hevc:smoke");
+    commands[hevcIndex] = { ...commands[hevcIndex], status: "failed", exitCode: 1, signal: null };
     receipt.status = "failed";
+    receipt.commandSummary = { total: commands.length, passed: commands.length - 1, failed: 1, skipped: 0, skippedByKind: {} };
 
     const panel = await panelFor(receipt);
 
@@ -99,18 +123,41 @@ describe("platform verification panel", () => {
     expect(summary?.skippedCommandCount).toBe(0);
   });
 
-  it("treats an unrecognised command status as a failure rather than a pass", async () => {
-    // Fail-closed on purpose: enumerating only the failure statuses would make any status added later
-    // count silently as success, which is the dangerous direction for a gate that decides whether a
-    // platform is verified.
+  it("rejects an unrecognised command status rather than treating it as platform evidence", async () => {
     const receipt = hostReceiptWithCapabilitySkip();
     const commands = receipt.commands as Array<Record<string, unknown>>;
-    commands[1] = { id: "render-hevc-smoke", required: true, status: "something-new" };
+    const hevcIndex = commands.findIndex((command) => command.id === "render-hevc:smoke");
+    commands[hevcIndex] = { ...commands[hevcIndex], status: "something-new" };
 
     const panel = await panelFor(receipt);
 
-    const summary = (panel.hostReceipts as Array<Record<string, any>>).find((entry) => entry.hostId === "linux");
-    expect(summary?.failedCommandCount).toBe(1);
-    expect(summary?.skippedCommandCount).toBe(0);
+    expect(panel.hostReceipts).toEqual([]);
+    expect(panel.missingHosts).toEqual(["linux"]);
+  });
+
+  it("rejects a schema-valid receipt whose required command ladder is incomplete", async () => {
+    const receipt = hostReceiptWithCapabilitySkip();
+    const commands = receipt.commands as Array<Record<string, unknown>>;
+    receipt.commands = [commands[0]];
+    receipt.commandSummary = { total: 1, passed: 1, failed: 0, skipped: 0, skippedByKind: {} };
+
+    const panel = await panelFor(receipt);
+
+    expect(panel.status).toBe("failed");
+    expect(panel.hostReceipts).toEqual([]);
+    expect(panel.satisfiedHosts).toEqual([]);
+    expect(panel.failedHosts).toEqual(["linux"]);
+  });
+
+  it("rejects a schema-valid receipt whose command id carries forged argv", async () => {
+    const receipt = hostReceiptWithCapabilitySkip();
+    const commands = receipt.commands as Array<Record<string, unknown>>;
+    commands[0] = { ...commands[0], command: ["pnpm", "run", "not-the-declared-command"] };
+
+    const panel = await panelFor(receipt);
+
+    expect(panel.status).toBe("failed");
+    expect(panel.hostReceipts).toEqual([]);
+    expect(panel.failedHosts).toEqual(["linux"]);
   });
 });

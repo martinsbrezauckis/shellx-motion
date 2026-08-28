@@ -57,6 +57,25 @@ export const FONT_FALLBACK_ADVISORY = /^Browser renderer used a font fallback fo
 export const MOTION_DENSITY_ADVISORY = /^Rendered motion is static for /;
 
 /**
+ * FFmpeg's palette generator emitted one or more adjacent duplicate entries while building a GIF
+ * palette.
+ *
+ * FFmpeg logs this at warning level, so Motion deliberately retains it on the render receipt and
+ * keeps that receipt at status `warning`. It is not a render failure, though: `palettegen` logs the
+ * message while writing its 16×16 palette and then supplies that palette to `paletteuse`. The GIF
+ * smoke independently verifies the delivered GIF signature, dimensions, and decoded quality frame.
+ *
+ * This is an admission only for the browser GIF smoke's known encoder observation. The pattern is
+ * anchored to the normalized `Parsed_palettegen` entry, exact `Duped color` wording, and one or
+ * more eight-digit ARGB colours. It does not admit another filter's warning, changed prose, or a
+ * diagnostic appended to the same entry.
+ */
+const GIF_PALETTEGEN_DUPLICATE_COLOUR_ENTRY = String.raw`\[Parsed_palettegen_\d+ @ \[address\]\] Duped color: [0-9A-F]{8}`;
+export const GIF_PALETTEGEN_DUPLICATE_COLOUR_ADVISORY = new RegExp(
+  `^(?:${GIF_PALETTEGEN_DUPLICATE_COLOUR_ENTRY})(?: ${GIF_PALETTEGEN_DUPLICATE_COLOUR_ENTRY})*$`
+);
+
+/**
  * The native frame lane drew lowercase text with its uppercase block-glyph set.
  *
  * The native rasterizer has no font engine — it owns a fixed repertoire of uppercase block glyphs

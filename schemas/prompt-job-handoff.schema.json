@@ -12,7 +12,7 @@
     "operation": { "type": "string", "minLength": 1 },
     "packageId": { "type": "string", "minLength": 1 },
     "lane": { "type": "string", "minLength": 1 },
-    "state": { "enum": ["queued", "running"] },
+    "state": { "enum": ["pending", "running"] },
     "createdAt": { "type": "string", "minLength": 1 },
     "inputHashes": {
       "type": "object",

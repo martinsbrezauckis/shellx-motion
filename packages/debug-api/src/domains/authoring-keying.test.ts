@@ -4,11 +4,13 @@ import {
   ROTO_MASK_SCHEMA,
   ROTO_TRACKING_ATTACHMENT_SCHEMA,
   loadMotionPackage,
+  type OperationReceipt,
 } from "@shellx-motion/core";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withTestAuthoringRoots } from "../authoring-test-context.test-support.js";
 import { dispatchKeyingAuthoringCommand } from "./authoring-keying.js";
 
 const roots: string[] = [];
@@ -31,15 +33,15 @@ describe("keying and roto authoring commands", () => {
       layerId: "subject",
       keying: { schema: CHROMA_KEY_SCHEMA, keyColor: "#00ff00", similarity: 0.2, spillSuppression: 0.8 },
       receiptsRoot: hostReceipts,
-    }, {
+    }, withTestAuthoringRoots({
       packageLoader: loadMotionPackage,
-      writeReceipt: async (receiptsRoot, receipt) => {
-        await mkdir(receiptsRoot, { recursive: true });
+      writeReceipt: async (receiptsRoot: string, receipt: OperationReceipt) => {
+        await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
         const path = join(receiptsRoot, `${receipt.id}.json`);
         await writeFile(path, JSON.stringify(receipt), "utf8");
         return path;
       },
-    });
+    }, { inputRoots: [root], outputRoots: [root] }));
     expect(result).toMatchObject({
       ok: true,
       result: { state: { keying: { keyColor: "#00ff00" }, trackingAttached: false } },
@@ -51,7 +53,7 @@ describe("keying and roto authoring commands", () => {
       operation: "keying.apply",
       artifacts: [{ role: "motion_package" }, { role: "keying_receipt" }],
     });
-    const inspected = await dispatchKeyingAuthoringCommand("motion.keying.inspect", { packageRoot: outputRoot, layerId: "subject" }, { packageLoader: loadMotionPackage });
+    const inspected = await dispatchKeyingAuthoringCommand("motion.keying.inspect", { packageRoot: outputRoot, layerId: "subject" }, authoringServices(root));
     expect(inspected).toMatchObject({ ok: true, result: { state: { keying: { spillSuppression: 0.8 } } } });
   });
 
@@ -82,7 +84,7 @@ describe("keying and roto authoring commands", () => {
         model: "similarity",
       },
     };
-    const services = { packageLoader: loadMotionPackage };
+    const services = authoringServices(root);
     const upserted = await dispatchKeyingAuthoringCommand("motion.roto.upsert", { packageRoot: sourceRoot, outDir: rotoRoot, layerId: "subject", mask }, services);
     expect(upserted).toMatchObject({ ok: true, result: { state: { trackingAttached: true } } });
 
@@ -101,7 +103,7 @@ describe("keying and roto authoring commands", () => {
     const malformedRoot = join(root, "malformed");
     const occupiedRoot = join(root, "occupied");
     await writePackage(sourceRoot);
-    const services = { packageLoader: loadMotionPackage };
+    const services = authoringServices(root);
     const baseArgs = { packageRoot: sourceRoot, layerId: "subject", keying: { schema: CHROMA_KEY_SCHEMA, keyColor: "#00ff00" } };
 
     const malformed = await dispatchKeyingAuthoringCommand("motion.keying.apply", {
@@ -115,7 +117,7 @@ describe("keying and roto authoring commands", () => {
     const inPlace = await dispatchKeyingAuthoringCommand("motion.keying.apply", { ...baseArgs, outDir: sourceRoot }, services);
     expect(inPlace).toMatchObject({ ok: false, error: { code: "unsafe_output" } });
 
-    await mkdir(occupiedRoot);
+    await mkdir(occupiedRoot, { mode: 0o700 });
     await writeFile(join(occupiedRoot, "keep.txt"), "user-owned", "utf8");
     const occupied = await dispatchKeyingAuthoringCommand("motion.keying.apply", { ...baseArgs, outDir: occupiedRoot }, services);
     expect(occupied).toMatchObject({ ok: false, error: { code: "output_not_empty" } });
@@ -129,8 +131,15 @@ async function fixtureRoot(): Promise<string> {
   return root;
 }
 
+function authoringServices(root: string) {
+  return withTestAuthoringRoots({ packageLoader: loadMotionPackage }, {
+    inputRoots: [root],
+    outputRoots: [root],
+  });
+}
+
 async function writePackage(root: string): Promise<void> {
-  await mkdir(join(root, "assets"), { recursive: true });
+  await mkdir(join(root, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(root, "assets/subject.mp4"), "fixture-video", "utf8");
   await writeJson(join(root, "manifest.json"), {
     schema: "shellx-motion/package-manifest@1",

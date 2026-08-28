@@ -1,11 +1,18 @@
-import { compareCodeUnits } from "./canonical-json";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, lstat, mkdtemp, open, readdir, readFile, realpath, rename, rm, rmdir, writeFile, type FileHandle } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { mkdir, lstat, open, readFile, realpath, writeFile, type FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { acquireDerivedOutputPublication, type DerivedOutputPublication } from "./derived-output-publication";
+import { OutputDirectoryTransaction } from "./output-directory-transaction";
 import { hashBuffer } from "./receipts";
 import { loadMotionPackage, resolvePackageAsset } from "./package";
+import { validatePackageAssetReferences } from "./package-asset-references";
+import { publishPackageArchiveOutputs } from "./package-archive-output-publication";
 import { loadSchema, validateDocument, type SchemaName } from "./validate";
+import { collectBoundedPackageArchiveEntries, type MotionPackageArchiveWriteLimits } from "./package-archive-write-input";
 import type { OperationReceipt, ReceiptArtifact } from "./types";
+
+export type { MotionPackageArchiveWriteLimits } from "./package-archive-write-input";
 
 export interface MotionPackageArchiveEntry {
   path: string;
@@ -30,6 +37,8 @@ export interface WriteMotionPackageArchiveInput {
   archivePath: string;
   receiptPath?: string;
   createdAt?: string;
+  /** Optional tighter limits for a trusted host; values may never remove the default bounds. */
+  limits?: Partial<MotionPackageArchiveWriteLimits>;
 }
 
 export interface ExtractMotionPackageArchiveInput {
@@ -38,6 +47,12 @@ export interface ExtractMotionPackageArchiveInput {
   receiptPath?: string;
   createdAt?: string;
   limits?: Partial<MotionPackageArchiveExtractionLimits>;
+}
+
+/** Bounded fault seam for extraction publication regressions; production callers omit it. */
+export interface MotionPackageArchiveExtractionServices {
+  /** Runs after the package tree is committed but before its receipt becomes visible. */
+  afterPackagePublished?: () => Promise<void>;
 }
 
 export interface MotionPackageArchiveExtractionLimits {
@@ -70,21 +85,7 @@ export async function writeMotionPackageArchive(input: WriteMotionPackageArchive
   const receiptPath = resolve(input.receiptPath ?? `${archivePath}.receipt.json`);
   await assertArchiveOutputsOutsidePackage(pkg.root, [archivePath, receiptPath]);
 
-  const files = await collectPackageFiles(pkg.root);
-  const entries = await Promise.all(files.map(async (path): Promise<MotionPackageArchiveEntry & { absolutePath: string; data: Buffer }> => {
-    const data = await readFile(path);
-    const archiveEntry = packageRelativePath(pkg.root, path);
-    return {
-      absolutePath: path,
-      path: archiveEntry,
-      size: data.byteLength,
-      sha256: hashBuffer(data),
-      data
-    };
-  }));
-  // Entry order decides the archive's bytes, so a locale-sensitive sort made the archive
-  // hash depend on the machine that built it. Code-unit order is the same everywhere.
-  entries.sort((left, right) => compareCodeUnits(left.path, right.path));
+  const entries = await collectBoundedPackageArchiveEntries(pkg.root, input.limits);
 
   const archiveBuffer = createTarArchive(entries);
   const archiveSha256 = hashBuffer(archiveBuffer);
@@ -117,10 +118,12 @@ export async function writeMotionPackageArchive(input: WriteMotionPackageArchive
     warnings: []
   };
 
-  await mkdir(dirname(archivePath), { recursive: true });
-  await mkdir(dirname(receiptPath), { recursive: true });
-  await writeFile(archivePath, archiveBuffer);
-  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  await publishPackageArchiveOutputs({
+    archivePath,
+    receiptPath,
+    archiveBytes: archiveBuffer,
+    receiptJson: `${JSON.stringify(receipt, null, 2)}\n`
+  });
 
   return {
     ok: true,
@@ -135,32 +138,39 @@ export async function writeMotionPackageArchive(input: WriteMotionPackageArchive
   };
 }
 
-export async function extractMotionPackageArchive(input: ExtractMotionPackageArchiveInput): Promise<MotionPackageArchiveExtractResult> {
+export async function extractMotionPackageArchive(
+  input: ExtractMotionPackageArchiveInput,
+  services: MotionPackageArchiveExtractionServices = {}
+): Promise<MotionPackageArchiveExtractResult> {
   const archivePath = resolve(input.archivePath);
   const packageRoot = resolve(input.packageRoot);
   const receiptPath = resolve(input.receiptPath ?? `${packageRoot}.package-extract.receipt.json`);
   const limits = resolveArchiveExtractionLimits(input.limits);
   await assertArchiveOutputsOutsidePackage(packageRoot, [receiptPath]);
-  await assertEmptyPackageDestination(packageRoot);
-  await mkdir(dirname(packageRoot), { recursive: true });
-
-  const stagingRoot = await mkdtemp(join(dirname(packageRoot), ".shellx-motion-extract-"));
-  let installed = false;
+  const packageTransaction = await OutputDirectoryTransaction.create(packageRoot);
+  let receiptPublication: DerivedOutputPublication | undefined;
   try {
-    const archive = await open(archivePath, "r");
+    receiptPublication = await acquireDerivedOutputPublication({ outputPath: receiptPath, kind: "file" });
+    const archiveLink = await lstat(archivePath);
+    if (!archiveLink.isFile() || archiveLink.isSymbolicLink()) throw new Error("Package archive must be a regular non-symlink file.");
+    const archive = await open(archivePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
     let extracted: StreamedArchiveExtraction;
     try {
       const archiveInfo = await archive.stat();
-      if (!archiveInfo.isFile()) throw new Error("Package archive must be a regular file.");
+      if (!archiveInfo.isFile() || archiveInfo.isSymbolicLink() || archiveInfo.dev !== archiveLink.dev || archiveInfo.ino !== archiveLink.ino) {
+        throw new Error("Package archive changed before it was opened.");
+      }
       if (archiveInfo.size > limits.maxArchiveBytes) {
         throw new Error(`Package archive exceeds the ${limits.maxArchiveBytes}-byte archive limit.`);
       }
-      extracted = await extractTarArchiveToStaging(archive, archiveInfo.size, stagingRoot, limits);
+      extracted = await extractTarArchiveToStaging(archive, archiveInfo.size, packageTransaction.stagingPath, limits);
       const finalArchiveInfo = await archive.stat();
       if (
         finalArchiveInfo.size !== archiveInfo.size
         || finalArchiveInfo.mtimeMs !== archiveInfo.mtimeMs
         || finalArchiveInfo.ctimeMs !== archiveInfo.ctimeMs
+        || finalArchiveInfo.dev !== archiveInfo.dev
+        || finalArchiveInfo.ino !== archiveInfo.ino
       ) {
         throw new Error("Package archive changed while it was being extracted.");
       }
@@ -169,8 +179,8 @@ export async function extractMotionPackageArchive(input: ExtractMotionPackageArc
     }
     if (extracted.entries.length === 0) throw new Error("Package archive is empty.");
 
-    await verifyStagedEntryHashes(stagingRoot, extracted.entries, limits.maxFileBytes);
-    const pkg = await validateExtractedPackage(stagingRoot, limits.maxJsonBytes);
+    await verifyStagedEntryHashes(packageTransaction.stagingPath, extracted.entries, limits.maxFileBytes);
+    const pkg = await validateExtractedPackage(packageTransaction.stagingPath, limits.maxJsonBytes);
     const createdAt = input.createdAt ?? new Date().toISOString();
     const artifacts: ReceiptArtifact[] = [
       { role: "motion_package", path: packageRoot, status: "available", mediaType: MOTION_PACKAGE_MEDIA_TYPE, primary: true },
@@ -206,15 +216,15 @@ export async function extractMotionPackageArchive(input: ExtractMotionPackageArc
       warnings: []
     };
 
-    await installStagedPackage(stagingRoot, packageRoot);
-    installed = true;
-    try {
-      await writeJsonAtomic(receiptPath, receipt);
-    } catch (error) {
-      await rm(packageRoot, { recursive: true, force: true });
-      installed = false;
-      throw error;
-    }
+    await writeFile(receiptPublication.stagingPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    const receiptEvidence = await receiptPublication.verifyFile();
+    await packageTransaction.commit();
+    // Receipt publication follows a revalidation of the committed package: a receipt may only name
+    // a package we still observe at its published identity. If the receipt later cannot publish, the
+    // complete package remains; removing a public name by path could delete a replacement.
+    await services.afterPackagePublished?.();
+    await packageTransaction.assertPublishedCurrent();
+    await receiptPublication.publishFile(receiptEvidence);
 
     return {
       ok: true,
@@ -229,8 +239,10 @@ export async function extractMotionPackageArchive(input: ExtractMotionPackageArc
       entries: extracted.entries,
       receipt
     };
-  } finally {
-    if (!installed) await rm(stagingRoot, { recursive: true, force: true });
+  } catch (error) {
+    await receiptPublication?.abort().catch(() => undefined);
+    await packageTransaction.abort().catch(() => undefined);
+    throw error;
   }
 }
 
@@ -246,20 +258,6 @@ export interface MotionPackageArchiveExtractResult {
   fileCount: number;
   entries: MotionPackageArchiveEntry[];
   receipt: OperationReceipt;
-}
-
-async function collectPackageFiles(root: string): Promise<string[]> {
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = await Promise.all(entries.map(async (entry) => {
-    const path = join(root, entry.name);
-    const info = await lstat(path);
-    if (info.isSymbolicLink()) {
-      throw new Error(`Package archive does not support symbolic links: ${packageRelativePath(root, path)}`);
-    }
-    if (info.isDirectory()) return collectPackageFiles(path);
-    return info.isFile() ? [path] : [];
-  }));
-  return files.flat().sort((left, right) => compareCodeUnits(packageRelativePath(root, left), packageRelativePath(root, right)));
 }
 
 interface StreamedArchiveExtraction {
@@ -453,6 +451,11 @@ async function validateExtractedPackage(stagingRoot: string, maxJsonBytes: numbe
     const info = await lstat(assetPath);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Package asset is not a regular file: ${assetRef}`);
   }
+  const assetReferences = await validatePackageAssetReferences(pkg);
+  if (!assetReferences.ok) {
+    const problem = assetReferences.problems[0]!;
+    throw new Error(`Extracted package asset reference is invalid at ${problem.path} (${problem.code}).`);
+  }
   return pkg;
 }
 
@@ -493,46 +496,6 @@ function positiveLimit(value: number | undefined, fallback: number, name: string
   const resolved = value ?? fallback;
   if (!Number.isSafeInteger(resolved) || resolved <= 0) throw new Error(`Package archive ${name} must be a positive safe integer.`);
   return resolved;
-}
-
-async function assertEmptyPackageDestination(packageRoot: string): Promise<void> {
-  try {
-    const info = await lstat(packageRoot);
-    if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw new Error("Package extraction destination must be nonexistent or an empty directory.");
-    }
-    if ((await readdir(packageRoot)).length > 0) {
-      throw new Error("Package extraction destination must be nonexistent or an empty directory.");
-    }
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return;
-    throw error;
-  }
-}
-
-async function installStagedPackage(stagingRoot: string, packageRoot: string): Promise<void> {
-  await assertEmptyPackageDestination(packageRoot);
-  try {
-    await rmdir(packageRoot);
-  } catch (error) {
-    if (!isErrno(error, "ENOENT")) throw error;
-  }
-  await rename(stagingRoot, packageRoot);
-}
-
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-    await rename(temporaryPath, path);
-  } finally {
-    await rm(temporaryPath, { force: true });
-  }
-}
-
-function isErrno(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as NodeJS.ErrnoException).code === code);
 }
 
 function assertTarChecksum(header: Buffer): void {
@@ -635,14 +598,6 @@ function writeChecksum(buffer: Buffer, value: number): void {
 function paddingForSize(size: number): number {
   const remainder = size % TAR_BLOCK_SIZE;
   return remainder === 0 ? 0 : TAR_BLOCK_SIZE - remainder;
-}
-
-function packageRelativePath(root: string, path: string): string {
-  const normalized = relative(root, path).split(/[/\\]+/).join("/");
-  if (!normalized || normalized === "." || normalized.startsWith("../") || normalized === "..") {
-    throw new Error(`Package archive file escapes package root: ${path}`);
-  }
-  return normalized;
 }
 
 function packageExtractPath(packageRoot: string, archivePath: string): string {

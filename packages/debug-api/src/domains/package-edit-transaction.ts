@@ -1,47 +1,64 @@
-import { createHash } from "node:crypto";
 import {
-  compareCodeUnits,
   compileMotionDocumentCompositing,
+  canonicalJsonSha256,
   hashBuffer,
   hashPackageFile,
+  isPublicationCommitUncertain,
   loadMotionPackage,
+  motionLayoutGapAnimationStorePresent,
   resolvePackageAsset,
+  type StableFileIdentity,
   type MotionDocument,
   type MotionPackage,
   type OperationReceipt
 } from "@shellx-motion/core";
-import { constants as fsConstants } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { PackageEditTransactionError } from "./package-edit-transaction-error.js";
+import { copyVerifiedAsset } from "./package-edit-verified-asset-copy.js";
+import { PackageEditWorkspace } from "./package-edit-transaction-workspace.js";
+import type { PackageEditClosedInventoryMode } from "./package-edit-closed-inventory.js";
+import { samePackageEditTreeSnapshot, snapshotPackageEditTree } from "./package-edit-tree-snapshot.js";
+import { assertConfiguredAuthoringPackageEditRoots } from "./authoring-root-policy.js";
+import type { PreparedImmutableJsonPair } from "./timeline-layout-application-authority-store.js";
 
-const MAX_PACKAGE_EDIT_FILES = 20_000;
-const MAX_PACKAGE_EDIT_BYTES = 8 * 1024 * 1024 * 1024;
-const MAX_PACKAGE_EDIT_DEPTH = 32;
-const MAX_PACKAGE_EDIT_PATH_BYTES = 4_096;
-
-export type PackageEditTransactionErrorCode =
-  | "unsafe_output"
-  | "output_not_empty"
-  | "source_changed"
-  | "copy_mismatch"
-  | "unsupported_source_entry"
-  | "package_limit_exceeded"
-  | "output_changed";
-
-export class PackageEditTransactionError extends Error {
-  constructor(readonly code: PackageEditTransactionErrorCode, message: string) {
-    super(message);
-    this.name = "PackageEditTransactionError";
-  }
-}
+export { PackageEditTransactionError, type PackageEditTransactionErrorCode } from "./package-edit-transaction-error.js";
 
 export interface PackageEditTransactionOptions<T, U = undefined> {
   sourceRoot: string;
   outputRoot: string;
+  /** Operations that create a package receipt may require a never-before-existing destination. */
+  requireAbsentOutput?: boolean;
+  /**
+   * Internal host COW opt-in: once `edit` resolves, pin the complete staged tree through Core's
+   * descriptor-relative closed inventory before any public installation.  This accepts no caller
+   * inventory, stage callback, or race hook; any later stage mutation is refused.
+   */
+  closedInventory?: PackageEditClosedInventoryMode;
   edit: (stagedRoot: string) => Promise<T>;
   validate?: (stagedRoot: string, editResult: T) => Promise<void>;
+  /** Last non-mutating checkpoint before the output claim/irreversible package swap. */
+  beforeCommit?: (stagedRoot: string, editResult: T) => Promise<void>;
   afterCommit?: (outputRoot: string, editResult: T) => Promise<U>;
+  /** Private transaction outcome hook for host authority that survives an unsafe rollback. */
+  onRollbackResult?: (result: "restored" | "unproven") => void;
+  /**
+   * Private admission token for the six C2 layout-gap lifecycle commands.  It is never derived
+   * from a command argument: C2 carries its continuation proof separately in its host callback.
+   */
+  layoutGapAnimationContinuation?: LayoutGapAnimationContinuationAdmission;
 }
+
+const layoutGapAnimationContinuationAdmission: unique symbol = Symbol("layout-gap-animation-continuation-admission");
+
+export interface LayoutGapAnimationContinuationAdmission {
+  readonly [layoutGapAnimationContinuationAdmission]: "c2-host-authorized";
+}
+
+/** Internal-only transaction admission, imported only by the typed C2 authoring vertical. */
+export const C2_LAYOUT_GAP_ANIMATION_CONTINUATION: LayoutGapAnimationContinuationAdmission = Object.freeze({
+  [layoutGapAnimationContinuationAdmission]: "c2-host-authorized" as const,
+});
 
 export interface PackageEditTransactionResult<T, U> {
   outputRoot: string;
@@ -60,98 +77,108 @@ export interface NewPackageTransactionOptions<T, U = undefined> {
 export async function commitNewPackage<T, U = undefined>(
   options: NewPackageTransactionOptions<T, U>
 ): Promise<PackageEditTransactionResult<T, U>> {
-  const outputRoot = resolve(options.outputRoot);
-  await mkdir(dirname(outputRoot), { recursive: true });
-  await canonicalPathForSafety(outputRoot);
-  const initialOutput = await inspectOutputClaim(outputRoot);
-  const stageRoot = await mkdtemp(join(dirname(outputRoot), `.${safeToken(basename(outputRoot))}.shellx-new-`));
-  const stagedPackageRoot = join(stageRoot, "package");
-  const backupRoot = join(stageRoot, "previous-output");
-  let backupClaimed = false;
-  let outputInstalled = false;
+  const workspace = await PackageEditWorkspace.create(options.outputRoot, "new");
+  const outputRoot = workspace.outputRoot;
+  let initialOutput: Awaited<ReturnType<typeof workspace.inspectOutput>> | undefined;
+  let installedIdentity: Awaited<ReturnType<typeof workspace.install>> | undefined;
   let cleanupStage = true;
   try {
-    await mkdir(stagedPackageRoot, { mode: 0o700 });
-    const buildResult = await options.build(stagedPackageRoot);
-    const stagedBuild = await snapshotTree(stagedPackageRoot);
-    if (options.validate) await options.validate(stagedPackageRoot, buildResult);
-    const stagedValidated = await snapshotTree(stagedPackageRoot);
-    if (!sameSnapshot(stagedBuild, stagedValidated)) {
+    initialOutput = await workspace.inspectOutput();
+    await mkdir(workspace.stagedPackageRoot, { mode: 0o700 });
+    const buildResult = await options.build(workspace.stagedPackageRoot);
+    const stagedBuild = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (options.validate) await options.validate(workspace.stagedPackageRoot, buildResult);
+    const stagedValidated = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (!samePackageEditTreeSnapshot(stagedBuild, stagedValidated)) {
       throw new PackageEditTransactionError("source_changed", "New package validation changed staged package bytes.");
     }
-    if (options.beforeCommit) await options.beforeCommit(stagedPackageRoot, buildResult);
-    const stagedBeforeCommit = await snapshotTree(stagedPackageRoot);
-    if (!sameSnapshot(stagedBuild, stagedBeforeCommit)) {
+    if (options.beforeCommit) await options.beforeCommit(workspace.stagedPackageRoot, buildResult);
+    const stagedBeforeCommit = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (!samePackageEditTreeSnapshot(stagedBuild, stagedBeforeCommit)) {
       throw new PackageEditTransactionError("source_changed", "New package staging changed before output claim.");
     }
 
-    if (initialOutput.exists) {
-      await rename(outputRoot, backupRoot);
-      backupClaimed = true;
-      const claimed = await inspectClaimedBackup(backupRoot);
-      if (claimed.dev !== initialOutput.dev || claimed.ino !== initialOutput.ino) {
-        throw new PackageEditTransactionError("output_changed", "New package output changed before it could be claimed.");
-      }
-    } else {
-      try {
-        await mkdir(outputRoot);
-      } catch (error) {
-        if (isExistingPathError(error)) {
-          throw new PackageEditTransactionError("output_changed", "New package output appeared before commit.");
-        }
-        throw error;
-      }
-      const claim = await inspectOutputClaim(outputRoot);
-      await rename(outputRoot, backupRoot);
-      backupClaimed = true;
-      const claimed = await inspectClaimedBackup(backupRoot);
-      if (!claim.exists || claimed.dev !== claim.dev || claimed.ino !== claim.ino) {
-        throw new PackageEditTransactionError("output_changed", "Exclusive new package output claim changed before commit.");
-      }
-    }
+    await workspace.claimOutput(initialOutput);
 
-    const stagedAtInstall = await snapshotTree(stagedPackageRoot);
-    if (!sameSnapshot(stagedBuild, stagedAtInstall)) {
+    const stagedAtInstall = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (!samePackageEditTreeSnapshot(stagedBuild, stagedAtInstall)) {
       throw new PackageEditTransactionError("source_changed", "New package staging changed during output claim.");
     }
-    await rename(stagedPackageRoot, outputRoot);
-    outputInstalled = true;
+    installedIdentity = await workspace.install();
     let afterCommitResult: U = undefined as U;
     if (options.afterCommit) afterCommitResult = await options.afterCommit(outputRoot, buildResult);
     return { outputRoot, editResult: buildResult, afterCommitResult };
   } catch (error) {
-    if (outputInstalled) {
-      await rm(outputRoot, { recursive: true, force: true });
-      outputInstalled = false;
-    }
-    if (backupClaimed && initialOutput.exists) {
-      try {
-        await rename(backupRoot, outputRoot);
-        backupClaimed = false;
-      } catch {
-        cleanupStage = false;
-        throw new PackageEditTransactionError(
-          "output_changed",
-          `New package rollback was obstructed; the previous empty destination is preserved at ${backupRoot}.`
-        );
-      }
+    try { await workspace.rollback(installedIdentity, initialOutput); } catch (rollbackError) {
+      cleanupStage = false;
+      throw rollbackError;
     }
     throw error;
   } finally {
-    if (cleanupStage) await rm(stageRoot, { recursive: true, force: true });
+    if (cleanupStage) await workspace.cleanup();
   }
 }
 
 export interface MotionDocumentEditOptions {
   sourcePackage: MotionPackage;
   outputRoot: string;
+  authoringInputRoots?: string[];
+  authoringOutputRoots?: string[];
   patchedMotion: MotionDocument;
   patchedManifest?: MotionPackage["manifest"];
-  stagedFiles?: Array<{ sourcePath: string; targetAssetRef: string; expectedSha256: string }>;
-  receipt: OperationReceipt;
-  receiptFileName: string;
+  stagedFiles?: Array<{
+    sourcePath: string;
+    targetAssetRef: string;
+    expectedSha256: string;
+    /** Present only for pre-admitted external imports; it pins COW to that exact source leaf. */
+    sourceRoot?: string;
+    expectedByteLength?: number;
+    expectedIdentity?: StableFileIdentity;
+  }>;
+  validateStagedSource?: (stagedPackage: MotionPackage) => Promise<void>;
+  /** Optional operation-specific proof over the fully staged output package before publication. */
+  validateStagedPackage?: (stagedPackage: MotionPackage) => Promise<void>;
+  receipt: OperationReceipt; receiptFileName: string;
   receiptsRoot?: string;
   writeHostReceipt?: (receiptsRoot: string, receipt: OperationReceipt) => Promise<string>;
+  /** Layout-only hosts may atomically persist extra immutable authority state after install. */
+  hostReceiptCommit?: (input: MotionDocumentHostReceiptCommit) => Promise<string>;
+  /**
+   * Shared static-layout/C2 pair lifecycle. Preparation is durable before COW installation;
+   * finalization links the journal only after the installed output re-proves its expected lineage.
+   */
+  hostAuthorityPair?: MotionDocumentHostAuthorityPair;
+  /** Internal C2-only admission passed through to the sole package COW boundary. */
+  layoutGapAnimationContinuation?: LayoutGapAnimationContinuationAdmission;
+}
+
+export interface MotionDocumentHostReceiptCommit {
+  receiptsRoot: string;
+  packageRoot: string;
+  manifestPath: string;
+  motionPath: string;
+  /** Canonical SHA-256 of the exact post-compositing Motion object persisted by the transaction. */
+  persistedMotionSha256: string;
+  receipt: OperationReceipt;
+}
+
+export interface MotionDocumentHostReceiptPreparation {
+  receiptsRoot: string;
+  stagedPackageRoot: string;
+  expectedPackageRoot: string;
+  manifestPath: string;
+  motionPath: string;
+  persistedMotionSha256: string;
+  receipt: OperationReceipt;
+}
+
+export interface MotionDocumentHostAuthorityPair {
+  prepare(input: MotionDocumentHostReceiptPreparation): Promise<PreparedImmutableJsonPair>;
+  finalize(
+    prepared: PreparedImmutableJsonPair,
+    commit: MotionDocumentHostReceiptCommit,
+  ): Promise<string>;
+  abort(prepared: PreparedImmutableJsonPair): Promise<void>;
 }
 
 export interface MotionDocumentEditResult {
@@ -164,6 +191,15 @@ export interface MotionDocumentEditResult {
 
 export async function commitMotionDocumentEdit(options: MotionDocumentEditOptions): Promise<MotionDocumentEditResult> {
   const packageRoot = resolve(options.outputRoot);
+  // Match `commitPackageEdit`'s same-filesystem workspace route before authority preparation.
+  // The outward result intentionally retains `packageRoot` for SDK spelling compatibility.
+  const canonicalPackageRoot = await canonicalPathForSafety(packageRoot);
+  await assertConfiguredAuthoringPackageEditRoots(
+    options.sourcePackage.root,
+    packageRoot,
+    options.authoringInputRoots,
+    options.authoringOutputRoots,
+  );
   const manifestPath = join(packageRoot, "manifest.json");
   const motionPath = join(packageRoot, options.sourcePackage.manifest.motion);
   const receiptPath = join(packageRoot, "receipts", options.receiptFileName);
@@ -171,13 +207,23 @@ export async function commitMotionDocumentEdit(options: MotionDocumentEditOption
   // transaction boundary so timeline/keying/tracking/procedural edits cannot leave renderer-visible
   // generated layers stale while retaining apparently current compile metadata.
   const persistedMotion = compileMotionDocumentCompositing(options.patchedMotion);
-  const transaction = await commitPackageEdit({
+  if (canonicalJsonSha256(compileMotionDocumentCompositing(persistedMotion)) !== canonicalJsonSha256(persistedMotion)) {
+    throw new PackageEditTransactionError("copy_mismatch", "Motion compositing compilation is not idempotent before package persistence.");
+  }
+  const persistedMotionSha256 = canonicalJsonSha256(persistedMotion);
+  let preparedAuthority: PreparedImmutableJsonPair | undefined;
+  let packageRollbackResult: "restored" | "unproven" | undefined;
+  try {
+    const transaction = await commitPackageEdit({
     sourceRoot: options.sourcePackage.root,
     outputRoot: packageRoot,
+    ...(options.layoutGapAnimationContinuation === C2_LAYOUT_GAP_ANIMATION_CONTINUATION
+      ? { layoutGapAnimationContinuation: C2_LAYOUT_GAP_ANIMATION_CONTINUATION }
+      : {}),
     edit: async (stagedRoot) => {
       const stagedPkg = await loadMotionPackage(stagedRoot);
       assertParsedPackageIdentity(options.sourcePackage, stagedPkg);
-      await assertReceiptInputHashes(options.receipt, stagedPkg);
+      await assertReceiptInputHashes(options.receipt, stagedPkg); if (options.validateStagedSource) await options.validateStagedSource(stagedPkg);
       for (const file of options.stagedFiles ?? []) await copyVerifiedAsset(stagedRoot, file);
       if (options.patchedManifest) await writeJson(join(stagedRoot, "manifest.json"), options.patchedManifest);
       await writeJson(join(stagedRoot, stagedPkg.manifest.motion), persistedMotion);
@@ -191,240 +237,217 @@ export async function commitMotionDocumentEdit(options: MotionDocumentEditOption
       if (options.patchedManifest && jsonHash(stagedPkg.manifest) !== jsonHash(options.patchedManifest)) {
         throw new PackageEditTransactionError("copy_mismatch", "Staged package edit did not preserve the validated package manifest.");
       }
+      if (options.validateStagedPackage) await options.validateStagedPackage(stagedPkg);
     },
-    afterCommit: async () => options.receiptsRoot && options.writeHostReceipt
-      ? options.writeHostReceipt(options.receiptsRoot, options.receipt)
-      : undefined
-  });
-  return {
-    packageRoot,
-    manifestPath,
-    motionPath,
-    receiptPath,
-    ...(transaction.afterCommitResult ? { hostReceiptPath: transaction.afterCommitResult } : {})
-  };
-}
-
-interface DirectoryClaim {
-  exists: boolean;
-  dev?: number;
-  ino?: number;
-}
-
-interface SnapshotState {
-  files: number;
-  bytes: number;
-  entries: Map<string, string>;
+    beforeCommit: async (stagedRoot) => {
+      if (!options.hostAuthorityPair) return;
+      if (!options.receiptsRoot) {
+        throw new PackageEditTransactionError("copy_mismatch", "Layout authority preparation requires a host receipts root.");
+      }
+      preparedAuthority = await options.hostAuthorityPair.prepare({
+        receiptsRoot: options.receiptsRoot,
+        stagedPackageRoot: stagedRoot,
+        expectedPackageRoot: canonicalPackageRoot,
+        manifestPath: join(stagedRoot, "manifest.json"),
+        motionPath: join(stagedRoot, options.sourcePackage.manifest.motion),
+        persistedMotionSha256,
+        receipt: options.receipt,
+      });
+    },
+    afterCommit: async (outputRoot) => {
+      if (!options.receiptsRoot) return undefined;
+      const hostCommit = {
+        receiptsRoot: options.receiptsRoot,
+        packageRoot: outputRoot,
+        manifestPath: join(outputRoot, "manifest.json"),
+        motionPath: join(outputRoot, options.sourcePackage.manifest.motion),
+        persistedMotionSha256,
+        receipt: options.receipt,
+      };
+      if (options.hostAuthorityPair) {
+        if (!preparedAuthority) throw new PackageEditTransactionError("copy_mismatch", "Layout authority pair was not prepared before output installation.");
+        return await options.hostAuthorityPair.finalize(preparedAuthority, hostCommit);
+      }
+      if (options.hostReceiptCommit) return await options.hostReceiptCommit(hostCommit);
+      return options.writeHostReceipt ? await options.writeHostReceipt(options.receiptsRoot, options.receipt) : undefined;
+    },
+    onRollbackResult: (result) => {
+      packageRollbackResult = result;
+    },
+    });
+    return {
+      packageRoot,
+      manifestPath,
+      motionPath,
+      receiptPath,
+      ...(transaction.afterCommitResult ? { hostReceiptPath: transaction.afterCommitResult } : {})
+    };
+  } catch (error) {
+    if (preparedAuthority && packageRollbackResult !== "unproven") {
+      await options.hostAuthorityPair?.abort(preparedAuthority).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function commitPackageEdit<T, U = undefined>(
   options: PackageEditTransactionOptions<T, U>
 ): Promise<PackageEditTransactionResult<T, U>> {
   const sourceRoot = resolve(options.sourceRoot);
-  const outputRoot = resolve(options.outputRoot);
-  await mkdir(dirname(outputRoot), { recursive: true });
+  const requestedOutput = resolve(options.outputRoot);
   const [canonicalSource, canonicalOutput] = await Promise.all([
     realpath(sourceRoot),
-    canonicalPathForSafety(outputRoot)
+    canonicalPathForSafety(requestedOutput)
   ]);
   if (isPathInsideOrEqual(canonicalSource, canonicalOutput) || isPathInsideOrEqual(canonicalOutput, canonicalSource)) {
     throw new PackageEditTransactionError("unsafe_output", "Package edit output must be outside the source package.");
   }
 
-  const initialOutput = await inspectOutputClaim(outputRoot);
-  const sourceBefore = await snapshotTree(sourceRoot);
-  const stageRoot = await mkdtemp(join(dirname(outputRoot), `.${safeToken(basename(outputRoot))}.shellx-edit-`));
-  const stagedPackageRoot = join(stageRoot, "package");
-  const backupRoot = join(stageRoot, "previous-output");
-  let backupClaimed = false;
-  let outputInstalled = false;
+  // Refuse links and special leaves before any package document is opened. The second snapshot
+  // closes the ordinary load race before output authority or staging is acquired; the transaction
+  // repeats the same proof after its private copy and again before publication.
+  const sourceBefore = await snapshotPackageEditTree(sourceRoot);
+
+  // This is the sole package COW admission point.  A source with an active C2 root may only
+  // advance through the typed C2 continuation vertical; every other writer would otherwise
+  // publish a new package lineage while stranding C2's host-owned successor authority.
+  const sourcePackage = await loadMotionPackage(sourceRoot);
+  const sourceAfterLoad = await snapshotPackageEditTree(sourceRoot);
+  if (!samePackageEditTreeSnapshot(sourceBefore, sourceAfterLoad)) {
+    throw new PackageEditTransactionError("source_changed", "Source package changed while it was being admitted for editing.");
+  }
+  if (motionLayoutGapAnimationStorePresent(sourcePackage.motion)
+    && options.layoutGapAnimationContinuation !== C2_LAYOUT_GAP_ANIMATION_CONTINUATION) {
+    throw new PackageEditTransactionError("layout_gap_animation_active", "remove layout gap track first");
+  }
+
+  // This edit boundary has already resolved the caller spelling to its canonical destination for
+  // the overlap check above.  Stage and publish through that canonical route so a trusted SDK
+  // path alias cannot turn the retained topology into a lexical symlink traversal later on.
+  // `commitMotionDocumentEdit` still returns its caller-facing spelling for SDK compatibility.
+  const workspace = await PackageEditWorkspace.create(canonicalOutput, "edit", {
+    closedInventory: options.closedInventory
+  });
+  const outputRoot = workspace.outputRoot;
+  let initialOutput: Awaited<ReturnType<typeof workspace.inspectOutput>> | undefined;
+  let installedIdentity: Awaited<ReturnType<typeof workspace.install>> | undefined;
   let cleanupStage = true;
   try {
-    await cp(sourceRoot, stagedPackageRoot, {
+    initialOutput = await workspace.inspectOutput();
+    if (options.requireAbsentOutput && initialOutput.exists) {
+      throw new PackageEditTransactionError("output_not_empty", "Package edit output must be absent for this operation.");
+    }
+    await cp(sourceRoot, workspace.stagedPackageRoot, {
       recursive: true,
       force: false,
       errorOnExist: true,
       preserveTimestamps: true,
       verbatimSymlinks: true
     });
-    const stagedBefore = await snapshotTree(stagedPackageRoot);
-    if (!sameSnapshot(sourceBefore, stagedBefore)) {
+    // `cp` preserves the source root's mode.  Only the explicit descriptor-pinned mode needs a
+    // private stage; legacy package edits retain their existing staging behavior unchanged.
+    if (options.closedInventory) {
+      await chmod(workspace.stagedPackageRoot, 0o700);
+    }
+    const stagedBefore = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (!samePackageEditTreeSnapshot(sourceBefore, stagedBefore)) {
       throw new PackageEditTransactionError("copy_mismatch", "Staged package bytes do not match the source package snapshot.");
     }
 
-    const editResult = await options.edit(stagedPackageRoot);
-    if (options.validate) await options.validate(stagedPackageRoot, editResult);
-    const sourceAfter = await snapshotTree(sourceRoot);
-    if (!sameSnapshot(sourceBefore, sourceAfter)) {
+    const editResult = await options.edit(workspace.stagedPackageRoot);
+    if (options.closedInventory) {
+      await workspace.pinCompleteStagedInventory();
+    }
+    if (options.validate) await options.validate(workspace.stagedPackageRoot, editResult);
+    const sourceAfter = await snapshotPackageEditTree(sourceRoot);
+    if (!samePackageEditTreeSnapshot(sourceBefore, sourceAfter)) {
       throw new PackageEditTransactionError("source_changed", "Source package changed while the edit transaction was running.");
     }
 
-    if (initialOutput.exists) {
-      await rename(outputRoot, backupRoot);
-      backupClaimed = true;
-      const claimed = await inspectClaimedBackup(backupRoot);
-      if (claimed.dev !== initialOutput.dev || claimed.ino !== initialOutput.ino) {
-        throw new PackageEditTransactionError("output_changed", "Package edit output changed before it could be claimed.");
+    // An opted-in pin is final only after validation and source stability have completed.  This
+    // leaves no callable mutation capability after pinning: any later write is an exact-inventory
+    // refusal before public output is claimed, then again immediately before the final rename.
+    if (options.closedInventory) {
+      await workspace.assertPinnedStagedInventoryCurrent();
+    }
+
+    // Claim a valid pre-existing empty destination before durable host authority preparation.
+    // The workspace preserves it in its private reservation and rollback restores its exact
+    // identity. A process crash after pair preparation now leaves the output absent (rather than
+    // a false foreign empty directory), which v2 recovery can safely classify as no-install.
+    await workspace.claimOutput(initialOutput);
+
+    if (options.beforeCommit) {
+      const sourceBeforeCommit = await snapshotPackageEditTree(sourceRoot);
+      const stagedBeforeCommit = options.closedInventory
+        ? undefined
+        : await snapshotPackageEditTree(workspace.stagedPackageRoot);
+      if (!samePackageEditTreeSnapshot(sourceBefore, sourceBeforeCommit)) {
+        throw new PackageEditTransactionError("source_changed", "Source package changed before the package edit commit checkpoint.");
       }
-    } else {
+      await options.beforeCommit(workspace.stagedPackageRoot, editResult);
+      const sourceAfterCommit = await snapshotPackageEditTree(sourceRoot);
+      if (!samePackageEditTreeSnapshot(sourceBefore, sourceAfterCommit)) {
+        throw new PackageEditTransactionError("source_changed", "Package edit commit checkpoint changed staged or source package bytes.");
+      }
+      if (options.closedInventory) {
+        await workspace.assertPinnedStagedInventoryCurrent();
+      } else {
+        const stagedAfterCommit = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+        if (!samePackageEditTreeSnapshot(stagedBeforeCommit!, stagedAfterCommit)) {
+          throw new PackageEditTransactionError("source_changed", "Package edit commit checkpoint changed staged or source package bytes.");
+        }
+      }
+    }
+
+    installedIdentity = await workspace.install();
+    let afterCommitResult: U = undefined as U;
+    if (options.afterCommit) {
       try {
-        await mkdir(outputRoot);
+        afterCommitResult = await options.afterCommit(outputRoot, editResult);
       } catch (error) {
-        if (isExistingPathError(error)) {
-          throw new PackageEditTransactionError("output_changed", "Package edit output appeared before commit.");
+        if (options.closedInventory && !isPublicationCommitUncertain(error)) {
+          throw workspace.postInstallObservationUncertain(error);
         }
         throw error;
       }
-      const claim = await inspectOutputClaim(outputRoot);
-      await rename(outputRoot, backupRoot);
-      backupClaimed = true;
-      const claimed = await inspectClaimedBackup(backupRoot);
-      if (!claim.exists || claimed.dev !== claim.dev || claimed.ino !== claim.ino) {
-        throw new PackageEditTransactionError("output_changed", "Exclusive package edit output claim changed before commit.");
-      }
     }
-
-    await rename(stagedPackageRoot, outputRoot);
-    outputInstalled = true;
-    let afterCommitResult: U = undefined as U;
-    if (options.afterCommit) afterCommitResult = await options.afterCommit(outputRoot, editResult);
     return { outputRoot, editResult, afterCommitResult };
   } catch (error) {
-    if (outputInstalled) {
-      await rm(outputRoot, { recursive: true, force: true });
-      outputInstalled = false;
+    if (isPublicationCommitUncertain(error)) {
+      options.onRollbackResult?.("unproven");
+      cleanupStage = false;
+      throw error;
     }
-    if (backupClaimed && initialOutput.exists) {
-      try {
-        await rename(backupRoot, outputRoot);
-        backupClaimed = false;
-      } catch {
-        cleanupStage = false;
-        throw new PackageEditTransactionError(
-          "output_changed",
-          `Package edit rollback was obstructed; the previous empty destination is preserved at ${backupRoot}.`
-        );
-      }
+    try {
+      await workspace.rollback(installedIdentity, initialOutput);
+      options.onRollbackResult?.("restored");
+    } catch (rollbackError) {
+      options.onRollbackResult?.("unproven");
+      cleanupStage = false;
+      throw rollbackError;
     }
     throw error;
   } finally {
-    if (cleanupStage) await rm(stageRoot, { recursive: true, force: true });
+    if (cleanupStage) await workspace.cleanup();
   }
 }
 
-async function inspectOutputClaim(path: string): Promise<DirectoryClaim> {
-  try {
-    const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new PackageEditTransactionError("output_not_empty", "Package edit output must be an empty directory or absent.");
-    }
-    const entries = await readdir(path);
-    if (entries.length > 0) {
-      throw new PackageEditTransactionError("output_not_empty", "Package edit output must be an empty directory or absent.");
-    }
-    return { exists: true, dev: stat.dev, ino: stat.ino };
-  } catch (error) {
-    if (isMissingPathError(error)) return { exists: false };
-    throw error;
-  }
+/**
+ * Internal CLI preflight for mutation commands that must parse the package before constructing
+ * their transaction request. It intentionally exposes no snapshot or caller-supplied inventory.
+ */
+export async function assertPackageEditSourceTree(sourceRoot: string): Promise<void> {
+  await snapshotPackageEditTree(resolve(sourceRoot));
 }
 
-async function inspectClaimedBackup(path: string): Promise<{ dev: number; ino: number }> {
-  const stat = await lstat(path);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (await readdir(path)).length > 0) {
-    throw new PackageEditTransactionError("output_changed", "Claimed package edit output was not the original empty directory.");
-  }
-  return { dev: stat.dev, ino: stat.ino };
-}
-
-async function snapshotTree(root: string): Promise<SnapshotState> {
-  const state: SnapshotState = { files: 0, bytes: 0, entries: new Map() };
-  await snapshotDirectory(root, "", 0, state);
-  return state;
-}
-
-async function snapshotDirectory(root: string, relativeDir: string, depth: number, state: SnapshotState): Promise<void> {
-  if (depth > MAX_PACKAGE_EDIT_DEPTH) {
-    throw new PackageEditTransactionError("package_limit_exceeded", `Package tree exceeds ${MAX_PACKAGE_EDIT_DEPTH} directory levels.`);
-  }
-  const directoryPath = relativeDir ? join(root, relativeDir) : root;
-  const before = await lstat(directoryPath);
-  if (!before.isDirectory() || before.isSymbolicLink()) {
-    throw new PackageEditTransactionError("unsupported_source_entry", `Package directory is not a regular directory: ${relativeDir || "."}`);
-  }
-  if (relativeDir) state.entries.set(toPortablePath(relativeDir), "dir");
-  const entries = (await readdir(directoryPath, { withFileTypes: true, encoding: "utf8" }))
-    .sort((left, right) => compareCodeUnits(left.name, right.name));
-  for (const entry of entries) {
-    const relativePath = relativeDir ? join(relativeDir, entry.name) : entry.name;
-    if (Buffer.byteLength(relativePath, "utf8") > MAX_PACKAGE_EDIT_PATH_BYTES) {
-      throw new PackageEditTransactionError("package_limit_exceeded", `Package path exceeds ${MAX_PACKAGE_EDIT_PATH_BYTES} bytes.`);
-    }
-    const absolutePath = join(root, relativePath);
-    const stat = await lstat(absolutePath);
-    if (stat.isSymbolicLink()) {
-      throw new PackageEditTransactionError("unsupported_source_entry", `Package edit source contains a symbolic link: ${toPortablePath(relativePath)}`);
-    }
-    if (stat.isDirectory()) {
-      await snapshotDirectory(root, relativePath, depth + 1, state);
-      continue;
-    }
-    if (!stat.isFile()) {
-      throw new PackageEditTransactionError("unsupported_source_entry", `Package edit source contains a non-regular entry: ${toPortablePath(relativePath)}`);
-    }
-    state.files += 1;
-    state.bytes += stat.size;
-    if (state.files > MAX_PACKAGE_EDIT_FILES || state.bytes > MAX_PACKAGE_EDIT_BYTES) {
-      throw new PackageEditTransactionError("package_limit_exceeded", "Package edit source exceeds the bounded file or byte limit.");
-    }
-    const sha256 = await hashRegularFile(absolutePath, stat.dev, stat.ino);
-    state.entries.set(toPortablePath(relativePath), `file:${stat.size}:${sha256}`);
-  }
-  const after = await lstat(directoryPath);
-  if (!after.isDirectory() || after.isSymbolicLink() || after.dev !== before.dev || after.ino !== before.ino) {
-    throw new PackageEditTransactionError("source_changed", `Package directory changed during snapshot: ${relativeDir || "."}`);
-  }
-}
-
-async function hashRegularFile(path: string, expectedDev: number, expectedIno: number): Promise<string> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const before = await handle.stat();
-    if (!before.isFile() || before.dev !== expectedDev || before.ino !== expectedIno) {
-      throw new PackageEditTransactionError("source_changed", `Package file changed before hashing: ${path}`);
-    }
-    const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk as Buffer);
-    const after = await handle.stat();
-    const pathAfter = await lstat(path);
-    if (after.size !== before.size
-      || after.mtimeMs !== before.mtimeMs
-      || after.ctimeMs !== before.ctimeMs
-      || pathAfter.isSymbolicLink()
-      || pathAfter.dev !== after.dev
-      || pathAfter.ino !== after.ino) {
-      throw new PackageEditTransactionError("source_changed", `Package file changed while hashing: ${path}`);
-    }
-    return hash.digest("hex");
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-  }
-}
-
-function sameSnapshot(left: SnapshotState, right: SnapshotState): boolean {
-  if (left.files !== right.files || left.bytes !== right.bytes || left.entries.size !== right.entries.size) return false;
-  for (const [path, value] of left.entries) if (right.entries.get(path) !== value) return false;
-  return true;
-}
-
-function assertParsedPackageIdentity(expected: MotionPackage, staged: MotionPackage): void {
+export function assertParsedPackageIdentity(expected: MotionPackage, staged: MotionPackage): void {
   if (jsonHash({ manifest: expected.manifest, motion: expected.motion }) !== jsonHash({ manifest: staged.manifest, motion: staged.motion })) {
     throw new PackageEditTransactionError("source_changed", "Source package changed after the Motion edit was prepared.");
   }
 }
 
-async function assertReceiptInputHashes(receipt: OperationReceipt, staged: MotionPackage): Promise<void> {
+export async function assertReceiptInputHashes(receipt: OperationReceipt, staged: MotionPackage): Promise<void> {
   const expectedManifestHash = receipt.inputHashes["manifest.json"];
   const expectedMotionHash = receipt.inputHashes[staged.manifest.motion];
   if (!expectedManifestHash || !expectedMotionHash) {
@@ -439,73 +462,12 @@ async function assertReceiptInputHashes(receipt: OperationReceipt, staged: Motio
   }
 }
 
-async function copyVerifiedAsset(
-  stagedRoot: string,
-  file: { sourcePath: string; targetAssetRef: string; expectedSha256: string }
-): Promise<void> {
-  const portableRef = toPortablePath(file.targetAssetRef).replace(/^\.\//, "");
-  if (!portableRef.startsWith("assets/") || portableRef === "assets/") {
-    throw new PackageEditTransactionError("unsupported_source_entry", "Imported package-edit files must target the assets directory.");
-  }
-  const sourcePath = resolve(file.sourcePath);
-  const targetPath = resolvePackageAsset({ root: stagedRoot }, portableRef);
-  const sourcePathBefore = await lstat(sourcePath);
-  if (!sourcePathBefore.isFile() || sourcePathBefore.isSymbolicLink()) {
-    throw new PackageEditTransactionError("unsupported_source_entry", "Imported package-edit asset must be a regular non-symlink file.");
-  }
-  let source: Awaited<ReturnType<typeof open>> | undefined;
-  let target: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    source = await open(sourcePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const sourceBefore = await source.stat();
-    if (!sourceBefore.isFile() || sourceBefore.dev !== sourcePathBefore.dev || sourceBefore.ino !== sourcePathBefore.ino) {
-      throw new PackageEditTransactionError("source_changed", "Imported package-edit asset changed before staging.");
-    }
-    await mkdir(dirname(targetPath), { recursive: true });
-    await rm(targetPath, { force: true });
-    target = await open(targetPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600);
-    const hash = createHash("sha256");
-    for await (const chunkValue of source.createReadStream({ autoClose: false })) {
-      const chunk = chunkValue as Buffer;
-      hash.update(chunk);
-      let offset = 0;
-      while (offset < chunk.length) {
-        const { bytesWritten } = await target.write(chunk, offset, chunk.length - offset);
-        if (bytesWritten <= 0) throw new Error("Imported package-edit asset write made no progress.");
-        offset += bytesWritten;
-      }
-    }
-    await target.sync();
-    const [sourceAfter, sourcePathAfter] = await Promise.all([source.stat(), lstat(sourcePath)]);
-    if (sourceAfter.size !== sourceBefore.size
-      || sourceAfter.mtimeMs !== sourceBefore.mtimeMs
-      || sourceAfter.ctimeMs !== sourceBefore.ctimeMs
-      || sourcePathAfter.isSymbolicLink()
-      || sourcePathAfter.dev !== sourceAfter.dev
-      || sourcePathAfter.ino !== sourceAfter.ino) {
-      throw new PackageEditTransactionError("source_changed", "Imported package-edit asset changed during staging.");
-    }
-    const copiedHash = hash.digest("hex");
-    if (copiedHash !== file.expectedSha256) {
-      throw new PackageEditTransactionError("source_changed", "Imported package-edit asset bytes differ from the receipt input hash.");
-    }
-  } finally {
-    if (target) await target.close().catch(() => {});
-    if (source) await source.close().catch(() => {});
-  }
-  const targetStat = await lstat(targetPath);
-  const targetHash = await hashRegularFile(targetPath, targetStat.dev, targetStat.ino);
-  if (targetHash !== file.expectedSha256) {
-    throw new PackageEditTransactionError("copy_mismatch", "Staged package-edit asset failed post-copy verification.");
-  }
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
+export async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function jsonHash(value: unknown): string {
+export function jsonHash(value: unknown): string {
   return hashBuffer(Buffer.from(JSON.stringify(value), "utf8"));
 }
 
@@ -523,20 +485,4 @@ async function canonicalPathForSafety(path: string): Promise<string> {
 function isPathInsideOrEqual(parent: string, candidate: string): boolean {
   const relation = relative(resolve(parent), resolve(candidate));
   return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}
-
-function isExistingPathError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "EEXIST";
-}
-
-function safeToken(value: string): string {
-  return value.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "package";
-}
-
-function toPortablePath(path: string): string {
-  return path.split("\\").join("/");
 }

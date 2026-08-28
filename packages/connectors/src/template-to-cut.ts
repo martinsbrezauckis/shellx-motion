@@ -1,62 +1,87 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { attachRenderedMediaToCutPlan, placeRenderedMediaInCutPlan, planCutImport, type CutRenderedMediaPlacement } from "@shellx-motion/adapters-cut";
 import {
   applyTemplateValues,
   escalateReceiptStatusForWarnings,
   hashBuffer,
-  loadMotionPackage,
+  loadedPackageInputHashes,
+  loadMotionPackageFromAdmittedFiles,
+  readBoundedStableFile,
   type MotionPackage,
   type OperationReceipt,
   type TemplateChangedBinding,
   type TemplateValue,
-  assertOutputDirGuard,
-  prepareFramesDir,
 } from "@shellx-motion/core";
-import { encodeImageSequenceWithPolicy, type FfmpegCommand, type FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
 import { renderMotionBrowserFrame } from "@shellx-motion/renderer-browser";
-import { renderNativePreviewFrame } from "@shellx-motion/renderer-native";
 import { connectorReceiptStatus, type ConnectorArtifact } from "./artifacts";
-import { connectorArtifactOperationHash, connectorArtifactStagingPath, finalizeConnectorArtifactHandle, publishConnectorArtifact } from "./artifact-handle";
-import { cutTargetCapabilitiesForMode, type CutImportModeRequest } from "./cut-import-mode";
-import { assertConnectorOutputOwnership } from "./output-ownership";
-import { packageAudioEncodeInput } from "./package-audio";
+import { connectorArtifactOperationHash, finalizeConnectorArtifactHandle } from "./artifact-handle";
+import { throwIfConnectorAborted } from "./connector-cancellation";
+import { createPrivateConnectorDelivery } from "./connector-delivery";
+import { cutTargetCapabilitiesForMode } from "./cut-import-mode";
+import {
+  renderConnectorStreamingArtifact
+} from "./streaming-final";
+import {
+  admitBoundedPackageTree,
+  publishAdmittedPackageTree,
+  replaceAdmittedPackageFile,
+  type AdmittedPackageTreeEvidence
+} from "./bounded-package-copy";
+import {
+  assertBrowserPreviewPackageTreeDigest,
+  assertBrowserStreamingPackageTreeDigest,
+  assertClosedDeliveryPackageDirectories,
+  assertNoPrivateDeliveryPath,
+  assertP2AClosedTreeCapacity,
+  assertP2APathlessExecutionInput,
+  assertTemplateAcceptedDeliveryCandidate,
+  bindPackageTreeDigestToCutPlan,
+  bindPackageTreeDigestToReceipt,
+  captureReceiptBoundDeliveryLeaf,
+  removeKnownEmptyPrivateDirectory,
+  remapPrivateDeliveryPaths,
+  setReceiptOutputPath,
+  TEMPLATE_CLOSED_DELIVERY_MAX_MEDIA_BYTES,
+  templateDeliveryExpectedInventory,
+  writeDeliveryJson
+} from "./template-to-cut-delivery";
 
 export interface TemplateToCutConnectorInput {
-  /**
-   * Overwrite a non-empty output directory. Off by default: `--out` is caller-supplied, and
-   * inferring ownership of an existing `package/` from its name destroyed a caller's files.
-   */
-  force?: boolean;
   packageRoot: string;
   values: Record<string, TemplateValue>;
   outDir: string;
-  previewLane?: "auto" | "native" | "browser";
-  renderLane?: "ffmpeg";
-  dryRunRender?: boolean;
-  cutImportMode?: CutImportModeRequest;
   cutPlacement?: CutRenderedMediaPlacement;
-  ffmpegRunner?: FfmpegRunner;
-  now?: () => string;
+  /** Coordinator-owned cancellation for this private P2A delivery. */
+  signal?: AbortSignal;
+}
+
+/** Private compatibility fence for untyped callers. It is deliberately not exported. */
+interface TemplateToCutRejectedLegacyOptions {
+  force?: unknown;
+  previewLane?: unknown;
+  renderLane?: unknown;
+  frameLane?: unknown;
+  dryRunRender?: unknown;
+  cutImportMode?: unknown;
 }
 
 export interface TemplateToCutConnectorResult {
-  ok: boolean;
+  ok: true;
   packageDir: string;
   template: {
     changedParams: string[];
     changedBindings: TemplateChangedBinding[];
     receiptPath: string;
   };
-  preview: { ok: boolean; lane: "native" | "browser"; atMs: number; failureFatal: boolean; receiptPath: string; outputPath: string | null };
+  preview: { ok: true; lane: "browser"; atMs: number; failureFatal: false; receiptPath: string; outputPath: string };
   render: {
-    ok: boolean;
-    required: boolean;
-    dryRun: boolean;
+    ok: true;
+    required: true;
+    dryRun: false;
     lane: "ffmpeg";
-    frameLane?: "browser";
+    frameLane: "browser";
     receiptPath: string;
-    outputPath?: string;
+    outputPath: string;
   };
   cutPlanPath: string;
   artifacts: ConnectorArtifact[];
@@ -65,15 +90,30 @@ export interface TemplateToCutConnectorResult {
 }
 
 export async function runTemplateToCutConnector(input: TemplateToCutConnectorInput): Promise<TemplateToCutConnectorResult> {
-  const requestedPreviewLane = input.previewLane ?? "native";
-  const renderLane = input.renderLane ?? "ffmpeg";
-  const dryRunRender = input.dryRunRender ?? true;
-  const createdAt = input.now?.() ?? new Date().toISOString();
-  if (!(["auto", "native", "browser"] as const).includes(requestedPreviewLane)) {
-    throw new Error(`Unsupported connector preview lane: ${requestedPreviewLane}`);
+  throwIfConnectorAborted(input.signal, "before Template-to-Cut admission");
+  const legacy = input as TemplateToCutConnectorInput & TemplateToCutRejectedLegacyOptions;
+  if (legacy.force !== undefined) {
+    throw new Error("Template-to-Cut accepted delivery does not support force; choose an absent or empty output directory.");
   }
-  if (renderLane !== "ffmpeg") {
-    throw new Error(`Unsupported connector render lane: ${renderLane}`);
+  if (legacy.dryRunRender !== undefined) {
+    throw new Error("Template-to-Cut accepted delivery requires a real browser-to-ffmpeg media render; dry-run does not create an accepted P2A delivery.");
+  }
+  if (legacy.cutImportMode !== undefined && legacy.cutImportMode !== "rendered_media") {
+    throw new Error("Template-to-Cut P2A accepted delivery supports only cutImportMode rendered_media.");
+  }
+  if (legacy.previewLane !== undefined && legacy.previewLane !== "browser") {
+    throw new Error("Template-to-Cut accepted delivery is browser-preview-only in P2A; native preview has no immutable admitted-package fulfillment yet.");
+  }
+  if (legacy.renderLane !== undefined && legacy.renderLane !== "ffmpeg") {
+    throw new Error(`Unsupported connector render lane: ${String(legacy.renderLane)}`);
+  }
+  if (legacy.frameLane !== undefined && legacy.frameLane !== "browser") {
+    throw new Error("Template-to-Cut accepted delivery currently supports only the browser final lane; GPU provenance is not yet closed for P2A.");
+  }
+  const createdAt = new Date().toISOString();
+  const frameLane: "browser" = "browser";
+  if (process.platform !== "linux") {
+    throw new Error("Template-to-Cut accepted delivery is Linux-only until a descriptor/DACL-equivalent exact-tree publication capability is available on this host.");
   }
 
   const sourcePackageRoot = resolve(input.packageRoot);
@@ -86,223 +126,297 @@ export async function runTemplateToCutConnector(input: TemplateToCutConnectorInp
   const cutPlanPath = join(outDir, "cut-import-plan.json");
   const connectorReceiptPath = join(outDir, "connector-run.receipt.json");
 
-  const sourcePackage = await loadMotionPackage(sourcePackageRoot);
+  const admittedSource = await admitBoundedPackageTree(sourcePackageRoot, { label: "Template-to-Cut interchange" });
+  throwIfConnectorAborted(input.signal, "after Template-to-Cut source admission");
+  const sourcePackage = loadMotionPackageFromAdmittedFiles(packageDir, admittedSource.files);
   const applied = applyTemplateValues(sourcePackage, input.values);
   if (!applied.ok) {
     const message = applied.errors.map((error) => `${error.paramId || "(package)"}: ${error.message}`).join("; ");
     throw new Error(`Template apply failed: ${message}`);
   }
-
-  await mkdir(outDir, { recursive: true });
-  // `outDir` is caller-supplied, so `<outDir>/package` is NOT ours to delete on the strength of its
-  // name. This removed a caller's existing package/ and still reported ok:true — a sentinel file
-  // placed there was destroyed by a successful dry run. the output-ownership invariant widened the check from `package/`
-  // alone to every directory this connector recreates: a non-empty `--out` WITHOUT a `package/`
-  // subdirectory used to walk straight past the guard.
-  await assertConnectorOutputOwnership({
-    packageDir,
-    ownedDirs: [receiptDir, join(outDir, "preview"), join(outDir, "render"), join(outDir, "artifacts")],
-    ownedFiles: [cutPlanPath, connectorReceiptPath],
-    force: input.force === true
-  });
-  await cp(sourcePackageRoot, packageDir, { recursive: true });
-  await writeJson(join(packageDir, sourcePackage.manifest.motion), applied.motion);
-
-  const templateReceipt = createTemplateApplyReceipt({
-    packageId: sourcePackage.manifest.id,
-    sourcePackage,
-    values: input.values,
-    packageDir,
-    receiptPath: templateApplyReceiptPath,
-    changedParams: applied.changedParams,
-    changedBindings: applied.changedBindings,
-    warnings: applied.warnings,
-    createdAt
-  });
-  await writeJson(templateApplyReceiptPath, templateReceipt);
-
-  const pkg = await loadMotionPackage(packageDir);
+  const admittedPackage = replaceAdmittedPackageFile(
+    admittedSource,
+    sourcePackage.manifest.motion,
+    Buffer.from(`${JSON.stringify(applied.motion, null, 2)}\n`, "utf8")
+  );
+  assertClosedDeliveryPackageDirectories(admittedPackage);
+  assertP2AClosedTreeCapacity(admittedPackage);
+  // The logical root is the eventual public package directory. Core retains all execution bytes
+  // behind its private snapshot capability; no accepted execution path reads this pathname.
+  const pkg = loadMotionPackageFromAdmittedFiles(packageDir, admittedPackage.files);
+  const immutablePackageTreeSha256 = loadedPackageInputHashes(pkg)?.["admitted-package-tree"];
+  if (immutablePackageTreeSha256 !== admittedPackage.evidence.sha256) {
+    throw new Error("Template-to-Cut admitted execution snapshot does not match the published package-tree identity.");
+  }
+  assertP2APathlessExecutionInput(pkg);
   const baseCutImport = planCutImport(pkg, cutTargetCapabilitiesForMode({
     targetId: "shellx-cut",
-    mode: input.cutImportMode ?? "auto"
+    mode: "rendered_media"
   }));
   const plannedCutImport = input.cutPlacement
     ? placeRenderedMediaInCutPlan(baseCutImport, input.cutPlacement)
     : baseCutImport;
-  const renderRequired = plannedCutImport.mode === "rendered_media";
-  const previewLane: "native" | "browser" = requestedPreviewLane === "auto"
-    ? renderRequired ? "browser" : "native"
-    : requestedPreviewLane;
-  const previewAtMs = previewLane === "browser"
-    ? pkg.template?.metadata?.qualityTargets?.representativeFramesMs[0] ?? 0
-    : 0;
-  const previewPath = join(outDir, "preview", `${previewLane}-${previewAtMs}.png`);
-  const previewReceiptPath = join(receiptDir, `${previewLane}-preview.receipt.json`);
-
-  await mkdir(receiptDir, { recursive: true });
-  await mkdir(join(outDir, "preview"), { recursive: true });
-  const preview = previewLane === "native"
-    ? await renderNativePreviewFrame({
-        packageRoot: packageDir,
-        outputPath: previewPath,
-        outputRoots: [outDir],
-        atMs: previewAtMs,
-        now: () => createdAt
-      })
-    : await renderTemplateBrowserPreview({ pkg, previewPath, atMs: previewAtMs, createdAt });
-  await writeJson(previewReceiptPath, preview.receipt);
-
-  const renderOutputPath = join(outDir, "render", `${pkg.manifest.id}.mp4`);
-  const framesDir = join(outDir, "frames", pkg.manifest.id);
-  const operationHash = connectorArtifactOperationHash({ packageId: pkg.manifest.id, motionId: pkg.motion.id, preset: "mp4-h264", plan: plannedCutImport });
-  const renderResult = !renderRequired
-    ? {
-        required: false,
-        frameLane: undefined,
-        receipt: createRenderNotRequiredReceipt({
-          packageId: pkg.manifest.id,
-          motionHash: hashBuffer(Buffer.from(JSON.stringify(pkg.motion), "utf8")),
-          createdAt,
-          mode: plannedCutImport.mode
-        })
-      }
-    : dryRunRender
-    ? {
-        required: true,
-        frameLane: undefined,
-        receipt: createDryRunRenderReceipt({
-          packageId: pkg.manifest.id,
-          motionHash: hashBuffer(Buffer.from(JSON.stringify(pkg.motion), "utf8")),
-          createdAt,
-          framesDir,
-          fps: pkg.motion.fps,
-          durationMs: pkg.motion.durationMs,
-          outputPath: renderOutputPath
-        })
-      }
-    : await renderRealBrowserFfmpegArtifact({
-        pkg,
-        packageId: pkg.manifest.id,
-        durationMs: pkg.motion.durationMs,
-        fps: pkg.motion.fps,
-        width: pkg.motion.width,
-        height: pkg.motion.height,
-        framesDir,
-        outputPath: renderOutputPath,
-        createdAt,
-        // the explicit-force invariant: `force` was declared on the render input and set by nobody, so `--force` never
-        // reached the frames guard even on the one connector that read the flag.
-        force: input.force === true,
-        runner: input.ffmpegRunner
-      });
-  const renderReceipt = renderResult.receipt;
-  renderReceipt.inputHashes = { ...renderReceipt.inputHashes, operation: operationHash };
-  const renderOk = renderReceipt.status !== "failed";
-  await writeJson(renderReceiptPath, renderReceipt);
-
-  let cutPlan = renderRequired && dryRunRender
-    ? attachRenderedMediaToCutPlan(plannedCutImport, {
-      plannedPath: renderOutputPath,
-      receiptPath: renderReceiptPath,
-      dryRun: true
-    })
-    : plannedCutImport;
-
-  const warnings = [...applied.warnings, ...preview.warnings, ...renderReceipt.warnings, ...cutPlan.receipt.warnings];
-  const previewFailureFatal = renderRequired && dryRunRender && !preview.ok;
-  const artifacts = templateToCutArtifacts({
-    sourcePackageRoot,
-    packageDir,
-    templateApplyReceiptPath,
-    previewPath,
-    previewOk: preview.ok,
-    previewReceiptPath,
-    renderRequired,
-    renderDryRun: dryRunRender,
-    renderOk,
-    renderOutputPath,
-    renderReceiptPath,
-    cutPlanPath,
-    connectorReceiptPath,
-    artifactHandlePath: renderRequired && !dryRunRender && renderOk ? artifactHandlePath : undefined
-  });
-  const connectorReceipt = createConnectorReceipt({
-    packageId: pkg.manifest.id,
-    createdAt,
-    sourcePackageRoot,
-    sourcePackage,
-    values: input.values,
-    packageDir,
-    changedParams: applied.changedParams,
-    changedBindings: applied.changedBindings,
-    templateApplyReceiptPath,
-    previewOk: preview.ok,
-    previewFailureFatal,
-    previewLane,
-    previewAtMs,
-    previewReceiptPath,
-    renderOk,
-    renderReceiptPath,
-    renderRequired,
-    renderDryRun: dryRunRender,
-    renderFrameLane: renderResult.frameLane,
-    renderOutputPath: renderRequired ? renderOutputPath : undefined,
-    cutOk: cutPlan.ok,
-    cutMode: cutPlan.mode,
-    cutPlanPath,
-    artifacts,
-    warnings,
-    operationHash
-  });
-  await writeJson(connectorReceiptPath, connectorReceipt);
-
-  if (renderRequired && !dryRunRender && renderOk) {
-    const finalized = await finalizeConnectorArtifactHandle({
-      root: outDir,
-      descriptorPath: artifactHandlePath,
-      artifactPath: renderOutputPath,
-      renderReceiptPath,
-      connectorReceiptPath,
-      pkg,
-      operationHash,
-      preset: "mp4-h264",
-      mediaType: "video/mp4",
-      createdAt
-    });
-    cutPlan = attachRenderedMediaToCutPlan(plannedCutImport, { dryRun: false, handle: finalized.reference });
+  bindPackageTreeDigestToCutPlan(plannedCutImport, immutablePackageTreeSha256);
+  if (!plannedCutImport.ok || plannedCutImport.mode !== "rendered_media") {
+    throw new Error("Template-to-Cut P2A accepted delivery requires a valid rendered-media Browser-to-Cut plan.");
   }
-  await writeJson(cutPlanPath, cutPlan);
+  const renderRequired = true;
+  assertP2AClosedTreeCapacity(admittedPackage, true);
+  const previewLane: "browser" = "browser";
+  const previewAtMs = pkg.template?.metadata?.qualityTargets?.representativeFramesMs[0] ?? 0;
+  const delivery = await createPrivateConnectorDelivery(outDir);
+  const stagedPackageDir = delivery.stagePath(packageDir);
+  const stagedTemplateApplyReceiptPath = delivery.stagePath(templateApplyReceiptPath);
+  const stagedRenderReceiptPath = delivery.stagePath(renderReceiptPath);
+  const stagedArtifactHandlePath = delivery.stagePath(artifactHandlePath);
+  const stagedCutPlanPath = delivery.stagePath(cutPlanPath);
+  const stagedConnectorReceiptPath = delivery.stagePath(connectorReceiptPath);
 
-  return {
-    ok: !previewFailureFatal && cutPlan.ok && renderOk,
-    packageDir,
-    template: {
+  try {
+    // Every durable connector member is produced below the one private Core stage. Public paths
+    // are used inside receipts and plans from the start, so the final tree has no stage locator to
+    // scrub after rename.
+    await publishAdmittedPackageTree(admittedPackage, stagedPackageDir);
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut package staging");
+    const templateReceipt = createTemplateApplyReceipt({
+      packageId: sourcePackage.manifest.id,
+      sourcePackage,
+      values: input.values,
+      packageDir,
+      receiptPath: templateApplyReceiptPath,
       changedParams: applied.changedParams,
       changedBindings: applied.changedBindings,
-      receiptPath: templateApplyReceiptPath
-    },
-    preview: {
-      ok: preview.ok,
-      lane: previewLane,
-      atMs: previewAtMs,
-      failureFatal: previewFailureFatal,
-      receiptPath: previewReceiptPath,
-      outputPath: preview.ok ? preview.frame.path : null
-    },
-    render: {
-      ok: renderOk,
-      required: renderRequired,
-      dryRun: renderRequired ? dryRunRender : true,
-      lane: "ffmpeg",
-      frameLane: renderResult.frameLane,
-      receiptPath: renderReceiptPath,
-      ...(renderRequired ? { outputPath: renderOutputPath } : {})
-    },
-    cutPlanPath,
-    artifacts,
-    receiptPath: connectorReceiptPath,
-    warnings
-  };
+      warnings: applied.warnings,
+      createdAt
+    });
+    await writeDeliveryJson(delivery, stagedTemplateApplyReceiptPath, templateReceipt, true);
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut template application");
+
+    const previewPath = join(outDir, "preview", `${previewLane}-${previewAtMs}.png`);
+    const stagedPreviewPath = delivery.stagePath(previewPath);
+    const previewReceiptPath = join(receiptDir, `${previewLane}-preview.receipt.json`);
+    const stagedPreviewReceiptPath = delivery.stagePath(previewReceiptPath);
+
+    // The public Browser still-frame API has no AbortSignal parameter. Check immediately on
+    // both sides so a completed preview cannot advance a cancelled P2A transaction.
+    throwIfConnectorAborted(input.signal, "before Template-to-Cut browser preview");
+    const preview = await renderTemplateBrowserPreview({ pkg, previewPath: stagedPreviewPath, atMs: previewAtMs, createdAt });
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut browser preview");
+    if (!preview.ok) {
+      await removeKnownEmptyPrivateDirectory(dirname(stagedPreviewPath), "preview failure");
+      throw new Error("Template-to-Cut accepted delivery requires a successful immutable browser preview.");
+    }
+    assertBrowserPreviewPackageTreeDigest(preview.receipt, immutablePackageTreeSha256);
+    const previewReceipt = remapPrivateDeliveryPaths(preview.receipt, delivery);
+    bindPackageTreeDigestToReceipt(previewReceipt, immutablePackageTreeSha256);
+    await writeDeliveryJson(delivery, stagedPreviewReceiptPath, previewReceipt, true);
+    const previewEvidence = await captureReceiptBoundDeliveryLeaf({
+      delivery,
+      publicPath: previewPath,
+      receipt: previewReceipt,
+      label: "Template-to-Cut preview frame"
+    });
+
+    const renderOutputPath = join(outDir, "render", `${pkg.manifest.id}.mp4`);
+    const stagedRenderOutputPath = delivery.stagePath(renderOutputPath);
+    const operationHash = connectorArtifactOperationHash({ packageId: pkg.manifest.id, motionId: pkg.motion.id, preset: "mp4-h264", plan: plannedCutImport });
+    throwIfConnectorAborted(input.signal, "before Template-to-Cut final rendering");
+    const renderResult = await renderConnectorStreamingArtifact({
+      pkg,
+      outputPath: stagedRenderOutputPath,
+      frameLane,
+      signal: input.signal,
+      now: () => createdAt
+    });
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut final rendering");
+    if (renderResult.frameLane !== "browser") {
+      throw new Error("Template-to-Cut P2A accepted delivery requires Browser frames for its Browser-to-FFmpeg final render.");
+    }
+    if (renderResult.receipt.status === "failed") {
+      await removeKnownEmptyPrivateDirectory(dirname(stagedRenderOutputPath), "render failure");
+      throw new Error("Template-to-Cut accepted delivery requires a successful immutable browser final render.");
+    }
+    assertBrowserStreamingPackageTreeDigest(renderResult.receipt, immutablePackageTreeSha256);
+    const renderReceipt = remapPrivateDeliveryPaths(renderResult.receipt, delivery);
+    renderReceipt.inputHashes = { ...renderReceipt.inputHashes, operation: operationHash };
+    bindPackageTreeDigestToReceipt(renderReceipt, immutablePackageTreeSha256);
+    if (renderReceipt.status !== "failed") {
+      // H must verify this one receipt against both the private stage and the post-rename root.
+      // A root-relative locator is canonical in that verification domain; the result and F retain
+      // their established public render path separately.
+      setReceiptOutputPath(renderReceipt, relative(outDir, renderOutputPath).split(sep).join("/"));
+    }
+    const renderOk = renderReceipt.status !== "failed";
+    await writeDeliveryJson(delivery, stagedRenderReceiptPath, renderReceipt, true);
+    // P2A commits through Core's exact-tree ceiling. Refuse this route before it constructs a
+    // successful F candidate when an encoded media leaf cannot be represented by that contract.
+    const admittedRenderedMedia = renderOk
+      ? await readBoundedStableFile(stagedRenderOutputPath, {
+          label: "Template-to-Cut accepted rendered media",
+          maxBytes: TEMPLATE_CLOSED_DELIVERY_MAX_MEDIA_BYTES,
+          withinRoot: delivery.stagingRoot,
+          requireSingleLink: true
+        })
+      : undefined;
+    let cutPlan = plannedCutImport;
+
+    const warnings = remapPrivateDeliveryPaths(
+      [...applied.warnings, ...preview.warnings, ...renderReceipt.warnings, ...cutPlan.receipt.warnings],
+      delivery
+    );
+    const previewFailureFatal = false;
+    const artifacts = templateToCutArtifacts({
+      packageDir,
+      templateApplyReceiptPath,
+      previewPath,
+      previewOk: preview.ok,
+      previewReceiptPath,
+      renderRequired,
+      renderDryRun: false,
+      renderOk,
+      renderOutputPath,
+      renderReceiptPath,
+      cutPlanPath,
+      connectorReceiptPath,
+      artifactHandlePath: renderOk ? artifactHandlePath : undefined
+    });
+    // F is a private staged candidate. It has no accepted/public authority until Core publishes
+    // the exact complete root after H and C have been assembled and cross-checked.
+    const connectorReceipt = createConnectorReceipt({
+      packageId: pkg.manifest.id,
+      createdAt,
+      sourcePackage,
+      admittedSource: admittedSource.evidence,
+      admittedPackage: admittedPackage.evidence,
+      values: input.values,
+      packageDir,
+      changedParams: applied.changedParams,
+      changedBindings: applied.changedBindings,
+      templateApplyReceiptPath,
+      previewOk: preview.ok,
+      previewFailureFatal,
+      previewLane,
+      previewAtMs,
+      previewReceiptPath,
+      renderOk,
+      renderReceiptPath,
+      renderRequired,
+      renderDryRun: false,
+      renderFrameLane: renderResult.frameLane,
+      renderOutputPath,
+      cutOk: cutPlan.ok,
+      cutMode: cutPlan.mode,
+      cutPlanPath,
+      artifacts,
+      warnings,
+      operationHash
+    });
+    bindPackageTreeDigestToReceipt(connectorReceipt, immutablePackageTreeSha256);
+    await writeDeliveryJson(delivery, stagedConnectorReceiptPath, connectorReceipt, true);
+    throwIfConnectorAborted(input.signal, "before Template-to-Cut artifact finalization");
+
+    let finalizedArtifact: Awaited<ReturnType<typeof finalizeConnectorArtifactHandle>> | undefined;
+    if (renderOk) {
+      const finalized = await finalizeConnectorArtifactHandle({
+        root: delivery.stagingRoot,
+        descriptorPath: stagedArtifactHandlePath,
+        artifactPath: stagedRenderOutputPath,
+        renderReceiptPath: stagedRenderReceiptPath,
+        connectorReceiptPath: stagedConnectorReceiptPath,
+        pkg,
+        operationHash,
+        preset: "mp4-h264",
+        mediaType: "video/mp4",
+        createdAt,
+        maxBytes: TEMPLATE_CLOSED_DELIVERY_MAX_MEDIA_BYTES
+      });
+      if (finalized.handle.sha256 !== admittedRenderedMedia?.sha256 || finalized.handle.byteLength !== admittedRenderedMedia.byteLength) {
+        throw new Error("Template-to-Cut artifact handle no longer matches the bounded rendered-media admission.");
+      }
+      finalizedArtifact = finalized;
+      cutPlan = attachRenderedMediaToCutPlan(plannedCutImport, { dryRun: false, handle: finalized.reference });
+      bindPackageTreeDigestToCutPlan(cutPlan, immutablePackageTreeSha256);
+      if (!cutPlan.ok || cutPlan.mode !== "rendered_media") {
+        throw new Error("Template-to-Cut P2A accepted delivery requires an attached valid rendered-media Browser-to-Cut plan.");
+      }
+    }
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut artifact finalization");
+    await writeDeliveryJson(delivery, stagedCutPlanPath, cutPlan, true);
+
+    await assertTemplateAcceptedDeliveryCandidate({
+      delivery,
+      sourcePackageRoot,
+      artifacts,
+      connectorReceipt,
+      stagedConnectorReceiptPath,
+      renderReceipt,
+      stagedRenderReceiptPath,
+      cutPlan,
+      finalizedArtifact,
+      stagedArtifactHandlePath,
+      stagedRenderOutputPath,
+      immutablePackageTreeSha256,
+      packageId: pkg.manifest.id,
+      motionId: pkg.motion.id,
+      operationHash
+    });
+    const expectedInventory = await templateDeliveryExpectedInventory({
+      delivery,
+      admittedPackage,
+      templateApplyReceiptPath,
+      templateReceipt,
+      previewReceiptPath,
+      previewReceipt,
+      previewEvidence,
+      renderReceiptPath,
+      renderReceipt,
+      artifact: finalizedArtifact,
+      cutPlanPath,
+      cutPlan,
+      connectorReceiptPath,
+      connectorReceipt
+    });
+    throwIfConnectorAborted(input.signal, "after Template-to-Cut validation and before delivery commit");
+    const result: TemplateToCutConnectorResult = {
+      ok: true,
+      packageDir,
+      template: {
+        changedParams: applied.changedParams,
+        changedBindings: applied.changedBindings,
+        receiptPath: templateApplyReceiptPath
+      },
+      preview: {
+        ok: true,
+        lane: previewLane,
+        atMs: previewAtMs,
+        failureFatal: previewFailureFatal,
+        receiptPath: previewReceiptPath,
+        outputPath: previewPath
+      },
+      render: {
+        ok: true,
+        required: true,
+        dryRun: false,
+        lane: "ffmpeg",
+        frameLane: renderResult.frameLane,
+        receiptPath: renderReceiptPath,
+        outputPath: renderOutputPath
+      },
+      cutPlanPath,
+      artifacts,
+      receiptPath: connectorReceiptPath,
+      warnings
+    };
+    // All output objects have to be final before the one public rename.  No fallible validation
+    // occurs after `commit`: Core alone owns the typed post-rename uncertainty boundary.
+    assertNoPrivateDeliveryPath({ result, templateReceipt, previewReceipt, renderReceipt, connectorReceipt, cutPlan }, delivery);
+    throwIfConnectorAborted(input.signal, "before Template-to-Cut delivery commit");
+    await delivery.commit(expectedInventory);
+    return result;
+  } catch (error) {
+    await delivery.abort();
+    throw error;
+  }
 }
 
 async function renderTemplateBrowserPreview(input: {
@@ -391,7 +505,6 @@ function createTemplateApplyReceipt(input: {
 }
 
 function templateToCutArtifacts(input: {
-  sourcePackageRoot: string;
   packageDir: string;
   templateApplyReceiptPath: string;
   previewPath: string;
@@ -407,7 +520,6 @@ function templateToCutArtifacts(input: {
   artifactHandlePath?: string;
 }): ConnectorArtifact[] {
   const artifacts: ConnectorArtifact[] = [
-    { role: "template_source", path: input.sourcePackageRoot, status: "available" },
     { role: "motion_package", path: input.packageDir, status: "available" },
     { role: "template_apply_receipt", path: input.templateApplyReceiptPath, status: "available", mediaType: "application/json" },
     { role: "preview_frame", path: input.previewPath, status: input.previewOk ? "available" : "planned", mediaType: "image/png" },
@@ -431,182 +543,12 @@ function templateToCutArtifacts(input: {
   return artifacts;
 }
 
-function createDryRunRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  framesDir: string;
-  fps: number;
-  durationMs: number;
-  outputPath: string;
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `render-dry-run-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "not_run",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      dryRun: true,
-      command: {
-        executable: "ffmpeg",
-        args: [
-          "-y",
-          "-framerate",
-          String(input.fps),
-          "-start_number",
-          "1",
-          "-i",
-          join(input.framesDir, "%06d.png"),
-          "-frames:v",
-          String(frameCountFor(input.durationMs, input.fps)),
-          "-pix_fmt",
-          "yuv420p",
-          "-movflags",
-          "+faststart",
-          input.outputPath
-        ],
-        shell: false
-      }
-    },
-    warnings: []
-  };
-}
-
-function createRenderNotRequiredReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  mode: string | null;
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `render-not-required-${hashBuffer(Buffer.from(`${input.packageId}:${input.mode ?? "none"}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "not_run",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      required: false,
-      reason: input.mode
-        ? `Cut import mode ${input.mode} does not require rendered media.`
-        : "Cut import planning found no applicable mode; rendered media was not run for the failed explicit handoff."
-    },
-    warnings: []
-  };
-}
-
-async function renderRealBrowserFfmpegArtifact(input: {
-  pkg: MotionPackage;
-  packageId: string;
-  durationMs: number;
-  fps: number;
-  width: number;
-  height: number;
-  framesDir: string;
-  /** Overwrite a frames directory holding files Motion did not write. */
-  force?: boolean;
-  outputPath: string;
-  createdAt: string;
-  runner?: FfmpegRunner;
-}): Promise<{ receipt: OperationReceipt; frameLane: "browser" }> {
-  // Wiping a frames directory is correct — a stale frame from a longer previous render would be
-  // encoded into this one — but this one lives under a caller-supplied `--out`, so ownership is
-  // proven from the CONTENT (only Motion's own PNG frames), never from the path's name.
-  assertOutputDirGuard(await prepareFramesDir(input.framesDir, { force: input.force === true, callerSupplied: true }));
-  await mkdir(input.framesDir, { recursive: true });
-  await mkdir(dirname(input.outputPath), { recursive: true });
-  const frameCount = frameCountFor(input.durationMs, input.fps);
-  for (let index = 0; index < frameCount; index += 1) {
-    await renderMotionBrowserFrame(input.pkg, {
-      outDir: input.framesDir,
-      outputPath: join(input.framesDir, frameFileName(index)),
-      atMs: frameTimestampMs(index, input.fps, input.durationMs),
-      now: () => input.createdAt
-    });
-  }
-
-  const stagingOutputPath = connectorArtifactStagingPath(input.outputPath);
-  // Final encode through the shared encode policy: hardware GPU encoding by default with a cached
-  // per-host probe, honoring SHELLX_MOTION_FORCE_SOFTWARE_ENCODE; the same host selects the same encoder
-  // as the CLI and debug-api render paths.
-  const encoded = await encodeImageSequenceWithPolicy({
-    packageId: input.packageId,
-    framesDir: input.framesDir,
-    fps: input.fps,
-    width: input.width,
-    height: input.height,
-    durationMs: input.durationMs,
-    outputPath: stagingOutputPath,
-    ...packageAudioEncodeInput(input.pkg),
-    inputRoots: [input.framesDir, input.pkg.root],
-    outputRoots: [dirname(input.outputPath)],
-    runner: input.runner,
-    now: () => input.createdAt
-  });
-  if (!encoded.ok) {
-    await rm(stagingOutputPath, { force: true });
-    return {
-      receipt: createFailedRenderReceipt({
-        packageId: input.packageId,
-        motionHash: hashBuffer(Buffer.from(JSON.stringify(input.pkg.motion), "utf8")),
-        createdAt: input.createdAt,
-        outputPath: input.outputPath,
-        command: encoded.command,
-        error: encoded.error
-      }),
-      frameLane: "browser"
-    };
-  }
-  await publishConnectorArtifact(stagingOutputPath, input.outputPath);
-  encoded.receipt.output = {
-    ...(readRecord(encoded.receipt.output) ?? {}),
-    path: input.outputPath,
-    frameLane: "browser"
-  };
-  encoded.receipt.artifacts = encoded.receipt.artifacts?.map((artifact) => artifact.role === "rendered_media"
-    ? { ...artifact, path: input.outputPath }
-    : artifact);
-  return { receipt: encoded.receipt, frameLane: "browser" };
-}
-
-function createFailedRenderReceipt(input: {
-  packageId: string;
-  motionHash: string;
-  createdAt: string;
-  outputPath: string;
-  command: FfmpegCommand;
-  error: { code: string; message: string };
-}): OperationReceipt {
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: `ffmpeg-render-failed-${hashBuffer(Buffer.from(`${input.packageId}:${input.outputPath}:${input.error.code}:${input.error.message}`)).slice(0, 16)}`,
-    operation: "render.final",
-    status: "failed",
-    packageId: input.packageId,
-    inputHashes: { motion: input.motionHash },
-    createdAt: input.createdAt,
-    lane: "ffmpeg",
-    output: {
-      path: input.outputPath,
-      frameLane: "browser",
-      command: input.command,
-      error: input.error
-    },
-    warnings: [input.error.message]
-  };
-}
-
 function createConnectorReceipt(input: {
   packageId: string;
   createdAt: string;
-  sourcePackageRoot: string;
   sourcePackage: MotionPackage;
+  admittedSource: AdmittedPackageTreeEvidence;
+  admittedPackage: AdmittedPackageTreeEvidence;
   values: Record<string, TemplateValue>;
   packageDir: string;
   changedParams: string[];
@@ -614,14 +556,14 @@ function createConnectorReceipt(input: {
   templateApplyReceiptPath: string;
   previewOk: boolean;
   previewFailureFatal: boolean;
-  previewLane: "native" | "browser";
+  previewLane: "browser";
   previewAtMs: number;
   previewReceiptPath: string;
   renderOk: boolean;
   renderReceiptPath: string;
   renderRequired: boolean;
   renderDryRun: boolean;
-  renderFrameLane?: "browser";
+  renderFrameLane: "browser";
   renderOutputPath?: string;
   cutOk: boolean;
   cutMode: string | null;
@@ -640,6 +582,9 @@ function createConnectorReceipt(input: {
       motion: hashBuffer(Buffer.from(JSON.stringify(input.sourcePackage.motion), "utf8")),
       template: hashBuffer(Buffer.from(JSON.stringify(input.sourcePackage.template ?? null), "utf8")),
       updates: hashBuffer(Buffer.from(JSON.stringify(input.values), "utf8")),
+      templateSourceTree: input.admittedSource.sha256,
+      templatePublishedTree: input.admittedPackage.sha256,
+      "admitted-package-tree": input.admittedPackage.sha256,
       operation: input.operationHash
     },
     createdAt: input.createdAt,
@@ -647,7 +592,8 @@ function createConnectorReceipt(input: {
     output: {
       artifacts: input.artifacts,
       template: {
-        sourcePackageRoot: input.sourcePackageRoot,
+        sourceTree: input.admittedSource,
+        publishedTree: input.admittedPackage,
         changedParams: input.changedParams,
         changedBindings: input.changedBindings,
         receiptPath: input.templateApplyReceiptPath
@@ -661,33 +607,10 @@ function createConnectorReceipt(input: {
         lane: "ffmpeg",
         frameLane: input.renderFrameLane,
         receiptPath: input.renderReceiptPath,
-        ...(input.renderOutputPath ? { outputPath: input.renderOutputPath } : {})
+        ...(input.renderOutputPath ? { outputPath: input.renderOutputPath } : {}),
       },
       cut: { ok: input.cutOk, mode: input.cutMode, planPath: input.cutPlanPath }
     },
     warnings: input.warnings
   };
-}
-
-function frameCountFor(durationMs: number, fps: number): number {
-  return Math.max(1, Math.ceil((durationMs / 1000) * fps));
-}
-
-function frameTimestampMs(index: number, fps: number, durationMs: number): number {
-  return Math.min(durationMs - 1, Math.round((index / fps) * 1000));
-}
-
-function frameFileName(index: number): string {
-  return `${String(index + 1).padStart(6, "0")}.png`;
-}
-
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value))
-    : null;
 }

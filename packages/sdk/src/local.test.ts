@@ -1,7 +1,7 @@
 /** End-to-end local adapter tests against real Core, Debug API, receipts, and artifact attestation. */
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   compositingGraphFingerprint,
@@ -12,6 +12,7 @@ import {
   type OperationReceipt,
 } from "@shellx-motion/core";
 import { createLocalMotionSdk } from "./local";
+import { withTestAuthoringRoots } from "./local-test-authoring-context.test-support";
 
 const tempDirs: string[] = [];
 const SAMPLE_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqBh4KOQqnS6Y6AAAAEGNhTnYAAAABAAAAAQAAAAAAAAAAmdvqagAAABFJREFUCNdjZGBg+P///38GAA4EA/75rp4uAAAAAElFTkSuQmCC", "base64");
@@ -25,7 +26,8 @@ describe("local Motion SDK", () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-forged-compositing-"));
     tempDirs.push(root);
     const packageRoot = join(root, "package");
-    await cp(resolve("../../fixtures/packages/editable-lower-third"), packageRoot, { recursive: true });
+    const receiptsRoot = join(root, "host-receipts");
+    await cp(resolve(import.meta.dirname, "../../../fixtures/packages/editable-lower-third"), packageRoot, { recursive: true });
     const motionPath = join(packageRoot, "motion.json");
     const motion = JSON.parse(await readFile(motionPath, "utf8"));
     const graph: MotionCompositingGraph = {
@@ -52,23 +54,57 @@ describe("local Motion SDK", () => {
     };
     await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
 
-    const validated = await createLocalMotionSdk().validate({ packageRoot });
+    const validated = await createLocalMotionSdk().validate({ packageRoot, receiptsRoot });
     expect(validated).toMatchObject({ ok: false, error: { code: "local_operation_failed", message: expect.stringContaining("deterministic graph compilation") } });
+    if (validated.ok) throw new Error("unreachable");
+    const detail = validated.error.detail as {
+      validation?: unknown;
+      validationReport?: unknown;
+      receiptId?: unknown;
+      receiptPath?: unknown;
+    } | undefined;
+    expect(detail).toMatchObject({
+      validation: "compositing_compile_integrity",
+      // The compatibility marker retains its long-standing location. The new report cannot use
+      // that same key, so this narrow compatibility case carries it separately.
+      validationReport: {
+        contract: "shellx-motion/motion-validation@1",
+        structural: "passed",
+        semantic: "failed",
+        renderability: "not_proven",
+      },
+      receiptId: expect.stringMatching(/^package-validate-/),
+      receiptPath: expect.any(String),
+    });
+    expect(JSON.parse(await readFile(String(detail?.receiptPath), "utf8"))).toMatchObject({
+      operation: "package.validate",
+      status: "failed",
+      output: {
+        validation: { valid: false, compositingIntegrity: "invalid" },
+        error: {
+          code: "invalid_motion_document",
+          detail: { validation: "compositing_compile_integrity" },
+        },
+      },
+    });
   });
 
   it("previews, renders, attests, reuses, lists, and cancels real local jobs", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-local-render-"));
     tempDirs.push(root);
-    const packageRoot = resolve("../../fixtures/packages/lower-third");
+    const packageRoot = resolve(import.meta.dirname, "../../../fixtures/packages/lower-third");
     const artifactRoot = join(root, "run");
     const previewRoot = join(root, "preview");
     const outputPath = join(artifactRoot, "final.mp4");
     const receiptsRoot = join(artifactRoot, ".shellx-motion", "receipts");
+    await mkdir(join(artifactRoot, ".shellx-motion", "receipts"), { recursive: true, mode: 0o700 });
+    await mkdir(join(artifactRoot, ".shellx-motion", "scratch"), { recursive: true, mode: 0o700 });
     let encodeCount = 0;
     const sdk = createLocalMotionSdk({
+      callerId: "cut:workspace-7",
       browserFrameRenderer: async (pkg, options) => {
         const path = options.outputPath ?? join(options.outDir, "frame.png");
-        await mkdir(dirname(path), { recursive: true });
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
         await writeFile(path, SAMPLE_PNG);
         const output = {
           path,
@@ -109,7 +145,7 @@ describe("local Motion SDK", () => {
           };
         }
         encodeCount += 1;
-        await mkdir(dirname(command.args.at(-1) as string), { recursive: true });
+        await mkdir(dirname(command.args.at(-1) as string), { recursive: true, mode: 0o700 });
         await writeFile(command.args.at(-1) as string, Buffer.from([0, 0, 0, 24, ...Buffer.from("ftypisom sdk local", "ascii")]));
         return { exitCode: 0, stdout: "", stderr: "" };
       }
@@ -121,10 +157,17 @@ describe("local Motion SDK", () => {
       output: {
         packageId: "pkg_lower_third",
         motionId: "motion_lower_third",
-        frame: { path: join(previewRoot, "frame.png"), sha256: expect.stringMatching(/^[a-f0-9]{64}$/), atMs: 250 },
+        frame: { path: expect.stringMatching(/\.png$/), sha256: expect.stringMatching(/^[a-f0-9]{64}$/), atMs: 250 },
         receiptPath: join(previewRoot, "receipts", "preview-250.receipt.json")
       }
     });
+    if (!preview.ok) throw new Error("expected local SDK preview");
+    const previewRelativePath = relative(previewRoot, preview.output.frame.path);
+    expect(previewRelativePath).not.toBe("");
+    expect(previewRelativePath).not.toBe("..");
+    expect(previewRelativePath.startsWith(`..${sep}`)).toBe(false);
+    expect(isAbsolute(previewRelativePath)).toBe(false);
+    expect(await hashFile(preview.output.frame.path)).toBe(preview.output.frame.sha256);
 
     const request = {
       packageRoot,
@@ -174,6 +217,16 @@ describe("local Motion SDK", () => {
     const reused = await sdk.render(request);
     expect(reused).toMatchObject({ ok: true, output: { artifact: { sha256: rendered.ok ? rendered.output.artifact?.sha256 : "" }, warnings: [expect.stringContaining("Reused attested local render")] } });
     expect(encodeCount).toBe(1);
+    if (process.platform !== "win32") {
+      await chmod(artifactRoot, 0o777);
+      const sharedRootReuse = await sdk.render(request);
+      expect(sharedRootReuse).toMatchObject({
+        ok: false,
+        error: { code: "local_operation_failed", message: expect.stringMatching(/group- or world-writable|exclusive child authority/i) }
+      });
+      expect(encodeCount).toBe(1);
+      await chmod(artifactRoot, 0o700);
+    }
     const cutPlan = JSON.parse(await readFile(rendered.output.cutHandoff!.path, "utf8"));
     expect(cutPlan).toMatchObject({
       schema: "shellx-motion/cut-import-plan@1",
@@ -201,9 +254,9 @@ describe("local Motion SDK", () => {
     const queued = receipt({ id: "render-sdk-queued", operation: "render.final", status: "not_run", packageId: "pkg_lower_third", output: { path: join(artifactRoot, "queued.mp4") } });
     await writeFile(join(receiptsRoot, "queued.receipt.json"), `${JSON.stringify(queued, null, 2)}\n`);
     const cancelled = await sdk.cancel({ receiptsRoot, jobId: queued.id, reason: "user stopped export" });
-    expect(cancelled).toMatchObject({ ok: true, output: { targetJobId: queued.id, state: "cancelled", receiptId: expect.stringMatching(/^render-cancel-/) } });
+    expect(cancelled).toMatchObject({ ok: false, error: { code: "job_unknown" } });
     const cancelledStatus = await sdk.status({ receiptsRoot, jobId: queued.id });
-    expect(cancelledStatus).toMatchObject({ ok: true, output: { jobs: [{ jobId: queued.id, state: "cancelled" }], stateCounts: { cancelled: 1 } } });
+    expect(cancelledStatus).toMatchObject({ ok: true, output: { jobs: [{ jobId: queued.id, state: "pending" }], stateCounts: { pending: 1 } } });
 
     const cutPlanPath = rendered.output.cutHandoff!.path;
     const outsidePlan = join(root, "outside-cut-plan.json");
@@ -227,14 +280,14 @@ describe("local Motion SDK", () => {
   }, 45_000);
 
   it("stamps an sdk actor onto host receipts, honoring a host-supplied actor identity", async () => {
-    const source = resolve("../../fixtures/packages/editable-lower-third");
+    const source = resolve(import.meta.dirname, "../../../fixtures/packages/editable-lower-third");
 
     // Helper: run a timeline edit through the local SDK and return the persisted host receipt's actor.
     const editAndReadActor = async (options?: { actor?: { kind?: "agent" | "human" | "host" | "unknown"; label?: string } }) => {
       const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-actor-"));
       tempDirs.push(root);
       const receiptsRoot = join(root, "host-receipts");
-      const sdk = createLocalMotionSdk(options ? { actor: options.actor } : {});
+      const sdk = createLocalMotionSdk(withTestAuthoringRoots(options ? { actor: options.actor } : {}, { inputRoots: [source], outputRoots: [root] }));
       const edited = await sdk.timelineEdit({
         packageRoot: source,
         outDir: join(root, "edited"),
@@ -263,8 +316,8 @@ describe("local Motion SDK", () => {
   it("applies an atomic timeline edit and returns a receipt bound to the reopened package", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-local-edit-"));
     tempDirs.push(root);
-    const sdk = createLocalMotionSdk();
-    const source = resolve("../../fixtures/packages/editable-lower-third");
+    const source = resolve(import.meta.dirname, "../../../fixtures/packages/editable-lower-third");
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, { inputRoots: [source, root], outputRoots: [root] }));
     const outDir = join(root, "edited");
     const edited = await sdk.timelineEdit({
       packageRoot: source,
@@ -319,43 +372,48 @@ describe("local Motion SDK", () => {
     expect(repeated).toMatchObject({ ok: false, error: { code: "invalid_args", message: expect.stringContaining("empty or absent") } });
   });
 
-  it("accepts a trusted package root reached through an operating-system path alias", async () => {
+  it("refuses an authoring output reached through an operating-system path alias", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-local-alias-"));
     tempDirs.push(root);
     const canonicalParent = join(root, "canonical");
     const aliasParent = join(root, "alias");
-    await mkdir(canonicalParent, { recursive: true });
+    await mkdir(canonicalParent, { recursive: true, mode: 0o700 });
     await symlink(canonicalParent, aliasParent, process.platform === "win32" ? "junction" : "dir");
     const outDir = join(aliasParent, "edited");
 
-    const edited = await createLocalMotionSdk().timelineEdit({
-      packageRoot: resolve("../../fixtures/packages/editable-lower-third"),
+    const source = resolve(import.meta.dirname, "../../../fixtures/packages/editable-lower-third");
+    const edited = await createLocalMotionSdk(withTestAuthoringRoots({}, { inputRoots: [source], outputRoots: [canonicalParent] })).timelineEdit({
+      packageRoot: source,
       outDir,
       edit: { kind: "keyframe.upsert", layerId: "title", target: "opacity", atMs: 150, value: 0.5 }
     });
 
-    expect(edited).toMatchObject({
-      ok: true,
-      output: {
-        packageRoot: outDir,
-        receipt: { operation: "timeline.keyframe.upsert", status: "passed", path: expect.stringContaining(join("receipts", "timeline-")) }
-      }
-    });
+    expect(edited).toMatchObject({ ok: false, error: { code: "timeline_keyframe_upsert_failed", message: expect.stringMatching(/authoring output root/i) } });
+    if (!edited.ok) expect(edited.error.message).not.toContain(outDir);
   });
 
-  it("applies an allowlisted rich control edit through the same atomic receipt path", async () => {
+  it("applies allowlisted rich controls, including analytic particle fields, through the same atomic receipt path", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-local-rich-edit-"));
     tempDirs.push(root);
     const source = join(root, "source");
-    await cp(resolve("../../fixtures/packages/editable-lower-third"), source, { recursive: true });
+    await cp(resolve(import.meta.dirname, "../../../fixtures/packages/editable-lower-third"), source, { recursive: true });
     const sourceMotionPath = join(source, "motion.json");
     const sourceMotion = JSON.parse(await readFile(sourceMotionPath, "utf8"));
     const accent = sourceMotion.layers.find((layer: { id: string }) => layer.id === "accent");
     accent.effects = { motionBlur: { samples: 4, shutterAngle: 180 } };
+    sourceMotion.layers.push({
+      id: "dust", type: "particles", startMs: 0, durationMs: 1_000,
+      transform: { x: 0, y: 0, width: 320, height: 180 },
+      emitter: {
+        seed: 7, count: 32, lifetimeMs: 900, color: "#ffffff",
+        field: { schema: "shellx-motion/particle-field@1", sources: [{ kind: "vortex", centerX: 0.5, centerY: 0.5, strength: 0.4, softening: 0.2 }] }
+      }
+    });
     await writeFile(sourceMotionPath, `${JSON.stringify(sourceMotion, null, 2)}\n`);
 
     const outDir = join(root, "edited");
-    const result = await createLocalMotionSdk().timelineEdit({
+    const sdk = createLocalMotionSdk(withTestAuthoringRoots({}, { inputRoots: [root], outputRoots: [root] }));
+    const result = await sdk.timelineEdit({
       packageRoot: source,
       outDir,
       createdBy: "canvas-rich-inspector",
@@ -373,6 +431,16 @@ describe("local Motion SDK", () => {
     const reopened = JSON.parse(await readFile(join(outDir, "motion.json"), "utf8"));
     expect(reopened.layers.find((layer: { id: string }) => layer.id === "accent")?.effects.motionBlur.shutterAngle).toBe(270);
     expect(await readFile(join(outDir, "receipts", "timeline-layer-rich-set.receipt.json"), "utf8")).toContain("timeline.layer.rich.set");
+
+    const fieldDir = join(root, "field-edited");
+    const fieldResult = await sdk.timelineEdit({
+      packageRoot: outDir,
+      outDir: fieldDir,
+      edit: { kind: "rich.set", layerId: "dust", path: "emitter.field.sources.0.strength", value: -0.35 }
+    });
+    expect(fieldResult).toMatchObject({ ok: true, output: { edit: { kind: "rich.set", layerId: "dust", path: "emitter.field.sources.0.strength", value: -0.35 }, receipt: { operation: "timeline.layer.rich.set", status: "passed" } } });
+    const fieldMotion = JSON.parse(await readFile(join(fieldDir, "motion.json"), "utf8"));
+    expect(fieldMotion.layers.find((layer: { id: string }) => layer.id === "dust")?.emitter.field.sources[0].strength).toBe(-0.35);
   });
 
   it("rejects render paths and receipt roots outside the declared artifact root before encoding", async () => {
@@ -381,7 +449,7 @@ describe("local Motion SDK", () => {
     const ffmpegRunner = async () => { throw new Error("must not run FFmpeg"); };
     const sdk = createLocalMotionSdk({ ffmpegRunner });
     const result = await sdk.render({
-      packageRoot: resolve("../../fixtures/packages/lower-third"),
+      packageRoot: resolve(import.meta.dirname, "../../../fixtures/packages/lower-third"),
       artifactRoot: join(root, "artifacts"),
       outputPath: join(root, "outside", "final.mp4"),
       preset: "mp4-h264"
@@ -390,11 +458,11 @@ describe("local Motion SDK", () => {
 
     const artifactRoot = join(root, "symlink-root");
     const outside = join(root, "symlink-outside");
-    await mkdir(artifactRoot, { recursive: true });
-    await mkdir(outside, { recursive: true });
+    await mkdir(artifactRoot, { recursive: true, mode: 0o700 });
+    await mkdir(outside, { recursive: true, mode: 0o700 });
     await symlink(outside, join(artifactRoot, "escaped"), process.platform === "win32" ? "junction" : "dir");
     const escaped = await sdk.render({
-      packageRoot: resolve("../../fixtures/packages/lower-third"),
+      packageRoot: resolve(import.meta.dirname, "../../../fixtures/packages/lower-third"),
       artifactRoot,
       outputPath: join(artifactRoot, "escaped", "final.mp4"),
       preset: "mp4-h264"

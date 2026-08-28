@@ -29,19 +29,21 @@ import {
 } from "./timeline-keyframes-bulk.js";
 import { dispatchTimelineSpatialPathCommand, type TimelineSpatialPathServices } from "./timeline-spatial-path.js";
 import {
-  dispatchTimelineLayersStructuralCommand,
-  type TimelineLayersStructuralServices
-} from "./timeline-layers-structural.js";
+  dispatchTimelineStructuralCommand,
+  type TimelineStructuralDispatchServices
+} from "./timeline-structural-dispatch.js";
 import {
   dispatchTimelineLayerPropertiesCommand,
   type TimelineLayerPropertiesServices
 } from "./timeline-layer-properties.js";
 import { dispatchTimelineCleanupCommand, type TimelineCleanupServices } from "./timeline-cleanup.js";
 import { dispatchTimelineTracksCommand, type TimelineTracksServices } from "./timeline-tracks.js";
+import { dispatchTimelineAudioMasterCommand, type TimelineAudioMasterServices } from "./timeline-audio-master.js";
 import { dispatchTimelineLayerRelationsCommand, type TimelineLayerRelationsServices } from "./timeline-layer-relations.js";
 import { dispatchTimelineTransitionsCommand, type TimelineTransitionsServices } from "./timeline-transitions.js";
 import { dispatchTimelineCaptionsCommand, type TimelineCaptionsServices } from "./timeline-captions.js";
-
+import { dispatchRevisionTransactionCommands } from "./revision-transaction-dispatch.js";
+import { dispatchCheckpointStoryboardRecordLifecycleCommand, type CheckpointStoryboardRecordLifecycleServices } from "./checkpoint-storyboard-record-lifecycle.js";
 /**
  * `warnings` is optional because most panels have nothing to say; when a panel builder produces
  * them they must reach the caller rather than dying inside the result body — a panel that knows
@@ -50,7 +52,7 @@ import { dispatchTimelineCaptionsCommand, type TimelineCaptionsServices } from "
  */
 type PanelRecord = { counts: object; warnings?: string[] };
 
-export interface TimelineDomainServices extends TimelineDurationPolicyServices, TimelineControlServices, TimelineScenesMarkersServices, TimelineKeyframesBasicServices, TimelineKeyframesBulkServices, TimelineSpatialPathServices, TimelineLayersStructuralServices, TimelineLayerPropertiesServices, TimelineCleanupServices, TimelineTracksServices, TimelineLayerRelationsServices, TimelineTransitionsServices, TimelineCaptionsServices {
+export interface TimelineDomainServices extends TimelineDurationPolicyServices, TimelineControlServices, TimelineScenesMarkersServices, TimelineKeyframesBasicServices, TimelineKeyframesBulkServices, TimelineSpatialPathServices, TimelineStructuralDispatchServices, TimelineLayerPropertiesServices, TimelineCleanupServices, TimelineTracksServices, TimelineAudioMasterServices, TimelineLayerRelationsServices, TimelineTransitionsServices, TimelineCaptionsServices, CheckpointStoryboardRecordLifecycleServices {
   packageLoader?: (packageRoot: string) => Promise<MotionPackage>;
   readTimelinePanel?: (pkg: MotionPackage) => Promise<{ panel: PanelRecord; playheadMs: number; warnings: string[] }>;
   buildKeyframesPanel?: (pkg: MotionPackage, options: { layerId?: string; target?: string; includeEmpty: boolean }) => PanelRecord;
@@ -63,6 +65,10 @@ export async function dispatchTimelineCommand(
   args: unknown,
   services: TimelineDomainServices = {}
 ): Promise<MotionDebugResult | null> {
+  const checkpointStoryboardResult = await dispatchCheckpointStoryboardRecordLifecycleCommand(command, args, services);
+  if (checkpointStoryboardResult) return checkpointStoryboardResult;
+  const revisionTransaction = await dispatchRevisionTransactionCommands(command, args, services);
+  if (revisionTransaction) return revisionTransaction;
   const durationPolicyMutation = await dispatchTimelineDurationPolicyCommand(command, args, services);
   if (durationPolicyMutation) return durationPolicyMutation;
   const controlMutation = await dispatchTimelineControlCommand(command, args, services);
@@ -75,14 +81,16 @@ export async function dispatchTimelineCommand(
   if (bulkKeyframeMutation) return bulkKeyframeMutation;
   const spatialPathMutation = await dispatchTimelineSpatialPathCommand(command, args, services);
   if (spatialPathMutation) return spatialPathMutation;
-  const structuralLayerMutation = await dispatchTimelineLayersStructuralCommand(command, args, services);
-  if (structuralLayerMutation) return structuralLayerMutation;
+  const structuralLayerOrGroupMutation = await dispatchTimelineStructuralCommand(command, args, services);
+  if (structuralLayerOrGroupMutation) return structuralLayerOrGroupMutation;
   const layerPropertyMutation = await dispatchTimelineLayerPropertiesCommand(command, args, services);
   if (layerPropertyMutation) return layerPropertyMutation;
   const cleanupMutation = await dispatchTimelineCleanupCommand(command, args, services);
   if (cleanupMutation) return cleanupMutation;
   const trackMutation = await dispatchTimelineTracksCommand(command, args, services);
   if (trackMutation) return trackMutation;
+  const audioMasterMutation = await dispatchTimelineAudioMasterCommand(command, args, services);
+  if (audioMasterMutation) return audioMasterMutation;
   const layerRelationMutation = await dispatchTimelineLayerRelationsCommand(command, args, services);
   if (layerRelationMutation) return layerRelationMutation;
   const transitionMutation = await dispatchTimelineTransitionsCommand(command, args, services);
@@ -328,9 +336,7 @@ function animationPresets(): MotionDebugResult {
   };
 }
 
-function invalidArgs(message: string): MotionDebugResult {
-  return { ok: false, error: { code: "invalid_args", message }, warnings: [] };
-}
+function invalidArgs(message: string): MotionDebugResult { return { ok: false, error: { code: "invalid_args", message }, warnings: [] }; }
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return {
@@ -340,6 +346,4 @@ function capabilityUnavailable(message: string): MotionDebugResult {
   };
 }
 
-function commandFailure(code: string, error: unknown): MotionDebugResult {
-  return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] };
-}
+function commandFailure(code: string, error: unknown): MotionDebugResult { return { ok: false, error: { code, message: error instanceof Error ? error.message : String(error) }, warnings: [] }; }

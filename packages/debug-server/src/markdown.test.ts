@@ -9,12 +9,22 @@
  * renders inert, never as live markup.
  */
 import { beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 
 interface MarkdownModule {
   escapeHtml: (value: string) => string;
   isSafeHref: (href: string) => boolean;
-  renderInline: (source: string) => string;
-  renderMarkdown: (source: string) => string;
+  resolveIndexedDocumentationLink: (
+    href: string,
+    context: { currentPageId: string; pages: Array<{ id?: unknown; file?: unknown }> }
+  ) => { pageId: string; anchor: string } | null;
+  renderInline: (source: string, options?: MarkdownRenderOptions) => string;
+  renderMarkdown: (source: string, options?: MarkdownRenderOptions) => string;
+}
+
+interface MarkdownRenderOptions {
+  headingIds?: boolean;
+  documentationLinkResolver?: (href: string) => { pageId: string; anchor: string } | null;
 }
 
 let md: MarkdownModule;
@@ -86,6 +96,94 @@ describe("markdown link safety", () => {
   it("escapes a javascript href even when smuggled with inner parens absent", () => {
     const html = md.renderInline("[x](JavaScript:void(0))");
     expect(html).not.toContain("<a ");
+  });
+
+  it("resolves only authenticated-index relative documentation pages and bounded anchors", () => {
+    const pages = [
+      { id: "quickstart", file: "quickstart.md" },
+      { id: "rendering", file: "rendering.md" },
+      { id: "host-integration", file: "guides/host-integration.md" }
+    ];
+    const context = { currentPageId: "quickstart", pages };
+
+    expect(md.resolveIndexedDocumentationLink("rendering.md#choosing-a-lane", context))
+      .toEqual({ pageId: "rendering", anchor: "choosing-a-lane" });
+    expect(md.resolveIndexedDocumentationLink("./rendering.md", context))
+      .toEqual({ pageId: "rendering", anchor: "" });
+    expect(md.resolveIndexedDocumentationLink("#install-expectations", context))
+      .toEqual({ pageId: "quickstart", anchor: "install-expectations" });
+    expect(md.resolveIndexedDocumentationLink("../quickstart.md", {
+      currentPageId: "host-integration",
+      pages
+    })).toEqual({ pageId: "quickstart", anchor: "" });
+  });
+
+  it("keeps arbitrary paths, URL-like values, unsafe schemes, and non-indexed pages inert", () => {
+    const context = {
+      currentPageId: "quickstart",
+      pages: [{ id: "quickstart", file: "quickstart.md" }, { id: "rendering", file: "rendering.md" }]
+    };
+    for (const href of [
+      "missing.md", "../../etc/passwd", "/etc/passwd", "//evil.example/docs.md", "C:\\docs\\rendering.md",
+      "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "mailto:ops@example.test",
+      "https://example.test/docs.md", "rendering.md?next=1", "rendering.md#bad anchor", "#"
+    ]) {
+      expect(md.resolveIndexedDocumentationLink(href, context), href).toBeNull();
+    }
+  });
+
+  it("renders indexed Docs links as reader targets, retains protected external links, and leaves rejected links literal", () => {
+    const pages = [{ id: "quickstart", file: "quickstart.md" }, { id: "rendering", file: "rendering.md" }];
+    const options: MarkdownRenderOptions = {
+      headingIds: true,
+      documentationLinkResolver: (href) => md.resolveIndexedDocumentationLink(href, { currentPageId: "quickstart", pages })
+    };
+    const html = md.renderMarkdown([
+      "# Quickstart",
+      "## Install expectations",
+      "[Rendering lanes](rendering.md#choosing-a-lane)",
+      "[This section](#install-expectations)",
+      "[External](https://example.test/guide)",
+      "[Filesystem](../../etc/passwd)",
+      "[Script](javascript:alert(1))"
+    ].join("\n\n"), options);
+
+    expect(html).toContain('<h1 id="quickstart">Quickstart</h1>');
+    expect(html).toContain('<h2 id="install-expectations">Install expectations</h2>');
+    expect(html).toContain('<a href="#choosing-a-lane" data-doc-page-id="rendering" data-doc-anchor="choosing-a-lane">Rendering lanes</a>');
+    expect(html).toContain('<a href="#install-expectations" data-doc-page-id="quickstart" data-doc-anchor="install-expectations">This section</a>');
+    expect(html).toContain('<a href="https://example.test/guide" target="_blank" rel="noopener noreferrer">External</a>');
+    expect(html).toContain("[Filesystem](../../etc/passwd)");
+    expect(html).toContain("[Script](javascript:alert(1))");
+    expect(html).not.toContain('href="../../etc/passwd"');
+    expect(html).not.toContain('href="javascript:');
+    expect(md.renderMarkdown("### `motion.canvas.bridge_export`", { headingIds: true }))
+      .toContain('<h3 id="motioncanvasbridge_export"><code>motion.canvas.bridge_export</code></h3>');
+  });
+
+  it("binds shipped Quickstart relative links and Rendering anchors only through the human index", async () => {
+    const docsRoot = new URL("../../../docs/public/", import.meta.url);
+    const index = JSON.parse(await readFile(new URL("index.json", docsRoot), "utf8")) as {
+      sections: Array<{ pages: Array<{ id: string; file: string; audience?: string }> }>;
+    };
+    const pages = index.sections.flatMap((section) => section.pages)
+      .filter((page) => page.audience !== "agent")
+      .map(({ id, file }) => ({ id, file }));
+    const quickstart = await readFile(new URL("quickstart.md", docsRoot), "utf8");
+    const rendering = await readFile(new URL("rendering.md", docsRoot), "utf8");
+    const quickstartHtml = md.renderMarkdown(quickstart, {
+      headingIds: true,
+      documentationLinkResolver: (href) => md.resolveIndexedDocumentationLink(href, { currentPageId: "quickstart", pages })
+    });
+    const renderingHtml = md.renderMarkdown(rendering, {
+      headingIds: true,
+      documentationLinkResolver: (href) => md.resolveIndexedDocumentationLink(href, { currentPageId: "rendering", pages })
+    });
+
+    expect(quickstartHtml).toContain('data-doc-page-id="connections"');
+    expect(quickstartHtml).toContain('data-doc-page-id="rendering" data-doc-anchor="choosing-a-lane"');
+    expect(quickstartHtml).toContain('data-doc-page-id="motion-validation"');
+    expect(renderingHtml).toContain('<h2 id="choosing-a-lane">Choosing a lane</h2>');
   });
 });
 

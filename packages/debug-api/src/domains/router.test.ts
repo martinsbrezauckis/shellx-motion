@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadMotionPackage } from "@shellx-motion/core";
+import { readMotionExportPreset } from "@shellx-motion/renderer-ffmpeg";
 import { dispatchDomainCommand } from "./router.js";
 import { DEBUG_COMMANDS, debugCommandDefinition } from "../command-registry.js";
 
@@ -77,49 +78,57 @@ describe("debug API domain router", () => {
 
   it("keeps final rendering behind the render-domain executor and strips inherited arguments", async () => {
     let calls = 0;
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-router-render-final-"));
+    const packageRoot = join(root, "package");
+    const outputPath = join(root, "final.mp4");
+    await mkdir(packageRoot, { mode: 0o700 });
     const executeFfmpegFinalRender = async (request: { packageRoot: string; outputPath: string }) => {
       calls += 1;
       expect(request).toMatchObject({
-        packageRoot: "/trusted/package",
-        outputPath: "/trusted/final.mp4",
+        packageRoot,
+        outputPath,
         frameLane: "browser",
         preset: "mp4-h264",
         dryRun: false
       });
       return { ok: true as const, result: { ok: true }, warnings: [] };
     };
-    const validArgs = { packageRoot: "/trusted/package", outputPath: "/trusted/final.mp4" };
-    expect(await dispatchDomainCommand("render", "motion.render.final", validArgs)).toMatchObject({
-      ok: false,
-      error: { code: "capability_unavailable" }
-    });
-    expect(await dispatchDomainCommand(
-      "surface",
-      "motion.render.final",
-      validArgs,
-      { executeFfmpegFinalRender }
-    )).toBeNull();
-    expect(calls).toBe(0);
+    const validArgs = { packageRoot, outputPath };
+    try {
+      expect(await dispatchDomainCommand("render", "motion.render.final", validArgs)).toMatchObject({
+        ok: false,
+        error: { code: "capability_unavailable" }
+      });
+      expect(await dispatchDomainCommand(
+        "surface",
+        "motion.render.final",
+        validArgs,
+        { executeFfmpegFinalRender }
+      )).toBeNull();
+      expect(calls).toBe(0);
 
-    const inherited = Object.create({ packageRoot: "/untrusted/inherited" }) as Record<string, unknown>;
-    inherited.outputPath = "/trusted/final.mp4";
-    expect(await dispatchDomainCommand("render", "motion.render.final", inherited, { executeFfmpegFinalRender })).toMatchObject({
-      ok: false,
-      error: { code: "invalid_args", message: "motion.render.final requires packageRoot." }
-    });
-    expect(calls).toBe(0);
-    expect(await dispatchDomainCommand(
-      "render",
-      "motion.render.final",
-      { ...validArgs, workflowPath: "/outside/workflow.json" },
-      { executeFfmpegFinalRender, isPathInsideTrustedRoot: async () => false }
-    )).toMatchObject({
-      ok: false,
-      error: { code: "invalid_args", message: "motion.render.final workflowPath must be inside packageRoot or a trusted debug input root." }
-    });
-    expect(calls).toBe(0);
-    expect(await dispatchDomainCommand("render", "motion.render.final", validArgs, { executeFfmpegFinalRender })).toMatchObject({ ok: true });
-    expect(calls).toBe(1);
+      const inherited = Object.create({ packageRoot: "/untrusted/inherited" }) as Record<string, unknown>;
+      inherited.outputPath = outputPath;
+      expect(await dispatchDomainCommand("render", "motion.render.final", inherited, { executeFfmpegFinalRender })).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args", message: "motion.render.final requires packageRoot." }
+      });
+      expect(calls).toBe(0);
+      expect(await dispatchDomainCommand(
+        "render",
+        "motion.render.final",
+        { ...validArgs, workflowPath: "/outside/workflow.json" },
+        { executeFfmpegFinalRender, renderRootPolicy: { enforce: true, packageRoots: [packageRoot], inputRoots: [root], outputRoots: [root] } }
+      )).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args", message: "motion.render.final workflowPath must be a regular file inside an approved render input root and may not traverse symbolic links." }
+      });
+      expect(calls).toBe(0);
+      expect(await dispatchDomainCommand("render", "motion.render.final", validArgs, { executeFfmpegFinalRender })).toMatchObject({ ok: true });
+      expect(calls).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("grants final rendering only the executor for the selected output lane", async () => {
@@ -138,11 +147,15 @@ describe("debug API domain router", () => {
 
   it("keeps batch rendering behind the render-domain executor and strips inherited arguments", async () => {
     let calls = 0;
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-router-render-batch-"));
+    const packageRoot = join(root, "package");
+    const outDir = join(root, "batch");
+    await mkdir(packageRoot, { mode: 0o700 });
     const executeBatchPlan = async (request: { packageRoot: string; outDir: string }) => {
       calls += 1;
       expect(request).toMatchObject({
-        packageRoot: "/trusted/package",
-        outDir: "/trusted/batch",
+        packageRoot,
+        outDir,
         rowIds: [],
         preset: "mp4-h264",
         forcePreset: false,
@@ -151,38 +164,42 @@ describe("debug API domain router", () => {
       });
       return { ok: true as const, result: { ok: true }, warnings: [] };
     };
-    const validArgs = { packageRoot: "/trusted/package", outDir: "/trusted/batch" };
-    expect(await dispatchDomainCommand("render", "motion.render.batch", validArgs)).toMatchObject({
-      ok: false,
-      error: { code: "capability_unavailable" }
-    });
-    expect(await dispatchDomainCommand(
-      "workspace",
-      "motion.render.batch",
-      validArgs,
-      { executeBatchPlan }
-    )).toBeNull();
-    expect(calls).toBe(0);
+    const validArgs = { packageRoot, outDir };
+    try {
+      expect(await dispatchDomainCommand("render", "motion.render.batch", validArgs)).toMatchObject({
+        ok: false,
+        error: { code: "capability_unavailable" }
+      });
+      expect(await dispatchDomainCommand(
+        "workspace",
+        "motion.render.batch",
+        validArgs,
+        { executeBatchPlan }
+      )).toBeNull();
+      expect(calls).toBe(0);
 
-    const inherited = Object.create({ packageRoot: "/untrusted/inherited" }) as Record<string, unknown>;
-    inherited.outDir = "/trusted/batch";
-    expect(await dispatchDomainCommand("render", "motion.render.batch", inherited, { executeBatchPlan })).toMatchObject({
-      ok: false,
-      error: { code: "invalid_args", message: "motion.render.batch requires packageRoot." }
-    });
-    expect(calls).toBe(0);
-    expect(await dispatchDomainCommand(
-      "render",
-      "motion.render.batch",
-      { ...validArgs, rowsPath: "/outside/rows.json" },
-      { executeBatchPlan, isPathInsideTrustedRoot: async () => false }
-    )).toMatchObject({
-      ok: false,
-      error: { code: "invalid_args", message: "motion.render.batch rowsPath must be inside packageRoot or a trusted debug input root." }
-    });
-    expect(calls).toBe(0);
-    expect(await dispatchDomainCommand("render", "motion.render.batch", validArgs, { executeBatchPlan })).toMatchObject({ ok: true });
-    expect(calls).toBe(1);
+      const inherited = Object.create({ packageRoot: "/untrusted/inherited" }) as Record<string, unknown>;
+      inherited.outDir = outDir;
+      expect(await dispatchDomainCommand("render", "motion.render.batch", inherited, { executeBatchPlan })).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args", message: "motion.render.batch requires packageRoot." }
+      });
+      expect(calls).toBe(0);
+      expect(await dispatchDomainCommand(
+        "render",
+        "motion.render.batch",
+        { ...validArgs, rowsPath: "/outside/rows.json" },
+        { executeBatchPlan, renderRootPolicy: { enforce: true, packageRoots: [packageRoot], inputRoots: [root], outputRoots: [root] } }
+      )).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args", message: "motion.render.batch rowsPath must be a regular file inside an approved render input root and may not traverse symbolic links." }
+      });
+      expect(calls).toBe(0);
+      expect(await dispatchDomainCommand("render", "motion.render.batch", validArgs, { executeBatchPlan })).toMatchObject({ ok: true });
+      expect(calls).toBe(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("grants batch rendering only the planner or executor selected by dryRun", async () => {
@@ -195,6 +212,18 @@ describe("debug API domain router", () => {
     expect(await dispatchDomainCommand("render", "motion.render.batch", args, services)).toMatchObject({ ok: true });
     expect(await dispatchDomainCommand("render", "motion.render.batch", { ...args, dryRun: false }, services)).toMatchObject({ ok: true });
     expect(calls).toEqual(["plan", "run"]);
+  });
+
+  it("passes GPU rows only to a capable fresh streamed-video batch executor", async () => {
+    const calls: unknown[] = [], base = { packageRoot: "/trusted/package", outDir: "/trusted/gpu-batch", frameLane: "gpu" };
+    const services = { gpuFinalExecutionAvailable: true, executeBatchPlan: async (request: unknown) => { calls.push(request); return { ok: true as const, warnings: [] }; } };
+    expect(await dispatchDomainCommand("render", "motion.render.batch", base, services)).toMatchObject({ ok: true });
+    expect(calls).toMatchObject([{ frameLane: "gpu", resume: false, preset: "mp4-h264" }]);
+    for (const args of [{ ...base, preset: "gif" }, { ...base, resume: true }]) {
+      expect(await dispatchDomainCommand("render", "motion.render.batch", args, services)).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    }
+    expect(await dispatchDomainCommand("render", "motion.render.batch", base, { ...services, gpuFinalExecutionAvailable: false })).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
+    expect(calls).toHaveLength(1);
   });
 
   it("keeps inherited and malformed argument fields outside handler authority", async () => {
@@ -436,7 +465,7 @@ describe("debug API domain router", () => {
         browserFrameRenderer: async () => { calls += 1; throw new Error("must not run for inherited workflow fields"); },
         packageLoader: loadMotionPackage,
         ensureDirectory: async () => {},
-        writeJson: async () => {}
+        publishJsonSidecar: async () => {}
       }
     )).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(calls).toBe(0);
@@ -448,7 +477,8 @@ describe("debug API domain router", () => {
         browserFrameRenderer: async () => { calls += 1; throw new Error("must not run without catalog persistence"); },
         packageLoader: loadMotionPackage,
         ensureDirectory: async () => {},
-        writeJson: async () => {}
+        publishJsonSidecar: async () => {},
+        isPathInsideTrustedRoot: async () => true
       }
     )).toMatchObject({ ok: false, error: { code: "capability_unavailable", message: "Browser workflow catalog persistence is unavailable." } });
     expect(calls).toBe(0);
@@ -490,7 +520,8 @@ describe("debug API domain router", () => {
               }
             };
           },
-          writeJson: async (path) => { writes.push(path); }
+          publishJsonSidecar: async (path) => { writes.push(path); },
+          isPathInsideTrustedRoot: async () => true
         }
       );
       expect(calls).toBe(1);
@@ -737,7 +768,7 @@ describe("debug API domain router", () => {
     expect(calls).toBe(0);
   });
 
-  it("keeps redacted support-bundle assembly inside workspace trust and persistence ports", async () => {
+  it("keeps redacted support-bundle assembly inside the workspace domain and trusted scratch authority", async () => {
     const scratchRoot = resolve("/scratch");
     const outDir = join(scratchRoot, "bundle");
     const args = { outDir };
@@ -761,89 +792,12 @@ describe("debug API domain router", () => {
     )).toBeNull();
     expect(calls).toBe(0);
 
-    const writes = new Map<string, unknown>();
-    const result = await dispatchDomainCommand(
+    expect(await dispatchDomainCommand(
       "workspace",
       "motion.support.bundle",
       args,
-      {
-        scratchRoot,
-        isEmptyOrAbsentDirectory: async (path) => path === outDir,
-        isPathInsideTrustedRoot: async (root, path) => root === scratchRoot && path === outDir,
-        ensureDirectory: async (path) => { expect(path).toBe(outDir); },
-        writeJson: async (path, value) => { writes.set(path, value); }
-      }
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      visibleState: { operation: "support.bundle", packageId: "workspace", receiptCount: 0, platformReceiptCount: 0 },
-      result: {
-        bundle: { schema: "shellx-motion/support-bundle@1", redactions: { envValues: "omitted" } },
-        receipt: { operation: "support.bundle", status: "passed", packageId: "workspace" }
-      }
-    });
-    expect([...writes.keys()]).toEqual([
-      join(outDir, "support-bundle.json"),
-      join(outDir, "support-bundle.receipt.json")
-    ]);
-  });
-
-  it("keeps script compilation inside authoring read, package-write, and receipt ports", async () => {
-    let writes = 0;
-    expect(await dispatchDomainCommand(
-      "authoring",
-      "motion.script.compile",
-      { script: { schema: "shellx-motion/scripted-video@1" }, packageDir: "/pkg" }
-    )).toMatchObject({ ok: false, error: { code: "capability_unavailable" } });
-    expect(await dispatchDomainCommand(
-      "workspace",
-      "motion.script.compile",
-      { script: {}, packageDir: "/pkg" },
-      { scriptedPackageWriter: async () => { writes += 1; throw new Error("must not run cross-domain"); } }
-    )).toBeNull();
-    const script = {
-      schema: "shellx-motion/scripted-video@1",
-      id: "domain-script",
-      name: "Domain Script",
-      sourceApp: "shellx-motion",
-      workflow: "generate",
-      width: 1280,
-      height: 720,
-      fps: 24,
-      frames: [{ id: "one", title: "One", durationMs: 1000 }]
-    };
-    const result = await dispatchDomainCommand(
-      "authoring",
-      "motion.script.compile",
-      { scriptPath: "/input/script.json", packageDir: "/output/package", receiptsRoot: "/receipts" },
-      {
-        readJson: async (path) => {
-          expect(path).toBe("/input/script.json");
-          return script;
-        },
-        scriptedPackageWriter: async (compiled, options) => {
-          writes += 1;
-          expect(options.packageDir).toBe("/output/package");
-          return {
-            packageDir: options.packageDir,
-            manifestPath: "/output/package/manifest.json",
-            motionPath: "/output/package/motion.json",
-            receiptPath: "/output/package/receipts/script-compile.receipt.json"
-          };
-        },
-        writeReceipt: async (root, receipt) => {
-          expect(root).toBe("/receipts");
-          expect(receipt.operation).toBe("package.compile");
-          return "/receipts/compile.json";
-        }
-      }
-    );
-    expect(writes).toBe(1);
-    expect(result).toMatchObject({
-      ok: true,
-      visibleState: { operation: "script.compile", packageId: "pkg_script_domain_script" },
-      result: { hostReceiptPath: "/receipts/compile.json" }
-    });
+      { scratchRoot }
+    )).toMatchObject({ ok: false, error: { code: "capability_unavailable", message: "Support bundle filesystem capabilities are unavailable." } });
   });
 
   it("keeps HTML and OTIO interchange behind authoring operation ports", async () => {
@@ -870,7 +824,10 @@ describe("debug API domain router", () => {
   });
 
   it("keeps secure source import and storyboard lowering behind authoring I/O ports", async () => {
-    const sourcePath = resolve("/source/source.md");
+    const sourceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-router-source-"));
+    const sourcePath = join(sourceRoot, "source.md");
+    const importOutDir = join(sourceRoot, "source-import");
+    const storyboardOutDir = join(sourceRoot, "storyboard");
     let writes = 0;
     expect(await dispatchDomainCommand(
       "authoring",
@@ -896,12 +853,13 @@ describe("debug API domain router", () => {
       "motion.source.import",
       {
         url: "https://example.com/article",
-        outDir: "/source",
+        outDir: importOutDir,
         markdown: "# Source\n\nA deterministic source.",
         kind: "article",
         title: "Source"
       },
       {
+        authoringOutputRoots: [sourceRoot],
         isEmptyOrAbsentDirectory: async () => true,
         writeText: async (_path, value) => { writes += 1; importedMarkdown = value; },
         writeJson: async () => { writes += 1; }
@@ -910,13 +868,16 @@ describe("debug API domain router", () => {
     expect(imported).toMatchObject({ ok: true, visibleState: { operation: "source.import", kind: "article" } });
     expect(importedMarkdown).toContain("A deterministic source.");
 
+    await writeFile(sourcePath, importedMarkdown, "utf8");
     const storyboard = await dispatchDomainCommand(
       "authoring",
       "motion.source.to_scripted_video",
-      { sourcePath, outDir: resolve("/storyboard"), maxFrames: 2 },
+      { sourcePath, outDir: storyboardOutDir, maxFrames: 2 },
       {
         isEmptyOrAbsentDirectory: async () => true,
-        readText: async () => importedMarkdown,
+        authoringInputRoots: [sourceRoot],
+        authoringOutputRoots: [sourceRoot],
+        readSourceMarkdown: async () => ({ text: importedMarkdown, sha256: "a".repeat(64) }),
         writeJson: async () => { writes += 1; }
       }
     );
@@ -925,6 +886,7 @@ describe("debug API domain router", () => {
       visibleState: { operation: "source.to_scripted_video", sourcePath }
     });
     expect(writes).toBe(4);
+    await rm(sourceRoot, { recursive: true, force: true });
   });
 
   it("keeps timeline inspection and preset catalogs inside the timeline domain", async () => {
@@ -1209,8 +1171,7 @@ describe("debug API domain router", () => {
         packageLoader: async () => { calls += 1; throw new Error("must not load cross-domain"); },
         isUnsafePackageOutputDirectory: async () => { calls += 1; return false; },
         isEmptyOrAbsentDirectory: async () => { calls += 1; return true; },
-        readText: async () => { calls += 1; throw new Error("must not read cross-domain"); },
-        hashInputFile: async () => { calls += 1; throw new Error("must not hash cross-domain"); }
+        readCaptionSource: async () => { calls += 1; throw new Error("must not read cross-domain"); }
       }
     )).toBeNull();
     expect(calls).toBe(0);
@@ -1300,7 +1261,34 @@ describe("debug API domain router", () => {
       "motion.export.panel",
       inheritedHosts,
       { buildExportPanel: () => ({ cards: [], groups: [], defaultPreset: "mp4-h264", recommendedPresets: [] }) }
-    )).toMatchObject({ ok: true, visibleState: { presetCount: 0 } });
+    )).toMatchObject({ ok: true, result: { ok: true, defaultPreset: "mp4-h264" } });
+
+    const preset = readMotionExportPreset("mp4-h264");
+    expect(preset).not.toBeNull();
+    expect(await dispatchDomainCommand(
+      "surface",
+      "motion.export.plan",
+      { requiredHosts: ["linux"] },
+      {
+        chooseExportPreset: () => preset!,
+        missingPlatformVerification: (requiredHosts) => ({
+          status: "missing",
+          platformReceiptCount: 0,
+          hostReceiptCount: 0,
+          aggregateReceiptCount: 0,
+          missingHosts: requiredHosts ?? [],
+          failedHosts: []
+        }),
+        buildExportPlan: ({ platformVerification }) => ({
+          preset: "mp4-h264",
+          target: "delivery",
+          preflight: [],
+          warningCount: 1,
+          recommendedLane: "browser",
+          warnings: [String(platformVerification?.status)]
+        })
+      }
+    )).toMatchObject({ ok: true, result: { warnings: ["missing"] } });
   });
 
   it("keeps storyboard file reads and builders inside surface-only capabilities", async () => {

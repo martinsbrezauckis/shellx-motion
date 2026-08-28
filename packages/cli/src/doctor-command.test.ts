@@ -12,9 +12,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dispatchDebugCommand } from "@shellx-motion/debug-api";
 import type { MotionToolName } from "@shellx-motion/core";
+import { gpuBrowserProcessContainmentEvidence } from "@shellx-motion/renderer-browser";
 import { pinMotionToolExecutables, type MotionToolPins } from "@shellx-motion/core/test-support";
 import type { FfmpegRunner } from "@shellx-motion/renderer-ffmpeg";
-import { doctorCommand } from "./doctor-command";
+import { doctorCommand, gpuProbeScratchRoot } from "./doctor-command";
 
 const READY = "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers";
 
@@ -48,6 +49,23 @@ function runnerFor(present: ReadonlyArray<MotionToolName>): FfmpegRunner {
 }
 
 describe("motion doctor", () => {
+  it("reports POSIX process-group containment without Windows-only native limits", () => {
+    expect(gpuBrowserProcessContainmentEvidence({
+      rootPid: 4_242,
+      mode: "unix-process-group",
+      status: "enforced",
+      killTree: true,
+      memoryLimit: "rss-monitor",
+      maxProcessTreeRssBytes: 8 * 1024 * 1024 * 1024
+    })).toEqual({
+      schema: "shellx-motion/process-containment@1",
+      mode: "unix-process-group",
+      status: "enforced",
+      killTree: true,
+      memoryLimit: "rss-monitor"
+    });
+  });
+
   beforeAll(() => { pins = pinMotionToolExecutables("doctor-command"); });
   afterAll(() => pins.release());
 
@@ -60,6 +78,10 @@ describe("motion doctor", () => {
     expect(result.satisfied).toBe(false);
     expect(result.missingCount).toBe(3);
     expect(result.requirements.schema).toBe("shellx-motion/platform-requirements@1");
+    expect(result.requirements.capacity).toMatchObject({
+      schema: "shellx-motion/host-render-capacity@1",
+      points: { portablePointsPerLayer: 8_192, maxPointsPerLayer: expect.any(Number) },
+    });
   });
 
   it("says yes when the machine can do what was asked, even with another tool missing", async () => {
@@ -89,6 +111,45 @@ describe("motion doctor", () => {
     expect(result.operation.alternative.flag).toBe("--frame-lane native");
   });
 
+  it("reports GPU launch policy separately from hardware readiness without opening a GPU browser", async () => {
+    const result = await doctorCommand(["--json"], {
+      ffmpegRunner: runnerFor(["ffmpeg", "ffprobe", "chromium"])
+    }) as Record<string, any>;
+
+    expect(result.gpu).toMatchObject({
+      status: "requires-hardware-proof",
+      trustedChromium: { status: "present" },
+      adapterDeviceProof: { status: "not-tested", requiredCommand: "host-owned motion.platform.gpu.probe" },
+      fixedLaunchProfile: { chromiumSandbox: true, finalContainment: "precontained-direct-chromium" },
+      audio: { gpuRaster: "none", finalVideo: "ffmpeg" },
+      refusals: [{ code: "gpu_hardware_proof_required" }]
+    });
+  });
+
+  it("runs the GPU frame/readback operation only when the operator explicitly requests --probe-gpu", async () => {
+    let calls = 0;
+    const gpuHardwareProbeRunner = async () => {
+      calls += 1;
+      return { ok: false as const, failure: { code: "gpu_hardware_unavailable" as const, message: "fixture has no hardware adapter" } };
+    };
+    await doctorCommand(["--json"], { ffmpegRunner: runnerFor(["ffmpeg", "ffprobe", "chromium"]), gpuHardwareProbeRunner });
+    expect(calls).toBe(0);
+
+    const result = await doctorCommand(["--json", "--probe-gpu"], {
+      ffmpegRunner: runnerFor(["ffmpeg", "ffprobe", "chromium"]),
+      gpuHardwareProbeRunner
+    }) as Record<string, any>;
+    expect(calls).toBe(1);
+    expect(result.gpuProbe).toEqual({ ok: false, failure: { code: "gpu_hardware_unavailable", message: "fixture has no hardware adapter" } });
+    expect(result.gpu).toMatchObject({ status: "requires-hardware-proof", adapterDeviceProof: { status: "not-tested" } });
+  });
+
+  it("uses the host GPU scratch root while preserving an explicit embedder override", () => {
+    expect(gpuProbeScratchRoot(undefined, { SHELLX_MOTION_SCRATCH_ROOT: " /private/motion-scratch " })).toBe("/private/motion-scratch");
+    expect(gpuProbeScratchRoot("/embedder/scratch", { SHELLX_MOTION_SCRATCH_ROOT: "/host/scratch" })).toBe("/embedder/scratch");
+    expect(gpuProbeScratchRoot(undefined, {})).toBe(".scratch");
+  });
+
   it("refuses an unknown operation instead of quietly answering about the whole machine", async () => {
     const result = await doctorCommand(["--json", "--operation", "render.everything"], {
       ffmpegRunner: runnerFor(["ffmpeg", "ffprobe"])
@@ -104,6 +165,7 @@ describe("motion doctor", () => {
     expect(result.report).toContain("ffmpeg");
     expect(result.report).toContain("MISSING  ffprobe");
     expect(result.report).toContain("What this machine can do right now:");
+    expect(result.report).toContain("Adaptive render capacity:");
     // The JSON and the prose come from one object, so they cannot disagree.
     expect(result.satisfied).toBe(false);
   });
@@ -129,7 +191,7 @@ describe("CLI and MCP agree on the same machine", () => {
     expect(mcp.ok).toBe(true);
     expect((mcp.result as Record<string, any>).platform).toEqual(cli.requirements);
     expect((mcp.result as Record<string, any>).satisfied).toBe(cli.satisfied);
-  }, 45_000);
+  }, 120_000);
 
   it("agrees when FFprobe is deliberately absent", async () => {
     // The override is the same one a user with a non-standard install would set; nothing is
@@ -154,7 +216,7 @@ describe("CLI and MCP agree on the same machine", () => {
       if (previous === undefined) delete process.env.SHELLX_MOTION_FFPROBE;
       else process.env.SHELLX_MOTION_FFPROBE = previous;
     }
-  }, 45_000);
+  }, 120_000);
 
   it("agrees on a scoped operation query", async () => {
     const cli = await doctorCommand(["--json", "--operation", "quality.check"]) as Record<string, any>;

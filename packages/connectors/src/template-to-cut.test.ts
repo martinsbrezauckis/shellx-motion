@@ -1,576 +1,261 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadMotionPackage } from "@shellx-motion/core";
-import { clearDefaultEncodePolicyCache, resolveFfmpegExecutable, type FfmpegCommand } from "@shellx-motion/renderer-ffmpeg";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadedPackageInputHashes, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+
+const privateFaults = vi.hoisted(() => ({
+  preview: undefined as undefined | ((pkg: any, options: any) => Promise<any>),
+  final: undefined as undefined | ((input: any) => Promise<any>),
+  handle: undefined as undefined | ((input: any, actual: (input: any) => Promise<any>) => Promise<any>),
+}));
+
+vi.mock("@shellx-motion/renderer-browser", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@shellx-motion/renderer-browser")>();
+  return { ...actual, renderMotionBrowserFrame: async (pkg: any, options: any) => {
+    if (!privateFaults.preview) throw new Error("P2A test did not install an internal Browser preview producer.");
+    return await privateFaults.preview(pkg, options);
+  } };
+});
+
+vi.mock("./streaming-final", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./streaming-final")>();
+  return { ...actual, renderConnectorStreamingArtifact: async (input: any) => {
+    if (!privateFaults.final) throw new Error("P2A test did not install an internal streaming producer.");
+    return await privateFaults.final(input);
+  } };
+});
+
+vi.mock("./artifact-handle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./artifact-handle")>();
+  return { ...actual, finalizeConnectorArtifactHandle: async (input: any) => privateFaults.handle
+    ? await privateFaults.handle(input, actual.finalizeConnectorArtifactHandle as (value: any) => Promise<any>)
+    : await actual.finalizeConnectorArtifactHandle(input) };
+});
+
 import { runTemplateToCutConnector } from "./template-to-cut";
-import { ffprobeReadbackStdout, isDeliveredColorReadback } from "./ffprobe-readback.test-support";
 
-const tempDirs: string[] = [];
-
-/**
- * A stale frame from a longer previous render. Real PNG bytes on purpose: the frames guard proves
- * ownership from CONTENT, so a text file named `000003.png` is (correctly) refused rather than
- * wiped. This preserves the directory-entry ownership contract without changing the test's focus.
- */
-const STALE_FRAME_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("stale", "utf8")]);
-
-
-// Clear the shared encode-policy probe cache before each test so the per-host hardware probe
-// runs deterministically (and once) per render regardless of test order.
-beforeEach(clearDefaultEncodePolicyCache);
-
-describe("Template to Cut connector harness", () => {
-  afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-  });
-
-  it("applies TemplateIR values and emits the exact Cut-native static subset without rendered media", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-editable-"));
-    tempDirs.push(outDir);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: resolve("../../fixtures/cut-native-static-package"),
-      outDir,
-      values: {
-        title: "Dr. Mira Chen",
-        accentColor: "#ff006e"
-      },
-      cutImportMode: "editable_lowering",
-      dryRunRender: false,
-      ffmpegRunner: async () => {
-        throw new Error("editable template-to-Cut import should not render media");
-      },
-      now: () => "2026-06-30T03:30:00.000Z"
-    });
-    const pkg = await loadMotionPackage(result.packageDir);
-    const templateReceipt = JSON.parse(await readFile(result.template.receiptPath, "utf8")) as Record<string, any>;
-    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
-    const cutPlan = JSON.parse(await readFile(result.cutPlanPath, "utf8")) as Record<string, any>;
-    const connectorReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
-
-    expect(result).toMatchObject({
-      ok: true,
-      template: {
-        changedParams: ["title", "accentColor"],
-        changedBindings: [
-          { paramId: "title", path: "/layers/1/text", oldValue: "Native in Cut", newValue: "Dr. Mira Chen" },
-          { paramId: "accentColor", path: "/layers/0/fill", oldValue: "#13d3ff", newValue: "#ff006e" }
-        ]
-      },
-      render: {
-        ok: true,
-        required: false,
-        dryRun: true,
-        lane: "ffmpeg"
-      },
-      preview: {
-        ok: true,
-        outputPath: join(outDir, "preview", "native-0.png")
-      },
-      // the text-delivery invariant: the native preview lane reports the case fold and the ignored font family
-      // instead of silently substituting them.
-      warnings: ["Native renderer case-folded lowercase text to uppercase block glyphs on layer title: riahen."]
-    });
-    expect(result.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "template_source", path: resolve("../../fixtures/cut-native-static-package"), status: "available" }),
-      expect.objectContaining({ role: "motion_package", path: result.packageDir, status: "available" }),
-      expect.objectContaining({ role: "template_apply_receipt", path: result.template.receiptPath, status: "available" }),
-      expect.objectContaining({ role: "cut_plan", path: result.cutPlanPath, status: "available", primary: true })
-    ]));
-    expect(result.artifacts.find((artifact) => artifact.role === "rendered_media")).toBeUndefined();
-    expect(result.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "preview_frame", path: join(outDir, "preview", "native-0.png"), status: "available", mediaType: "image/png" })
-    ]));
-    expect(pkg.motion.layers[1]).toMatchObject({ id: "title", text: "Dr. Mira Chen", transform: { scale: 1 } });
-    expect(pkg.motion.layers[0]).toMatchObject({ id: "accent", fill: "#ff006e" });
-    expect(templateReceipt).toMatchObject({
-      operation: "template.apply",
-      status: "passed",
-      packageId: "pkg_cut_native_static",
-      output: {
-        changedParams: ["title", "accentColor"]
-      }
-    });
-    expect(renderReceipt).toMatchObject({
-      operation: "render.final",
-      status: "not_run",
-      output: {
-        required: false,
-        reason: "Cut import mode editable_lowering does not require rendered media."
-      }
-    });
-    expect(cutPlan).toMatchObject({
-      ok: true,
-      mode: "editable_lowering",
-      operations: [
-        { verb: "cut.shape.create", sourceLayerId: "accent", payload: { fill: "#ff006e" } },
-        { verb: "cut.title.create", sourceLayerId: "title", payload: { text: "Dr. Mira Chen" } }
-      ]
-    });
-    expect(connectorReceipt).toMatchObject({
-      operation: "connector.template_to_cut",
-      // the text-delivery invariant: degraded, because the native preview could not draw the applied title faithfully.
-      status: "warning",
-      output: {
-        template: {
-          changedParams: ["title", "accentColor"],
-          receiptPath: result.template.receiptPath
-        },
-        cut: { ok: true, mode: "editable_lowering", planPath: result.cutPlanPath },
-        artifacts: expect.arrayContaining([
-          expect.objectContaining({ role: "cut_plan", path: result.cutPlanPath, primary: true })
-        ])
-      }
-    });
-    expect(connectorReceipt.warnings).toEqual([
-      "Native renderer case-folded lowercase text to uppercase block glyphs on layer title: riahen."
-    ]);
-  });
-
-  it("defaults to rendered media when the template exceeds Cut's native receiver", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-auto-editable-"));
-    tempDirs.push(outDir);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: resolve("../../fixtures/packages/editable-lower-third"),
-      outDir,
-      values: {
-        title: "Auto Editable"
-      },
-      dryRunRender: true,
-      now: () => "2026-07-03T01:10:00.000Z"
-    });
-    const cutPlan = JSON.parse(await readFile(result.cutPlanPath, "utf8")) as Record<string, any>;
-    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
-
-    expect(result).toMatchObject({
-      ok: true,
-      render: {
-        ok: true,
-        required: true,
-        dryRun: true,
-        lane: "ffmpeg"
-      },
-      warnings: [
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer title: utodiable.",
-        "Native renderer ignored the requested font family 'Inter' on layer title and drew block glyphs instead.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer subtitle: roductea.",
-        "Native renderer ignored the requested font family 'Inter' on layer subtitle and drew block glyphs instead.",
-        "Target shellx-cut cannot lower transition.slide on layer title.",
-        "Target shellx-cut cannot lower text.style.fontFamily on layer title.",
-        "Target shellx-cut cannot lower text.style.fontWeight on layer title.",
-        "Target shellx-cut cannot lower text.style.fontFamily on layer subtitle.",
-        "Target shellx-cut cannot lower transition.wipe on layer accent."
-      ]
-    });
-    expect(renderReceipt).toMatchObject({ operation: "render.final" });
-    expect(cutPlan).toMatchObject({
-      ok: true,
-      mode: "rendered_media",
-      operations: [
-        { verb: "cut.media.import_rendered" }
-      ],
-      unsupported: expect.arrayContaining([
-        expect.objectContaining({ layerId: "title", feature: "transition.slide" }),
-        expect.objectContaining({ layerId: "accent", feature: "transition.wipe" })
-      ])
-    });
-  });
-
-  it("uses a semantic browser review frame when auto previewing a rich rendered-media template", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-rich-browser-preview-"));
-    tempDirs.push(outDir);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: resolve("../../templates/shellx-product-pack/cinematic-rain-launch"),
-      outDir,
-      values: { title: "Rain becomes part of the product story", rainIntensity: 0.68 },
-      previewLane: "auto",
-      cutImportMode: "rendered_media",
-      dryRunRender: true,
-      now: () => "2026-07-13T12:30:00.000Z"
-    });
-    const connectorReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
-
-    expect(result).toMatchObject({
-      ok: true,
-      preview: {
-        ok: true,
-        lane: "browser",
-        atMs: 300,
-        failureFatal: false,
-        outputPath: join(outDir, "preview", "browser-300.png")
-      },
-      render: { ok: true, required: true, dryRun: true, lane: "ffmpeg" }
-    });
-    expect(result.warnings).not.toEqual(expect.arrayContaining([
-      expect.stringContaining("does not support environment"),
-      expect.stringContaining("does not support particles")
-    ]));
-    expect(connectorReceipt).toMatchObject({
-      operation: "connector.template_to_cut",
-      status: "passed",
-      output: {
-        preview: { ok: true, lane: "browser", atMs: 300, failureFatal: false }
-      }
-    });
-    // Rich cinematic (rain-launch) browser preview render is ~4s in isolation; give headroom so it does
-    // not flake past the 5s default under full parallel-suite CPU contention.
-  }, 45_000);
-
-  it("marks dry-run rendered-media plans failed when native preview fails", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-preview-fail-"));
-    tempDirs.push(outDir);
-    const sourcePackage = await createPreviewFailingTemplatePackage(outDir);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: sourcePackage,
-      outDir: join(outDir, "run"),
-      values: { title: "Preview Failure" },
-      cutImportMode: "rendered_media",
-      dryRunRender: true,
-      now: () => "2026-07-03T12:50:00.000Z"
-    });
-    const connectorReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
-
-    expect(result).toMatchObject({
-      ok: false,
-      preview: { ok: false, lane: "native", failureFatal: true },
-      render: { ok: true, required: true, dryRun: true },
-      warnings: expect.arrayContaining([expect.stringContaining("Unsupported color format")])
-    });
-    expect(connectorReceipt).toMatchObject({
-      operation: "connector.template_to_cut",
-      status: "failed",
-      output: {
-        preview: { ok: false, lane: "native", failureFatal: true },
-        render: { ok: true, dryRun: true },
-        cut: { ok: true, mode: "rendered_media" }
-      }
-    });
-  });
-
-  it("renders applied templates to a real MP4 artifact before Cut rendered-media import", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-rendered-"));
-    tempDirs.push(outDir);
-    const sourcePackage = await createShortTemplatePackage(outDir);
-    const staleFrame = join(outDir, "frames", "pkg_editable_lower_third", "000999.png");
-    await mkdir(join(outDir, "frames", "pkg_editable_lower_third"), { recursive: true });
-    await writeFile(staleFrame, STALE_FRAME_BYTES);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: sourcePackage,
-      outDir,
-      values: { title: "Rendered Template" },
-      cutImportMode: "rendered_media",
-      dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        // Answered BEFORE the encode expectations below: the delivered-colour readback is an ffprobe
-        // READ of the staged artifact, so it satisfies none of them — and `gradeDeliveredColor`
-        // deliberately swallows readback failures, which would make a failed expectation here
-        // invisible instead of loud. See ./ffprobe-readback.test-support.
-        if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-        expect(command.shell).toBe(false);
-        expect(command.executable).toBe(resolveFfmpegExecutable());
-        expect(command.args).toEqual(expect.arrayContaining(["-frames:v", "2"]));
-        await writeFile(command.args.at(-1) as string, fakeMp4Bytes("template"));
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
-      now: () => "2026-06-30T03:45:00.000Z"
-    });
-    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
-    const cutPlan = JSON.parse(await readFile(result.cutPlanPath, "utf8")) as Record<string, any>;
-    const firstFrame = await readFile(join(outDir, "frames", "pkg_editable_lower_third", "000001.png"));
-
-    expect(firstFrame.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
-    await expect(stat(staleFrame)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(result.render).toMatchObject({
-      ok: true,
-      required: true,
-      dryRun: false,
-      lane: "ffmpeg",
-      frameLane: "browser",
-      outputPath: join(outDir, "render", "pkg_editable_lower_third.mp4")
-    });
-    expect(result.artifacts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "rendered_media", path: join(outDir, "render", "pkg_editable_lower_third.mp4"), status: "available", mediaType: "video/mp4", primary: true }),
-      expect.objectContaining({ role: "render_receipt", path: result.render.receiptPath, status: "available" })
-    ]));
-    expect(renderReceipt).toMatchObject({
-      operation: "render.final",
-      // `warning`, not `passed`: this 1000ms render carries the review-length advisory, and since
-      // a render receipt escalates on an actionable warning exactly as the connector receipt
-      // aggregating the same warning does.
-      status: "warning",
-      warnings: expect.arrayContaining([
-        "Rendered video is 1000ms; product review clips should be at least 1500ms."
-      ]),
-      lane: "ffmpeg",
-      output: {
-        path: join(outDir, "render", "pkg_editable_lower_third.mp4"),
-        width: 1280,
-        height: 720,
-        durationMs: 1000,
-        frameLane: "browser",
-        // The delivered colour is now OBSERVED off the file, not merely declared from the preset.
-        color: expect.objectContaining({
-          profile: "sdr-bt709",
-          observed: { primaries: "bt709", transfer: "bt709", matrix: "bt709", range: "tv" }
-        })
-      }
-    });
-    expect(cutPlan).toMatchObject({
-      ok: true,
-      mode: "rendered_media",
-      operations: [
-        {
-          verb: "cut.media.import_rendered",
-          source: { render: "artifact" },
-          renderedMedia: {
-            dryRun: false,
-            handle: {
-              schema: "shellx-motion/artifact-handle-ref@1",
-              rootRelativePath: "artifacts/rendered-media.artifact.json",
-              sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
-            }
-          }
-        }
-      ]
-    });
-  }, 90_000);
-
-  it("returns structured failed receipts when rendered Template-to-Cut FFmpeg encode fails", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-ffmpeg-fail-"));
-    tempDirs.push(outDir);
-    const sourcePackage = await createShortTemplatePackage(outDir);
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: sourcePackage,
-      outDir: join(outDir, "run"),
-      values: { title: "Failed Template" },
-      cutImportMode: "rendered_media",
-      dryRunRender: false,
-      ffmpegRunner: async () => ({ exitCode: 1, stdout: "", stderr: "encoder exploded" }),
-      now: () => "2026-07-03T02:15:00.000Z"
-    });
-    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
-    const connectorReceipt = JSON.parse(await readFile(result.receiptPath, "utf8")) as Record<string, any>;
-
-    expect(result).toMatchObject({
-      ok: false,
-      render: {
-        ok: false,
-        required: true,
-        dryRun: false,
-        lane: "ffmpeg",
-        frameLane: "browser",
-        outputPath: join(outDir, "run", "render", "pkg_editable_lower_third.mp4")
-      },
-      artifacts: expect.arrayContaining([
-        expect.objectContaining({ role: "rendered_media", path: join(outDir, "run", "render", "pkg_editable_lower_third.mp4"), status: "failed", primary: true })
-      ]),
-      warnings: [
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer title: ailedmpt.",
-        "Native renderer ignored the requested font family 'Inter' on layer title and drew block glyphs instead.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer subtitle: roductea.",
-        "Native renderer ignored the requested font family 'Inter' on layer subtitle and drew block glyphs instead.",
-        "encoder exploded"
-      ]
-    });
-    expect(renderReceipt).toMatchObject({
-      operation: "render.final",
-      status: "failed",
-      lane: "ffmpeg",
-      output: {
-        path: join(outDir, "run", "render", "pkg_editable_lower_third.mp4"),
-        frameLane: "browser",
-        error: { code: "ffmpeg_failed", message: "encoder exploded" }
-      },
-      warnings: ["encoder exploded"]
-    });
-    expect(connectorReceipt).toMatchObject({
-      operation: "connector.template_to_cut",
-      status: "failed",
-      output: {
-        render: { ok: false, dryRun: false, frameLane: "browser" },
-        cut: { ok: true, mode: "rendered_media" }
-      },
-      warnings: [
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer title: ailedmpt.",
-        "Native renderer ignored the requested font family 'Inter' on layer title and drew block glyphs instead.",
-        "Native renderer case-folded lowercase text to uppercase block glyphs on layer subtitle: roductea.",
-        "Native renderer ignored the requested font family 'Inter' on layer subtitle and drew block glyphs instead.",
-        "encoder exploded"
-      ]
-    });
-  });
-
-  it("muxes package audio layers into rendered Template-to-Cut imports", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-template-to-cut-audio-"));
-    tempDirs.push(outDir);
-    const sourcePackage = await createAudioTemplatePackage(outDir);
-    const commands: FfmpegCommand[] = [];
-
-    const result = await runTemplateToCutConnector({
-      packageRoot: sourcePackage,
-      outDir: join(outDir, "run"),
-      values: { title: "Audio Template" },
-      cutImportMode: "rendered_media",
-      dryRunRender: false,
-      ffmpegRunner: async (command) => {
-        if (command.args.includes("-encoders")) return { exitCode: 0, stdout: "", stderr: "" }; // Hardware-probe discovery; empty means software.
-        commands.push(command);
-        // The readback READS the staged artifact; answering it as an encode would rewrite it.
-        if (isDeliveredColorReadback(command)) return { exitCode: 0, stdout: ffprobeReadbackStdout(), stderr: "" };
-        await writeFile(command.args.at(-1) as string, fakeMp4Bytes("template audio"));
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
-      now: () => "2026-07-01T23:45:00.000Z"
-    });
-    const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
-    const audioPath = join(result.packageDir, "assets", "voice.wav");
-    const command = commands[0];
-    expect(command).toBeDefined();
-    if (!command) throw new Error("expected Template-to-Cut to invoke FFmpeg");
-    expect(command.args).toEqual(expect.arrayContaining([
-      "-i",
-      audioPath,
-      "-map",
-      "1:a:0",
-      "-c:a",
-      "aac"
-    ]));
-    expect(renderReceipt.output).toMatchObject({
-      audio: {
-        path: audioPath,
-        codec: "aac",
-        startMs: 250,
-        durationMs: 1800,
-        volume: 0.35,
-        fadeInMs: 180,
-        fadeOutMs: 240
-      }
-    });
-  }, 90_000);
+const roots: string[] = [];
+afterEach(async () => {
+  privateFaults.preview = undefined;
+  privateFaults.final = undefined;
+  privateFaults.handle = undefined;
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function createShortTemplatePackage(outDir: string): Promise<string> {
-  const packageRoot = join(outDir, "short-source-package");
-  await cp(resolve("../../fixtures/packages/editable-lower-third"), packageRoot, { recursive: true });
-  const motionPath = join(packageRoot, "motion.json");
-  const motion = JSON.parse(await readFile(motionPath, "utf8")) as Record<string, any>;
-  motion.durationMs = 1000;
-  motion.fps = 2;
-  motion.layers = motion.layers.map((layer: Record<string, any>) => ({
-    ...layer,
-    durationMs: 1000
-  }));
-  await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
-  return packageRoot;
-}
+// Internal producer seams prove only structural/atomic assembly. Real Browser+FFmpeg acceptance is
+// the Linux `connector:template-cut-render-smoke` platform gate, never this mocked suite.
+describe.runIf(process.platform === "linux")("Template-to-Cut P2A structural atomic assembly coverage", () => {
+  it("assembles one exact nested package/media/H/C/F tree from immutable Browser evidence", async () => {
+    const { source, outDir } = await fixture();
+    installSuccessfulPrivateProducers();
+    const result = await run(source, outDir);
+    const connector = await readJson(result.receiptPath);
+    const render = await readJson(result.render.receiptPath);
+    const plan = await readJson(result.cutPlanPath);
+    const reference = plan.operations[0].renderedMedia.handle;
+    const handle = await readJson(join(outDir, reference.rootRelativePath));
+    const leaves = (await readdir(outDir, { recursive: true })).filter((path): path is string => typeof path === "string").sort();
 
-function fakeMp4Bytes(label: string): Buffer {
-  return Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom", "ascii"), Buffer.from(label)]);
-}
+    expect(result).toMatchObject({ ok: true, preview: { ok: true, lane: "browser" }, render: { ok: true, required: true, dryRun: false, frameLane: "browser" } });
+    expect(connector.inputHashes["admitted-package-tree"]).toBe(connector.output.template.publishedTree.sha256);
+    expect(render.inputHashes["admitted-package-tree"]).toBe(connector.output.template.publishedTree.sha256);
+    expect(plan.receipt.inputHashes["admitted-package-tree"]).toBe(connector.output.template.publishedTree.sha256);
+    expect(handle.rootRelativePath).toBe("render/pkg_editable_lower_third.mp4");
+    expect(reference.rootRelativePath).toBe("artifacts/rendered-media.artifact.json");
+    expect(leaves).toEqual(expect.arrayContaining(["artifacts", "artifacts/rendered-media.artifact.json", "connector-run.receipt.json", "cut-import-plan.json", "preview", "receipts", "render"]));
+    const publicText = JSON.stringify({ result, connector, render, plan, handle });
+    expect(publicText).not.toContain(source);
+    expect(publicText).not.toContain(".stage");
+  });
 
-async function createPreviewFailingTemplatePackage(outDir: string): Promise<string> {
-  const packageRoot = join(outDir, "preview-failing-source-package");
-  await cp(resolve("../../fixtures/packages/editable-lower-third"), packageRoot, { recursive: true });
-  const motionPath = join(packageRoot, "motion.json");
-  const motion = JSON.parse(await readFile(motionPath, "utf8")) as Record<string, any>;
-  motion.layers = motion.layers.map((layer: Record<string, any>) =>
-    layer.id === "title"
-      ? { ...layer, style: { ...layer.style, color: "color(display-p3 1 0 0)" } }
-      : layer
-  );
-  await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
-  return packageRoot;
-}
+  it("keeps F private until H exists and writes C only after the exact H reference", async () => {
+    const { source, outDir } = await fixture();
+    installSuccessfulPrivateProducers();
+    privateFaults.handle = async (input, actual) => {
+      await expect(stat(input.connectorReceiptPath)).resolves.toMatchObject({ isFile: expect.any(Function) });
+      await expect(stat(input.descriptorPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(outDir, "connector-run.receipt.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      const finalized = await actual(input);
+      await expect(stat(input.descriptorPath)).resolves.toMatchObject({ isFile: expect.any(Function) });
+      await expect(stat(join(input.root, "cut-import-plan.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      return finalized;
+    };
+    const result = await run(source, outDir);
+    const plan = await readJson(result.cutPlanPath);
+    expect(plan.operations[0].renderedMedia.handle.rootRelativePath).toBe("artifacts/rendered-media.artifact.json");
+  });
 
-async function createAudioTemplatePackage(outDir: string): Promise<string> {
-  const packageRoot = join(outDir, "source-package");
-  await cp(resolve("../../fixtures/packages/editable-lower-third"), packageRoot, { recursive: true });
-  await mkdir(join(packageRoot, "assets"), { recursive: true });
-  await writeFile(join(packageRoot, "assets", "voice.wav"), "fake wav bytes", "utf8");
+  it.each(["media producer", "artifact handle"])("aborts without public output on %s failure", async (kind) => {
+    const { source, outDir } = await fixture();
+    privateFaults.preview = successfulPreview;
+    if (kind === "media producer") privateFaults.final = async () => { throw new Error("media failure"); };
+    else privateFaults.handle = async () => { throw new Error("handle failure"); };
+    await expect(run(source, outDir)).rejects.toThrow();
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
-  const manifestPath = join(packageRoot, "manifest.json");
-  const motionPath = join(packageRoot, "motion.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, any>;
-  const motion = JSON.parse(await readFile(motionPath, "utf8")) as Record<string, any>;
-  manifest.assets = ["assets/voice.wav"];
-  motion.durationMs = 2000;
-  motion.fps = 2;
-  motion.assets = [{ id: "asset_voice", path: "assets/voice.wav", mimeType: "audio/wav" }];
-  motion.layers = [
-    ...motion.layers.map((layer: Record<string, any>) => ({
-      ...layer,
-      durationMs: 2000
-    })),
-    {
-      id: "voiceover",
-      type: "audio",
-      assetId: "assets/voice.wav",
-      source: "assets/voice.wav",
-      startMs: 250,
-      durationMs: 1800,
-      volume: 0.35,
-      fadeInMs: 180,
-      fadeOutMs: 240
+  it("refuses P2A-only unsupported modes before any output transaction", async () => {
+    const { source, outDir } = await fixture();
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, previewLane: "native", cutImportMode: "rendered_media" }))).rejects.toThrow(/browser-preview-only/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, frameLane: "gpu", cutImportMode: "rendered_media" }))).rejects.toThrow(/browser final lane/i);
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, dryRunRender: true, cutImportMode: "rendered_media" }))).rejects.toThrow(/real browser-to-ffmpeg/i);
+  });
+
+  it.each([
+    ["active script", "../../fixtures/packages/web-card", "web", /active agent scripts/i],
+    ["audio layer", "../../fixtures/packages/gpu-g9-mixed-media-atlas", "audio", /refuses audio/i],
+    ["includeAudio layer", undefined, "includeAudio", /refuses audio/i],
+    ["shader layer", "../../fixtures/packages/gpu-material-admitted", "shader", /refuses shader layer/i],
+    ["scene3d layer", "../../fixtures/packages/fixed-scene3d", "scene3d", /refuses scene3d layer/i],
+    ["environment layer", "../../fixtures/packages/environment-fog-cinematic", "environment", /refuses environment layer/i]
+  ] as const)("refuses P2A %s content before any output transaction", async (_label, fixtureRelative, layerType, expected) => {
+    const { root, source, outDir } = await fixture();
+    const motionPath = join(source, "motion.json");
+    const motion = await readJson(motionPath) as { layers: Array<Record<string, unknown>> };
+    if (layerType === "includeAudio") {
+      motion.layers[0] = { ...motion.layers[0], includeAudio: true };
+    } else {
+      const fixtureMotion = await readJson(resolve(fixtureRelative!, "motion.json")) as { layers: Array<Record<string, unknown>> };
+      const layer = fixtureMotion.layers.find((candidate) => candidate.type === layerType);
+      if (!layer) throw new Error(`test fixture has no ${layerType} layer`);
+      motion.layers.push(layer);
     }
-  ];
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
-  return packageRoot;
+    await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+
+    await expect(runWithTrustedRoot(root, { packageRoot: source, outDir, values: { title: "x" } })).rejects.toThrow(expected);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a source package leaf that would exceed P1 final-path depth before any output transaction", async () => {
+    const { root, source, outDir } = await fixture();
+    const sourceRelativePath = `${Array.from({ length: 15 }, (_, index) => `d${index}`).join("/")}/leaf.txt`;
+    await mkdir(dirname(join(source, sourceRelativePath)), { recursive: true, mode: 0o700 });
+    await writeFile(join(source, sourceRelativePath), "depth sentinel", "utf8");
+
+    await expect(runWithTrustedRoot(root, { packageRoot: source, outDir, values: { title: "x" } })).rejects.toThrow(/at most 16 final root-relative path components/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves collision sentinels and refuses force", async () => {
+    const { source, outDir } = await fixture(true);
+    const sentinel = join(outDir, "caller-sentinel.txt");
+    await writeFile(sentinel, "keep", "utf8");
+    await expect(run(source, outDir)).rejects.toThrow();
+    expect(await readFile(sentinel, "utf8")).toBe("keep");
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, force: true, cutImportMode: "rendered_media" }))).rejects.toThrow(/does not support force/i);
+    expect(await readFile(sentinel, "utf8")).toBe("keep");
+  });
+
+  it("does not invoke legacy caller renderer hooks smuggled through an untyped input", async () => {
+    const { root, source, outDir } = await fixture();
+    installSuccessfulPrivateProducers();
+    let invoked = false;
+    const untypedInput = {
+      packageRoot: source, outDir, values: { title: "x" },
+      streamingRenderer: async () => { invoked = true; throw new Error("legacy renderer must not run"); },
+      ffmpegRunner: async () => { invoked = true; throw new Error("legacy runner must not run"); }
+    } as unknown as Parameters<typeof runTemplateToCutConnector>[0];
+    const anchor = await createTrustedWorkspaceAnchor(root);
+    const result = await withTrustedWorkspaceAnchor(anchor, async () => await runTemplateToCutConnector(untypedInput));
+    expect(result.ok).toBe(true);
+    expect(invoked).toBe(false);
+  });
+
+  it("refuses source empty directories before staging", async () => {
+    const { source, outDir } = await fixture();
+    await mkdir(join(source, "empty"), { mode: 0o700 });
+    await expect(run(source, outDir)).rejects.toThrow(/empty package directory/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("Template-to-Cut P2A portable early refusals", () => {
+  it("refuses native preview and force before any output transaction", async () => {
+    const { source, outDir } = await fixture();
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, previewLane: "native", cutImportMode: "rendered_media" }))).rejects.toThrow(/browser-preview-only/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(runTemplateToCutConnector(hostileInput({ packageRoot: source, outDir, values: { title: "x" }, force: true, cutImportMode: "rendered_media" }))).rejects.toThrow(/does not support force/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.runIf(process.platform !== "linux")("refuses accepted P2A delivery on unsupported hosts before source admission", async () => {
+    const { source, outDir } = await fixture();
+    await expect(runTemplateToCutConnector({ packageRoot: source, outDir, values: { title: "x" } })).rejects.toThrow(/Linux-only/i);
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+async function fixture(precreateOutput = false): Promise<{ root: string; source: string; outDir: string }> {
+  const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-p2a-"));
+  roots.push(root);
+  const source = join(root, "source"), outDir = join(root, "delivery");
+  await cp(resolve("../../fixtures/packages/editable-lower-third"), source, { recursive: true });
+  // A Git checkout created under umask 0002 has group-writable directory modes. The copied source
+  // is an authority fixture, so normalize every copied directory instead of inheriting host modes.
+  await makeDirectoryTreePrivate(source);
+  if (precreateOutput) await mkdir(outDir, { mode: 0o700 });
+  return { root, source, outDir };
 }
 
-describe("output ownership", () => {
-  it("never destroys a caller's files under --out, and says why", async () => {
-    // A dry-run connector must not delete a sentinel file under <out>/package and still report
-    // ok:true. `outDir` is caller-supplied, so
-    // a subdirectory named "package" is NOT evidence that Motion created it.
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-connector-own-"));
-    tempDirs.push(outDir);
-    await mkdir(join(outDir, "package"), { recursive: true });
-    await writeFile(join(outDir, "package", "user-sentinel.txt"), "user data", "utf8");
+async function run(source: string, outDir: string) {
+  if (!privateFaults.preview) privateFaults.preview = successfulPreview;
+  if (!privateFaults.final) privateFaults.final = successfulFinal;
+  return await runWithTrustedRoot(dirname(source), {
+    packageRoot: source, outDir, values: { title: "P2A immutable title" }
+  });
+}
 
-    await expect(runTemplateToCutConnector({
-      packageRoot: resolve("../../templates/shellx-product-pack/feature-announcement"),
-      values: {},
-      outDir,
-      previewLane: "auto",
-      renderLane: "ffmpeg",
-      dryRunRender: true,
-      cutImportMode: "auto"
-    })).rejects.toMatchObject({ code: "output_dir_not_empty" });
+async function runWithTrustedRoot(root: string, input: Parameters<typeof runTemplateToCutConnector>[0]) {
+  const anchor = await createTrustedWorkspaceAnchor(root);
+  return await withTrustedWorkspaceAnchor(anchor, async () => await runTemplateToCutConnector(input));
+}
 
-    // Nothing removed on the refusal path.
-    expect(await readFile(join(outDir, "package", "user-sentinel.txt"), "utf8")).toBe("user data");
-  }, 60_000);
+function hostileInput(input: Record<string, unknown>): Parameters<typeof runTemplateToCutConnector>[0] {
+  return input as unknown as Parameters<typeof runTemplateToCutConnector>[0];
+}
 
-  it("overwrites only when the caller explicitly asks", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-connector-own-"));
-    tempDirs.push(outDir);
-    await mkdir(join(outDir, "package"), { recursive: true });
-    await writeFile(join(outDir, "package", "user-sentinel.txt"), "user data", "utf8");
+function installSuccessfulPrivateProducers(): void { privateFaults.preview = successfulPreview; privateFaults.final = successfulFinal; }
 
-    // The subject here is the guard, not the render: assert it does not REFUSE, and that the
-    // overwrite the caller explicitly asked for actually happened.
-    await runTemplateToCutConnector({
-      packageRoot: resolve("../../templates/shellx-product-pack/feature-announcement"),
-      values: {},
-      outDir,
-      previewLane: "auto",
-      renderLane: "ffmpeg",
-      dryRunRender: true,
-      force: true,
-      cutImportMode: "auto"
-    }).catch((error: { code?: string }) => {
-      expect(error.code).not.toBe("output_dir_not_empty");
-    });
+async function successfulPreview(pkg: MotionPackage, options: { outputPath: string; atMs: number }) {
+  const bytes = Buffer.from("p2a-preview");
+  await mkdir(dirname(options.outputPath), { recursive: true, mode: 0o700 });
+  await writeFile(options.outputPath, bytes);
+  const sha256 = digest(bytes), tree = requiredTree(pkg);
+  return { output: { path: options.outputPath, sha256 }, receipt: makeReceipt(pkg, "preview.frame", "browser", { path: options.outputPath, sha256, atMs: options.atMs }, tree) };
+}
 
-    await expect(readFile(join(outDir, "package", "user-sentinel.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-  }, 60_000);
-});
+async function successfulFinal(input: { pkg: MotionPackage; outputPath: string; frameLane: "browser" }) {
+  const bytes = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from("ftypisom\u0000\u0000\u0002\u0000isomiso2")]);
+  await mkdir(dirname(input.outputPath), { recursive: true, mode: 0o700 });
+  await writeFile(input.outputPath, bytes);
+  const sha256 = digest(bytes), tree = requiredTree(input.pkg);
+  return { frameLane: input.frameLane, receipt: makeReceipt(input.pkg, "render.final", "ffmpeg", {
+    path: input.outputPath, sha256,
+    frameTransport: { delivery: "streamed", frameLane: "browser", producer: { frameLane: "browser", evidence: {
+      stableInputHashUnion: { "admitted-package-tree": tree }, stableInputHashKeysOmitted: 0,
+      stableInputHashConflictKeys: [], stableInputHashConflictKeysOmitted: 0
+    } } }
+  }, tree) };
+}
+
+function makeReceipt(pkg: MotionPackage, operation: string, lane: string, output: Record<string, unknown>, tree: string): OperationReceipt {
+  return { schema: "shellx-motion/receipt@1", id: `${operation}-${tree.slice(0, 12)}`, operation, status: "passed", packageId: pkg.manifest.id, inputHashes: { "admitted-package-tree": tree }, createdAt: "2026-08-21T12:00:00.000Z", lane, output, warnings: [] };
+}
+
+function requiredTree(pkg: MotionPackage): string {
+  const tree = loadedPackageInputHashes(pkg)?.["admitted-package-tree"];
+  if (!tree) throw new Error("test expected a Core-minted admitted execution snapshot");
+  return tree;
+}
+function digest(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
+async function readJson(path: string): Promise<any> { return JSON.parse(await readFile(path, "utf8")); }
+
+async function makeDirectoryTreePrivate(root: string): Promise<void> {
+  await chmod(root, 0o700);
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.isDirectory()) await makeDirectoryTreePrivate(join(root, entry.name));
+  }
+}
