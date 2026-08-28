@@ -968,6 +968,7 @@ async function debugCommand(argv: string[], options: RunCliOptions = {}): Promis
     : undefined;
   const context = cliDebugDispatchContext({
     debugName, tier: tier.tier, actor: readCliActor(debugArgv, tier.tier), scratchRoot,
+    callerId: resolveCallerId(debugArgv, options) ?? "cli:local",
     cliHostReceiptStore, cliReceiptsRoot, cliDefaultPlatformReceiptsRoot,
     authoringRoots, trustedInputRoots, renderRoots, promptRuntime, agentRuntime,
     ffmpegRunner: options.ffmpegRunner, browserFrameRenderer: options.browserFrameRenderer,

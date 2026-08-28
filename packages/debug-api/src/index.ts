@@ -99,6 +99,7 @@ import {
   type TemplateValue
 } from "@shellx-motion/core";
 import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-browser"; import type { GpuActiveHardwareProbeResult, GpuEffectModuleUseAuthority } from "@shellx-motion/renderer-browser"; import type { DebugAgentScriptHostContext } from "./debug-agent-script-host-context.js"; import { writeContextReceipt, type DebugHostReceiptContext } from "./debug-host-receipt-writer.js"; import { selectDebugBrowserFrameRenderer } from "./debug-browser-frame-renderer-selection.js"; import { agentScriptBatchCopyRefusal } from "./agent-script-batch-refusal.js"; import { readDebugJson } from "./debug-json-read.js"; import { publishBrowserWorkflowJsonSidecar } from "./browser-workflow-sidecar-publication.js";
+import { applyRenderLifecycleOwner, renderLifecycleReceiptVisible } from "./render-lifecycle-ownership.js";
 import { debugBatchOutputTopologyError, prepareDebugBatchOutput } from "./batch-output-admission.js";
 import { inspectDebugBatchResumeOwner, type DebugBatchResumeOutput } from "./batch-resume-ownership.js";
 import {
@@ -281,11 +282,10 @@ export interface MotionDebugContext extends DebugAgentScriptHostContext, DebugHo
   /**
    * Stable owner identity for the jobs this dispatch starts.
    *
-   * Defaults to `${transport}:${label}` derived from {@link actor} when the host does not supply
-   * one, which is stable across a host's processes in a way a pid or per-connection session id is
-   * not. A host that runs several independent workspaces should set it explicitly
-   * (`"cut:workspace-7"`), because that is the granularity at which its agents see each other's
-   * work. See docs/public/host-integration.md.
+   * The boundary host supplies this independently of the actor label, which is attribution rather
+   * than authority. Direct CLI and local-SDK hosts provide stable local defaults; a host that runs
+   * several independent workspaces should set it explicitly (`"cut:workspace-7"`), because that is
+   * the granularity at which its agents see each other's work. See docs/public/host-integration.md.
    */
   callerId?: string;
   /** Host-selected cross-caller job visibility; defaults false and is not a permission tier. */
@@ -561,6 +561,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
   if (refusal) return refusal;
   if (stableReceiptStoreRequired(command, args, context) && !hasStableReceiptStoreCapability(context.stableReceiptStorePlatform, context.stableReceiptStoreProcSelfFdUsable)) return stableReceiptStoreCapabilityUnavailable(command, context);
   const browserRenderer = selectDebugBrowserFrameRenderer(context.browserFrameRenderer, context.agentScriptAuthority);
+  const lifecycleCallerId = dispatchCallerId(context);
   const coordinatedJobs = coordinatedJobDomainServices({
     jobView: context.jobView, jobCoordinator: context.jobCoordinator,
     injectedBrowserRenderer: browserRenderer.injectedForFrameTransport, gpuFinalExecutionAvailable: context.gpuFinalExecutionAvailable === true, callerId: dispatchCallerId(context),
@@ -758,12 +759,15 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     // Platform readiness names the same injected FFmpeg and host-owned GPU evidence its renderer uses.
     ...(context.ffmpegRunner ? { platformRequirementsRunner: context.ffmpegRunner } : {}), ...(context.gpuHardwareProof !== undefined ? { gpuHardwareProof: context.gpuHardwareProof } : {}), ...(context.gpuHardwareProbeRunner ? { gpuHardwareProbeRunner: context.gpuHardwareProbeRunner } : {}), ...(context.scratchRoot ? { gpuHardwareProbeScratchRoot: context.scratchRoot } : {}),
     createPackage: async (input) => await createMotionPackage(input) as unknown as Record<string, unknown>,
-    jobCallerId: dispatchCallerId(context),
+    jobCallerId: lifecycleCallerId,
     jobCrossCallerScopeGranted: context.crossCallerJobScope === true,
+    lifecycleCallerId,
+    lifecycleCrossCallerScopeGranted: context.crossCallerJobScope === true,
     readRenderLifecycleState: async (root) => {
       const entries = root ? await readReceiptEntries(root) : [];
-      const controls = renderControlIndex(entries);
-      const statusJobs = entries
+      const visibleEntries = entries.filter((entry) => renderLifecycleReceiptVisible(entry.receipt, lifecycleCallerId, context.crossCallerJobScope === true));
+      const controls = renderControlIndex(visibleEntries);
+      const statusJobs = visibleEntries
         .filter((entry) => isRenderJobReceipt(entry.receipt))
         .map((entry) => renderStatusJob(entry, controls));
       return {
@@ -777,9 +781,10 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       const entry = findReceiptEntryById(entries, receiptId);
       if (!entry) return { kind: "missing" as const };
       if (!isRenderJobReceipt(entry.receipt)) return { kind: "not_render" as const };
+      if (!renderLifecycleReceiptVisible(entry.receipt, lifecycleCallerId, context.crossCallerJobScope === true)) return { kind: "not_visible" as const };
       if (!entry.snapshot) return { kind: "missing" as const };
       await context.receiptControlTargetTestHook?.({ kind: "render", receiptsRoot: root, receiptId });
-      const controls = renderControlIndex(entries);
+      const controls = renderControlIndex(entries.filter((candidate) => renderLifecycleReceiptVisible(candidate.receipt, lifecycleCallerId, context.crossCallerJobScope === true)));
       const job = renderStatusJob(entry, controls);
       return {
         kind: "render" as const,
@@ -926,7 +931,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     readReceipt: readReceiptFile,
     readJson: readDebugJson,
     receiptActor: context.actor,
-    writeReceipt: (root, receipt) => writeContextReceipt(context, root, applyReceiptActor(receipt, context.actor), writeReceiptFile),
+    writeReceipt: (root, receipt) => writeContextReceipt(context, root, applyReceiptActor(applyRenderLifecycleOwner(receipt, lifecycleCallerId), context.actor), writeReceiptFile),
     writeJson: writeJsonFile
   });
   if (domainResult) return domainResult;
@@ -1036,7 +1041,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       await publication.publishFile(await publication.verifyFile());
       published = true;
       remapPublicationPaths(receipt, publication.stagingPath, outputPath); remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(receipt, context.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), context.actor)) : undefined;
       return {
         ok: true,
         receiptId: receipt.id,
@@ -1170,7 +1175,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       published = true;
       remapPublicationPaths(receipt, publication.stagingPath, outputPath);
       remapPublicationPaths(framePass.frameReceipt, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(receipt, context.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), context.actor)) : undefined;
       return {
         ok: true, receiptId: receipt.id,
         visibleState: { panel: "receipts", operation: "render.final", packageId: pkg.manifest.id, outputPath, status: receipt.status },
@@ -1228,7 +1233,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             activeScriptSessionAvailable: browserRenderer.activeScriptSessionAvailable,
             ...(browserRenderer.sessionFactory ? { browserSessionFactory: browserRenderer.sessionFactory } : {})
           },
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor))
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor))
         });
       }
       const nativeRefusal = frameLane === "native" ? nativeFrameLaneRefusal(pkg, frameLane, "delivery") : null;
@@ -1250,7 +1255,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
             if (qualityCheck.ok) return { qualityCheck }; redactAbortedFinalOutputEvidence(receipt, { code: qualityCheck.error.code, message: qualityCheck.error.message }); const failed = abortedQualityCheckEvidence(qualityCheck);
             return { qualityCheck: failed, failure: debugRenderQualityManifestFailure({ lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath, receipt, qualityManifestPath, qualityCheck: failed, extra: { frameTransport: transport } }) };
           }} : {}),
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor))
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor))
         });
       }
       if (frameLane === "gpu") return invalidArgs("GPU final rendering requires the strict streamed FFmpeg path and never falls back to materialized frames.");
@@ -1372,7 +1377,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           framePass,
           receiptsRoot,
           actor: renderContext.actor,
-          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(receipt, actor)),
+          persistReceipt: async (root, receipt, actor) => await writeReceiptFile(root, applyReceiptActor(applyRenderLifecycleOwner(receipt, dispatchCallerId(context)), actor)),
           frameLane,
           preset: ffmpegPreset,
           packageId: pkg.manifest.id,
@@ -1430,7 +1435,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       await publication.publishFile(await publication.verifyFile());
       published = true;
       remapPublicationPaths(encoded, publication.stagingPath, outputPath);
-      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(encoded.receipt, renderContext.actor)) : undefined;
+      const receiptPath = receiptsRoot ? await writeReceiptFile(receiptsRoot, applyReceiptActor(applyRenderLifecycleOwner(encoded.receipt, dispatchCallerId(renderContext)), renderContext.actor)) : undefined;
 
       return {
         ok: true,

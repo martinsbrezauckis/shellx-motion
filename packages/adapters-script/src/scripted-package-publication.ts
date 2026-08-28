@@ -9,6 +9,7 @@ import {
   type OutputDirectoryTransactionExpectedInventory
 } from "@shellx-motion/core";
 import type { ScriptedMotionExport } from "./index.js";
+import { normalizeBoundedScriptedPackageJson } from "./scripted-video-admission.js";
 
 export interface WriteScriptedMotionPackageOptions {
   packageDir: string;
@@ -77,7 +78,9 @@ interface ScriptedPackageContentInventory {
 
 function jsonPackageFile(relativePath: string, value: unknown): ScriptedPackageFile {
   const normalizedPath = normalizedPackagePath(relativePath);
-  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const maxJsonBytes = DEFAULT_HOST_INTERCHANGE_LIMITS.maxFileBytes - Buffer.byteLength("\n", "utf8");
+  const normalized = normalizeBoundedScriptedPackageJson(value, `Script package ${normalizedPath}`, maxJsonBytes);
+  const bytes = Buffer.from(`${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   return { relativePath: normalizedPath, bytes, sha256: hashBuffer(bytes), label: `Script package ${normalizedPath}` };
 }
 

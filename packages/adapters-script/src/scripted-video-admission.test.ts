@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertScriptedFramesToMotionPackage } from "./index.js";
+import { convertScriptedFramesToMotionPackage, normalizeScriptedVideoInput } from "./index.js";
 
 describe("scripted-video admission bounds", () => {
   it("checks the raw frame count before mapping untrusted frame entries", () => {
@@ -110,7 +110,46 @@ describe("scripted-video admission bounds", () => {
       }))
     })).toThrow("Scripted video supports at most 65536 generated keyframes across frames.");
   });
+
+  it("bounds retained text and normalizes bounded template variables before later hashing", () => {
+    expect(() => convertScriptedFramesToMotionPackage({
+      ...scriptedVideo(),
+      frames: [{ id: "long", title: "x".repeat(16 * 1024 + 1), durationMs: 1000 }]
+    })).toThrow("frames[0].title exceeds the 16384-byte scripted-video string limit.");
+
+    expect(() => convertScriptedFramesToMotionPackage({
+      ...scriptedVideo(),
+      frames: [{
+        id: "deep", title: "Deep", durationMs: 1000,
+        template: { id: "hint", engine: "test", variables: nestedTemplateVariables(9) }
+      }]
+    })).toThrow(/template\.variables.*depth limit/i);
+
+    const variables = { nested: { palette: ["cyan", "violet"] } };
+    const normalized = normalizeScriptedVideoInput({
+      ...scriptedVideo(),
+      frames: [{ id: "owned", title: "Owned", durationMs: 1000, template: { id: "hint", engine: "test", variables } }]
+    });
+    variables.nested.palette[0] = "mutated";
+    expect(normalized.frames[0]?.template?.variables).toEqual({ nested: { palette: ["cyan", "violet"] } });
+  });
+
+  it("hashes only normalized scripted fields, not ignored caller object graphs", () => {
+    const baseline = convertScriptedFramesToMotionPackage(scriptedVideo());
+    const result = convertScriptedFramesToMotionPackage({
+      ...scriptedVideo(),
+      ignored: { toJSON: () => { throw new Error("raw input must not be hashed"); } }
+    });
+
+    expect(result.receipt.inputHashes["scripted-video.json"]).toBe(baseline.receipt.inputHashes["scripted-video.json"]);
+  });
 });
+
+function nestedTemplateVariables(depth: number): Record<string, unknown> {
+  let value: Record<string, unknown> = { value: "leaf" };
+  for (let index = 0; index < depth; index += 1) value = { nested: value };
+  return value;
+}
 
 function scriptedVideo(): Record<string, unknown> {
   return {

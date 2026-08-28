@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildSourceImportDocument, loadedPackageInputHashes, PublicationCommitUncertainError, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
-import { assertP2BClosedTreeCapacity, assertP2BPathlessExecutionInput } from "./p2b-connector-delivery";
+import { assertP2BClosedTreeCapacity, assertP2BPathlessExecutionInput, P2B_MAX_SCRIPT_INPUT_BYTES } from "./p2b-connector-delivery";
 
 const faults = vi.hoisted(() => ({
   preview: undefined as undefined | ((pkg: any, options: any) => Promise<any>),
@@ -246,6 +246,27 @@ describe.runIf(process.platform === "linux")("Canvas/Script/Source P2B atomic co
     expect(frameReads).toBe(1);
     expect(motionText).toContain("Accessor admitted");
     expect(motionText).not.toContain("Accessor changed");
+  });
+
+  it("refuses oversized Script JSON before parsing or creating a P2B delivery", async () => {
+    const { root, sourceDir, outDir } = await fixture();
+    const scriptPath = join(sourceDir, "oversized-script.json");
+    await writeFile(scriptPath, Buffer.alloc(P2B_MAX_SCRIPT_INPUT_BYTES + 1, 0x20));
+
+    await expect(trusted(root, () => runScriptToCutConnector({ scriptPath, outDir })))
+      .rejects.toThrow("Scripted-video input exceeds its byte limit");
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(faults.stagingRoots).toEqual([]);
+  });
+
+  it("refuses oversized inline Script text before its JSON serialization", async () => {
+    const { root, outDir } = await fixture();
+    const input = scriptedVideo("x".repeat(16 * 1024 + 1));
+
+    await expect(trusted(root, () => runScriptToCutConnector({ script: input, outDir })))
+      .rejects.toThrow("frames[0].title exceeds the 16384-byte scripted-video string limit.");
+    await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(faults.stagingRoots).toEqual([]);
   });
 
   it("refuses every public legacy selector/callback surface before a Canvas, Script, or Source stage", async () => {

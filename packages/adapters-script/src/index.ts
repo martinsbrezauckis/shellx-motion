@@ -18,6 +18,8 @@ import {
   assertScriptedVideoArrayEntryLimit,
   assertScriptedVideoGeneratedWork,
   assertScriptedVideoMetadataAdmission,
+  assertScriptedVideoString,
+  normalizeScriptedTemplateVariables,
 } from "./scripted-video-admission.js";
 
 export type { WriteScriptedMotionPackageOptions, WrittenScriptedMotionPackage } from "./scripted-package-publication.js";
@@ -36,7 +38,7 @@ export interface ScriptedMotionExport {
 
 type JsonRecord = Record<string, unknown>;
 
-interface ScriptedVideo {
+export interface ScriptedVideo {
   schema: "shellx-motion/scripted-video@1";
   id: string;
   name: string;
@@ -117,7 +119,7 @@ const MAX_FRAME_COUNT = 120;
 const MAX_TOTAL_DURATION_MS = 600_000;
 
 export function convertScriptedFramesToMotionPackage(input: unknown, options: ConvertScriptedFramesOptions = {}): ScriptedMotionExport {
-  const scripted = parseScriptedVideo(input);
+  const scripted = normalizeScriptedVideoInput(input);
   assertScriptedVideoGeneratedWork(scripted.frames);
   const slug = slugId(scripted.id);
   const packageId = `pkg_script_${slug}`;
@@ -192,7 +194,7 @@ export function convertScriptedFramesToMotionPackage(input: unknown, options: Co
       storyboard: storyboardSummary,
       createdAt,
       inputPath: options.inputPath ?? DEFAULT_INPUT_PATH,
-      inputHash: hashCanonical(input)
+      inputHash: hashCanonical(scripted)
     })
   };
 }
@@ -794,7 +796,8 @@ function createScriptReceipt(input: {
   };
 }
 
-function parseScriptedVideo(input: unknown): ScriptedVideo {
+/** Normalize the closed scripted-video schema before a caller serializes or retains it. */
+export function normalizeScriptedVideoInput(input: unknown): ScriptedVideo {
   const root = expectRecord(input, "scripted video");
   const schema = expectString(root, "schema", "scripted video");
   if (schema !== "shellx-motion/scripted-video@1") {
@@ -896,8 +899,7 @@ function parseTemplateHint(value: unknown, path: string): ScriptedTemplateHint |
     id: expectString(record, "id", path),
     engine: expectString(record, "engine", path)
   };
-  const variables = optionalRecord(record, "variables", path);
-  if (variables !== undefined) template.variables = variables;
+  if (record.variables !== undefined) template.variables = normalizeScriptedTemplateVariables(record.variables, `${path}.variables`);
   return template;
 }
 
@@ -1008,7 +1010,8 @@ function isSourceDerivedStoryboard(workflow: string, intent: string | undefined)
 }
 
 function expectRecord(input: unknown, path: string): JsonRecord {
-  if (typeof input === "object" && input !== null && !Array.isArray(input)) return Object.fromEntries(Object.entries(input));
+  if (typeof input === "object" && input !== null && !Array.isArray(input)
+    && (Object.getPrototypeOf(input) === Object.prototype || Object.getPrototypeOf(input) === null)) return input as JsonRecord;
   throw new Error(`Expected ${path} to be an object.`);
 }
 
@@ -1020,7 +1023,7 @@ function expectArray(input: JsonRecord, key: string, path: string): unknown[] {
 
 function expectString(input: JsonRecord, key: string, path: string): string {
   const value = input[key];
-  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "string" && value.length > 0) return assertScriptedVideoString(value, `${path}.${key}`);
   throw new Error(`Expected ${path}.${key} to be a non-empty string.`);
 }
 
@@ -1039,7 +1042,7 @@ function expectIntegerInRange(input: JsonRecord, key: string, path: string, min:
 function optionalString(input: JsonRecord, key: string, path: string): string | undefined {
   if (!(key in input)) return undefined;
   const value = input[key];
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return assertScriptedVideoString(value, `${path}.${key}`);
   throw new Error(`Expected ${path}.${key} to be a string.`);
 }
 
@@ -1071,18 +1074,13 @@ function optionalEffectShape(input: JsonRecord, key: string, path: string): Scri
   throw new Error(`${path}.${key} must be one of: rect, ellipse, star.`);
 }
 
-function optionalRecord(input: JsonRecord, key: string, path: string): JsonRecord | undefined {
-  if (!(key in input)) return undefined;
-  return expectRecord(input[key], `${path}.${key}`);
-}
-
 function optionalStringArray(input: JsonRecord, key: string, path: string, collection: "assetRefs" | "tags"): string[] {
   if (!(key in input)) return [];
   const value = input[key];
   if (!Array.isArray(value)) throw new Error(`Expected ${path}.${key} to be an array.`);
   assertScriptedVideoArrayEntryLimit(value, `${path}.${key}`, collection);
   return value.map((entry, index) => {
-    if (typeof entry === "string") return entry;
+    if (typeof entry === "string") return assertScriptedVideoString(entry, `${path}.${key}[${index}]`);
     throw new Error(`Expected ${path}.${key}[${index}] to be a string.`);
   });
 }

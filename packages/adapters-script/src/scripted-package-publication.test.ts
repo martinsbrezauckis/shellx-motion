@@ -139,6 +139,37 @@ describe("Script complete-package publication", () => {
     await expect(stat(packageDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  itLinux("refuses an oversized package value before whole-document JSON serialization", async () => {
+    const root = await workspace();
+    const packageDir = join(root, "oversized-package");
+    const scripted = compiled();
+    scripted.motion.layers[0]!.text = "x".repeat(64 * 1024 + 1);
+
+    await expect(trusted(root, () => writeScriptedMotionPackage(scripted, { packageDir })))
+      .rejects.toThrow("exceeds the 65536-byte Script package JSON string limit.");
+    await expect(stat(packageDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  itLinux("refuses accessor-backed package data without invoking it", async () => {
+    const root = await workspace();
+    const packageDir = join(root, "accessor-package");
+    const scripted = compiled();
+    let reads = 0;
+    Object.defineProperty(scripted.motion, "layers", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? [] : [{ text: "x".repeat(17 * 1024 * 1024) }];
+      }
+    });
+
+    await expect(trusted(root, () => writeScriptedMotionPackage(scripted, { packageDir })))
+      .rejects.toThrow("accessors are not permitted");
+    expect(reads).toBe(0);
+    await expect(stat(packageDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.runIf(process.platform !== "linux")("refuses the unsupported closed-tree root without a public package", async () => {
     const root = await workspace();
     const packageDir = join(root, "unsupported-root");

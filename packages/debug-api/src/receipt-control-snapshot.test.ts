@@ -42,6 +42,7 @@ describe("receipt control target snapshots", () => {
 
         const result = await dispatchDebugCommand(control.command, { receiptsRoot, receiptId }, {
           tier: control.tier,
+          ...(control.operation === "render.final" ? { callerId: "snapshot-operator", crossCallerJobScope: true } : {}),
           receiptControlTargetTestHook: async () => {
             await rename(nested, held);
             await mkdir(nested);
@@ -78,7 +79,10 @@ describe("receipt control target snapshots", () => {
         const bytes = invalidUtf8InsideJsonString(jobReceipt(receiptId, control.operation, control.status, "receipt-utf8-sentinel"), "receipt-utf8-sentinel");
         await writeFile(targetPath, bytes);
 
-        const result = await dispatchDebugCommand(control.command, { receiptsRoot, receiptId }, { tier: control.tier });
+        const result = await dispatchDebugCommand(control.command, { receiptsRoot, receiptId }, {
+          tier: control.tier,
+          ...(control.operation === "render.final" ? { callerId: "snapshot-operator", crossCallerJobScope: true } : {})
+        });
 
         expect(result).toEqual({
           ok: false,

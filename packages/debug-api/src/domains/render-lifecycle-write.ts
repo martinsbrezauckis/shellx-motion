@@ -2,11 +2,13 @@
 import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import type { StableReceiptSnapshot } from "../receipt-store-stable-reader.js";
+import { renderLifecycleReceiptOwner } from "../render-lifecycle-ownership.js";
 import { stringArg } from "./args.js";
 
 export type RenderControlTarget =
   | { kind: "missing" }
   | { kind: "not_render" }
+  | { kind: "not_visible" }
   | {
       kind: "render";
       receipt: OperationReceipt;
@@ -19,6 +21,10 @@ export type RenderControlTarget =
 
 export interface RenderLifecycleWriteServices {
   receiptsRoot?: string;
+  /** Host-authenticated logical caller; never derived from command input. */
+  lifecycleCallerId?: string;
+  /** Host-operator grant for the exceptional cross-caller historical-control route. */
+  lifecycleCrossCallerScopeGranted?: boolean;
   readRenderControlTarget?: (receiptsRoot: string, receiptId: string) => Promise<RenderControlTarget>;
   writeReceipt?: (root: string, receipt: OperationReceipt) => Promise<string>;
 }
@@ -34,12 +40,16 @@ export async function dispatchRenderLifecycleWriteCommand(
   const reason = stringArg(args, "reason") ?? undefined;
   if (!receiptsRoot) return invalidArgs(`${command} requires receiptsRoot.`);
   if (!receiptId) return invalidArgs(`${command} requires receiptId.`);
+  if (!services.lifecycleCallerId?.trim()) {
+    return ownerPrincipalUnavailable();
+  }
   if (!services.readRenderControlTarget || !services.writeReceipt) {
     return capabilityUnavailable("Render lifecycle control persistence is unavailable.");
   }
   const target = await services.readRenderControlTarget(receiptsRoot, receiptId);
   if (target.kind === "missing") return invalidArgs(`Render receipt not found: ${receiptId}.`);
   if (target.kind === "not_render") return invalidArgs(`Receipt is not a render job: ${receiptId}.`);
+  if (target.kind === "not_visible") return notVisible();
   return command === "motion.render.cancel"
     ? cancel(receiptsRoot, target, reason, services)
     : retry(receiptsRoot, target, reason, services);
@@ -55,6 +65,7 @@ async function cancel(
     return invalidArgs(`Cannot cancel ${target.state} render job: ${target.receipt.id}.`);
   }
   const output = {
+    ...(renderLifecycleReceiptOwner(target.receipt) ? { callerId: renderLifecycleReceiptOwner(target.receipt) } : {}),
     targetReceiptId: target.receipt.id,
     targetReceiptPath: target.path,
     targetOperation: target.receipt.operation,
@@ -98,6 +109,7 @@ async function retry(
   }
   const retryAttempt = source.retryCount + 1;
   const output = {
+    ...(renderLifecycleReceiptOwner(source.receipt) ? { callerId: renderLifecycleReceiptOwner(source.receipt) } : {}),
     sourceReceiptId: source.receipt.id,
     sourceReceiptPath: source.path,
     sourceOperation: source.receipt.operation,
@@ -142,4 +154,28 @@ function invalidArgs(message: string): MotionDebugResult {
 
 function capabilityUnavailable(message: string): MotionDebugResult {
   return { ok: false, error: { code: "capability_unavailable", message, suggestedAction: "Configure the required host capability and retry." }, warnings: [] };
+}
+
+function ownerPrincipalUnavailable(): MotionDebugResult {
+  return {
+    ok: false,
+    error: {
+      code: "capability_unavailable",
+      message: "Render lifecycle control requires a server-authenticated owner principal.",
+      suggestedAction: "Ask the host operator to use an authenticated Motion transport or configure a trusted in-process caller identity."
+    },
+    warnings: []
+  };
+}
+
+function notVisible(): MotionDebugResult {
+  return {
+    ok: false,
+    error: {
+      code: "permission_denied",
+      message: "Render receipt is not visible to this caller.",
+      suggestedAction: "Use the caller that created the render, or ask the host operator for an explicit cross-caller lifecycle grant."
+    },
+    warnings: []
+  };
 }

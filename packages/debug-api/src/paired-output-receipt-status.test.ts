@@ -35,11 +35,11 @@ describeQualifiedLinuxGpuPublication("paired delivery receipt status", () => {
     };
     await writeFile(receiptPath, JSON.stringify(receipt), "utf8");
 
-    await expect(dispatchDebugCommand("motion.render.status", { receiptsRoot: root }, { tier: "read_motion" }))
+    await expect(dispatchDebugCommand("motion.render.status", { receiptsRoot: root }, { tier: "read_motion", callerId: "paired-operator", crossCallerJobScope: true }))
       .resolves.toMatchObject({ ok: true, result: { jobCount: 0 } });
 
     await writeFile(outputPath, bytes, "utf8");
-    await expect(dispatchDebugCommand("motion.render.status", { receiptsRoot: root }, { tier: "read_motion" }))
+    await expect(dispatchDebugCommand("motion.render.status", { receiptsRoot: root }, { tier: "read_motion", callerId: "paired-operator", crossCallerJobScope: true }))
       .resolves.toMatchObject({ ok: true, result: { jobCount: 1, jobs: [expect.objectContaining({ receiptId: "paired-status" })] } });
   });
 });

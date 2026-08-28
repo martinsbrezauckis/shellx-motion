@@ -1,11 +1,12 @@
 import { dirname } from "node:path";
+import { normalizeScriptedVideoInput } from "@shellx-motion/adapters-script";
 import type { CutRenderedMediaPlacement } from "@shellx-motion/adapters-cut";
 import { hashBuffer, readBoundedStableFile } from "@shellx-motion/core";
 import type { ConnectorArtifact } from "./artifacts";
 import { throwIfConnectorAborted } from "./connector-cancellation";
 import { createPrivateConnectorDelivery } from "./connector-delivery";
 import { resolveConnectorPath } from "./path-utils";
-import { assertP2BExternalInput, assertP2BLinuxBeforeInput, P2B_MAX_MEDIA_BYTES } from "./p2b-connector-delivery";
+import { assertP2BExternalInput, assertP2BLinuxBeforeInput, P2B_MAX_SCRIPT_INPUT_BYTES } from "./p2b-connector-delivery";
 import { materializeP2BScriptToCut } from "./script-to-cut-materializer";
 
 /** P2B public input: real Browser-to-FFmpeg rendered media only. */
@@ -68,12 +69,13 @@ async function readP2BScriptInput(input: ScriptToCutConnectorInput): Promise<{ l
   const hasInline = input.script !== undefined;
   if (hasPath === hasInline) throw new Error("Script-to-Cut requires exactly one input source: scriptPath or inline script.");
   if (hasInline) {
-    // Serialize exactly once: callers can supply accessors or mutate their object after admission.
-    // The parsed owned bytes, never the caller object, are the sole converter input.
-    const encoded = JSON.stringify(input.script);
+    // Normalize before serialization: inline scripts are control data, and only this bounded,
+    // owned JSON value may reach the later parser and package/receipt paths.
+    const normalized = normalizeScriptedVideoInput(input.script);
+    const encoded = JSON.stringify(normalized);
     if (typeof encoded !== "string") throw new Error("Script-to-Cut inline script must have a defined JSON encoding.");
     const bytes = Buffer.from(`${encoded}\n`, "utf8");
-    if (bytes.byteLength > P2B_MAX_MEDIA_BYTES) throw new Error("Script-to-Cut inline script exceeds P2B's 64MiB input limit.");
+    if (bytes.byteLength > P2B_MAX_SCRIPT_INPUT_BYTES) throw new Error("Script-to-Cut inline script exceeds P2B's 1MiB input limit.");
     try {
       return { label: "inline-scripted-video.json", bytes, script: JSON.parse(encoded) };
     } catch (error) {
@@ -81,7 +83,7 @@ async function readP2BScriptInput(input: ScriptToCutConnectorInput): Promise<{ l
     }
   }
   const path = resolveConnectorPath(input.scriptPath!);
-  const source = await readBoundedStableFile(path, { label: "Scripted-video input", maxBytes: P2B_MAX_MEDIA_BYTES, withinRoot: dirname(path), requireSingleLink: true });
+  const source = await readBoundedStableFile(path, { label: "Scripted-video input", maxBytes: P2B_MAX_SCRIPT_INPUT_BYTES, withinRoot: dirname(path), requireSingleLink: true });
   try {
     return { label: "scripted-video.json", bytes: source.bytes, script: JSON.parse(source.bytes.toString("utf8")) };
   } catch (error) {
