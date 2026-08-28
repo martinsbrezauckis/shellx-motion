@@ -1,11 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { constants as fsConstants, existsSync } from "node:fs";
-import { lstat, open, readFile, realpath } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
-import { OutputDirectoryReservation, type RetainedDirectoryAuthority } from "@shellx-motion/core";
 import {
   createEffectModuleRegistryAuthority,
   createEffectModuleRegistryUseAuthority,
@@ -78,15 +76,19 @@ import {
   type WorkbenchPathPicker
 } from "./workbench-path-picker.js";
 import { effectModuleOperatorSessionCookie, handleEffectModuleWorkbenchRequest } from "./workbench-effect-modules.js";
+import {
+  createWorkbenchArtifactSessions,
+  establishWorkbenchArtifactSession,
+  mintWorkbenchArtifactHandle,
+  mintWorkbenchPosterHandle,
+  resolveWorkbenchArtifactHandle,
+  resolveWorkbenchPosterHandle,
+  workbenchArtifactSessionCookie,
+  workbenchArtifactSessionFromRequest
+} from "./workbench-artifact-session.js";
+import { readWorkbenchArtifact, readWorkbenchPoster, retainExistingArtifactRoots } from "./workbench-artifact-read.js";
 import { consumeWorkbenchBootstrapClaim } from "./workbench-bootstrap-claim.js";
 import type { MotionDebugServerSecurityContext, MotionPermissionTier } from "./debug-server-security.js";
-import {
-  WORKBENCH_POSTER_EXTENSIONS,
-  WORKBENCH_RASTER_CONTENT_TYPES,
-  WORKBENCH_RASTER_EXTENSIONS,
-  assessWorkbenchPosterPayload,
-  matchesWorkbenchImageMagic
-} from "./workbench-image.js";
 import {
   MOTION_SDK_SCHEMA,
   motionSdkCacheKey,
@@ -198,7 +200,6 @@ const CAPABILITY_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 16;
 const DEFAULT_MAX_WEBSOCKET_CONNECTIONS = 8;
 const MAX_OUTSTANDING_WEBSOCKET_FRAMES = 32;
-const MAX_WORKBENCH_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /**
  * Default documentation root: the single-source `docs/public` tree.
@@ -337,6 +338,7 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     ...(options.artifactRoots ?? []).map((root) => resolve(root))
   ])];
   const artifactRootAuthorities = await retainExistingArtifactRoots(configuredArtifactRoots);
+  const templateRootAuthorities = await retainExistingArtifactRoots(templateRoots);
   const security: MotionDebugServerSecurityContext = {
     capabilityToken,
     workbenchBootstrapToken, ...(options.onWorkbenchBootstrapClaim ? { onWorkbenchBootstrapClaim: options.onWorkbenchBootstrapClaim } : {}),
@@ -353,6 +355,8 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
     artifactRoots: artifactRootAuthorities.map((authority) => authority.path),
     artifactRootAuthorities,
     templateRoots,
+    templateRootAuthorities,
+    workbenchArtifactSessions: createWorkbenchArtifactSessions(),
     sdkTransport: options.sdkTransport ?? createLocalMotionSdkTransport(localSdkOptionsFromDebugContext({ ...serverContext, attestedRenderReuseProducerAuthority, callerId: serverContext.callerId?.trim() || jobOwnerPrincipal })),
     docsRoot: resolve(options.docsRoot ?? DEFAULT_DOCS_PUBLIC_ROOT),
     updateRepo,
@@ -541,6 +545,13 @@ async function handleRequest(
       return;
     }
 
+    if (request.method === "POST" && path === "/workbench/artifact-session") {
+      const session = establishWorkbenchArtifactSession(request, security.workbenchArtifactSessions);
+      response.setHeader("set-cookie", workbenchArtifactSessionCookie(session));
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+
     if (request.method === "POST" && path === "/workbench/select-path") {
       if (!hasJsonContentType(request)) {
         writeJson(response, 415, debugServerError("unsupported_media_type", "The file chooser requires application/json."));
@@ -564,9 +575,12 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && path === "/workbench/artifact") {
-      const artifactPath = requestUrl.searchParams.get("path");
+      const artifactPath = resolveWorkbenchArtifactHandle(
+        workbenchArtifactSessionFromRequest(request, security.workbenchArtifactSessions),
+        requestUrl.searchParams.get("handle")
+      );
       if (!artifactPath) {
-        writeJson(response, 400, debugServerError("invalid_artifact_path", "Workbench artifact requests require a path query parameter."));
+        writeJson(response, 403, debugServerError("artifact_not_visible", "Workbench artifact requests require an opaque handle from this browser session."));
         return;
       }
       const artifact = await readWorkbenchArtifact(artifactPath, security.artifactRoots, security.artifactRootAuthorities);
@@ -582,12 +596,15 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && path === "/workbench/poster") {
-      const posterPath = requestUrl.searchParams.get("path");
+      const posterPath = resolveWorkbenchPosterHandle(
+        workbenchArtifactSessionFromRequest(request, security.workbenchArtifactSessions),
+        requestUrl.searchParams.get("handle")
+      );
       if (!posterPath) {
-        writeJson(response, 400, debugServerError("invalid_poster_path", "Workbench poster requests require a path query parameter."));
+        writeJson(response, 403, debugServerError("poster_not_visible", "Workbench poster requests require an opaque handle from this browser session."));
         return;
       }
-      const poster = await readWorkbenchPoster(posterPath, security.artifactRoots, security.artifactRootAuthorities);
+      const poster = await readWorkbenchPoster(posterPath, security.templateRoots, security.templateRootAuthorities);
       if (!poster.ok) {
         writeJson(response, poster.status, debugServerError(poster.code, poster.message));
         return;
@@ -857,10 +874,18 @@ async function handleRequest(
       // answer "BY WHO" even when the caller supplied no createdBy. See inferredServerActor.
       actor: inferredServerActor({ wire: "http", protocol: "raw", grantedTier: resolvedTier.tier, sessionId: security.sessionId })
     });
-
+    const workbenchSession = workbenchArtifactSessionFromRequest(request, security.workbenchArtifactSessions);
+    const workbenchArtifact = previewArtifactHandleForResult(
+      command as MotionDebugCommand,
+      result,
+      workbenchSession
+    );
+    const workbenchPosters = posterHandlesForResult(command as MotionDebugCommand, result, workbenchSession);
     writeJson(response, statusForRawDebugResult(result), {
       ...result,
-      command
+      command,
+      ...(workbenchArtifact ? { workbenchArtifact: { handle: workbenchArtifact } } : {}),
+      ...(workbenchPosters.length > 0 ? { workbenchPosters } : {})
     });
   } catch (error) {
     const status = error instanceof RawDebugRequestBodyTooLargeError
@@ -1164,187 +1189,6 @@ async function handleWebSocketFrame(
   writeWebSocketText(socket, JSON.stringify(await handleJsonRpcRequest(payload, security, "websocket-json-rpc", connection)));
 }
 
-type BoundedArtifactRead =
-  | { ok: true; bytes: Buffer; extension: string }
-  | { ok: false; status: number; code: string; message: string };
-
-/**
- * Open a bounded, symlink-free regular file that resolves inside one of the
- * authenticated host artifact roots, running the TOCTOU-hardened
- * lstat/realpath/open/re-stat/read sequence shared by every workbench file
- * response. Callers own the per-type content gate (raster magic bytes, SVG
- * safety); this helper owns the filesystem-safety invariants so no reader can
- * weaken them.
- *
- * @param requestedPath Absolute host path supplied by the authenticated client.
- * @param roots Authenticated artifact roots the file must resolve inside.
- * @param options Allowed extensions and the error code/message for other types.
- * @returns The bounded file bytes plus its lowercased extension, or a typed error.
- */
-async function readBoundedArtifactBytes(
-  requestedPath: string,
-  roots: string[],
-  authorities: readonly RetainedDirectoryAuthority[],
-  options: { allowedExtensions: Set<string>; unsupportedCode: string; unsupportedMessage: string }
-): Promise<BoundedArtifactRead> {
-  const resolvedPath = resolve(requestedPath);
-  const extension = extname(resolvedPath).toLowerCase();
-  if (!isAbsolute(requestedPath) || !options.allowedExtensions.has(extension)) {
-    return { ok: false, status: 400, code: options.unsupportedCode, message: options.unsupportedMessage };
-  }
-  let canonicalPath: string;
-  let requestedFacts: Awaited<ReturnType<typeof lstat>>;
-  try {
-    await assertArtifactRootAuthorities(authorities);
-    [requestedFacts, canonicalPath] = await Promise.all([lstat(resolvedPath), realpath(resolvedPath)]);
-    if (!requestedFacts.isFile() || requestedFacts.isSymbolicLink() || requestedFacts.size > MAX_WORKBENCH_ARTIFACT_BYTES) {
-      return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench artifact must be a bounded regular file, not a symlink." };
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ok: false, status: 404, code: "artifact_not_found", message: "Workbench preview artifact was not found." };
-    }
-    return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench preview artifact could not be opened safely." };
-  }
-  let inside = false;
-  for (const root of roots) {
-    try {
-      const canonicalRoot = await realpath(root);
-      const rel = relative(canonicalRoot, canonicalPath);
-      if (rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))) {
-        inside = true;
-        break;
-      }
-    } catch {
-      // Missing/unreadable host roots do not widen artifact access.
-    }
-  }
-  if (!inside) {
-    return { ok: false, status: 403, code: "artifact_outside_roots", message: "Workbench preview artifact is outside authenticated host artifact roots." };
-  }
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  try {
-    handle = await openReadNoFollow(resolvedPath);
-    const opened = await handle.stat();
-    const [canonicalAfterOpen, pathAfterOpen] = await Promise.all([realpath(resolvedPath), lstat(resolvedPath)]);
-    if (!opened.isFile()
-      || pathAfterOpen.isSymbolicLink()
-      || canonicalAfterOpen !== canonicalPath
-      || opened.dev !== requestedFacts.dev
-      || opened.ino !== requestedFacts.ino
-      || pathAfterOpen.dev !== opened.dev
-      || pathAfterOpen.ino !== opened.ino
-      || opened.size > MAX_WORKBENCH_ARTIFACT_BYTES) {
-      return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench artifact changed before it could be opened safely." };
-    }
-    const bytes = await handle.readFile();
-    const openedAfter = await handle.stat();
-    const pathAfterRead = await lstat(resolvedPath);
-    if (bytes.byteLength !== opened.size
-      || openedAfter.dev !== opened.dev
-      || openedAfter.ino !== opened.ino
-      || openedAfter.size !== opened.size
-      || openedAfter.mtimeMs !== opened.mtimeMs
-      || pathAfterRead.isSymbolicLink()
-      || pathAfterRead.dev !== opened.dev
-      || pathAfterRead.ino !== opened.ino) {
-      return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench artifact changed while it was being read." };
-    }
-    await assertArtifactRootAuthorities(authorities);
-    return { ok: true, bytes, extension };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ok: false, status: 404, code: "artifact_not_found", message: "Workbench preview artifact was not found." };
-    }
-    return { ok: false, status: 400, code: "unsafe_artifact", message: "Workbench preview artifact could not be read safely." };
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-  }
-}
-
-/**
- * Read a bounded raster preview artifact (PNG/JPEG/GIF/WebP) and confirm its
- * bytes match the declared image type via a fixed magic-byte signature.
- */
-async function readWorkbenchArtifact(
-  requestedPath: string,
-  roots: string[],
-  authorities: readonly RetainedDirectoryAuthority[]
-): Promise<
-  | { ok: true; bytes: Buffer; contentType: string }
-  | { ok: false; status: number; code: string; message: string }
-> {
-  const read = await readBoundedArtifactBytes(requestedPath, roots, authorities, {
-    allowedExtensions: WORKBENCH_RASTER_EXTENSIONS,
-    unsupportedCode: "unsupported_artifact",
-    unsupportedMessage: "Workbench preview artifacts must be PNG, JPEG, GIF, or WebP images."
-  });
-  if (!read.ok) return read;
-  if (!matchesWorkbenchImageMagic(read.bytes, read.extension)) {
-    return { ok: false, status: 400, code: "artifact_magic_mismatch", message: "Workbench artifact bytes do not match the declared image type." };
-  }
-  return { ok: true, bytes: read.bytes, contentType: WORKBENCH_RASTER_CONTENT_TYPES[read.extension]! };
-}
-
-/**
- * Read a template poster. Packs ship posters as SVG (hand-authored vector
- * mockups) or PNG/JPEG (real rendered frames, which is what the shipped product
- * pack now contains); the raster preview endpoint refuses SVG by design, so
- * posters get their own reader that reuses the same bounded safe-file core and
- * then applies the gate that matches the format — SVG sanitisation for vector,
- * magic-byte identity for raster. See ./workbench-image.ts for that policy and
- * why the two formats cannot share one gate.
- */
-async function readWorkbenchPoster(
-  requestedPath: string,
-  roots: string[],
-  authorities: readonly RetainedDirectoryAuthority[]
-): Promise<
-  | { ok: true; bytes: Buffer; contentType: string; contentSecurityPolicy: string }
-  | { ok: false; status: number; code: string; message: string }
-> {
-  const read = await readBoundedArtifactBytes(requestedPath, roots, authorities, {
-    allowedExtensions: WORKBENCH_POSTER_EXTENSIONS,
-    unsupportedCode: "unsupported_poster",
-    unsupportedMessage: "Workbench template posters must be SVG, PNG, or JPEG images."
-  });
-  if (!read.ok) return read;
-  const assessed = assessWorkbenchPosterPayload(read.bytes, read.extension);
-  if (!assessed.ok) {
-    return { ok: false, status: 400, code: "unsafe_poster", message: assessed.message };
-  }
-  return { ok: true, bytes: read.bytes, ...assessed.payload };
-}
-
-async function assertArtifactRootAuthorities(authorities: readonly RetainedDirectoryAuthority[]): Promise<void> {
-  for (const authority of authorities) await authority.assertCurrent();
-}
-
-async function retainExistingArtifactRoots(roots: readonly string[]): Promise<readonly RetainedDirectoryAuthority[]> {
-  const authorities: RetainedDirectoryAuthority[] = [];
-  for (const root of roots) {
-    const existing = await lstat(root).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (!existing) continue;
-    authorities.push(await OutputDirectoryReservation.acquire(root, {
-      allowExistingContents: true, requireExisting: true, requireExclusiveChildAuthority: true
-    }));
-  }
-  return authorities;
-}
-
-async function openReadNoFollow(path: string) {
-  try {
-    return await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EINVAL" && code !== "ENOTSUP" && code !== "EOPNOTSUPP") throw error;
-    return open(path, fsConstants.O_RDONLY);
-  }
-}
-
 function setBaseHeaders(response: ServerResponse, allowedOrigin: string | null): void {
   if (allowedOrigin) response.setHeader("access-control-allow-origin", allowedOrigin);
   response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
@@ -1488,6 +1332,47 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value))
     : null;
+}
+
+/**
+ * Attach a browser-session handle only to the one Workbench preview command.
+ * Debug/MCP callers keep their normal result shape and may never turn an
+ * arbitrary path into a Workbench-readable artifact.
+ */
+function previewArtifactHandleForResult(
+  command: MotionDebugCommand,
+  result: MotionDebugResult,
+  session: ReturnType<typeof workbenchArtifactSessionFromRequest>
+): string | null {
+  if (command !== "motion.preview.frame" || !result.ok || !session) return null;
+  const output = objectRecord(objectRecord(result.result)?.output);
+  const path = typeof output?.path === "string" && output.path ? output.path : null;
+  return path ? mintWorkbenchArtifactHandle(session, path) : null;
+}
+
+/**
+ * Catalog entries are the only server-derived source for poster handles. A raw
+ * path parameter must never turn an authenticated browser into a filesystem
+ * reader, even when the path happens to sit inside a template collection.
+ */
+function posterHandlesForResult(
+  command: MotionDebugCommand,
+  result: MotionDebugResult,
+  session: ReturnType<typeof workbenchArtifactSessionFromRequest>
+): Array<{ packageRoot: string; handle: string }> {
+  if (command !== "motion.template.catalog" || !result.ok || !session) return [];
+  const templates = objectRecord(result.result)?.templates;
+  if (!Array.isArray(templates)) return [];
+  const handles: Array<{ packageRoot: string; handle: string }> = [];
+  for (const candidate of templates) {
+    const template = objectRecord(candidate);
+    const packageRoot = typeof template?.packageRoot === "string" && template.packageRoot ? template.packageRoot : null;
+    const preview = objectRecord(template?.preview) ?? objectRecord(objectRecord(template?.metadata)?.preview);
+    const poster = typeof preview?.poster === "string" && preview.poster ? preview.poster : null;
+    if (!packageRoot || !poster) continue;
+    handles.push({ packageRoot, handle: mintWorkbenchPosterHandle(session, resolve(packageRoot, poster)) });
+  }
+  return handles;
 }
 
 function closeServer(server: Server): Promise<void> {

@@ -2,7 +2,18 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { expandMotionPackageRows, filterMotionDataRows, loadDataRowsFile, loadMotionPackage, loadPackageDataRows, MAX_BATCH_QUALITY_ROWS, MAX_MOTION_DATA_ROWS_BYTES, parseMotionDataRows, parseMotionDataRowsCsv, type MotionPackage } from "./index";
+import {
+  expandMotionPackageRows,
+  filterMotionDataRows,
+  loadDataRowsFile,
+  loadMotionPackage,
+  loadPackageDataRows,
+  MAX_BATCH_QUALITY_ROWS,
+  MAX_MOTION_DATA_ROWS_BYTES,
+  parseMotionDataRows,
+  parseMotionDataRowsCsv,
+  type MotionPackage
+} from "./index";
 
 describe("motion data rows", () => {
   const fixtureRoot = resolve("../../fixtures/packages/batch-card");

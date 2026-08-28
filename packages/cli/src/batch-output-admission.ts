@@ -18,9 +18,10 @@ export type CliBatchOutputAdmission =
 export async function admitCliBatchOutput(outDir: string, resume: boolean): Promise<CliBatchOutputAdmission> {
   let batchOutput: OutputDirectoryReservation;
   try {
-    // Quality/workflow inputs may deliberately share this private root with generated children.
+    // A fresh batch owns a new empty tree. Only an explicit resume may adopt
+    // generated packages, media, and receipts that already exist here.
     batchOutput = await OutputDirectoryReservation.acquire(outDir, {
-      allowExistingContents: true,
+      allowExistingContents: resume,
       requireExclusiveChildAuthority: true
     });
   } catch (error) {

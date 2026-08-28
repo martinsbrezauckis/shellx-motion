@@ -142,6 +142,13 @@ typed template bindings, `replace.text` / `replace.media`, `layers.<id>` patches
 then `motion` document overrides. This lets compact rows drive ordinary template
 controls while retaining `layers.<id>` for deliberate low-level per-row changes.
 
+Batch data is bounded control-plane input: JSON and CSV stop at 256 data rows;
+row IDs, fields, nesting, and total row value bytes are limited; and
+prototype-sensitive keys are refused. Interpolation also has per-string,
+per-document, per-row, and aggregate byte budgets, checked before generated
+packages, receipts, or render jobs are written. Keep long prose, payloads, and
+unbounded collections in declared package assets rather than data-row tokens.
+
 ## Media slots and containment
 
 Read `authoringLoop.mediaSlots` before replacing media. Package-local `assets/`

@@ -1,5 +1,6 @@
 import type { MotionPackage } from "./types.js";
 import { readBoundedStableFile } from "./stable-file-read.js";
+import { parseBoundedPackageJsonBytes } from "./package-json-admission.js";
 
 const loadedPackageHashes = new WeakMap<MotionPackage, Readonly<Record<string, string>>>();
 export const PACKAGE_MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
@@ -17,7 +18,7 @@ export async function readStablePackageJson(
   // stable POSIX symlink or Windows junction. The stable reader canonicalizes only that root;
   // symlinked descendants and leaf files remain refused.
   const file = await readBoundedStableFile(path, { label, maxBytes, withinRoot: root, allowRootAlias: true });
-  return { value: JSON.parse(file.bytes.toString("utf8")), sha256: file.sha256 };
+  return { value: parseBoundedPackageJsonBytes(file.bytes, maxBytes, label), sha256: file.sha256 };
 }
 
 /** Attach loader-owned hashes without publishing a caller-forgeable MotionPackage field. */

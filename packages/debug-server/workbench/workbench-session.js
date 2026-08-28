@@ -111,6 +111,14 @@ export function createWorkbenchSession(options) {
       const response = await fetch("/debug/contracts", { headers: { authorization: `Bearer ${state.token}` } });
       const body = await response.json();
       if (!response.ok || body.ok !== true) throw new Error(text(object(body.error).message, "The local access key was rejected."));
+      // This non-path-bearing exchange gives the browser an HttpOnly session used
+      // only to redeem opaque preview handles returned by its own render calls.
+      // Manual Connect intentionally follows the same path as Start Motion.
+      const artifactSession = await fetch("/workbench/artifact-session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${state.token}` }
+      });
+      if (!artifactSession.ok) throw new Error("Motion could not establish the Workbench preview session.");
       state.grantedTier = text(body.grantedTier, "read_motion");
       state.contractsBody = object(body);
       state.commandPermission = new Map(list(body.contracts).map((contract) => [contract.command, contract.permission]));

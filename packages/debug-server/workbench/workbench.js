@@ -397,6 +397,14 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       const response = await fetch("/debug/contracts", { headers: { authorization: `Bearer ${state.token}` } });
       const body = await response.json();
       if (!response.ok || body.ok !== true) throw new Error(text(object(body.error).message, "The local access key was rejected."));
+      // The Inspector has its own Connect flow rather than the shared page
+      // controller. Establish the same HttpOnly browser session so manual
+      // Connect and Start Motion can redeem only their own preview handles.
+      const artifactSession = await fetch("/workbench/artifact-session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${state.token}` }
+      });
+      if (!artifactSession.ok) throw new Error("Motion could not establish the Workbench preview session.");
       sessionStorage.setItem("shellx-motion-capability", state.token);
       setConnected(true, text(body.grantedTier, "read_motion"));
       ui.connectDialog.close();
@@ -658,9 +666,10 @@ import { claimWorkbenchBootstrap } from "/workbench-session.js";
       const response = await api("motion.preview.frame", { packageRoot: state.packageRoot, lane, atMs: requestedAtMs }, "render_motion");
       const result = object(response.result);
       const output = object(result.output);
-      const path = text(output.path, text(result.outputPath, ""));
-      if (!path) throw new Error("Motion did not return a preview image.");
-      const artifact = await fetch(`/workbench/artifact?path=${encodeURIComponent(path)}`, { headers: { authorization: `Bearer ${state.token}` } });
+      const workbenchArtifact = object(response.workbenchArtifact);
+      const handle = text(workbenchArtifact.handle);
+      if (!handle) throw new Error("Motion did not return a Workbench preview handle.");
+      const artifact = await fetch(`/workbench/artifact?handle=${encodeURIComponent(handle)}`, { headers: { authorization: `Bearer ${state.token}` } });
       if (!artifact.ok) {
         const failure = await artifact.json().catch(() => null);
         throw new Error(text(object(failure?.error).message, "The preview image could not be loaded."));

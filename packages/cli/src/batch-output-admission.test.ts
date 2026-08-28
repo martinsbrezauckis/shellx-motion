@@ -9,6 +9,21 @@ const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
 
 describe("CLI batch retained-output admission", () => {
+  it("refuses a non-empty destination for a fresh batch without changing retained bytes", async () => {
+    const root = await scratch();
+    const outDir = join(root, "retained-batch-output");
+    const sentinelPath = join(outDir, "sentinel.txt");
+    const sentinel = "retained output must survive a fresh batch refusal\n";
+    await mkdir(outDir, { recursive: true, mode: 0o700 });
+    await writeFile(sentinelPath, sentinel, "utf8");
+
+    const result = await admitCliBatchOutput(outDir, false);
+
+    expect(result).toMatchObject({ ok: false, message: expect.stringMatching(/empty|existing/i) });
+    await expect(readFile(sentinelPath, "utf8")).resolves.toBe(sentinel);
+    await expect(readFile(join(outDir, "receipts", "batch-render.receipt.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.skipIf(process.platform === "win32")("refuses a sticky shared root before parsing a foreign preseeded resume receipt", async () => {
     const root = await scratch();
     const outDir = join(root, "shared-batch-output");

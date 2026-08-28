@@ -9,6 +9,7 @@ import type { RevealOpener } from "./workbench-reveal.js";
 import type { WorkbenchUpdateController } from "./workbench-update-controller.js";
 import type { UpdateFetch } from "./workbench-update.js";
 import type { EffectModuleWorkbenchSecurity } from "./workbench-effect-modules.js";
+import type { WorkbenchArtifactSessions } from "./workbench-artifact-session.js";
 
 export type MotionPermissionTier = MotionDebugContext["tier"];
 
@@ -35,6 +36,10 @@ export interface MotionDebugServerSecurityContext extends EffectModuleWorkbenchS
   artifactRootAuthorities: readonly RetainedDirectoryAuthority[];
   /** Agent reference collections authorized for bounded poster reads. */
   templateRoots: string[];
+  /** Exact startup identities behind templateRoots; posters never inherit general artifact roots. */
+  templateRootAuthorities: readonly RetainedDirectoryAuthority[];
+  /** Browser-session-owned opaque preview handles; never populated from request paths. */
+  workbenchArtifactSessions: WorkbenchArtifactSessions;
   agentSnapshotSource?: MotionAgentSnapshotResourceSource;
   /** Absolute docs/public root served by the workbench documentation viewer. */
   docsRoot: string;

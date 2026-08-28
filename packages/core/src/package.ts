@@ -20,6 +20,7 @@ import type {
   TemplateSuitability
 } from "./types";
 import { PACKAGE_MANIFEST_MAX_BYTES, PACKAGE_MOTION_MAX_BYTES, PACKAGE_TEMPLATE_MAX_BYTES, readStablePackageJson, rememberLoadedPackageHashes } from "./package-loaded-inputs"; import { readMotionScene3DAnimationDocumentRoot } from "./motion-scene3d-animation-document"; import { readMotionLayoutGapAnimationDocumentRoot } from "./motion-layout-gap-animation-document"; import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
+export const MAX_MOTION_DOCUMENT_LAYERS = 8_192;
 export async function loadMotionPackage(root: string): Promise<MotionPackage> {
   const packageRoot = resolve(root);
   const manifestFile = await readStablePackageJson(resolve(packageRoot, "manifest.json"), packageRoot, PACKAGE_MANIFEST_MAX_BYTES, "Package manifest"); const manifest = readPackageManifest(manifestFile.value);
@@ -49,16 +50,12 @@ export function resolvePackageAsset(pkg: Pick<MotionPackage, "root">, assetRef: 
   return resolved;
 }
 
-export async function hashPackageFile(path: string): Promise<string> {
-  return hashBuffer(await readFile(path));
-}
+export async function hashPackageFile(path: string): Promise<string> { return hashBuffer(await readFile(path)); }
 function assertPathInsidePackageRoot(root: string, candidate: string, assetRef: string): void {
   const normalizedRoot = resolve(root);
   const normalizedCandidate = resolve(candidate);
   const rootWithSep = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
-  if (normalizedCandidate !== normalizedRoot && !normalizedCandidate.startsWith(rootWithSep)) {
-    throw new Error(`Asset path escapes package root: ${assetRef}`);
-  }
+  if (normalizedCandidate !== normalizedRoot && !normalizedCandidate.startsWith(rootWithSep)) throw new Error(`Asset path escapes package root: ${assetRef}`);
 }
 export function readPackageManifest(value: unknown): PackageManifest {
   const record = readRecord(value);
@@ -341,6 +338,9 @@ export function readMotionDocument(value: unknown): MotionDocument {
   const provenance = readRecord(record.provenance);
   if (!provenance) throw new Error("Motion document provenance must be an object.");
   if (!Array.isArray(record.layers)) throw new Error("Motion document layers must be an array.");
+  if (record.layers.length > MAX_MOTION_DOCUMENT_LAYERS) {
+    throw new Error(`Motion document layers exceed the ${MAX_MOTION_DOCUMENT_LAYERS}-layer admission limit.`);
+  }
   const layers = record.layers.map((layer, index) => readMotionLayer(layer, index)); const scene3dAnimation = readMotionScene3DAnimationDocumentRoot(record.scene3dAnimation, { durationMs: record.durationMs, layers });
   const document = {
     ...record,

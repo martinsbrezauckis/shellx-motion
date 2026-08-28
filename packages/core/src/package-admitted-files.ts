@@ -1,5 +1,11 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { rememberLoadedPackageHashes } from "./package-loaded-inputs";
+import {
+  PACKAGE_MANIFEST_MAX_BYTES,
+  PACKAGE_MOTION_MAX_BYTES,
+  PACKAGE_TEMPLATE_MAX_BYTES,
+  rememberLoadedPackageHashes
+} from "./package-loaded-inputs";
+import { parseBoundedPackageJsonBytes } from "./package-json-admission";
 import { rememberAdmittedPackageExecutionSnapshot, type AdmittedPackageExecutionSnapshot } from "./package-admitted-execution-store";
 import { canonicalJsonSha256 } from "./canonical-json";
 import { hashBuffer } from "./receipts";
@@ -24,13 +30,13 @@ export function loadMotionPackageFromAdmittedFiles(
 ): MotionPackage {
   const packageRoot = resolve(root);
   const snapshot = privateAdmittedPackageExecutionSnapshot(files);
-  const manifestFile = readAdmittedPackageJson(snapshot, "manifest.json", "Package manifest");
+  const manifestFile = readAdmittedPackageJson(snapshot, "manifest.json", PACKAGE_MANIFEST_MAX_BYTES, "Package manifest");
   const manifest = readPackageManifest(manifestFile.value);
   const motionPath = resolvePackageAsset({ root: packageRoot }, manifest.motion);
-  const motionFile = readAdmittedPackageJson(snapshot, packageRelativePath(packageRoot, motionPath), "Motion document");
+  const motionFile = readAdmittedPackageJson(snapshot, packageRelativePath(packageRoot, motionPath), PACKAGE_MOTION_MAX_BYTES, "Motion document");
   const motion = readMotionDocument(motionFile.value);
   const templateFile = manifest.template
-    ? readAdmittedPackageJson(snapshot, packageRelativePath(packageRoot, resolvePackageAsset({ root: packageRoot }, manifest.template)), "Template document")
+    ? readAdmittedPackageJson(snapshot, packageRelativePath(packageRoot, resolvePackageAsset({ root: packageRoot }, manifest.template)), PACKAGE_TEMPLATE_MAX_BYTES, "Template document")
     : undefined;
   const template = templateFile ? readTemplateDocument(templateFile.value) : undefined;
 
@@ -53,11 +59,12 @@ export function loadMotionPackageFromAdmittedFiles(
 function readAdmittedPackageJson(
   snapshot: AdmittedPackageExecutionSnapshot,
   relativePath: string,
+  maxBytes: number,
   label: string
 ): { value: unknown; sha256: string } {
   const file = snapshot.read(relativePath);
   if (!file) throw new Error(`${label} is absent from the admitted package snapshot: ${relativePath}`);
-  return { value: JSON.parse(file.bytes.toString("utf8")), sha256: file.sha256 };
+  return { value: parseBoundedPackageJsonBytes(file.bytes, maxBytes, label), sha256: file.sha256 };
 }
 
 function privateAdmittedPackageExecutionSnapshot(
