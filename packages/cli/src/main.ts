@@ -1240,6 +1240,7 @@ async function promptCommand(argv: string[], options: RunCliOptions = {}): Promi
   const agentId = optionValue(argv, "--agent");
   const cwd = optionValue(argv, "--cwd");
   const receiptsRoot = optionValue(argv, "--receipts-root");
+  const callerIdForRun = resolveCallerId(argv, options) ?? "cli:local";
   const executeAgentCommands = hasFlag(argv, "--execute-agent-commands") || hasFlag(argv, "--execute");
   // No flag can substitute a stubbed agent: `--fake` made `prompt run` emit an `ok: true` receipt
   // pair over an agent that never ran (the tool-provenance invariant). A host that wants one injects it deliberately.
@@ -1310,10 +1311,12 @@ async function promptCommand(argv: string[], options: RunCliOptions = {}): Promi
   try {
     const result = await runMotionPrompt({ request, tier: tier.tier, agentId, packageId, cwd, runtime: promptRuntime, retention: retention.value, ...(options.promptNow ? { now: options.promptNow } : {}) });
     const persist = async (receipt: OperationReceipt) => {
-      if (retention.value.mode === "raw_request") await options.promptReceiptWriteTestHook?.(receipt);
+      const output = receipt.output && typeof receipt.output === "object" && !Array.isArray(receipt.output) ? receipt.output as Record<string, unknown> : {};
+      const ownedReceipt: OperationReceipt = { ...receipt, output: { ...output, callerId: callerIdForRun } };
+      if (retention.value.mode === "raw_request") await options.promptReceiptWriteTestHook?.(ownedReceipt);
       return stableReceiptRoot
-        ? await stableReceiptRoot.writeJson(`${safeFileToken(receipt.id)}.receipt.json`, receipt)
-        : await writeHostReceiptFile(receiptsRoot!, receipt);
+        ? await stableReceiptRoot.writeJson(`${safeFileToken(ownedReceipt.id)}.receipt.json`, ownedReceipt)
+        : await writeHostReceiptFile(receiptsRoot!, ownedReceipt);
     };
 
     if (result.ok) {

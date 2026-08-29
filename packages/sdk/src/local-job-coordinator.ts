@@ -22,6 +22,13 @@ export interface LocalMotionSdkRenderJob {
 }
 
 export async function submitLocalRender(input: MotionSdkCoordinatedRenderRequest, options: LocalMotionSdkOptions): Promise<LocalMotionSdkRenderJob> {
+  if (!options.callerId?.trim()) {
+    throw new LocalMotionSdkError(
+      "capability_unavailable",
+      "Local SDK coordinated rendering requires a trusted embedding-host callerId before a job can be queued.",
+      false
+    );
+  }
   const debug = await dispatchDebugCommand("motion.job.submit", {
     ...(input.jobId ? { jobId: input.jobId } : {}),
     packageRoot: resolve(input.packageRoot), outputPath: resolve(input.outputPath), preset: input.preset,

@@ -238,7 +238,9 @@ describe("local Motion SDK", () => {
       operations: [{ renderedMedia: { handle: rendered.output.artifactReference } }]
     });
     expect(cutPlan.receipt.inputHashes).toMatchObject({ artifactDescriptorSha256: rendered.output.artifactReference!.sha256, artifactOperationHash: rendered.cacheKey, manifestSha256: rendered.output.artifact!.packageLineage!.manifestSha256 });
-    expect(JSON.parse(await readFile(join(receiptsRoot, `${rendered.output.receiptId}.receipt.json`), "utf8")).inputHashes).toEqual({ operationHash: rendered.cacheKey, manifestSha256: rendered.output.artifact!.packageLineage!.manifestSha256, motionSha256: rendered.output.artifact!.packageLineage!.motionSha256 });
+    const persistedRenderReceipt = JSON.parse(await readFile(join(receiptsRoot, `${rendered.output.receiptId}.receipt.json`), "utf8"));
+    expect(persistedRenderReceipt.inputHashes).toEqual({ operationHash: rendered.cacheKey, manifestSha256: rendered.output.artifact!.packageLineage!.manifestSha256, motionSha256: rendered.output.artifact!.packageLineage!.motionSha256 });
+    expect(persistedRenderReceipt.output).toMatchObject({ callerId: "cut:workspace-7" });
     const collision = await sdk.render({ ...request, outputPath: join(artifactRoot, "different.mp4"), idempotencyKey: rendered.cacheKey });
     expect(collision).toMatchObject({ ok: false, error: { code: "local_operation_failed", message: "SDK idempotency key was already used for a different render request." } });
     expect(encodeCount).toBe(1);
@@ -251,7 +253,7 @@ describe("local Motion SDK", () => {
     const status = await sdk.status({ receiptsRoot });
     expect(status).toMatchObject({ ok: true, output: { jobs: [expect.objectContaining({ jobId: rendered.output.receiptId, state: "succeeded" })], stateCounts: { succeeded: 1 } } });
 
-    const queued = receipt({ id: "render-sdk-queued", operation: "render.final", status: "not_run", packageId: "pkg_lower_third", output: { callerId: "sdk:local", path: join(artifactRoot, "queued.mp4") } });
+    const queued = receipt({ id: "render-sdk-queued", operation: "render.final", status: "not_run", packageId: "pkg_lower_third", output: { callerId: "cut:workspace-7", path: join(artifactRoot, "queued.mp4") } });
     await writeFile(join(receiptsRoot, "queued.receipt.json"), `${JSON.stringify(queued, null, 2)}\n`);
     const cancelled = await sdk.cancel({ receiptsRoot, jobId: queued.id, reason: "user stopped export" });
     expect(cancelled).toMatchObject({ ok: false, error: { code: "job_unknown" } });

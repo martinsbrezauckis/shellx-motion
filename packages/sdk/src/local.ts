@@ -323,7 +323,7 @@ async function renderPackage(
   const frames = input.keepFrames === true ? await retainedRenderFrames(result, artifactRoot) : undefined;
   const rawReceipt = operationReceipt(result.receipt, "render receipt");
   await assertRenderPackageLineage(pkg.root, lineage);
-  const receipt: OperationReceipt = { ...rawReceipt, inputHashes: renderReceiptInputHashes(operationHash, lineage), output: { ...record(rawReceipt.output, "render receipt output"), rendererInputHashes: rawReceipt.inputHashes } };
+  const receipt: OperationReceipt = { ...rawReceipt, inputHashes: renderReceiptInputHashes(operationHash, lineage), output: { ...record(rawReceipt.output, "render receipt output"), callerId: options.callerId?.trim() || "sdk:local", rendererInputHashes: rawReceipt.inputHashes } };
   const receiptPath = join(receiptsRoot, `${safeToken(receipt.id)}.receipt.json`);
   await writeJsonExclusive(receiptPath, receipt);
   const attestation = await attestArtifactReceipt(artifactRoot, receiptPath, "render");

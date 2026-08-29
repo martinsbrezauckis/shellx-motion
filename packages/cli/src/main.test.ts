@@ -10460,13 +10460,14 @@ describe("shellx-motion CLI", () => {
     if (!result.ok) return;
     const promptReceiptPath = (result.receiptPaths as string[])[1]!;
     const promptReceipt = JSON.parse(await readFile(promptReceiptPath, "utf8"));
+    expect(promptReceipt).toMatchObject({ output: { callerId: "cli:local" } });
     promptReceipt.output.promptRetention.deleteAfter = "2000-01-01T00:00:00.000Z";
     await writeFile(promptReceiptPath, JSON.stringify(promptReceipt), "utf8");
 
     const read = await dispatchDebugCommand(
       "motion.receipts.read",
       { receiptsRoot, receiptPath: promptReceiptPath },
-      { tier: "read_motion", receiptsRoot }
+      { tier: "read_motion", receiptsRoot, callerId: "cli:local" }
     );
 
     expect(read.ok).toBe(true);
@@ -15144,10 +15145,11 @@ describe("shellx-motion CLI", () => {
   }, 45_000);
 
   it("replays browser workflow evidence for each batch/data render row", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-workflow-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-workflow-"));
+    const outDir = join(tempRoot, "batch");
     const sourceRoot = await writeFastBatchPackage();
-    const workflowPath = join(outDir, "workflow.json");
-    tempDirs.push(outDir, sourceRoot);
+    const workflowPath = join(tempRoot, "workflow.json");
+    tempDirs.push(tempRoot, sourceRoot);
     await writeFile(workflowPath, JSON.stringify({
       schema: "shellx-motion/browser-workflow@1",
       networkPolicy: "blocked-unless-declared",
@@ -15291,11 +15293,12 @@ describe("shellx-motion CLI", () => {
   }, 45_000);
 
   it("re-renders batch/data rows on resume when browser workflow evidence changes", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-resume-workflow-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-resume-workflow-"));
+    const outDir = join(tempRoot, "batch");
     const sourceRoot = await writeFastBatchPackage();
-    const firstWorkflowPath = join(outDir, "workflow-a.json");
-    const secondWorkflowPath = join(outDir, "workflow-b.json");
-    tempDirs.push(outDir, sourceRoot);
+    const firstWorkflowPath = join(tempRoot, "workflow-a.json");
+    const secondWorkflowPath = join(tempRoot, "workflow-b.json");
+    tempDirs.push(tempRoot, sourceRoot);
     await writeFile(firstWorkflowPath, JSON.stringify({
       schema: "shellx-motion/browser-workflow@1",
       networkPolicy: "blocked-unless-declared",
@@ -15371,11 +15374,12 @@ describe("shellx-motion CLI", () => {
   }, 45_000);
 
   it("runs quality manifests for each rendered batch/data row", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-quality-manifest-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-quality-manifest-"));
+    const outDir = join(tempRoot, "batch");
     const sourceRoot = await writeFastBatchPackage();
-    tempDirs.push(outDir, sourceRoot);
-    const baselinePath = join(outDir, "baseline.png");
-    const manifestPath = join(outDir, "quality-manifest.json");
+    tempDirs.push(tempRoot, sourceRoot);
+    const baselinePath = join(tempRoot, "baseline.png");
+    const manifestPath = join(tempRoot, "quality-manifest.json");
     await writeFile(baselinePath, CONTRAST_PNG);
     await writeFile(manifestPath, `${JSON.stringify({
       schema: "shellx-motion/quality-manifest@1",
@@ -15621,13 +15625,14 @@ describe("shellx-motion CLI", () => {
   }, 45_000);
 
   it("materializes row-token quality manifests for batch/data baselines", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-row-quality-manifest-"));
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-render-batch-row-quality-manifest-"));
+    const outDir = join(tempRoot, "batch");
     const sourceRoot = await writeFastBatchPackage();
-    tempDirs.push(outDir, sourceRoot);
-    await mkdir(join(outDir, "baselines"), { recursive: true });
-    await writeFile(join(outDir, "baselines", "ada.png"), CONTRAST_PNG);
-    await writeFile(join(outDir, "baselines", "grace.png"), CONTRAST_PNG);
-    const manifestPath = join(outDir, "quality-manifest.json");
+    tempDirs.push(tempRoot, sourceRoot);
+    await mkdir(join(tempRoot, "baselines"), { recursive: true });
+    await writeFile(join(tempRoot, "baselines", "ada.png"), CONTRAST_PNG);
+    await writeFile(join(tempRoot, "baselines", "grace.png"), CONTRAST_PNG);
+    const manifestPath = join(tempRoot, "quality-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
       schema: "shellx-motion/quality-manifest@1",
       samples: [
