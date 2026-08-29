@@ -3,6 +3,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { loadMotionPackage } from "./package";
+import { parseBoundedPackageJsonBytes } from "./package-json-admission";
 import { requiredLoadedPackageDocumentHashes } from "./package-loaded-inputs";
 import type { MotionPackage, OperationReceipt } from "./types";
 
@@ -121,12 +122,12 @@ export async function derivePackageRenderLineage(packageRoot: string): Promise<P
   const root = await realpath(resolve(packageRoot));
   if (!(await stat(root)).isDirectory()) throw new Error("package render lineage root must be a directory");
   const manifestFile = await readPackageFile(root, "manifest.json", MAX_MANIFEST_BYTES, "package manifest");
-  const manifest = jsonRecord(manifestFile.bytes, "package manifest");
+  const manifest = jsonRecord(manifestFile.bytes, MAX_MANIFEST_BYTES, "package manifest");
   if (manifest.schema !== "shellx-motion/package-manifest@1") throw new Error("package render lineage manifest schema is invalid");
   const packageId = nonEmpty(manifest.id, "package render lineage manifest id");
   const motionRef = nonEmpty(manifest.motion, "package render lineage motion path");
   const motionFile = await readPackageFile(root, motionRef, MAX_MOTION_BYTES, "package Motion document");
-  const motion = jsonRecord(motionFile.bytes, "package Motion document");
+  const motion = jsonRecord(motionFile.bytes, MAX_MOTION_BYTES, "package Motion document");
   if (motion.schema !== "shellx-motion/motion@1") throw new Error("package render lineage Motion schema is invalid");
   const motionId = nonEmpty(motion.id, "package render lineage Motion id");
   const base: PackageRenderLineage = {
@@ -152,7 +153,7 @@ export async function derivePackageRenderLineage(packageRoot: string): Promise<P
   if (sourceSha256 !== declaredSourceHash) throw new Error("glTF preserved source hash does not match its manifest provenance");
   if (normalizedSourceSha256 !== declaredNormalizedHash) throw new Error("glTF normalized source hash does not match its manifest provenance");
   validateGltfLoweringReceipt({
-    receipt: jsonRecord(receiptFile.bytes, "glTF lowering receipt"),
+    receipt: jsonRecord(receiptFile.bytes, MAX_RECEIPT_BYTES, "glTF lowering receipt"),
     adapter,
     packageId,
     motionId,
@@ -253,9 +254,8 @@ function stable(left: Stats, right: Stats): boolean {
   return sameFile(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
 }
 
-function jsonRecord(bytes: Buffer, label: string): Record<string, unknown> {
-  try { return record(JSON.parse(bytes.toString("utf8")), label); }
-  catch (error) { if (error instanceof SyntaxError) throw new Error(`${label} is not valid JSON`); throw error; }
+function jsonRecord(bytes: Buffer, maxBytes: number, label: string): Record<string, unknown> {
+  return record(parseBoundedPackageJsonBytes(bytes, maxBytes, label), label);
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

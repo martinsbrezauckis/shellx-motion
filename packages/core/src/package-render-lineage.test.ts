@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bindFinalRenderReceiptLineage,
   derivePackageRenderLineage,
@@ -48,6 +48,38 @@ describe("package render lineage", () => {
       manifestSha256: hashBuffer(manifestBytes),
       motionSha256: hashBuffer(motionBytes),
     });
+  });
+
+  it("applies structural JSON admission before parsing every lineage-owned JSON file", async () => {
+    const manifestRoot = await writePlainPackage("manifest-structural");
+    await writeFile(join(manifestRoot, "manifest.json"), jsonBytes({
+      ...manifestFor("pkg_manifest_structural", "motion.json"),
+      ignored: deeplyNestedValue()
+    }));
+    await expectMarkedInputRejectedBeforeJsonParse(manifestRoot, /pre-parse nesting limit/);
+
+    const motionRoot = await writePlainPackage("motion-structural");
+    await writeFile(join(motionRoot, "motion.json"), jsonBytes({
+      ...motionFor("motion_motion_structural", "Motion structural"),
+      ignored: deeplyNestedValue()
+    }));
+    await expectMarkedInputRejectedBeforeJsonParse(motionRoot, /pre-parse nesting limit/);
+
+    const receiptFixture = await writeGltfPackage();
+    const receipt = JSON.parse(await readFile(receiptFixture.receiptPath, "utf8"));
+    receipt.ignored = deeplyNestedValue();
+    await writeFile(receiptFixture.receiptPath, jsonBytes(receipt));
+    await expectMarkedInputRejectedBeforeJsonParse(receiptFixture.root, /pre-parse nesting limit/);
+  });
+
+  it("rejects invalid UTF-8 lineage JSON before JSON.parse", async () => {
+    const root = await writePlainPackage("invalid-utf8");
+    const valid = jsonBytes(manifestFor("pkg_invalid_utf8", "motion.json"));
+    await writeFile(
+      join(root, "manifest.json"),
+      Buffer.concat([valid.subarray(0, valid.byteLength - 2), Buffer.from([0xc3, 0x28, 0x7d, 0x0a])])
+    );
+    await expectRejectedBeforeJsonParse(root, /valid UTF-8 JSON/);
   });
 
   it("binds the exact loaded package revision and refuses a same-id source mutation before receipt release", async () => {
@@ -293,6 +325,39 @@ async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-render-lineage-"));
   roots.push(root);
   return root;
+}
+
+async function writePlainPackage(suffix: string): Promise<string> {
+  const root = await tempRoot();
+  await writeFile(join(root, "manifest.json"), jsonBytes(manifestFor(`pkg_${suffix}`, "motion.json")));
+  await writeFile(join(root, "motion.json"), jsonBytes(motionFor(`motion_${suffix}`, suffix)));
+  return root;
+}
+
+async function expectRejectedBeforeJsonParse(root: string, error: RegExp): Promise<void> {
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    await expect(derivePackageRenderLineage(root)).rejects.toThrow(error);
+    expect(parse).not.toHaveBeenCalled();
+  } finally {
+    parse.mockRestore();
+  }
+}
+
+async function expectMarkedInputRejectedBeforeJsonParse(root: string, error: RegExp): Promise<void> {
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    await expect(derivePackageRenderLineage(root)).rejects.toThrow(error);
+    expect(parse.mock.calls.some(([source]) => typeof source === "string" && source.includes('"ignored"'))).toBe(false);
+  } finally {
+    parse.mockRestore();
+  }
+}
+
+function deeplyNestedValue(): unknown {
+  let value: unknown = 0;
+  for (let depth = 0; depth < 65; depth += 1) value = { child: value };
+  return value;
 }
 
 async function stableTempRoot(): Promise<string> {

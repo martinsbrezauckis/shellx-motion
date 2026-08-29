@@ -6,12 +6,16 @@
  * The renderer asks a host-injected authority to resolve it against durable host state.
  */
 import { isAbsolute, resolve } from "node:path";
-import { createHash } from "node:crypto";
 import type { MotionDocument, MotionLayer, MotionPackage } from "./types";
 import { AgentScriptProvenanceRefusal, canonicalPackageRoot } from "./agent-script-provenance-root";
-import { readVerifiedPackageRegularFile } from "./agent-script-provenance-fingerprint";
+import {
+  AGENT_SCRIPT_PROVENANCE_MAX_BYTES,
+  AGENT_SCRIPT_PROVENANCE_MAX_FILES,
+  fingerprintAgentScriptPackage,
+  readVerifiedPackageRegularFile,
+} from "./agent-script-provenance-fingerprint";
 
-export { fingerprintAgentScriptPackage } from "./agent-script-provenance-fingerprint";
+export { AGENT_SCRIPT_PROVENANCE_MAX_BYTES, AGENT_SCRIPT_PROVENANCE_MAX_FILES, fingerprintAgentScriptPackage };
 export { AgentScriptProvenanceRefusal, canonicalPackageRoot } from "./agent-script-provenance-root";
 
 export const AGENT_SCRIPT_EXECUTION_EXTENSION = "x-shellx-motion-script-execution";
@@ -107,8 +111,12 @@ export function requestedAgentScriptMode(motion: MotionDocument): AgentScriptReq
 export async function describeActiveScriptSources(pkg: MotionPackage): Promise<ActiveScriptSource[]> {
   const canonicalRoot = await canonicalPackageRoot(pkg.root);
   const active = activeScriptLayers(pkg.motion);
+  if (active.length > AGENT_SCRIPT_PROVENANCE_MAX_FILES) {
+    throw new AgentScriptProvenanceRefusal("Active script package exceeds the provenance snapshot budget.", { fileCount: active.length, totalBytes: 0 });
+  }
   const seen = new Set<string>();
   const sources: ActiveScriptSource[] = [];
+  let totalBytes = 0;
   for (const layer of active) {
     const source = typeof layer.source === "string" ? layer.source : "";
     if (!source || isAbsolute(source) || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(source)) {
@@ -132,13 +140,19 @@ export async function describeActiveScriptSources(pkg: MotionPackage): Promise<A
     }
     seen.add(normalized);
     const path = resolve(canonicalRoot, normalized);
-    const bytes = await readVerifiedPackageRegularFile(canonicalRoot, path, normalized);
+    const file = await readVerifiedPackageRegularFile(
+      canonicalRoot,
+      path,
+      normalized,
+      AGENT_SCRIPT_PROVENANCE_MAX_BYTES - totalBytes
+    );
+    totalBytes += file.byteLength;
     sources.push({
       layerId: layer.id,
       layerType: layer.type as ActiveScriptLayerType,
       path: normalized,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.byteLength
+      sha256: file.sha256,
+      bytes: file.byteLength
     });
   }
   return sources.sort(compareSources);

@@ -8,8 +8,9 @@
  */
 import { dirname, isAbsolute } from "node:path";
 import {
-  motionJobFailure,
   motionCapabilityCatalog,
+  motionJobFailure,
+  motionJobFailureFromException,
   prepareGenericConnectorRequest,
   type ConnectorCapabilityDescriptor,
   type GenericConnectorRequestPreparation,
@@ -181,10 +182,7 @@ export async function executePreparedMotionConnectorJob(
       return {
         ok: false,
         binding: rebound,
-        error: motionJobFailure(nested, {
-          code: "connector_failed",
-          message: `Connector capability ${rebound.capabilityId} failed.`
-        })
+        error: connectorTerminalFailure(nested)
       };
     }
     if (typeof record.receiptPath !== "string" || !isAbsolute(record.receiptPath)) {
@@ -245,24 +243,21 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function failure(prepared: PreparedMotionConnectorJob, error: unknown): MotionConnectorJobExecutionResult {
-  return { ok: false, binding: prepared, error: connectorJobErrorDetail(error) };
+  return { ok: false, binding: prepared, error: connectorTerminalFailure(error) };
 }
 
-function connectorJobErrorDetail(error: unknown): MotionJobFailure {
-  if (error instanceof MotionConnectorJobError) {
-    return motionJobFailure({ code: error.code, message: error.message, retryable: false }, {
-      code: "connector_failed", message: "Connector job failed."
-    });
-  }
-  const record = resultRecord(error);
+function connectorTerminalFailure(error: unknown): MotionJobFailure {
+  const fallback = {
+    code: "connector_failed",
+    message: "Connector job failed."
+  } as const;
+  const typed = motionJobFailureFromException(error, fallback);
   return motionJobFailure({
-    code: record.code,
-    message: error instanceof Error ? error.message : record.message ?? String(error),
-    retryable: record.retryable,
-    retryAfterMs: record.retryAfterMs,
-    remedy: record.remedy,
-    suggestedAction: record.suggestedAction
-  }, { code: "connector_failed", message: "Connector job failed." });
+    code: typed.code,
+    retryable: typed.retryable,
+    ...(typed.remedy ? { remedy: typed.remedy } : {}),
+    ...(typed.retryAfterMs !== undefined ? { retryAfterMs: typed.retryAfterMs } : {})
+  }, fallback);
 }
 
 function resultRecord(value: unknown): Record<string, unknown> {
