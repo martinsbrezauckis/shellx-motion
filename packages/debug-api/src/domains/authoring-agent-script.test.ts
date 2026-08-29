@@ -1,18 +1,21 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadMotionPackage, type ReceiptActor } from "@shellx-motion/core";
+import { loadMotionPackage, type AgentScriptProvenanceAuthority, type ReceiptActor } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { createApprovedAgentScriptProvenanceAuthority } from "@shellx-motion/renderer-browser";
 import { dispatchDebugCommand, establishServerObservedMcpSession } from "../index.js";
+import { dispatchAgentScriptAuthoringCommand } from "./authoring-agent-script.js";
 
 const roots: string[] = [];
 
-async function fixtureRoot(): Promise<{ root: string; sourceRoot: string; outputRoot: string; stateRoot: string }> {
+async function fixtureRoot(): Promise<{ root: string; sourceRoot: string; replacementRoot: string; outputRoot: string; stateRoot: string }> {
   const root = await mkdtemp(join(await realpath(tmpdir()), "shellx-motion-agent-script-authoring-"));
   roots.push(root);
   const sourceRoot = join(root, "inputs", "source");
+  const replacementRoot = join(root, "inputs", "replacement");
   const outputRoot = join(root, "outputs");
   const stateRoot = join(root, "host-state");
   await mkdir(sourceRoot, { recursive: true, mode: 0o700 });
@@ -48,7 +51,38 @@ async function fixtureRoot(): Promise<{ root: string; sourceRoot: string; output
     assets: [],
     provenance: { sourceApp: "shellx-motion", createdBy: "test" }
   });
-  return { root, sourceRoot, outputRoot, stateRoot };
+  await cp(sourceRoot, replacementRoot, { recursive: true });
+  await writeJson(join(replacementRoot, "manifest.json"), {
+    schema: "shellx-motion/package-manifest@1",
+    id: "agent-script-data-only",
+    name: "Replacement data only source",
+    motion: "replacement-motion.json",
+    assets: [],
+    sourceApp: "shellx-motion-test",
+    compatibility: { lanes: ["browser"], hosts: ["motion"] }
+  });
+  await writeJson(join(replacementRoot, "replacement-motion.json"), {
+    schema: "shellx-motion/motion@1",
+    id: "agent-script-data-only-motion",
+    name: "Replacement data only source",
+    durationMs: 1000,
+    fps: 30,
+    width: 320,
+    height: 180,
+    layers: [{
+      id: "replacement-background",
+      type: "shape",
+      shape: "rectangle",
+      startMs: 0,
+      durationMs: 1000,
+      width: 320,
+      height: 180,
+      fill: "#222222"
+    }],
+    assets: [],
+    provenance: { sourceApp: "shellx-motion", createdBy: "replacement-test" }
+  });
+  return { root, sourceRoot, replacementRoot, outputRoot, stateRoot };
 }
 
 function args(packageRoot: string, outDir: string): Record<string, unknown> {
@@ -62,6 +96,11 @@ function args(packageRoot: string, outDir: string): Record<string, unknown> {
 
 function actor(transport: ReceiptActor["transport"], sessionId = "server-1:session-1"): ReceiptActor {
   return { kind: "agent", label: `${transport} client`, transport, sessionId, grantedTier: "write_local" };
+}
+
+async function inTrustedRoot<T>(root: string, action: () => Promise<T>): Promise<T> {
+  if (process.platform === "win32") return await action();
+  return await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), action);
 }
 
 describe("approved-agent-entry Debug authoring", () => {
@@ -183,6 +222,78 @@ describe("approved-agent-entry Debug authoring", () => {
     expect(await readdir(fixture.stateRoot)).toEqual([]);
   });
 
+  it("keeps pre-existing active scripts refused after staged admission", async () => {
+    const fixture = await fixtureRoot();
+    const authority = createApprovedAgentScriptProvenanceAuthority({ stateRoot: fixture.stateRoot });
+    const sourceMotion = JSON.parse(await readFile(join(fixture.sourceRoot, "motion.json"), "utf8")) as { layers: unknown[] };
+    sourceMotion.layers.push({
+      id: "existing-script",
+      type: "html",
+      startMs: 0,
+      durationMs: 1000,
+      source: "scripts/existing.html",
+      allowedOrigins: []
+    });
+    await mkdir(join(fixture.sourceRoot, "scripts"), { recursive: true });
+    await writeFile(join(fixture.sourceRoot, "scripts", "existing.html"), "<main>existing</main>", "utf8");
+    await writeJson(join(fixture.sourceRoot, "motion.json"), sourceMotion);
+
+    const outDir = join(fixture.outputRoot, "pre-existing-script");
+    const result = await inTrustedRoot(fixture.root, async () => await dispatchDebugCommand("motion.package.script.author", args(fixture.sourceRoot, outDir), {
+      tier: "write_local",
+      actor: actor("mcp"),
+      observedMcpAgentSession: establishServerObservedMcpSession(),
+      agentScriptAuthority: authority,
+      authoringInputRoots: [join(fixture.root, "inputs")],
+      authoringOutputRoots: [fixture.outputRoot]
+    }));
+
+    expect(result).toMatchObject({ ok: false, error: { code: "approved_agent_entry_refused" } });
+    await expect(readdir(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(fixture.stateRoot)).toEqual([]);
+  });
+
+  it("refuses a same-ID source A-to-B replacement before output, attestation, or receipt", async () => {
+    const fixture = await fixtureRoot();
+    const authority = createApprovedAgentScriptProvenanceAuthority({ stateRoot: fixture.stateRoot });
+    const outDir = join(fixture.outputRoot, "swapped");
+    let mintCalls = 0;
+    let receiptWrites = 0;
+    const trackedAuthority: AgentScriptProvenanceAuthority = {
+      resolverVersion: authority.resolverVersion,
+      mint: async (input) => { mintCalls += 1; return await authority.mint(input); },
+      resolve: async (pkg) => await authority.resolve(pkg),
+      revoke: async (attestationId) => await authority.revoke(attestationId),
+      writeReceipt: async (receipt) => { receiptWrites += 1; return await authority.writeReceipt(receipt); }
+    };
+    let swapped = false;
+    const result = await inTrustedRoot(fixture.root, async () => await dispatchAgentScriptAuthoringCommand("motion.package.script.author", args(fixture.sourceRoot, outDir), {
+      tier: "write_local",
+      actor: actor("mcp"),
+      observedMcpAgentSession: establishServerObservedMcpSession(),
+      agentScriptAuthority: trackedAuthority,
+      authoringInputRoots: [join(fixture.root, "inputs")],
+      authoringOutputRoots: [fixture.outputRoot],
+      packageLoader: async (root) => {
+        const loaded = await loadMotionPackage(root);
+        if (!swapped) {
+          swapped = true;
+          await rename(fixture.sourceRoot, join(fixture.root, "source-a"));
+          await rename(fixture.replacementRoot, fixture.sourceRoot);
+        }
+        return loaded;
+      }
+    }));
+
+    expect(swapped).toBe(true);
+    expect(result).toMatchObject({ ok: false, error: { code: "source_changed" } });
+    await expect(readdir(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(fixture.outputRoot)).toEqual([]);
+    expect(mintCalls).toBe(0);
+    expect(receiptWrites).toBe(0);
+    expect(await readdir(fixture.stateRoot)).toEqual([]);
+  });
+
   it("requires server-established observed MCP plus write_local, then mints authority-owned evidence and host receipt", async () => {
     const fixture = await fixtureRoot();
     const authority = createApprovedAgentScriptProvenanceAuthority({
@@ -190,14 +301,14 @@ describe("approved-agent-entry Debug authoring", () => {
       now: () => new Date("2026-08-09T00:00:00.000Z")
     });
     const outDir = join(fixture.outputRoot, "approved");
-    const result = await dispatchDebugCommand("motion.package.script.author", args(fixture.sourceRoot, outDir), {
+    const result = await inTrustedRoot(fixture.root, async () => await dispatchDebugCommand("motion.package.script.author", args(fixture.sourceRoot, outDir), {
       tier: "write_local",
       actor: actor("mcp"),
       observedMcpAgentSession: establishServerObservedMcpSession(),
       agentScriptAuthority: authority,
       authoringInputRoots: [join(fixture.root, "inputs")],
       authoringOutputRoots: [fixture.outputRoot]
-    });
+    }));
 
     expect(result).toMatchObject({
       ok: true,
@@ -232,13 +343,15 @@ describe("approved-agent-entry Debug authoring", () => {
     expect(JSON.stringify(result.result)).not.toContain("\"dev\"");
     expect(JSON.stringify(result.result)).not.toContain("\"ino\"");
 
-    const resolved = await authority.resolve(await loadMotionPackage(outDir));
-    try {
-      expect(resolved.evidence.attestationId).toBe(detail.scriptExecution.attestationId);
-      expect(resolved.evidence.sources).toEqual([expect.objectContaining({ path: "scripts/agent/entry.html" })]);
-    } finally {
-      await resolved.release();
-    }
+    await inTrustedRoot(fixture.root, async () => {
+      const resolved = await authority.resolve(await loadMotionPackage(outDir));
+      try {
+        expect(resolved.evidence.attestationId).toBe(detail.scriptExecution.attestationId);
+        expect(resolved.evidence.sources).toEqual([expect.objectContaining({ path: "scripts/agent/entry.html" })]);
+      } finally {
+        await resolved.release();
+      }
+    });
     const admittedHtml = await readFile(join(outDir, "scripts", "agent", "entry.html"), "utf8");
     expect(admittedHtml).toContain('<meta http-equiv="Content-Security-Policy"');
     expect(admittedHtml).toContain("script-src 'sha256-");

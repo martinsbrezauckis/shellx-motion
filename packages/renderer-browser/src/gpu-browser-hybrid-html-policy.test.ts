@@ -84,9 +84,15 @@ describe("GPU hybrid strict data-only HTML policy", () => {
     ["abrupt empty comment close", "<!--><img src=https://example.test/logo.png>"],
     ["abrupt empty comment dash close", "<!---><img src=https://example.test/logo.png>"],
     ["incorrect comment end bang close", "<!--text--!><img src=https://example.test/logo.png>"],
+    ["title RCDATA comment differential", "<title><!--</title><img src=https://example.test/logo.png>--></title>"],
+    ["xmp raw-text comment differential", "<xmp><!--</xmp><img src=https://example.test/logo.png>--></xmp>"],
+    ["noembed raw-text comment differential", "<noembed><!--</noembed><img src=https://example.test/logo.png>--></noembed>"],
+    ["noframes raw-text comment differential", "<noframes><!--</noframes><img src=https://example.test/logo.png>--></noframes>"],
+    ["noscript raw-text comment differential", "<noscript><!--</noscript><img src=https://example.test/logo.png>--></noscript>"],
+    ["plaintext tokenizer state", "<plaintext><!--</plaintext><img src=https://example.test/logo.png>"],
     ["unterminated quote", `<img src="${STATIC_PNG_DATA_URL}>`],
     ["unterminated tag", `<img src=${STATIC_PNG_DATA_URL}`],
-  ])("refuses unquoted or malformed %s through both strict HTML admissions", async (_name, html) => {
+  ])("refuses parser-state, unquoted, or malformed %s through both strict HTML admissions", async (_name, html) => {
     const ordinary = fulfillmentFor(html);
     await expect(admitGpuHybridDataOnlyDocument({ source: "card.html", sourcePath: "/retained/package/card.html", fulfillment: ordinary.fulfillment })).rejects.toThrow("strict data-only HTML refusal");
     expect(ordinary.reads).toEqual(["/retained/package/card.html"]);
