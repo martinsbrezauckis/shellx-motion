@@ -1,6 +1,9 @@
 import { classifyGpuImageResource, decodePngRgba } from "@shellx-motion/core";
 
 type StrictGpuHybridUrlAttributeName = "href" | "src" | "srcset" | "action" | "formaction" | "xlink:href" | "background";
+const CSS_URL_BEARING_ATTRIBUTES = new Set([
+  "fill", "stroke", "filter", "clip-path", "mask", "marker", "marker-start", "marker-mid", "marker-end", "cursor"
+]);
 
 interface StrictGpuHybridUrlAttribute {
   readonly name: StrictGpuHybridUrlAttributeName;
@@ -76,6 +79,9 @@ function tokenizeStrictGpuHybridUrlAttributes(html: string):
         continue;
       }
       const name = html.slice(nameStart, cursor).toLowerCase();
+      if (name === "style") {
+        return { ok: false, problem: "style attributes are not admitted" };
+      }
       const urlName = strictGpuHybridUrlAttributeName(name);
       while (cursor < html.length && isStrictGpuHtmlSpace(html.charCodeAt(cursor))) cursor += 1;
       if (html[cursor] !== "=") {
@@ -114,6 +120,9 @@ function tokenizeStrictGpuHybridUrlAttributes(html: string):
       if (urlName) {
         sawUrlAttribute = true;
         attributes.push({ name: urlName, value });
+      }
+      if (CSS_URL_BEARING_ATTRIBUTES.has(name) && /[&\\]|\/\*/u.test(value)) {
+        return { ok: false, problem: `${name} contains encoded CSS syntax that is not admitted` };
       }
     }
     if (!closed && sawUrlAttribute) return { ok: false, problem: "a URL attribute appears in an unterminated strict GPU hybrid HTML tag" };

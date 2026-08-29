@@ -1,9 +1,11 @@
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   AgentScriptProvenanceRefusal,
+  AGENT_SCRIPT_PROVENANCE_MAX_BYTES,
+  AGENT_SCRIPT_PROVENANCE_MAX_FILES,
   describeActiveScriptSources,
   fingerprintAgentScriptPackage,
   requestedAgentScriptMode,
@@ -91,4 +93,34 @@ describe("approved-agent-entry provenance primitives", () => {
     await expect(describeActiveScriptSources(pkg)).rejects.toBeInstanceOf(AgentScriptProvenanceRefusal);
     await expect(fingerprintAgentScriptPackage(root)).rejects.toThrow("symbolic link");
   });
+
+  it("refuses oversized sparse files before provenance hashing", async () => {
+    const activeRoot = await writePackage();
+    const activePackage = {
+      root: activeRoot,
+      motion: { layers: [{ id: "entry", type: "web", source: "scripts/agent/entry.html" }] }
+    } as unknown as Awaited<ReturnType<typeof loadMotionPackage>>;
+    await truncate(join(activeRoot, "scripts", "agent", "entry.html"), AGENT_SCRIPT_PROVENANCE_MAX_BYTES + 1);
+    await expect(describeActiveScriptSources(activePackage)).rejects.toThrow("provenance snapshot budget");
+
+    const treeRoot = await writePackage();
+    const oversized = join(treeRoot, "oversized.bin");
+    await writeFile(oversized, Buffer.alloc(0));
+    await truncate(oversized, AGENT_SCRIPT_PROVENANCE_MAX_BYTES + 1);
+    await expect(fingerprintAgentScriptPackage(treeRoot)).rejects.toThrow("provenance snapshot budget");
+  });
+
+  it("refuses the first file beyond the provenance file-count budget", async () => {
+    const root = await writePackage();
+    const directory = join(root, "many");
+    await mkdir(directory);
+    for (let offset = 0; offset < AGENT_SCRIPT_PROVENANCE_MAX_FILES; offset += 128) {
+      await Promise.all(Array.from(
+        { length: Math.min(128, AGENT_SCRIPT_PROVENANCE_MAX_FILES - offset) },
+        (_entry, index) => writeFile(join(directory, `empty-${String(offset + index).padStart(4, "0")}`), Buffer.alloc(0))
+      ));
+    }
+
+    await expect(fingerprintAgentScriptPackage(root)).rejects.toThrow("provenance snapshot budget");
+  }, 45_000);
 });

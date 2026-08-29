@@ -6,6 +6,9 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { AgentScriptProvenanceRefusal, canonicalPackageRoot } from "./agent-script-provenance-root";
 
 type DirectoryEntry = { name: string; isSymbolicLink(): boolean; isDirectory(): boolean; isFile(): boolean };
+export const AGENT_SCRIPT_PROVENANCE_MAX_FILES = 4_096;
+export const AGENT_SCRIPT_PROVENANCE_MAX_BYTES = 536_870_912;
+const PROVENANCE_HASH_CHUNK_BYTES = 64 * 1024;
 
 /** A single, bounded tree fingerprint for an execution snapshot. Package receipts are included. */
 export async function fingerprintAgentScriptPackage(root: string): Promise<string> {
@@ -28,12 +31,17 @@ export async function fingerprintAgentScriptPackage(root: string): Promise<strin
       }
       if (!entry.isFile()) throw new AgentScriptProvenanceRefusal(`Active script package contains an unsupported special entry: ${rel}.`, { path: rel });
       fileCount += 1;
-      const bytes = await readVerifiedPackageRegularFile(canonicalRoot, path, rel);
-      totalBytes += bytes.byteLength;
-      if (fileCount > 4_096 || totalBytes > 536_870_912) {
+      if (fileCount > AGENT_SCRIPT_PROVENANCE_MAX_FILES) {
         throw new AgentScriptProvenanceRefusal("Active script package exceeds the provenance snapshot budget.", { fileCount, totalBytes });
       }
-      updateFingerprintFrame(fingerprint, ["file", rel, String(bytes.byteLength), createHash("sha256").update(bytes).digest("hex")]);
+      const file = await readVerifiedPackageRegularFile(
+        canonicalRoot,
+        path,
+        rel,
+        AGENT_SCRIPT_PROVENANCE_MAX_BYTES - totalBytes
+      );
+      totalBytes += file.byteLength;
+      updateFingerprintFrame(fingerprint, ["file", rel, String(file.byteLength), file.sha256]);
     }
     const afterEntries = await readStableDirectoryEntries(canonicalRoot, directory, beforeDirectory);
     if (!sameDirectoryEntries(entries, afterEntries)) {
@@ -47,22 +55,45 @@ export async function fingerprintAgentScriptPackage(root: string): Promise<strin
   return fingerprint.digest("hex");
 }
 
-export async function readVerifiedPackageRegularFile(canonicalRoot: string, path: string, rel: string): Promise<Buffer> {
+export async function readVerifiedPackageRegularFile(
+  canonicalRoot: string,
+  path: string,
+  rel: string,
+  maxBytes: number
+): Promise<{ sha256: string; byteLength: number }> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new AgentScriptProvenanceRefusal("Active script package has an invalid provenance snapshot budget.");
+  }
   await assertCanonicalPackageParent(canonicalRoot, path);
   const initial = await lstat(path);
   if (initial.isSymbolicLink() || !initial.isFile()) throw new AgentScriptProvenanceRefusal(`Active script package entry must be a regular file: ${rel}.`, { path: rel });
+  if (!Number.isSafeInteger(initial.size) || initial.size > maxBytes) {
+    throw new AgentScriptProvenanceRefusal("Active script package exceeds the provenance snapshot budget.", { path: rel, byteLength: initial.size, maxBytes });
+  }
   const handle = await open(path, fsConstants.O_RDONLY | (typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0));
   try {
     const before = await handle.stat();
     if (!sameFile(initial, before)) throw new AgentScriptProvenanceRefusal(`Active script package file changed before it could be read: ${rel}.`, { path: rel });
-    const bytes = await handle.readFile();
+    if (!Number.isSafeInteger(before.size) || before.size > maxBytes) {
+      throw new AgentScriptProvenanceRefusal("Active script package exceeds the provenance snapshot budget.", { path: rel, byteLength: before.size, maxBytes });
+    }
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(Math.max(1, Math.min(PROVENANCE_HASH_CHUNK_BYTES, before.size)));
+    let byteLength = 0;
+    while (byteLength < before.size) {
+      const requested = Math.min(chunk.byteLength, before.size - byteLength);
+      const read = await handle.read(chunk, 0, requested, byteLength);
+      if (read.bytesRead === 0) break;
+      hash.update(chunk.subarray(0, read.bytesRead));
+      byteLength += read.bytesRead;
+    }
     const after = await handle.stat();
     const pathAfter = await lstat(path);
     await assertCanonicalPackageParent(canonicalRoot, path);
-    if (!sameFile(before, after) || !sameFile(before, pathAfter)) {
+    if (byteLength !== before.size || !sameFile(before, after) || !sameFile(before, pathAfter)) {
       throw new AgentScriptProvenanceRefusal(`Active script package file changed while it was being read: ${rel}.`, { path: rel });
     }
-    return bytes;
+    return { sha256: hash.digest("hex"), byteLength };
   } finally {
     await handle.close().catch(() => undefined);
   }
