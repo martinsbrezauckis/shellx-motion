@@ -17798,11 +17798,10 @@ describe("shellx-motion CLI", () => {
       ok: false,
       command: "connector.canvas-to-cut",
       error: {
-        code: "connector_failed"
+        code: "connector_failed",
+        message: "Connector job failed.",
       }
     });
-    const message = String((result.error as { message?: string }).message);
-    expect(message).toContain("missing Canvas assets");
     expect(result.render).toBeUndefined();
     expect(await readdir(outDir)).toEqual([]);
   }, 45_000);

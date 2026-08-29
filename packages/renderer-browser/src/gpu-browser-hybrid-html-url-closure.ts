@@ -41,9 +41,9 @@ function tokenizeStrictGpuHybridUrlAttributes(html: string):
     if (open < 0 || open + 1 >= html.length) break;
     cursor = open + 1;
     if (html.startsWith("!--", cursor)) {
-      const close = html.indexOf("-->", cursor + 3);
+      const close = strictGpuHtmlCommentClose(html, cursor + 3);
       if (close < 0) break;
-      cursor = close + 3;
+      cursor = close;
       continue;
     }
     if (html[cursor] === "/" || html[cursor] === "!" || html[cursor] === "?") {
@@ -128,6 +128,22 @@ function tokenizeStrictGpuHybridUrlAttributes(html: string):
     if (!closed && sawUrlAttribute) return { ok: false, problem: "a URL attribute appears in an unterminated strict GPU hybrid HTML tag" };
   }
   return { ok: true, attributes };
+}
+
+/** Returns the first index after the browser-visible HTML comment close. */
+function strictGpuHtmlCommentClose(html: string, contentStart: number): number {
+  // The tokenizer has two abrupt empty-comment exits before its ordinary
+  // comment state. A single dash followed by `>` closes only in this position.
+  if (html[contentStart] === ">") return contentStart + 1;
+  if (html[contentStart] === "-" && html[contentStart + 1] === ">") return contentStart + 2;
+
+  for (let cursor = contentStart; cursor + 1 < html.length; cursor += 1) {
+    if (html[cursor] !== "-" || html[cursor + 1] !== "-") continue;
+    const suffix = cursor + 2;
+    if (html[suffix] === ">") return suffix + 1;
+    if (html[suffix] === "!" && html[suffix + 1] === ">") return suffix + 2;
+  }
+  return -1;
 }
 
 function strictGpuHybridUrlAttributeName(name: string): StrictGpuHybridUrlAttributeName | undefined {
