@@ -52,9 +52,9 @@ describe.skipIf(process.platform !== "linux")("stable paired-receipt admission",
 
     expect(read).toMatchObject({ complete: true, entries: [{ path: receiptPath, receipt: { id: receipt.id } }] });
 
-    await expect(dispatchDebugCommand("motion.receipts.list", { receiptsRoot: root }, { tier: "read_motion" }))
+    await expect(dispatchDebugCommand("motion.receipts.list", { receiptsRoot: root }, { tier: "read_motion", callerId: "paired-reader" }))
       .resolves.toMatchObject({ ok: true, result: { receiptCount: 1, receipts: [{ id: receipt.id, path: receiptPath }] } });
-    await expect(dispatchDebugCommand("motion.receipts.read", { receiptsRoot: root, receiptId: receipt.id }, { tier: "read_motion" }))
+    await expect(dispatchDebugCommand("motion.receipts.read", { receiptsRoot: root, receiptId: receipt.id }, { tier: "read_motion", callerId: "paired-reader" }))
       .resolves.toMatchObject({ ok: true, receiptId: receipt.id, result: { path: receiptPath, receipt: { id: receipt.id } } });
     await expect(dispatchDebugCommand("motion.render.status", { receiptsRoot: root }, { tier: "read_motion", callerId: "paired-reader" }))
       .resolves.toMatchObject({ ok: true, result: { jobCount: 1, jobs: [{ receiptId: receipt.id }] } });
