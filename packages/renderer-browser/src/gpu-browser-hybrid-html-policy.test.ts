@@ -81,6 +81,9 @@ describe("GPU hybrid strict data-only HTML policy", () => {
     ["SVG presentation URL with a CSS escape", String.raw`<svg><rect filter=u\72l(https://approved.example/x#paint)></rect></svg>`],
     ["SVG presentation URL with a CSS comment", "<svg><rect clip-path=u/**/rl(https://approved.example/x#paint)></rect></svg>"],
     ["quoted background", '<table background="https://example.test/background.png"></table>'],
+    ["abrupt empty comment close", "<!--><img src=https://example.test/logo.png>"],
+    ["abrupt empty comment dash close", "<!---><img src=https://example.test/logo.png>"],
+    ["incorrect comment end bang close", "<!--text--!><img src=https://example.test/logo.png>"],
     ["unterminated quote", `<img src="${STATIC_PNG_DATA_URL}>`],
     ["unterminated tag", `<img src=${STATIC_PNG_DATA_URL}`],
   ])("refuses unquoted or malformed %s through both strict HTML admissions", async (_name, html) => {
@@ -99,6 +102,9 @@ describe("GPU hybrid strict data-only HTML policy", () => {
     ["unquoted fragment href", "<svg><use href=#shape></use></svg>"],
     ["quoted xlink fragment", "<svg><use xlink:href=\"#shape\"></use></svg>"],
     ["unquoted xlink fragment", "<svg><use xlink:href=#shape></use></svg>"],
+    ["ordinary comment with an inert remote-looking image", "<!-- inert <img src=https://example.test/logo.png> --><svg><use href=#shape></use></svg>"],
+    ["single-dash comment continuation", "<!--text-><img src=https://example.test/logo.png>"],
+    ["end-bang-dash comment continuation", "<!--text--!-><img src=https://example.test/logo.png>"],
   ])("admits %s through both strict HTML admissions", async (_name, html) => {
     const ordinary = fulfillmentFor(html);
     await expect(admitGpuHybridDataOnlyDocument({ source: "card.html", sourcePath: "/retained/package/card.html", fulfillment: ordinary.fulfillment })).resolves.toMatchObject({ policy: "strict-data-only-html" });
