@@ -57,6 +57,14 @@ interface ParsedAuthoringInput {
   sourcePath: string;
 }
 
+class ApprovedAgentEntryRefusal extends Error {}
+
+class ApprovedAgentEntryInvalid extends Error {
+  constructor(readonly suggestedAction: string) {
+    super("Approved-agent-entry layer did not produce a valid Motion document.");
+  }
+}
+
 /**
  * Create exactly one local inline HTML entry and ask the opaque host authority to attest the
  * committed package. Importers, copied script packages, raw Debug, SDK, and CLI never enter here.
@@ -79,42 +87,36 @@ export async function dispatchAgentScriptAuthoringCommand(
     return refused("Approved-agent-entry script authoring is available only to a server-established, initialized MCP WebSocket session granted write_local by the host.");
   }
   if (!services.packageLoader) return unavailable("Approved-agent-entry script authoring package loading is unavailable.");
+  const packageLoader = services.packageLoader;
 
   try {
     await assertConfiguredAuthoringInputRoot(parsed.packageRoot, services.authoringInputRoots);
     await assertConfiguredAuthoringOutputRoot(parsed.outDir, services.authoringOutputRoots);
-    const sourcePackage = await services.packageLoader(parsed.packageRoot);
-    await assertConfiguredAuthoringInputRoot(sourcePackage.root, services.authoringInputRoots);
-    if (activeScriptLayers(sourcePackage.motion).length > 0) {
-      return refused("Approved-agent-entry script authoring starts from a data-only package; imported, copied, or pre-existing active scripts cannot be re-attested.");
-    }
-    const sourceHash = createHash("sha256").update(parsed.html, "utf8").digest("hex");
-    const inputHashes = {
-      "manifest.json": await hashPackageFile(resolvePackageAsset(sourcePackage, "manifest.json")),
-      [sourcePackage.manifest.motion]: await hashPackageFile(resolvePackageAsset(sourcePackage, sourcePackage.manifest.motion)),
-      "approved-agent-entry.html": sourceHash,
-    };
-    const patchedMotion = withApprovedAgentEntry(sourcePackage.motion, parsed.layer);
-    const validation = await validateDocument(await loadSchema("motion"), patchedMotion);
-    if (!validation.ok) {
-      return {
-        ok: false,
-        error: {
-          code: "approved_agent_entry_invalid",
-          message: "Approved-agent-entry layer did not produce a valid Motion document.",
-          suggestedAction: validation.errors.map((entry) => `${entry.path}: ${entry.message}`).join("; ")
-        },
-        warnings: []
-      };
-    }
     const outputRoot = resolve(parsed.outDir);
     const transaction = await commitPackageEdit({
-      sourceRoot: sourcePackage.root,
+      sourceRoot: parsed.packageRoot,
       outputRoot,
       edit: async (stagedRoot) => {
-        const staged = await loadMotionPackage(stagedRoot);
-        if (staged.manifest.id !== sourcePackage.manifest.id || staged.motion.id !== sourcePackage.motion.id) {
-          throw new Error("Source package identity changed before approved-agent-entry staging.");
+        // Keep data-only admission, derivation, and receipt input hashes on the COW snapshot.
+        // commitPackageEdit proves that snapshot matches its admitted source, then refuses a
+        // replacement before it can install output or mint provenance.
+        const staged = await packageLoader(stagedRoot);
+        if (resolve(staged.root) !== resolve(stagedRoot)) {
+          throw new PackageEditTransactionError("copy_mismatch", "Approved-agent-entry staging did not load the transaction snapshot.");
+        }
+        if (activeScriptLayers(staged.motion).length > 0) {
+          throw new ApprovedAgentEntryRefusal("Approved-agent-entry script authoring starts from a data-only package; imported, copied, or pre-existing active scripts cannot be re-attested.");
+        }
+        const sourceHash = createHash("sha256").update(parsed.html, "utf8").digest("hex");
+        const inputHashes = {
+          "manifest.json": await hashPackageFile(resolvePackageAsset(staged, "manifest.json")),
+          [staged.manifest.motion]: await hashPackageFile(resolvePackageAsset(staged, staged.manifest.motion)),
+          "approved-agent-entry.html": sourceHash,
+        };
+        const patchedMotion = withApprovedAgentEntry(staged.motion, parsed.layer);
+        const validation = await validateDocument(await loadSchema("motion"), patchedMotion);
+        if (!validation.ok) {
+          throw new ApprovedAgentEntryInvalid(validation.errors.map((entry) => `${entry.path}: ${entry.message}`).join("; "));
         }
         const stagedSourcePath = resolvePackageAsset({ root: stagedRoot }, parsed.sourcePath);
         await mkdir(dirname(stagedSourcePath), { recursive: true });
@@ -125,18 +127,22 @@ export async function dispatchAgentScriptAuthoringCommand(
         };
         await writeJson(join(stagedRoot, "manifest.json"), nextManifest);
         await writeJson(resolvePackageAsset({ root: stagedRoot }, staged.manifest.motion), patchedMotion);
+        return { packageId: staged.manifest.id, sourceHash, inputHashes, validation };
       },
-      validate: async (stagedRoot) => {
+      validate: async (stagedRoot, stagedInput) => {
         const staged = await loadMotionPackage(stagedRoot);
         const stagedValidation = await validateDocument(await loadSchema("motion"), staged.motion);
         if (!stagedValidation.ok) throw new Error("Staged approved-agent-entry Motion document failed validation.");
         const written = await readFile(resolvePackageAsset(staged, parsed.sourcePath), "utf8");
-        if (createHash("sha256").update(written, "utf8").digest("hex") !== sourceHash) {
+        if (createHash("sha256").update(written, "utf8").digest("hex") !== stagedInput.sourceHash) {
           throw new Error("Staged approved-agent-entry source bytes differ from the requested inline entry.");
         }
       },
-      afterCommit: async (installedRoot) => {
+      afterCommit: async (installedRoot, stagedInput) => {
         const packageToAttest = await loadMotionPackage(installedRoot);
+        if (packageToAttest.manifest.id !== stagedInput.packageId) {
+          throw new PackageEditTransactionError("copy_mismatch", "Installed approved-agent-entry package identity differs from the staged snapshot.");
+        }
         const attestation = await services.agentScriptAuthority!.mint({ package: packageToAttest });
         const scriptExecution: AgentScriptExecutionEvidence = {
           schema: "shellx-motion/script-execution@1",
@@ -154,7 +160,7 @@ export async function dispatchAgentScriptAuthoringCommand(
           operation: "package.script.author",
           status: "passed",
           packageId: packageToAttest.manifest.id,
-          inputHashes,
+          inputHashes: stagedInput.inputHashes,
           createdAt: attestation.createdAt,
           lane: "debug-api",
           output: {
@@ -175,12 +181,12 @@ export async function dispatchAgentScriptAuthoringCommand(
       }
     });
     const result = {
-      packageId: sourcePackage.manifest.id,
+      packageId: transaction.editResult.packageId,
       packageRoot: transaction.outputRoot,
       sourcePath: parsed.sourcePath,
       scriptExecution: transaction.afterCommitResult.scriptExecution,
       receipt: transaction.afterCommitResult.receipt,
-      validation
+      validation: transaction.editResult.validation
     };
     return {
       ok: true,
@@ -188,7 +194,7 @@ export async function dispatchAgentScriptAuthoringCommand(
       visibleState: {
         panel: "packages",
         operation: "package.script.author",
-        packageId: sourcePackage.manifest.id,
+        packageId: transaction.editResult.packageId,
         packageRoot: transaction.outputRoot,
         sourcePath: parsed.sourcePath,
         activeMode: APPROVED_AGENT_SCRIPT_MODE
@@ -197,6 +203,18 @@ export async function dispatchAgentScriptAuthoringCommand(
       warnings: []
     };
   } catch (error) {
+    if (error instanceof ApprovedAgentEntryRefusal) return refused(error.message);
+    if (error instanceof ApprovedAgentEntryInvalid) {
+      return {
+        ok: false,
+        error: {
+          code: "approved_agent_entry_invalid",
+          message: "Approved-agent-entry layer did not produce a valid Motion document.",
+          suggestedAction: error.suggestedAction
+        },
+        warnings: []
+      };
+    }
     const code = error instanceof AuthoringRootPolicyError || error instanceof PackageEditTransactionError
       ? error.code
       : "approved_agent_entry_failed";

@@ -8,7 +8,7 @@ import { strictGpuHybridHtmlClosureProblem } from "./gpu-browser-hybrid-html-url
 
 export const GPU_HYBRID_HTML_POLICY_SCHEMA = "shellx-motion/gpu-hybrid-html-policy@1" as const;
 const MAX_GPU_HYBRID_HTML_SOURCE_BYTES = 8 * 1024 * 1024;
-const FORBIDDEN_TAGS = ["script", "iframe", "frame", "frameset", "object", "embed", "applet", "portal", "base", "link", "form", "input", "button", "select", "textarea", "option", "details", "dialog", "a", "audio", "video", "progress", "template", "marquee", "blink", "animate", "animatemotion", "animatetransform", "set"] as const;
+const FORBIDDEN_TAGS = ["script", "iframe", "frame", "frameset", "object", "embed", "applet", "portal", "base", "link", "form", "input", "button", "select", "textarea", "option", "details", "dialog", "a", "audio", "video", "progress", "template", "marquee", "blink", "animate", "animatemotion", "animatetransform", "set", "title", "xmp", "noembed", "noframes", "noscript", "plaintext"] as const;
 const FORBIDDEN_DOCUMENT_TOKENS = ["@import", "@keyframes", "animation:", "animation-", "transition:", "transition-", "expression(", "-moz-binding", "behavior:"] as const;
 
 export interface GpuHybridDataOnlyDocumentEvidence {

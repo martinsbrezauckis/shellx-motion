@@ -9,8 +9,12 @@ import { loadMotionPackage, resolvePackageAsset } from "./package";
 import { validatePackageAssetReferences } from "./package-asset-references";
 import { publishPackageArchiveOutputs } from "./package-archive-output-publication";
 import { parseBoundedPackageJsonBytes } from "./package-json-admission";
+import { retainedArchivePackageId } from "./package-archive-retained-entry-validation";
 import { loadSchema, validateDocument, type SchemaName } from "./validate";
-import { collectBoundedPackageArchiveEntries, type MotionPackageArchiveWriteLimits } from "./package-archive-write-input";
+import {
+  collectBoundedPackageArchiveEntries,
+  type MotionPackageArchiveWriteLimits
+} from "./package-archive-write-input";
 import type { OperationReceipt, ReceiptArtifact } from "./types";
 
 export type { MotionPackageArchiveWriteLimits } from "./package-archive-write-input";
@@ -40,6 +44,12 @@ export interface WriteMotionPackageArchiveInput {
   createdAt?: string;
   /** Optional tighter limits for a trusted host; values may never remove the default bounds. */
   limits?: Partial<MotionPackageArchiveWriteLimits>;
+}
+
+/** Bounded fault seam for archive identity binding regressions; production callers omit it. */
+export interface MotionPackageArchiveWriteServices {
+  /** Runs after the source package is initially validated, before archive entries are retained. */
+  afterPackageLoaded?: () => Promise<void>;
 }
 
 export interface ExtractMotionPackageArchiveInput {
@@ -80,13 +90,21 @@ export const DEFAULT_PACKAGE_ARCHIVE_EXTRACTION_LIMITS: MotionPackageArchiveExtr
   maxJsonBytes: 16 * 1024 * 1024
 });
 
-export async function writeMotionPackageArchive(input: WriteMotionPackageArchiveInput): Promise<MotionPackageArchiveResult> {
-  const pkg = await loadMotionPackage(input.packageRoot);
+export async function writeMotionPackageArchive(
+  input: WriteMotionPackageArchiveInput,
+  services: MotionPackageArchiveWriteServices = {}
+): Promise<MotionPackageArchiveResult> {
+  const initialPackage = await loadMotionPackage(input.packageRoot);
+  await services.afterPackageLoaded?.();
   const archivePath = resolve(input.archivePath);
   const receiptPath = resolve(input.receiptPath ?? `${archivePath}.receipt.json`);
-  await assertArchiveOutputsOutsidePackage(pkg.root, [archivePath, receiptPath]);
+  await assertArchiveOutputsOutsidePackage(initialPackage.root, [archivePath, receiptPath]);
 
-  const entries = await collectBoundedPackageArchiveEntries(pkg.root, input.limits);
+  const entries = await collectBoundedPackageArchiveEntries(initialPackage.root, input.limits);
+  // The archive is serialized from these retained bytes, not from the package instance loaded
+  // above.  A source-root replacement between those phases must therefore not leave a receipt
+  // that names the earlier package identity.
+  const packageId = retainedArchivePackageId(entries);
 
   const archiveBuffer = createTarArchive(entries);
   const archiveSha256 = hashBuffer(archiveBuffer);
@@ -98,10 +116,10 @@ export async function writeMotionPackageArchive(input: WriteMotionPackageArchive
   ];
   const receipt: OperationReceipt = {
     schema: "shellx-motion/receipt@1",
-    id: `package-archive-${pkg.manifest.id}-${archiveSha256.slice(0, 16)}`,
+    id: `package-archive-${packageId}-${archiveSha256.slice(0, 16)}`,
     operation: "package.archive",
     status: "passed",
-    packageId: pkg.manifest.id,
+    packageId,
     inputHashes,
     createdAt,
     lane: "package",
@@ -128,7 +146,7 @@ export async function writeMotionPackageArchive(input: WriteMotionPackageArchive
 
   return {
     ok: true,
-    packageId: pkg.manifest.id,
+    packageId,
     archivePath,
     receiptPath,
     archiveSha256,
