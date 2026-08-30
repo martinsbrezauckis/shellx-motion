@@ -70,7 +70,7 @@
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   },
   "dependencies": {
-    "@babel/parser": "7.29.8",
+    "@babel/parser": "8.0.4",
     "@dimforge/rapier3d-deterministic-compat": "0.20.0",
     "@shellx-motion/actions": "workspace:*",
     "@shellx-motion/analysis-tracking": "workspace:*",
