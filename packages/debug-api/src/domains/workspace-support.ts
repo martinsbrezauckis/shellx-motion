@@ -217,27 +217,26 @@ interface SupportBundlePublicationInput {
  * a POSIX-only anchor.
  */
 async function publishSupportBundle(input: SupportBundlePublicationInput): Promise<void> {
-  const publish = async () => {
-    const transaction = await OutputDirectoryTransaction.create(input.bundleDir, { requireAbsent: true, requireClosedTree: true });
-    try {
-      const expectedInventory = await stageSupportBundle(transaction, input.bundleBytes, input.receiptBytes);
-      await input.beforeSupportBundlePublicationForTest?.();
-      await input.assertPackageCurrent?.();
-      await transaction.commit(expectedInventory);
-      await transaction.assertPublishedCurrent();
-    } catch (error) {
-      await transaction.abort();
-      throw error;
-    }
-  };
-  if (input.runtimePlatform === "win32") {
-    await publish();
-    return;
+  const scratchAuthority = input.runtimePlatform === "win32" ? undefined : await createTrustedWorkspaceAnchor(resolve(input.scratchRoot));
+  const withinScratch = async <T>(operation: () => Promise<T>): Promise<T> => scratchAuthority
+    ? await withTrustedWorkspaceAnchor(scratchAuthority, operation) : await operation();
+  let transaction: OutputDirectoryTransaction | undefined;
+  try {
+    const expectedInventory = await withinScratch(async () => {
+      transaction = await OutputDirectoryTransaction.create(input.bundleDir, { requireAbsent: true, requireClosedTree: true });
+      return await stageSupportBundle(transaction, input.bundleBytes, input.receiptBytes);
+    });
+    // Package input is a distinct host authority. Do not let the output anchor select its re-read.
+    await input.beforeSupportBundlePublicationForTest?.();
+    await input.assertPackageCurrent?.();
+    await withinScratch(async () => {
+      await transaction!.commit(expectedInventory);
+      await transaction!.assertPublishedCurrent();
+    });
+  } catch (error) {
+    await withinScratch(async () => await transaction?.abort());
+    throw error;
   }
-  // `scratchRoot` is nominated by the host, never by command arguments. Retaining this opaque
-  // POSIX authority keeps the output's same-filesystem parent route in one publication admission.
-  const scratchAuthority = await createTrustedWorkspaceAnchor(resolve(input.scratchRoot));
-  await withTrustedWorkspaceAnchor(scratchAuthority, publish);
 }
 
 /** Write exactly the self-contained bundle and receipt before the sole public-directory rename. */

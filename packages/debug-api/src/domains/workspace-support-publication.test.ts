@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hashBuffer, loadMotionPackage, type OperationReceipt } from "@shellx-motion/core";
-import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+import { activeTrustedWorkspaceAnchorForTarget, createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 
 const faults = vi.hoisted(() => ({
   failStageWrite: undefined as undefined | ((path: string) => boolean),
@@ -122,6 +122,22 @@ describe("motion.support.bundle governed directory publication", () => {
 
     expect(bundle).toMatchObject({ package: { inputHashes: expectedInputHashes } });
     expect(receipt).toMatchObject({ inputHashes: expectedInputHashes });
+  });
+
+  itLinux("revalidates package source without retaining the output workspace anchor", async () => {
+    const fixture = await createFixture();
+    let reloads = 0;
+
+    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, {
+      packageRoot: fixture.packageRoot,
+      beforePackageReloadForTest: async () => {
+        reloads += 1;
+        expect(await activeTrustedWorkspaceAnchorForTarget(join(fixture.packageRoot, "manifest.json"))).toBeUndefined();
+      }
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(reloads).toBe(1);
   });
 
   itLinux("omits absolute paths and path-bearing diagnostics from shareable support artifacts", async () => {
@@ -424,6 +440,7 @@ interface DispatchSupportBundleOptions {
   runtimePlatform?: NodeJS.Platform;
   packageRoot?: string;
   afterPackageLoadForTest?: (packageRoot: string) => void | Promise<void>;
+  beforePackageReloadForTest?: () => void | Promise<void>;
   beforeSupportBundlePublicationForTest?: () => void | Promise<void>;
 }
 
@@ -431,6 +448,7 @@ async function dispatchSupportBundle(root: string, outDir: string, options: Disp
   const packageWorkspaceAuthority = options.packageRoot && process.platform !== "win32"
     ? await createTrustedWorkspaceAnchor(root)
     : undefined;
+  let packageLoads = 0;
   return await dispatchDomainCommand(
     "workspace",
     "motion.support.bundle",
@@ -439,9 +457,12 @@ async function dispatchSupportBundle(root: string, outDir: string, options: Disp
       scratchRoot: root,
       ...(options.runtimePlatform ? { runtimePlatform: options.runtimePlatform } : {}),
       ...(options.packageRoot ? {
-        packageLoader: async (packageRoot: string) => packageWorkspaceAuthority
-          ? await withTrustedWorkspaceAnchor(packageWorkspaceAuthority, async () => await loadMotionPackage(packageRoot))
-          : await loadMotionPackage(packageRoot),
+        packageLoader: async (packageRoot: string) => {
+          if (packageLoads++ > 0) await options.beforePackageReloadForTest?.();
+          return packageWorkspaceAuthority
+            ? await withTrustedWorkspaceAnchor(packageWorkspaceAuthority, async () => await loadMotionPackage(packageRoot))
+            : await loadMotionPackage(packageRoot);
+        },
         isUnsafePackageOutputDirectory: async () => false,
         ...(options.afterPackageLoadForTest ? { afterPackageLoadForTest: options.afterPackageLoadForTest } : {}),
         ...(options.beforeSupportBundlePublicationForTest ? { beforeSupportBundlePublicationForTest: options.beforeSupportBundlePublicationForTest } : {})
