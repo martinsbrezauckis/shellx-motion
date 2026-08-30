@@ -494,7 +494,7 @@ describe("package edit transaction", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("rejects staged or source mutation by the final non-mutating commit checkpoint", async () => {
+  it("rejects staged or source mutation by the final non-mutating commit checkpoint", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-package-edit-before-commit-"));
     const authority = await createTrustedWorkspaceAnchor(root);
     try {

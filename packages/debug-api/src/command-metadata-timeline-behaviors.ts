@@ -13,7 +13,7 @@ import {
   MOTION_BEHAVIOR_MIN_VELOCITY,
 } from "@shellx-motion/core";
 import type { MotionDebugArgPropertySchema, MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, MOTION_EASING, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
 
 const BEHAVIOR_PACKAGE_EDIT = {
   packageRoot: {
@@ -49,20 +49,7 @@ const TRANSFORM_MOTION: MotionDebugArgPropertySchema = {
   ],
   description: "Closed analytic gravity or bounce motion; never code or a simulation program.",
 };
-const EASING: MotionDebugArgPropertySchema = {
-  type: ["string", "object"],
-  oneOf: [
-    { type: "string", description: "Named or functional Motion easing." },
-    { type: "object", required: ["type", "stiffness", "damping"], additionalProperties: false, properties: {
-      type: { type: "string", enum: ["spring"], description: "Closed spring easing type." },
-      stiffness: { type: "number", exclusiveMinimum: 0, description: "Finite positive spring stiffness." },
-      damping: { type: "number", exclusiveMinimum: 0, description: "Finite positive spring damping." },
-      mass: { type: "number", exclusiveMinimum: 0, description: "Optional finite positive spring mass." },
-      initialVelocity: { type: "number", description: "Optional finite initial velocity." },
-    } },
-  ],
-  description: "Exact string or closed spring behavior easing; Core is the evaluator authority.",
-};
+const EASING: MotionDebugArgPropertySchema = MOTION_EASING;
 const SQUASH: MotionDebugArgPropertySchema = {
   type: "object", required: ["kind", "axis", "amount"], additionalProperties: false,
   properties: { kind: { type: "string", enum: ["squash"] }, axis: { type: "string", enum: ["vertical", "horizontal"], description: "Closed squash axis." }, amount: boundedNumberProperty(MOTION_BEHAVIOR_MIN_SQUASH_AMOUNT, MOTION_BEHAVIOR_MAX_SQUASH_AMOUNT, "Finite squash amount.") },

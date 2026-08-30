@@ -154,6 +154,28 @@ describe("local procedural relationship SDK", () => {
     });
   });
 
+  it("rejects hostile procedural properties before package access or placeholder writes", async () => {
+    const root = await fixtureRoot();
+    const result = await createLocalMotionSdk().proceduralSet({
+      packageRoot: join(root, "missing-source"),
+      outDir: join(root, "output"),
+      relationship: {
+        ...relationship(),
+        target: { layerId: "target", property: "__proto__.sdk_placeholder_polluted" },
+      } as never,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_request",
+        message: expect.stringMatching(/target\/property.*allow-listed numeric property/i),
+      },
+    });
+    expect(await stat(join(root, "output")).catch(() => null)).toBeNull();
+    expect((Object.prototype as { sdk_placeholder_polluted?: unknown }).sdk_placeholder_polluted).toBeUndefined();
+  });
+
   it("forwards configured authoring roots to procedural inspect and mutations", async () => {
     const root = await fixtureRoot();
     const inputRoot = join(root, "input");

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   packagePatchWorkspacePaths,
 } from "./debug-context-cli.js";
+import { cliAuthoringRoots } from "./debug-authoring-roots.js";
 import { createCliShapeGeometryKeyframeHostReceiptStore } from "./shape-geometry-keyframes-host-receipt.js";
 import {
   isShapeGeometryKeyframeDebugCommand,
@@ -38,14 +39,18 @@ describe("shape geometry keyframe CLI projection", () => {
     expect(isShapeGeometryKeyframeDebugCommand("motion.timeline.keyframe.upsert")).toBe(false);
   });
 
-  it("selects workspace-anchor paths only for this exact command family and includes a host-minted receipt scope", () => {
-    expect(packagePatchWorkspacePaths(INSPECT, { packageRoot: "/source", layerId: "shape" })).toEqual(["/source"]);
-    expect(packagePatchWorkspacePaths(UPSERT, { packageRoot: "/source", outDir: "/out", layerId: "shape", snapshot })).toEqual(["/source", "/out"]);
+  it("derives workspace-anchor paths from typed authoring roots and includes a host-minted receipt scope", () => {
+    const inspectArgs = { packageRoot: "/workspace/source", layerId: "shape" };
+    const upsertArgs = { packageRoot: "/workspace/source", outDir: "/workspace/out/revision", layerId: "shape", snapshot };
+    expect(packagePatchWorkspacePaths(inspectArgs, cliAuthoringRoots(INSPECT, inspectArgs))).toEqual(["/workspace"]);
+    expect(packagePatchWorkspacePaths(upsertArgs, cliAuthoringRoots(UPSERT, upsertArgs))).toEqual(["/workspace", "/workspace/out"]);
     const store = createCliShapeGeometryKeyframeHostReceiptStore(UPSERT, { workspaceRoot: "/workspace" });
     expect(store?.receiptsRoot.startsWith(`${join(resolve("/workspace"), ".scratch", "cli-host-receipts", "timeline-shape-geometry-keyframes")}/`)).toBe(true);
-    expect(packagePatchWorkspacePaths(UPSERT, { packageRoot: "/source", outDir: "/out", layerId: "shape", snapshot }, store?.receiptsRoot))
-      .toEqual(["/source", "/out", store?.receiptsRoot]);
-    expect(packagePatchWorkspacePaths("motion.timeline.keyframe.upsert", { packageRoot: "/source", outDir: "/out" })).toBeUndefined();
+    expect(packagePatchWorkspacePaths(upsertArgs, cliAuthoringRoots(UPSERT, upsertArgs), store?.receiptsRoot))
+      .toEqual(["/workspace", "/workspace/out", store?.receiptsRoot]);
+    const genericArgs = { packageRoot: "/workspace/source", outDir: "/workspace/out/revision" };
+    expect(packagePatchWorkspacePaths(genericArgs, cliAuthoringRoots("motion.timeline.keyframe.upsert", genericArgs)))
+      .toEqual(["/workspace", "/workspace/out"]);
     expect(createCliShapeGeometryKeyframeHostReceiptStore(INSPECT)).toBeUndefined();
   });
 });

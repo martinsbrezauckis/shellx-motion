@@ -1,11 +1,12 @@
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+import { hasAtomicCOWAuthority } from "@shellx-motion/core/test-support";
 import { publishJsonSidecar } from "./sidecar-publication.js";
 
 const roots: string[] = [];
-const STICKY_TMP_ROOT = "/tmp";
 const SIDECARS = [
   { name: "native preview receipt", fileName: "pkg-sidecar-native-preview.receipt.json" },
   { name: "browser preview receipt", fileName: "pkg-sidecar-browser-preview.receipt.json" },
@@ -24,19 +25,39 @@ async function workspace(): Promise<string> {
   return root;
 }
 
-async function stickyWorkspace(): Promise<string> {
-  if (process.platform === "win32") return workspace();
-  const parent = await lstat(STICKY_TMP_ROOT);
+async function anchoredStickyParentFixture(): Promise<{ stickyParent: string; anchorRoot: string }> {
+  const anchorRoot = await workspace();
+  const stickyParent = join(anchorRoot, "sticky-parent");
+  await mkdir(stickyParent, { mode: 0o700 });
+  await chmod(stickyParent, 0o1777);
+  const parent = await lstat(stickyParent);
   expect(parent.isDirectory()).toBe(true);
   expect(parent.mode & 0o1000).toBe(0o1000);
-  const root = await mkdtemp(join(STICKY_TMP_ROOT, "shellx-motion-cli-sidecar-publication-"));
-  roots.push(root);
-  return root;
+  return { stickyParent, anchorRoot };
+}
+
+async function withAnchoredFixtureAuthority<T>(anchorRoot: string, operation: () => Promise<T>): Promise<T> {
+  return await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(anchorRoot), operation);
 }
 
 describe("CLI preview and capture sidecar publication", () => {
-  it.each(SIDECARS)("publishes the $name through the ordinary sticky-parent route", async ({ fileName }) => {
-    const root = await stickyWorkspace();
+  it.skipIf(process.platform === "win32").each(SIDECARS)("publishes the $name through the explicitly anchored sticky-parent fixture", async ({ fileName }) => {
+    const { stickyParent, anchorRoot } = await anchoredStickyParentFixture();
+    const outputDir = join(stickyParent, "out");
+    const sidecarPath = join(outputDir, fileName);
+    await mkdir(outputDir, { mode: 0o700 });
+
+    await withAnchoredFixtureAuthority(anchorRoot, async () => {
+      await publishJsonSidecar(sidecarPath, { schema: "shellx-motion/receipt@1", sidecar: fileName });
+    });
+
+    await expect(readFile(sidecarPath, "utf8")).resolves.toBe(
+      `${JSON.stringify({ schema: "shellx-motion/receipt@1", sidecar: fileName }, null, 2)}\n`
+    );
+  });
+
+  it.skipIf(!hasAtomicCOWAuthority(tmpdir())).each(SIDECARS)("publishes the $name through an ordinary full-ancestor COW route without an anchor", async ({ fileName }) => {
+    const root = await workspace();
     const outputDir = join(root, "out");
     const sidecarPath = join(outputDir, fileName);
     await mkdir(outputDir, { mode: 0o700 });
@@ -56,7 +77,7 @@ describe("CLI preview and capture sidecar publication", () => {
     await mkdir(outside, { mode: 0o700 });
     await symlink(outside, linkedOutputDir, "dir");
 
-    await expect(publishJsonSidecar(sidecarPath, { sidecar: fileName }))
+    await expect(withAnchoredFixtureAuthority(root, async () => await publishJsonSidecar(sidecarPath, { sidecar: fileName })))
       .rejects.toMatchObject({ code: "derived_output_unsafe_parent" });
     await expect(readFile(join(outside, fileName), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -70,12 +91,12 @@ describe("CLI preview and capture sidecar publication", () => {
     await mkdir(outputDir, { mode: 0o700 });
     await mkdir(outside, { mode: 0o700 });
 
-    await expect(publishJsonSidecar(sidecarPath, { sidecar: fileName }, {
+    await expect(withAnchoredFixtureAuthority(root, async () => await publishJsonSidecar(sidecarPath, { sidecar: fileName }, {
       afterStageVerified: async () => {
         await rename(outputDir, movedOutputDir);
         await symlink(outside, outputDir, "dir");
       }
-    })).rejects.toMatchObject({ code: "derived_output_unsafe_parent" });
+    }))).rejects.toMatchObject({ code: "derived_output_unsafe_parent" });
 
     await expect(readFile(join(outside, fileName), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });

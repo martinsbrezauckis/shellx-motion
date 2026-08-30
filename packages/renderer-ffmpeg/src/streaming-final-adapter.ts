@@ -1,4 +1,4 @@
-import { acquireDerivedOutputPublication, motionBehaviorLaneRefusal, motionLayoutGapAnimationLaneRefusal, motionRelationLaneRefusal, motionScene3DAnimationLaneRefusal } from "@shellx-motion/core";
+import { acquireDerivedOutputPublication, colorPipelinePreallocationRefusal, motionBehaviorLaneRefusal, motionLayoutGapAnimationLaneRefusal, motionRelationLaneRefusal, motionScene3DAnimationLaneRefusal } from "@shellx-motion/core";
 import { hasScene3dGltfPbrHdr10FinalLocator } from "@shellx-motion/core/internal/scene3d-gltf-pbr-hdr10-final";
 import { planStreamingFinalCommand, resolveStreamingFinalTransport } from "./streaming-final-command-plan.js";
 import { preflightGpuFinalDelivery } from "./streaming-final-adapter-execution.js";
@@ -6,9 +6,22 @@ import { redactAbortedStreamingOutput, remapStreamingReceiptOutput, streamingPub
 import { preliminaryGpuAudio } from "./streaming-final-gpu-audio.js";
 import { renderStreamingFinalUnpublished } from "./streaming-final-adapter-execution.js";
 import type { RenderStreamingFinalInput, RenderStreamingFinalResult } from "./streaming-final-adapter-types.js";
+import { planLinearSrgbSdrFinalRender, preflightLinearSrgbSdrFinalRender, renderLinearSrgbSdrFinalUnpublished } from "./linear-srgb-sdr-final-public.js";
+import { claimLinearSrgbSdrFinalPreparation } from "./linear-srgb-sdr-final-adapter.js";
 
 /** Public streamed-final adapter: validates public shape, reserves output publication, then executes one staged render. */
 export async function renderStreamingFinal(input: RenderStreamingFinalInput): Promise<RenderStreamingFinalResult> {
+  const strict = await preflightLinearSrgbSdrFinalRender(input);
+  if (strict.kind === "refused") {
+    const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
+    return { ok: false, transport: transport.ok ? transport.plan : transport.transport, error: strict.error };
+  }
+  if (strict.kind === "strict") return await renderStrict(input, strict.preparation);
+  const colorPipelineRefusal = colorPipelinePreallocationRefusal(input.pkg.motion, `ffmpeg-${input.frameLane}`);
+  if (colorPipelineRefusal) {
+    const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
+    return { ok: false, transport: transport.ok ? transport.plan : transport.transport, error: colorPipelineRefusal };
+  }
   const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(input.pkg.motion, input.frameLane === "browser" ? "ffmpeg-browser" : input.frameLane === "native" ? "ffmpeg-native" : "ffmpeg-gpu");
   if (layoutGapAnimationRefusal) {
     const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
@@ -71,5 +84,41 @@ export async function renderStreamingFinal(input: RenderStreamingFinalInput): Pr
     }
   } catch (error) {
     return { ok: false, transport: planned.transport, error: streamingPublicationFailure(error) };
+  }
+}
+
+async function renderStrict(input: RenderStreamingFinalInput, preparation: import("./linear-srgb-sdr-final-adapter.js").LinearSrgbSdrFinalPreparation): Promise<RenderStreamingFinalResult> {
+  const transport = { delivery: "streamed" as const, reason: "stream_default" as const };
+  try {
+    claimLinearSrgbSdrFinalPreparation(input.pkg.motion, preparation);
+  } catch (error) {
+    return { ok: false, transport, error: { code: "linear_srgb_sdr_final_unsupported", message: error instanceof Error ? error.message : "Strict linear-sRGB SDR preparation could not be claimed." } };
+  }
+  const currentPlan = planLinearSrgbSdrFinalRender(input);
+  if (currentPlan.kind !== "strict") {
+    return { ok: false, transport, error: currentPlan.kind === "refused" ? currentPlan.error : { code: "linear_srgb_sdr_final_unsupported", message: "Strict linear-sRGB SDR input changed before output reservation." } };
+  }
+  try {
+    const publication = input.outputPublication ?? await acquireDerivedOutputPublication({ outputPath: input.outputPath, kind: "file", force: input.force === true });
+    let published = false;
+    let handedToPair = false;
+    try {
+      const staged = await renderLinearSrgbSdrFinalUnpublished({ ...input, transport, outputPublication: publication, linearSrgbSdrFinalPreparation: preparation });
+      if (!staged.ok) return redactAbortedStreamingOutput(staged);
+      if (input.outputPublication) {
+        handedToPair = true;
+        return staged;
+      }
+      await publication.publishFile(await publication.verifyFile());
+      published = true;
+      return {
+        ...staged,
+        receipt: remapStreamingReceiptOutput(staged.receipt, publication.stagingPath, input.outputPath),
+      };
+    } finally {
+      if (!published && !handedToPair) await publication.abort();
+    }
+  } catch (error) {
+    return { ok: false, transport, error: streamingPublicationFailure(error) };
   }
 }

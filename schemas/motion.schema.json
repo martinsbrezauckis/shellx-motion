@@ -47,6 +47,26 @@
       "type": "string",
       "minLength": 1
     },
+    "colorPipeline": {
+      "type": "object",
+      "required": [
+        "schema",
+        "intent"
+      ],
+      "properties": {
+        "schema": {
+          "const": "shellx-motion/color-pipeline@1"
+        },
+        "intent": {
+          "enum": [
+            "legacy-encoded-sdr@0.2.65",
+            "linear-srgb-sdr@1"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Closed versioned colour-pipeline intent. Omission resolves to legacy-encoded-sdr@0.2.65."
+    },
     "audio": {
       "$ref": "#/$defs/audioDocument"
     },
@@ -384,7 +404,8 @@
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "$comment": "Additional properties remain open for forward compatibility and x-* extension namespaces. The runtime validator remains the authority for cross-record references, ordering, budgets, and semantic relationships."
@@ -578,11 +599,13 @@
         },
         "fill": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "width": {
           "type": "number",
@@ -1608,7 +1631,8 @@
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "fontSizePx": {
           "type": "number",
@@ -1677,16 +1701,15 @@
           ]
         },
         {
-          "pattern": "^cubic-bezier\\("
-        },
-        {
-          "pattern": "^steps\\("
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
         },
         {
           "$ref": "#/$defs/springEasing"
         }
       ],
-      "$comment": "The runtime parses functional easing strings and checks spring parameter ranges; JSON Schema expresses the portable discriminant and number shapes."
+      "$comment": "Functional easing strings are capped at 256 UTF-16 code units and use the same bounded grammar as Core; spring parameter ranges remain runtime-validated."
     },
     "springEasing": {
       "type": "object",
@@ -1880,7 +1903,8 @@
             },
             "color": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "$comment": "Additional properties remain open for forward compatibility and x-* extension namespaces. The runtime validator remains the authority for cross-record references, ordering, budgets, and semantic relationships."
@@ -1925,7 +1949,8 @@
             },
             "color": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 128
             }
           },
           "$comment": "Additional properties remain open for forward compatibility and x-* extension namespaces. The runtime validator remains the authority for cross-record references, ordering, budgets, and semantic relationships."
@@ -2029,7 +2054,8 @@
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "$comment": "Additional properties remain open for forward compatibility and x-* extension namespaces. The runtime validator remains the authority for cross-record references, ordering, budgets, and semantic relationships."
@@ -2066,11 +2092,13 @@
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "secondaryColor": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "minSize": {
           "type": "number",
@@ -2609,7 +2637,8 @@
         },
         "version": {
           "type": "string",
-          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+          "maxLength": 128,
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?!0[0-9]+(?:\\.|$))[0-9A-Za-z-]+(?:\\.(?!0[0-9]+(?:\\.|$))[0-9A-Za-z-]+)*)?$"
         },
         "parameters": {
           "$ref": "#/$defs/effectModuleParameters"
@@ -2716,7 +2745,8 @@
         },
         "color": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "size": {
           "type": "number",
@@ -2806,7 +2836,8 @@
         },
         "fallbackColor": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 128
         },
         "uniforms": {
           "type": "object",
@@ -2838,7 +2869,8 @@
               "maxItems": 3,
               "items": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "maxLength": 128
               }
             }
           },

@@ -18,16 +18,34 @@ export function actionPlanDetails(actionId: string): ActionPlanDetails | undefin
   const details: Record<string, ActionPlanDetails> = {
     "motion.package.patch": {
       cautions: [
+        "For a large, bounded layer batch, send one motion.package.patch call with one add operation for each complete layer at /layers/-. Motion validates the copied document once; do not turn that batch into repeated motion.timeline.layer.create calls.",
         "Requires a host-granted edit_motion tier. When Motion reports the held tier, the refusal is `motion.package.patch requires edit_motion; this session holds <granted-tier>.` A caller cannot raise that grant.",
         "packageRoot is an existing source package and outDir is an empty or absent destination outside it. Both stay inside host-approved authoring input/output roots; these arguments do not configure or widen those roots.",
         "The copied package's receipt path is returned. motion.receipts.read needs a host receiptsRoot that contains that receipt; do not invent a receipts root."
       ],
-      examples: [{
-        description: "Copy an inspected package and replace a title field without changing the source package.", call: "motion.package.patch",
-        args: { packageRoot: "<host-approved-existing-package>", outDir: "<host-approved-empty-or-absent-output>", patch: [{ op: "replace", path: "/layers/0/text", value: "Updated title" }] },
-        note: "Illustrative only: inspect the package first and use JSON Pointer paths that exist in that package. The host, not this example, grants the tier and root authority."
-      }],
-      relatedActionIds: ["motion.template.controls", "motion.template.apply", "motion.revision.transaction"]
+      examples: [
+        {
+          description: "Copy an inspected package and replace a title field without changing the source package.", call: "motion.package.patch",
+          args: { packageRoot: "<host-approved-existing-package>", outDir: "<host-approved-empty-or-absent-output>", patch: [{ op: "replace", path: "/layers/0/text", value: "Updated title" }] },
+          note: "Illustrative only: inspect the package first and use JSON Pointer paths that exist in that package. The host, not this example, grants the tier and root authority."
+        },
+        {
+          description: "Append one complete text layer as one operation in a larger layer batch.", call: "motion.package.patch",
+          args: {
+            packageRoot: "<host-approved-existing-package>", outDir: "<host-approved-empty-or-absent-output>",
+            patch: [{
+              op: "add", path: "/layers/-",
+              value: {
+                id: "caption-001", type: "text", text: "Caption 001", startMs: 0, durationMs: 3000,
+                transform: { x: 120, y: 820, scale: 1, rotation: 0 },
+                style: { fontFamily: "Inter", fontSize: 64, color: "#ffffff" }
+              }
+            }]
+          },
+          note: "Illustrative one-operation shape for a batch: repeat complete /layers/- add operations in one request, at most 1,000 operations total, and keep the final document within its 8,192-layer admission limit. Never hand-write package files; inspect the returned receipt."
+        }
+      ],
+      relatedActionIds: ["motion.timeline.layer.create", "motion.revision.transaction"]
     },
     "motion.package.asset.import": {
       cautions: [

@@ -140,9 +140,10 @@ the exit code, is what a render actually produced. See
     distinct leaves strictly below `--out`; the workflow catalog remains an
     external post-capture observer.
   - `render` returns the receipt inline **and writes it beside the delivered
-    artifact** as `<packageId>-render.receipt.json`. For an image-sequence output,
-    the receipt is written inside the output directory. Prefer the returned
-    `receiptPath` over reconstructing either location.
+    artifact** as `<output-file>.receipt.json`. For an image-sequence output,
+    the receipt is written inside the output directory as `<output-directory>.receipt.json`.
+    This deterministic output-specific identity lets separate takes of one package keep separate
+    evidence. Prefer the returned `receiptPath` over reconstructing either location.
   - `validate` remains read-only for the package. Pass `--receipts-root <host-store>`
     to retain its passed or failed `package.validate` receipt; the store must be
     outside the package. Without that explicit governed destination, step 1 returns

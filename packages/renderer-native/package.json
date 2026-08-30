@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/renderer-native",
-  "version": "0.2.65",
+  "version": "0.2.66",
   "license": "MIT",
   "type": "module",
   "exports": {

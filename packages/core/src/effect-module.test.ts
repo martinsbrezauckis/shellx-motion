@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJsonSha256 } from "./canonical-json";
-import { GPU_EFFECT_MODULE_RENDERER_ABI, createGpuEffectModuleBinding, gpuEffectModuleInstallationProvenanceFingerprint, gpuEffectModuleRegistryEntryFingerprint, gpuEffectModuleRendererIdentityProblem, gpuEffectModuleResourceCeilingFingerprint, motionEffectModuleManifestProblem, motionEffectModuleReferenceProblem, resolveGpuEffectModuleFrameBindings, type GpuEffectModuleBinding, type GpuEffectModuleRegistryEntry, type MotionEffectModuleReference } from "./effect-module";
+import { GPU_EFFECT_MODULE_RENDERER_ABI, createGpuEffectModuleBinding, gpuEffectModuleInstallationProvenanceFingerprint, gpuEffectModuleInstallationProvenanceProblem, gpuEffectModuleRegistryEntryFingerprint, gpuEffectModuleRendererIdentityProblem, gpuEffectModuleResourceCeilingFingerprint, gpuEffectModuleStaticDescriptorProblem, isCanonicalMotionEffectModuleVersion, motionEffectModuleManifestProblem, motionEffectModuleReferenceProblem, resolveGpuEffectModuleFrameBindings, type GpuEffectModuleBinding, type GpuEffectModuleRegistryEntry, type MotionEffectModuleReference } from "./effect-module";
 import { compileGpuScene2dPlan } from "./gpu-scene-2d-plan";
 import { GPU_FRAME_INTENT_SCHEMA, compileGpuFramePlan } from "./gpu-frame-intent";
 import { compileGpuSceneStaticPlan } from "./gpu-scene-static-plan";
@@ -30,6 +30,30 @@ function staticAndBinding(value: MotionDocument = motion()): { descriptor: NonNu
 }
 
 describe("closed local effect-module Core contract", () => {
+  it("uses one bounded canonical SemVer parser for package, manifest, provenance, and descriptors", () => {
+    const accepted = ["0.0.0", "1.2.3", "1.2.3-0", "1.2.3-alpha", "1.2.3-alpha.1", "1.2.3-rc-1.0"];
+    const rejected = ["v1.2.3", "1.2.3+build.1", "latest", "^1.2.3", "1.2", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-00", "1.2.3-rc.01", "1.2.3-", `1.2.3-${"a".repeat(128)}`];
+    const manifest = { schema: "shellx-motion/effect-module-manifest@1", moduleId: "motion.afterimage-stack", version: "1.2.3", displayName: "Afterimage", intrinsic: "motion.afterimage-stack.v1", rendererAbi: GPU_EFFECT_MODULE_RENDERER_ABI, parameterSchema: "motion.afterimage-stack.parameters@1" };
+    const provenance = entry().installationProvenance;
+    const { descriptor } = staticAndBinding();
+
+    for (const version of accepted) {
+      expect(isCanonicalMotionEffectModuleVersion(version), version).toBe(true);
+      expect(motionEffectModuleReferenceProblem(ref({ version })), version).toBeNull();
+      expect(motionEffectModuleManifestProblem({ ...manifest, version }), version).toBeNull();
+      expect(gpuEffectModuleInstallationProvenanceProblem({ ...provenance, version }), version).toBeNull();
+    }
+    for (const version of rejected) {
+      expect(isCanonicalMotionEffectModuleVersion(version), version).toBe(false);
+      expect(motionEffectModuleReferenceProblem(ref({ version })), version).toContain("invalid");
+      expect(motionEffectModuleManifestProblem({ ...manifest, version }), version).toContain("invalid");
+      expect(gpuEffectModuleInstallationProvenanceProblem({ ...provenance, version }), version).toContain("invalid");
+      const { descriptorFingerprint: _descriptorFingerprint, ...payload } = descriptor;
+      const resealed = { ...payload, version };
+      expect(gpuEffectModuleStaticDescriptorProblem({ ...resealed, descriptorFingerprint: canonicalJsonSha256(resealed) }), version).toContain("invalid");
+    }
+  });
+
   it("validates only exact executable-free manifest and parameter data", async () => {
     expect(motionEffectModuleManifestProblem({ schema: "shellx-motion/effect-module-manifest@1", moduleId: "motion.afterimage-stack", version: "1.2.3", displayName: "Afterimage", intrinsic: "motion.afterimage-stack.v1", rendererAbi: GPU_EFFECT_MODULE_RENDERER_ABI, parameterSchema: "motion.afterimage-stack.parameters@1" })).toBeNull();
     expect(motionEffectModuleManifestProblem({ schema: "shellx-motion/effect-module-manifest@1", moduleId: "Motion.Afterimage", version: "1.2.3", displayName: "Afterimage", intrinsic: "motion.afterimage-stack.v1", rendererAbi: GPU_EFFECT_MODULE_RENDERER_ABI, parameterSchema: "motion.afterimage-stack.parameters@1" })).toContain("invalid");

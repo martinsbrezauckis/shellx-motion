@@ -167,9 +167,8 @@ function svgDimensions(bytes: Buffer): { mimeType: "image/svg+xml"; width: numbe
   // Paint-server fragment references are static; every other url() form can resolve externally.
   const urlsRemoved = source.replace(/url\(\s*(["']?)#[A-Za-z_][A-Za-z0-9_.:-]*\1\s*\)/gi, "");
   if (/url\s*\(/i.test(urlsRemoved)) throw new GpuImageResourceClassificationError("SVG image contains a non-fragment external resource reference.");
-  const root = source.match(/^\s*(?:<\?xml\s+[^>]*\?>\s*)?<svg\b([^>]*)>/i);
-  if (!root) throw new GpuImageResourceClassificationError("SVG image has no root svg element.");
-  const attributes = root[1]!;
+  const attributes = staticSvgRootAttributes(source);
+  if (attributes === null) throw new GpuImageResourceClassificationError("SVG image has no root svg element.");
   const width = svgLength(attributes, "width");
   const height = svgLength(attributes, "height");
   const viewBox = attributes.match(/\bviewBox\s*=\s*(["'])([^"']+)\1/i)?.[2]?.trim().split(/[\s,]+/).map(Number);
@@ -181,6 +180,59 @@ function svgDimensions(bytes: Buffer): { mimeType: "image/svg+xml"; width: numbe
     throw new GpuImageResourceClassificationError("SVG image must declare finite integer width and height or a finite integer viewBox.");
   }
   return { mimeType: "image/svg+xml", width: resolvedWidth, height: resolvedHeight };
+}
+
+/**
+ * Find the optional XML declaration and root `<svg>` tag without backtracking through an
+ * attacker-controlled prologue. This preserves the prior root grammar: JavaScript `\s`, an
+ * optional `<?xml` declaration with at least one whitespace character, ASCII case-insensitive
+ * `svg`, and the regular-expression `\b` boundary after that name.
+ */
+function staticSvgRootAttributes(source: string): string | null {
+  let cursor = 0;
+  while (cursor < source.length && isSvgWhitespace(source.charCodeAt(cursor))) cursor += 1;
+
+  if (asciiEqualAt(source, cursor, "<?xml")) {
+    const afterXml = cursor + 5;
+    if (!isSvgWhitespace(source.charCodeAt(afterXml))) return null;
+    let declarationEnd = afterXml;
+    while (declarationEnd < source.length && source.charCodeAt(declarationEnd) !== 0x3e) declarationEnd += 1;
+    if (declarationEnd >= source.length || source.charCodeAt(declarationEnd - 1) !== 0x3f) return null;
+    cursor = declarationEnd + 1;
+    while (cursor < source.length && isSvgWhitespace(source.charCodeAt(cursor))) cursor += 1;
+  }
+
+  if (!asciiEqualAt(source, cursor, "<svg")) return null;
+  const attributesStart = cursor + 4;
+  if (isSvgWordCharacter(source.charCodeAt(attributesStart))) return null;
+  let tagEnd = attributesStart;
+  while (tagEnd < source.length && source.charCodeAt(tagEnd) !== 0x3e) tagEnd += 1;
+  return tagEnd < source.length ? source.slice(attributesStart, tagEnd) : null;
+}
+
+function asciiEqualAt(source: string, start: number, expected: string): boolean {
+  if (start + expected.length > source.length) return false;
+  for (let offset = 0; offset < expected.length; offset += 1) {
+    let code = source.charCodeAt(start + offset);
+    if (code >= 0x41 && code <= 0x5a) code += 0x20;
+    if (code !== expected.charCodeAt(offset)) return false;
+  }
+  return true;
+}
+
+/** JavaScript's non-Unicode `\b` word set, matching the legacy root expression. */
+function isSvgWordCharacter(code: number): boolean {
+  return (code >= 0x30 && code <= 0x39)
+    || (code >= 0x41 && code <= 0x5a)
+    || (code >= 0x61 && code <= 0x7a)
+    || code === 0x5f;
+}
+
+/** JavaScript's `\s` set, matching the legacy root expression without allocating a regex match. */
+function isSvgWhitespace(code: number): boolean {
+  return code === 0x20 || (code >= 0x09 && code <= 0x0d) || code === 0xa0 || code === 0xfeff
+    || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
+    || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000;
 }
 
 function svgLength(attributes: string, name: "width" | "height"): number | undefined {

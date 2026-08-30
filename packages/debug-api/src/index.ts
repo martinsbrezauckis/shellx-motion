@@ -102,7 +102,7 @@ import { browserTypographyAttestationRefusal } from "@shellx-motion/renderer-bro
 import { stampReceiptOwner, visibleReceiptEntries } from "./receipt-ownership.js";
 import { createReceiptOwnershipAccess } from "./receipt-ownership-access.js"; import { persistHostReceipt, receiptAccessScope, receiptVisibleForHost, stampHostReceipt } from "./receipt-ownership-host.js";
 import { debugBatchOutputTopologyError, prepareDebugBatchOutput } from "./batch-output-admission.js";
-import { inspectDebugBatchResumeOwner, type DebugBatchResumeOutput } from "./batch-resume-ownership.js";
+import { assertDebugBatchResumeArtifacts, inspectDebugBatchResumeOwner } from "./batch-resume-ownership.js";
 import {
   audioWarningsForExportPreset,
   buildEncodeImageSequenceCommand,
@@ -172,7 +172,6 @@ import {
   debugBatchRenderCounts,
   debugBatchRenderError,
   debugBatchRenderedDelivery,
-  debugBatchResumeSourceReceiptPath,
   readDebugBatchResumeMatch
 } from "./debug-batch-outcomes.js";
 import {
@@ -1568,15 +1567,15 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (await isUnsafePackageOutputDir(pkg.root, outDir)) return invalidArgs("motion.render.batch outDir must be outside packageRoot.");
       const preparedOutput = await prepareDebugBatchOutput(outDir, { resume: false });
       if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
-      const { batchOutput, packagesRoot, renderRoot, receiptsRoot } = preparedOutput;
+      const { packagesRoot, renderRoot, receiptsRoot } = preparedOutput;
       // `outDir` was admitted against the host-owned render output roots before
       // any package read or output claim. Its derived receipts/packages/render
       // children therefore retain that same authority; a caller still cannot
       // nominate a separate receipt store for later reads.
       for (let index = 0; index < expanded.length; index += 1) {
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
         const packageAssetInputHashes = await writeExpandedMotionPackage(expanded[index], pkg, jobs[index].packageDir);
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
         const planReceiptPath = await writeDebugBatchRowPlanReceipt({
           receiptsRoot, dryRun: true, packageId: expanded[index].manifest.id,
           row: expanded[index].row, manifest: expanded[index].manifest, motion: expanded[index].motion,
@@ -1586,7 +1585,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         });
         Object.assign(jobs[index], { planReceiptPath, receiptPath: planReceiptPath });
       }
-      await batchOutput.assertCurrent();
+      await preparedOutput.assertCurrent();
       const receipt = await writeDebugBatchReceipt({
         receiptsRoot, pkg, rows, dryRun: true, preset: request.preset, ...presetSummary,
         quality, qualityManifestPath, frameLane: request.frameLane, jobs, status: "not_run", callerId: request.callerId, actor: context.actor
@@ -1631,25 +1630,23 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       if (await isUnsafePackageOutputDir(pkg.root, outDir)) {
         return invalidArgs("motion.render.batch outDir must be outside packageRoot.");
       }
-      let retainedResumeOutput: DebugBatchResumeOutput | undefined;
+      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume, keepFrames });
+      if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
       let previousBatchJobs = new Map<string, Record<string, unknown>>();
       if (resume) {
-        const resumePreflight = await inspectDebugBatchResumeOwner(outDir, request.callerId);
+        const resumePreflight = await inspectDebugBatchResumeOwner(preparedOutput, request.callerId);
         if (!resumePreflight.ok) return resumePreflight.result;
-        retainedResumeOutput = resumePreflight.batchOutput;
         previousBatchJobs = resumePreflight.jobs;
       }
-      const preparedOutput = await prepareDebugBatchOutput(outDir, { resume, keepFrames }, retainedResumeOutput);
-      if (!preparedOutput) return invalidArgs("motion.render.batch outDir must be empty or absent before render.");
-      const { batchOutput, packagesRoot, renderRoot, receiptsRoot, framesRoot } = preparedOutput;
+      const { packagesRoot, renderRoot, receiptsRoot, framesRoot } = preparedOutput;
       for (let index = 0; index < expanded.length; index += 1) {
         if (index > 0) await context.batchTestHooks?.beforeNextRow?.();
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
         const expandedJob = expanded[index];
         const planJob = jobs[index];
         const jobPreset = presetPlan.presets[index];
         const packageAssetInputHashes = await writeExpandedMotionPackage(expandedJob, pkg, planJob.packageDir);
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
         const planReceiptPath = await writeDebugBatchRowPlanReceipt({
           receiptsRoot,
           dryRun,
@@ -1673,11 +1670,11 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           actor: context.actor
         });
         Object.assign(planJob, { planReceiptPath });
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
 
         const resumeMatch = request.frameLane === "gpu" ? null : resume ? readDebugBatchResumeMatch(previousBatchJobs, planJob.idempotencyKey, planJob.outputPath, request.callerId) : null;
         if (resumeMatch) {
-          const sourceReceiptPath = debugBatchResumeSourceReceiptPath(resumeMatch);
+          const sourceReceiptPath = await assertDebugBatchResumeArtifacts(preparedOutput, resumeMatch);
           renderedJobs.push({
             ...planJob,
             status: "skipped",
@@ -1752,11 +1749,11 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
         };
         renderedJobs.push(renderedJob);
         await context.batchTestHooks?.beforePostRenderAssert?.();
-        await batchOutput.assertCurrent();
+        await preparedOutput.assertCurrent();
 
         if (!renderResult.ok) {
           const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
-          await batchOutput.assertCurrent();
+          await preparedOutput.assertCurrent();
           await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
           const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: possiblyCommittedPaths.length > 0 ? "warning" : "failed", callerId: request.callerId, actor: context.actor });
           const delivery = debugBatchDeliveryFields(renderedJobs);
@@ -1770,7 +1767,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
       }
 
       const batchCounts = debugBatchRenderCounts(renderedJobs, dryRun);
-      await batchOutput.assertCurrent();
+      await preparedOutput.assertCurrent();
       await context.batchTestHooks?.beforeAggregateReceiptWrite?.();
       const receipt = await writeDebugBatchReceipt({ receiptsRoot, pkg, rows, dryRun, resume, frameLane: request.frameLane, ...batchCounts, preset: motionPreset, ...presetSummary, quality, qualityManifestPath, jobs: renderedJobs, status: "passed", callerId: request.callerId, actor: context.actor });
       const receiptPath = join(receiptsRoot, "batch-render.receipt.json");

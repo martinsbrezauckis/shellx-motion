@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "productVersion": "0.2.65",
+  "productVersion": "0.2.66",
   "sections": [
     {
       "id": "start-here",
@@ -36,6 +36,11 @@
           "id": "rendering",
           "title": "Rendering lanes",
           "file": "rendering.md"
+        },
+        {
+          "id": "color-pipeline",
+          "title": "Color pipeline contract",
+          "file": "COLOR_PIPELINE.md"
         },
         {
           "id": "shape-geometry",

@@ -107,7 +107,7 @@ describeQualifiedLinuxGpuPublication("render-batch delegated publication uncerta
       batchTestHooks: { [hook]: () => { throw new Error(`injected ${hook}`); } }
     });
     const outputPath = join(outDir, "render", "batch-uncertain_one.png");
-    const receiptPath = join(outDir, "render", "batch-uncertain_one-render.receipt.json");
+    const receiptPath = `${outputPath}.receipt.json`;
 
     expect(result).toMatchObject({
       ok: false,
@@ -132,7 +132,7 @@ describeQualifiedLinuxGpuPublication("render-batch delegated publication uncerta
       batchTestHooks: { beforeNextRow: () => { throw new Error("injected next-row boundary"); } }
     });
     const outputPath = join(outDir, "render", "batch-uncertain_one.png");
-    const receiptPath = join(outDir, "render", "batch-uncertain_one-render.receipt.json");
+    const receiptPath = `${outputPath}.receipt.json`;
 
     expect(result).toMatchObject({
       ok: false,

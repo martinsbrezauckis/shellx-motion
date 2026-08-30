@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import type { MotionDebugCommand, MotionDebugContext, ReceiptActor } from "@shellx-motion/debug-api";
+import type { CliAuthoringRoots } from "./debug-authoring-roots.js";
 
 export function debugScratchRoot(
   debugName: MotionDebugCommand,
@@ -139,7 +140,7 @@ export async function withCliSourceWorkspaceAnchor<T>(
   }
   const workspace = sourceCheckoutWorkspaceRoot();
   if (!workspace) return await operation();
-  if (!operationPaths.every((path) => isStrictDescendant(workspace, resolve(path)))) return await operation();
+  if (!operationPaths.every((path) => isWorkspacePath(workspace, resolve(path)))) return await operation();
   let anchor;
   try {
     anchor = await createTrustedWorkspaceAnchor(workspace);
@@ -151,59 +152,60 @@ export async function withCliSourceWorkspaceAnchor<T>(
 
 /**
  * Source-checkout paths eligible for the CLI's module-derived workspace anchor.
- * Import commands need the same host admission as package COW: only their
- * parsed input and bounded output are considered, and only when both are below
- * the source checkout determined by this module.
+ * `cliAuthoringRoots` is the single metadata-backed local-path selection for every direct CLI
+ * authoring command. Keep source-anchor selection bound to it, rather than growing an independent
+ * command list whenever a new COW family is added. The two receipt roots are host/CLI-owned
+ * supplements: they are retained so a selected package edit cannot anchor its package and output
+ * while omitting a receipt publication path from the same operation.
  */
 export function sourceWorkspaceOperationPaths(
-  command: MotionDebugCommand,
   args: unknown,
+  authoringRoots: CliAuthoringRoots | null | undefined,
   hostReceiptsRoot?: string,
+  rawDebugFileInputs: readonly string[] = [],
 ): string[] | undefined {
+  if (!authoringRoots) return undefined;
   const record = readRecord(args);
-  if (!record) return undefined;
-  if (command === "motion.scene3d.gltf.import"
-    || command === "motion.lottie.import"
-    || command === "motion.dotlottie.import") {
-    if (typeof record.sourcePath !== "string" || typeof record.outDir !== "string") return undefined;
-    return [record.sourcePath, record.outDir];
+  const explicitReceiptsRoot = typeof record?.receiptsRoot === "string" ? record.receiptsRoot : undefined;
+  const paths = [
+    ...authoringRoots.inputRoots,
+    ...authoringRoots.outputRoots,
+    ...rawDebugFileInputs,
+    ...(explicitReceiptsRoot ? [explicitReceiptsRoot] : []),
+    ...(hostReceiptsRoot ? [hostReceiptsRoot] : []),
+  ].map((path) => resolve(path));
+  return paths.length > 0 ? [...new Set(paths)] : undefined;
+}
+
+/**
+ * Preserves selected CLI-only file inputs after a typed adapter has decoded their JSON into a
+ * public Debug request. This is deliberately argv-only: it neither reads the file nor adds it to
+ * Debug/MCP arguments. A selected external file only prevents the source-checkout anchor from
+ * activating; it never creates a new authority.
+ */
+export function rawDebugFileInputPaths(
+  argv: readonly string[],
+  resolveInputPath: (path: string) => string,
+): string[] {
+  const paths: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (!/^--[a-z0-9]+(?:-[a-z0-9]+)*-file$/.test(argv[index] ?? "")) continue;
+    const value = argv[index + 1];
+    if (!value) continue;
+    paths.push(resolveInputPath(value));
+    index += 1;
   }
-  if (typeof record.packageRoot !== "string") return undefined;
-  if (command === "motion.package.patch") {
-    if (typeof record.outDir !== "string") return undefined;
-    const paths = [record.packageRoot, record.outDir];
-    if (record.receiptsRoot !== undefined) {
-      if (typeof record.receiptsRoot !== "string") return undefined;
-      paths.push(record.receiptsRoot);
-    }
-    return paths;
-  }
-  if (command === "motion.timeline.shape.geometry-keyframes.inspect") return [record.packageRoot];
-  if (command === "motion.timeline.behaviors.inspect") return [record.packageRoot];
-  if (command === "motion.procedural.inspect") return [record.packageRoot];
-  if (command === "motion.timeline.animation.preset.apply"
-    || command === "motion.timeline.shape.geometry-keyframes.upsert"
-    || command === "motion.timeline.shape.geometry-keyframes.delete"
-    || command === "motion.timeline.shape.geometry-keyframes.move"
-    || command === "motion.timeline.behaviors.upsert"
-    || command === "motion.timeline.behaviors.remove") {
-    if (typeof record.outDir !== "string") return undefined;
-    return [record.packageRoot, record.outDir, ...(hostReceiptsRoot ? [hostReceiptsRoot] : [])];
-  }
-  if (command === "motion.procedural.relationship.set"
-    || command === "motion.procedural.relationship.enabled.set"
-    || command === "motion.procedural.relationship.bake"
-    || command === "motion.procedural.relationship.detach") {
-    if (typeof record.outDir !== "string") return undefined;
-    return [record.packageRoot, record.outDir, ...(hostReceiptsRoot ? [hostReceiptsRoot] : [])];
-  }
-  return undefined;
+  return [...new Set(paths)];
 }
 
 /** @deprecated Use sourceWorkspaceOperationPaths for all host-admitted source operations. */
 export const packagePatchWorkspacePaths = sourceWorkspaceOperationPaths;
 
-function isStrictDescendant(root: string, path: string): boolean {
+/** Selected authoring roots are often a parent of a source/out leaf, so the checkout root itself
+ * is an admissible selection. Core still requires every concrete output target to be a strict
+ * descendant of the active trusted-workspace anchor. */
+function isWorkspacePath(root: string, path: string): boolean {
+  if (root === path) return true;
   const suffix = relative(root, path);
   return suffix.length > 0 && suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
 }

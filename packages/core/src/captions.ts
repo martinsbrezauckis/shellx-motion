@@ -1,4 +1,5 @@
 import { compareCodeUnits } from "./canonical-json";
+import { MAX_CAPTION_LAYER_PREFIX_LENGTH, normalizeCaptionIdentifier } from "./caption-identifiers";
 import type { MotionDocument, MotionLayer, MotionTrack } from "./types";
 
 export type CaptionSourceFormat = "srt" | "vtt" | "plain";
@@ -84,7 +85,10 @@ export function importTimelineCaptions(motion: MotionDocument, input: TimelineCa
   let trackCreated = false;
   let track: MotionTrack | undefined;
   const trackId = input.trackId ?? DEFAULT_TRACK_ID;
-  const layerPrefix = sanitizeLayerId(input.layerPrefix ?? DEFAULT_LAYER_PREFIX);
+  const layerPrefix = normalizeCaptionIdentifier(input.layerPrefix ?? DEFAULT_LAYER_PREFIX, {
+    label: "Caption layerPrefix",
+    maxLength: MAX_CAPTION_LAYER_PREFIX_LENGTH,
+  });
 
   cues.forEach((cue, index) => {
     const upsert = upsertTimelineCaption(nextMotion, {
@@ -223,7 +227,7 @@ function parseTimedCaptions(source: string, format: CaptionSourceFormat): Captio
     const text = lines.slice(timeLineIndex + 1).join("\n").trim();
     if (!text) continue;
     cues.push({
-      id: cueId ? sanitizeLayerId(cueId) : `cue_${String(cues.length + 1).padStart(4, "0")}`,
+      id: cueId ? normalizeCaptionIdentifier(cueId, { label: "Caption cue id" }) : `cue_${String(cues.length + 1).padStart(4, "0")}`,
       startMs,
       durationMs: endMs - startMs,
       text
@@ -321,10 +325,6 @@ function sortLayerIdsByTime(layerIds: string[], layers: MotionLayer[]): string[]
 
 function without(values: string[], value: string): string[] {
   return values.filter((candidate) => candidate !== value);
-}
-
-function sanitizeLayerId(value: string): string {
-  return value.trim().replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "") || "caption";
 }
 
 function defaultCaptionTransform(motion: MotionDocument): Record<string, unknown> {

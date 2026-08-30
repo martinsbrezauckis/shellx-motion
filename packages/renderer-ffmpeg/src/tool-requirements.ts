@@ -24,7 +24,10 @@
  * usable from a failure path that must not itself fail. Primary callers: `checkFfmpeg` in index.ts,
  * the CLI doctor command, and the platform-requirements debug command.
  */
-import type { MotionToolName } from "@shellx-motion/core";
+import { takeUtf8Prefix, type MotionToolName } from "@shellx-motion/core";
+
+/** Probe text only decides a status; it is never a reason to scan unlimited stderr. */
+export const MOTION_TOOL_PROBE_ERROR_MAX_BYTES = 4 * 1024;
 
 export interface MotionToolInstallOption {
   /** Package manager or channel, e.g. "winget", "homebrew", "apt". */
@@ -214,7 +217,7 @@ export function ffmpegInstallOptions(platform: NodeJS.Platform = process.platfor
  */
 export function ffmpegLooksLikeBrokenLoad(rawError: string): boolean {
   return /error while loading shared libraries|cannot open shared object file|symbol lookup error|dyld(?:\[\d+\])?:|library not loaded|symbol not found/i
-    .test(rawError);
+    .test(takeUtf8Prefix(rawError, MOTION_TOOL_PROBE_ERROR_MAX_BYTES).value);
 }
 
 /**
@@ -225,8 +228,9 @@ export function ffmpegLooksLikeBrokenLoad(rawError: string): boolean {
  * {@link ffmpegLooksLikeBrokenLoad} takes precedence for it.
  */
 export function ffmpegLooksAbsent(rawError: string): boolean {
-  if (ffmpegLooksLikeBrokenLoad(rawError)) return false;
-  return /ENOENT|command not found|not recognized|no such file/i.test(rawError);
+  const bounded = takeUtf8Prefix(rawError, MOTION_TOOL_PROBE_ERROR_MAX_BYTES).value;
+  if (ffmpegLooksLikeBrokenLoad(bounded)) return false;
+  return /ENOENT|command not found|not recognized|no such file/i.test(bounded);
 }
 
 export function ffmpegMissingMessage(rawError: string, executable: string): string {

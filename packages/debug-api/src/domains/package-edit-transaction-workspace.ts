@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm } from "nod
 import { basename, dirname, join, resolve } from "node:path";
 import { OutputPathTopology, OutputPathTopologyError, PublicationCommitUncertainError } from "@shellx-motion/core";
 import { PackageEditTransactionError } from "./package-edit-transaction-error.js";
-import { PackageEditClosedInventory, type PackageEditClosedInventoryMode } from "./package-edit-closed-inventory.js";
+import { assertPackageEditClosedInventoryAvailable, PackageEditClosedInventory, type PackageEditClosedInventoryMode } from "./package-edit-closed-inventory.js";
 
 interface PathIdentity {
   dev: bigint;
@@ -52,6 +52,7 @@ export class PackageEditWorkspace {
   }
 
   static async create(outputRoot: string, kind: "new" | "edit", options: { closedInventory?: PackageEditClosedInventoryMode } = {}): Promise<PackageEditWorkspace> {
+    if (options.closedInventory) assertPackageEditClosedInventoryAvailable();
     const resolvedOutput = resolve(outputRoot);
     let topology: OutputPathTopology;
     try {
@@ -145,8 +146,8 @@ export class PackageEditWorkspace {
     await this.assertPinnedStagedInventory(staged);
   }
 
-  /** Install only the exact staged package captured in this output filesystem reservation. */
-  async install(): Promise<ProtectedDirectoryIdentity> {
+  /** Last portable recheck before rename; an observation only, never same-UID atomicity. */
+  async install(assertImmediatelyBeforeRename?: () => Promise<void>): Promise<ProtectedDirectoryIdentity> {
     await this.assertReservation();
     const staged = await captureProtectedDirectory(this.stagedPackageRoot, "Staged package changed before installation.");
     await this.assertPinnedStagedInventory(staged);
@@ -160,6 +161,11 @@ export class PackageEditWorkspace {
       }
       const current = await protectedIdentityOrUndefined(this.stagedPackageRoot);
       if (!current || !sameProtectedIdentity(current, staged)) {
+        throw new PackageEditTransactionError("output_changed", "Staged package changed during installation.");
+      }
+      if (assertImmediatelyBeforeRename) await assertImmediatelyBeforeRename();
+      const ready = await protectedIdentityOrUndefined(this.stagedPackageRoot);
+      if (!ready || !sameProtectedIdentity(ready, staged) || await pathExists(this.outputRoot)) {
         throw new PackageEditTransactionError("output_changed", "Staged package changed during installation.");
       }
       publicationAttempted = true;

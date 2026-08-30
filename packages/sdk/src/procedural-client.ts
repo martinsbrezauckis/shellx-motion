@@ -1,5 +1,6 @@
 /** Runtime guards for deterministic, data-only procedural SDK operations. */
 import {
+  isMotionProceduralProperty,
   proceduralRelationshipGraphFingerprint,
   validateMotionProceduralGraph,
   type MotionProceduralGraph,
@@ -249,7 +250,11 @@ function placeholderLayers(refs: unknown[], envelopes: unknown[]): Array<Record<
     const ref = plainRecord(value);
     if (!safeId(ref?.layerId)) continue;
     const layer = layers.get(String(ref!.layerId)) ?? { id: String(ref!.layerId), type: "shape" };
-    if (typeof ref?.property === "string") writePath(layer, ref.property, 0);
+    // This synthetic document exists only to validate a standalone request. Its computed writes
+    // must never receive an unvalidated caller path: Core remains the one property authority, so
+    // invalid properties reach Core unchanged and produce property.unsupported rather than
+    // traversing Object.prototype while this placeholder is assembled.
+    if (isMotionProceduralProperty(ref?.property)) writePath(layer, ref.property, 0);
     layers.set(layer.id, layer);
   }
   return [...layers.values()];

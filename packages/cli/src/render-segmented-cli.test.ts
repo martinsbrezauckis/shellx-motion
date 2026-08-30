@@ -22,7 +22,10 @@ vi.mock("./output-dir-guard.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("./output-dir-guard.js")>(),
   outputFileRefusal: async () => undefined
 }));
-vi.mock("./paired-output-receipt-publication.js", () => ({ PairedOutputReceiptPublication: { acquire: paired.acquire } }));
+vi.mock("./paired-output-receipt-publication.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./paired-output-receipt-publication.js")>(),
+  PairedOutputReceiptPublication: { acquire: paired.acquire }
+}));
 vi.mock("@shellx-motion/renderer-ffmpeg/internal/segmented-final-cli-publication", () => ({
   withSegmentedFinalCliPublication: segmentedCli.bind
 }));

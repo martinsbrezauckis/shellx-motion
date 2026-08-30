@@ -103,7 +103,7 @@ describe("quality-gated render failure receipts", () => {
     expect(receiptWriter).toHaveBeenCalledOnce();
     expect(receiptWriter).toHaveBeenCalledWith(
       receipt,
-      join(root, "pkg_quality_receipt-render.receipt.json"),
+      join(root, "final.png.receipt.json"),
       { force: false }
     );
   });

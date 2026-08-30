@@ -13,6 +13,10 @@
  * (`stringArg(args, "layerId") ?? stringArg(args, "layer")`), and `additionalProperties: false`
  * in the published schema would be a lie if they were omitted.
  */
+import {
+  MAX_MOTION_EASING_CODE_UNITS,
+  MOTION_FUNCTIONAL_EASING_PATTERN
+} from "@shellx-motion/core";
 import type { MotionDebugArgPropertySchema, MotionDebugExpectedReceipt } from "./command-registry.js";
 
 type Properties = Record<string, MotionDebugArgPropertySchema>;
@@ -51,6 +55,43 @@ export const TRACK_ID: Properties = {
 /** Keyframe channel selector shared by every keyframe command. */
 export const KEYFRAME_TARGET: Properties = {
   target: { type: "string", enumRef: "keyframeTarget", description: "Animated property path the keyframes belong to." }
+};
+
+/**
+ * Complete public contract for a string easing. The first branch names every
+ * fixed easing/preset; the second is the bounded functional grammar shared
+ * with Core. Keeping them as alternatives matters: an enum alone silently
+ * rejects valid custom curves at MCP transport validation before Core sees it.
+ */
+export const MOTION_EASING_STRING: MotionDebugArgPropertySchema = {
+  type: "string",
+  maxLength: MAX_MOTION_EASING_CODE_UNITS,
+  oneOf: [
+    { type: "string", enumRef: "easing", maxLength: MAX_MOTION_EASING_CODE_UNITS },
+    { type: "string", maxLength: MAX_MOTION_EASING_CODE_UNITS, pattern: MOTION_FUNCTIONAL_EASING_PATTERN }
+  ],
+  description: `Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most ${MAX_MOTION_EASING_CODE_UNITS} UTF-16 code units).`
+};
+
+/** Full Motion easing value, including the closed spring-object form. */
+export const MOTION_EASING: MotionDebugArgPropertySchema = {
+  type: ["string", "object"],
+  oneOf: [
+    MOTION_EASING_STRING,
+    {
+      type: "object",
+      required: ["type", "stiffness", "damping"],
+      additionalProperties: false,
+      properties: {
+        type: { type: "string", enum: ["spring"], description: "Closed spring easing type." },
+        stiffness: { type: "number", exclusiveMinimum: 0, description: "Finite positive spring stiffness." },
+        damping: { type: "number", exclusiveMinimum: 0, description: "Finite positive spring damping." },
+        mass: { type: "number", exclusiveMinimum: 0, description: "Optional finite positive spring mass." },
+        initialVelocity: { type: "number", description: "Optional finite initial velocity." }
+      }
+    }
+  ],
+  description: "Exact bounded Motion easing. Core remains the single evaluator authority."
 };
 
 /** Receipt store selector shared by receipt-reading and job-lifecycle commands. */

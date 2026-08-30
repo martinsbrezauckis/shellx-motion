@@ -38,10 +38,26 @@ describe("restricted shader plugins", () => {
     const result = validateRestrictedFragmentShader(source, ["u_time", "bad-name"]);
 
     expect(result.ok).toBe(false);
-    expect(result.errors).toEqual(expect.arrayContaining([
-      expect.stringContaining("exceeds"),
-      "invalid shader uniform name: u_time",
-      "invalid shader uniform name: bad-name"
-    ]));
+    expect(result.errors).toEqual([expect.stringContaining("exceeds")]);
+  });
+
+  it("accepts the exact byte boundary and refuses one byte over before other validation", () => {
+    const base = "vec4 motionMain(vec2 uv) { return vec4(uv, 0.0, 1.0); }";
+    const atLimit = `${base}${" ".repeat(MAX_RESTRICTED_SHADER_BYTES - base.length)}`;
+    expect(validateRestrictedFragmentShader(atLimit)).toMatchObject({ ok: true });
+    expect(validateRestrictedFragmentShader(`${atLimit} `, ["bad-name"]).errors).toEqual([
+      `shader source exceeds ${MAX_RESTRICTED_SHADER_BYTES} bytes`,
+    ]);
+    const multibyteOverLimit = `${base}${"\u2000".repeat(Math.ceil((MAX_RESTRICTED_SHADER_BYTES - base.length) / 3) + 1)}`;
+    expect(multibyteOverLimit.length).toBeLessThan(MAX_RESTRICTED_SHADER_BYTES);
+    expect(validateRestrictedFragmentShader(multibyteOverLimit).errors).toEqual([
+      `shader source exceeds ${MAX_RESTRICTED_SHADER_BYTES} bytes`,
+    ]);
+  });
+
+  it("preserves wrapper whitespace while refusing extra declarations and terminal data", () => {
+    expect(validateRestrictedFragmentShader("\n vec4\tmotionMain ( vec2\nuv ) { return\nvec4(uv, 0.0, 1.0) ; } \n")).toMatchObject({ ok: true });
+    expect(validateRestrictedFragmentShader("vec4 motionMain(vec2 uv) { return vec4(uv, 0.0, 1.0); } helper").ok).toBe(false);
+    expect(validateRestrictedFragmentShader("vec4 motionMain(vec2 uv) { return vec4(uv, 0.0, 1.0); }; ").ok).toBe(false);
   });
 });

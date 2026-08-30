@@ -1,5 +1,7 @@
+import { MAX_MOTION_COLOR_STRING_LENGTH } from "./color";
+
 /** Closed source-schema vocabulary for manifest-bound text-runs@1. */
-const COLOR = { type: "string", minLength: 1 };
+const COLOR = { type: "string", minLength: 1, maxLength: MAX_MOTION_COLOR_STRING_LENGTH };
 
 export const TEXT_RUNS_LAYER_PROPERTY = { $ref: "#/$defs/textRuns" };
 

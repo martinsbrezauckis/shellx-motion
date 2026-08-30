@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { hashBuffer } from "./receipts";
 import { htmlToMarkdown } from "./source-html-markdown";
+import { cleanSourceMarkdownText, extractBoundedSourceUrls } from "./source-import-scanners";
 import {
   assertPublicNetworkUrl,
   defaultNetworkAddressResolver,
@@ -116,16 +117,7 @@ export interface SourceScriptedVideoFrame {
 }
 
 export function extractSourceUrls(text: string, max = 3): string[] {
-  const seen = new Set<string>();
-  const urls: string[] = [];
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`)\]}]+/gi)) {
-    const url = match[0].replace(/[.,;:!?]+$/, "");
-    if (seen.has(url)) continue;
-    seen.add(url);
-    urls.push(url);
-    if (urls.length >= max) break;
-  }
-  return urls;
+  return extractBoundedSourceUrls(text, max);
 }
 
 export function assertPublicSourceUrl(raw: string): URL {
@@ -640,12 +632,7 @@ function sourceSections(markdown: string, sourceTitle: string): SourceSection[] 
 }
 
 function cleanMarkdownText(value: string): string {
-  return value
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[`*_>#]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return cleanSourceMarkdownText(value);
 }
 
 function firstSentence(value: string): string {

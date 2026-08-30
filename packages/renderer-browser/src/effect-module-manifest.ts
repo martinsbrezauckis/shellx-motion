@@ -7,13 +7,11 @@ import {
   EffectModuleRegistryError,
   type EffectModuleManifest
 } from "./effect-module-registry-types.js";
-import { motionEffectModuleManifestProblem } from "@shellx-motion/core";
+import { isCanonicalMotionEffectModuleVersion, motionEffectModuleManifestProblem } from "@shellx-motion/core";
 
 export const MAX_EFFECT_MODULE_MANIFEST_BYTES = 16 * 1024;
 
 const MODULE_ID = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/;
-// Canonical SemVer without build metadata; ranges/latest/leading zeroes are deliberately absent.
-const VERSION = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 
 export function parseEffectModuleManifest(bytes: Buffer): EffectModuleManifest {
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_EFFECT_MODULE_MANIFEST_BYTES) {
@@ -42,7 +40,7 @@ export function parseEffectModuleManifest(bytes: Buffer): EffectModuleManifest {
 }
 
 export function safeEffectModuleId(value: unknown): value is string { return typeof value === "string" && value.length <= 128 && MODULE_ID.test(value); }
-export function safeEffectModuleVersion(value: unknown): value is string { return typeof value === "string" && VERSION.test(value); }
+export function safeEffectModuleVersion(value: unknown): value is string { return isCanonicalMotionEffectModuleVersion(value); }
 export function safeEffectModuleDisplayName(value: unknown): value is string {
   return typeof value === "string" && value.length >= 1 && value.length <= 96
     && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);

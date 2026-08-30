@@ -185,7 +185,7 @@ describe("native frame lane delivery text gate", () => {
   it("keeps native preview and still-frame renders working and reports the case fold as a warning", async () => {
     const packageRoot = await writeTextPackage("Sveiks");
     const outDir = await makeOutDir();
-    // Each render keeps its immutable package-derived receipt beside the output. Separate parents
+    // Each render keeps an immutable output-specific receipt beside the output. Separate parents
     // keep this text-capability test independent from receipt replacement policy.
     const previewPath = join(outDir, "preview", "frame.png");
     const stillPath = join(outDir, "still", "frame.png");

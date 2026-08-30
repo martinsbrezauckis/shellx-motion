@@ -11,6 +11,7 @@ import { hashBuffer } from "./receipts.js";
 import { receiptStatusForWarnings } from "./receipt-status.js";
 import { hashPackageFile, resolvePackageAsset } from "./package.js";
 import { loadedPackageInputHashes } from "./package-loaded-inputs.js";
+import { colorPipelineValidationReceiptEvidence } from "./color-pipeline.js";
 import type { MotionPackage, OperationReceipt } from "./types.js";
 
 export interface PackageValidationReceiptFailure {
@@ -31,6 +32,8 @@ export interface PackageValidationReceiptOutput {
   inputHashScope: PackageValidationInputHashScope;
   /** The caller-facing validation summary, retained so a receipt is sufficient evidence on its own. */
   validation: Record<string, unknown>;
+  /** Requested pipeline plus explicit non-execution evidence for this validation-only receipt. */
+  colorPipeline?: ReturnType<typeof colorPipelineValidationReceiptEvidence>;
   error?: PackageValidationReceiptFailure;
 }
 
@@ -63,11 +66,13 @@ export async function createPackageValidationReceipt(input: CreatePackageValidat
     ...(input.error ? [input.error.message] : [])
   ]);
   const createdAt = input.createdAt ?? new Date().toISOString();
+  const colorPipeline = input.package ? validationColorPipelineEvidence(input.package) : undefined;
   const output: PackageValidationReceiptOutput = {
     packageRoot,
     valid: input.valid,
     inputHashScope,
     validation: input.validation,
+    ...(colorPipeline ? { colorPipeline } : {}),
     ...(input.error ? { error: input.error } : {})
   };
   const id = `package-validate-${hashBuffer(Buffer.from(JSON.stringify({
@@ -89,6 +94,15 @@ export async function createPackageValidationReceipt(input: CreatePackageValidat
     output,
     warnings
   };
+}
+
+/** A malformed declaration is reported by validation; receipt construction must not hide that verdict. */
+function validationColorPipelineEvidence(pkg: MotionPackage): ReturnType<typeof colorPipelineValidationReceiptEvidence> | undefined {
+  try {
+    return colorPipelineValidationReceiptEvidence(pkg.motion);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Hash exactly the two authored package documents whose validation produced the verdict. */

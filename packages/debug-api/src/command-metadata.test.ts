@@ -18,6 +18,9 @@ import {
   MOTION_BEHAVIOR_MIN_RESTITUTION,
   MOTION_BEHAVIOR_MIN_SQUASH_AMOUNT,
   MOTION_BEHAVIOR_MIN_VELOCITY,
+  MAX_CAPTION_LAYER_PREFIX_LENGTH,
+  MAX_MOTION_EASING_CODE_UNITS,
+  MOTION_FUNCTIONAL_EASING_PATTERN,
   readSupportedKeyframeTarget,
   isSupportedEasing,
   readSupportedTransitionType,
@@ -30,6 +33,7 @@ import { KEYING_COMMAND_METADATA } from "./command-metadata-keying.js";
 import { SCENE3D_COMMAND_METADATA } from "./command-metadata-scene3d.js";
 import { SURFACE_COMMAND_METADATA } from "./command-metadata-surfaces.js";
 import { TIMELINE_KEYFRAME_COMMAND_METADATA } from "./command-metadata-timeline-keyframes.js";
+import { MOTION_EASING_STRING } from "./command-metadata-shared.js";
 import { TIMELINE_LAYER_COMMAND_METADATA } from "./command-metadata-timeline-layers.js";
 import { TIMELINE_GROUP_COMMAND_METADATA } from "./command-metadata-timeline-groups.js";
 import { TIMELINE_LAYOUT_COMMAND_METADATA } from "./command-metadata-timeline-layout.js";
@@ -81,6 +85,15 @@ const METADATA_MODULES = [
 ] as const;
 
 describe("published debug argument contracts", () => {
+  it("publishes Core's exact bounded caption layer-prefix contract", () => {
+    const layerPrefix = TIMELINE_TRACK_COMMAND_METADATA["motion.timeline.caption.import"].argsSchema.properties.layerPrefix;
+    expect(layerPrefix).toMatchObject({
+      type: "string",
+      maxLength: MAX_CAPTION_LAYER_PREFIX_LENGTH,
+    });
+    expect(layerPrefix?.description).toContain("Core reserves the generated cue suffix separately");
+  });
+
   it("keeps fixed adjustment set closed and behind the package COW boundary", () => {
     for (const command of ["motion.timeline.adjustment.fixed.set", "motion.timeline.adjustment.fixed.remove"] as const) {
       const schema = TIMELINE_FIXED_ADJUSTMENT_COMMAND_METADATA[command].argsSchema;
@@ -262,6 +275,26 @@ describe("published debug argument contracts", () => {
 });
 
 describe("published argument enumerations", () => {
+  it("publishes the same complete bounded functional easing grammar Core accepts", () => {
+    const functional = MOTION_EASING_STRING.oneOf?.[1];
+    expect(MOTION_EASING_STRING.maxLength).toBe(MAX_MOTION_EASING_CODE_UNITS);
+    expect(functional).toMatchObject({
+      type: "string",
+      maxLength: MAX_MOTION_EASING_CODE_UNITS,
+      pattern: MOTION_FUNCTIONAL_EASING_PATTERN
+    });
+    const grammar = new RegExp(functional?.pattern ?? "");
+    expect(grammar.test("cubic-bezier(0, -1.5, 1, 2.5)")).toBe(true);
+    expect(grammar.test("steps(4, jump-end)")).toBe(true);
+    expect(grammar.test(`steps(${" ".repeat(249)}1)`)).toBe(true);
+    expect((`steps(${" ".repeat(249)}1)`).length).toBeGreaterThan(MAX_MOTION_EASING_CODE_UNITS);
+    expect(grammar.test("cubic-bezier(-0.1, 0, 1, 1)")).toBe(true);
+    for (const terminator of ["\n", "\r", "\u2028", "\u2029"]) {
+      expect(grammar.test(`steps(4, end)${terminator}`)).toBe(false);
+      expect(isSupportedEasing(`steps(4, end)${terminator}`)).toBe(false);
+    }
+  });
+
   it("publishes keyframe targets the engine actually accepts", () => {
     const targets = MOTION_DEBUG_ARG_ENUMS.keyframeTarget.values;
     expect(targets.length).toBeGreaterThan(100);

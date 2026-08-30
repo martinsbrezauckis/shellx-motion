@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { listRendererCapabilityCards } from "./capabilities";
 import { CURRENT_COLOR_ALPHA_CONTRACT, currentColorAlphaContract } from "./color-alpha-contract";
-import { isSupportedMotionColorString } from "./color";
+import { isSupportedMotionColorString, MAX_MOTION_COLOR_STRING_LENGTH } from "./color";
+import { buildMotionPublicSchema } from "./motion-public-schema";
 import { loadSchema, validateDocument } from "./validate";
 
 interface ColorAlphaFixture {
@@ -77,6 +78,11 @@ describe("current colour and alpha contract", () => {
         });
       }
     }
+  });
+
+  it("publishes the shared color bound for fixed GPU material arrays", async () => {
+    const motionSchema = buildMotionPublicSchema() as Record<string, any>;
+    expect(motionSchema.$defs.shader.properties.gpuMaterial.properties.colors.items.maxLength).toBe(MAX_MOTION_COLOR_STRING_LENGTH);
   });
 
   it("clones lane colour/alpha evidence for callers and the local SDK boundary", () => {

@@ -24,11 +24,13 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
 - Layer, track, scene, caption, transition, marker, selection, timeline, and range operations.
 - Visible keyframe creation, update, movement, duplication, deletion, range transforms, easing,
   interpolation, curve handles, spatial paths, snapping, presets, and undoable package revisions.
-- Text, shape, image, video, audio, **linear and radial gradients on closed,
-  fillable shapes** (`layer.gradient`, 2–16 stops, `gradient.angle` keyframable — use it instead of
-  stacking translucent shapes, which band), masks/mattes, effects,
-  transforms, crop/fit, blend modes, and bounded rich-layer controls. Open v1
-  line, polyline, and arc contours are stroke-only; see [Shape geometry v1](shape-geometry.md).
+- Text, shape, image, video, audio, **linear and radial gradients on Browser-renderable closed
+  legacy primitives** (`rect`/`rectangle`, `rounded-rect`, `ellipse`, `triangle`, and `star`; 2–16
+  stops; `gradient.angle` keyframable — use it instead of stacking translucent shapes, which band),
+  masks/mattes, effects, transforms, crop/fit, blend modes, and bounded rich-layer controls. Strict
+  GPU accepts gradients only on `rect` and Native refuses them. Legacy `path` / `freeform`
+  gradients remain refused until their closure is proven; open v1 line, polyline, and arc contours
+  are stroke-only; see [Shape geometry v1](shape-geometry.md).
 - [Path reveals](path-reveals.md) on one explicitly stroked SVG path: independently keyframable
   normalized start/end windows for line drawing and light traces. Browser accepts the broader
   validated contract; the strict GPU lane accepts its documented fixed path subset; native refuses
@@ -153,12 +155,15 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
 - H.264/HEVC MP4, VP9/AV1 WebM where the local capability probe permits them, audio, captions,
   alpha-capable outputs, GIF, JPEG/stills, and explicit export-preset capability matching.
 - **Current SDR colour/alpha boundary.** Authored colours use Motion's restricted CSS/hex syntax as
-  SDR sRGB-encoded values, and unprofiled raster input is assumed to be sRGB. Native PNG frames
-  expose straight RGBA (with temporary premultiplication only while native blur runs); browser
-  filtering and blend behaviour remains Chromium-managed, so Motion does not claim linear-light or
-  cross-renderer colour parity. HDR, wide-gamut, ICC profile conversion, OCIO, and selectable
-  working spaces are unsupported. Final FFmpeg media is explicitly converted/tagged as SDR BT.709
-  and, when delivered-colour verification runs, reports the FFprobe-observed tags in its receipt.
+  SDR sRGB-encoded values, and unprofiled raster input is assumed to be sRGB. The exact
+  `linear-srgb-sdr@1` static-rectangle final route performs premultiplied linear-sRGB WebGPU
+  composition, including the F2a rectangular linear/radial subset with stop interpolation in linear
+  light (2–16 canonical opaque stops, static angle/centre, normal source-over only), explicit
+  straight-sRGB frame publication, fixed limited-BT.709 H.264 conversion,
+  FFprobe validation, and mandatory inverse-decoded frame comparison before output publication.
+  Native PNG and general Browser/GPU paths retain their documented encoded/Chromium-defined
+  behaviour and make no cross-renderer colour-parity claim. HDR, wide-gamut, ICC profile
+  conversion, OCIO, and selectable working spaces remain unsupported.
 - **Fenced HDR10 implementation — not a Motion capability.** The source retains a narrow
   `internal/*` glTF PBR HDR10 implementation so the generic-render fence can compose. A package
   carrying its authenticated marker is refused by every generic final route before generic resource

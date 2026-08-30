@@ -13,7 +13,30 @@ import { PackageEditTransactionError } from "./package-edit-transaction-error.js
 
 export type PackageEditClosedDirectoryIdentity = { dev: bigint; ino: bigint };
 export type PackageEditClosedInventoryMode = "finalize-after-edit" | "finalize-after-edit-with-empty-directories";
+export type PackageEditClosedInventoryPlatformCapability =
+  | { readonly available: true; readonly proof: "linux-descriptor-relative" }
+  | { readonly available: false; readonly refusal: "native_descriptor_or_dacl_proof_required" };
 const COMPLETE_TREE_REOPEN_REQUIRED_SHA256 = createHash("sha256").update("shellx-motion:complete-tree-reopen-required@1\n").digest("hex");
+
+/**
+ * Closed inventory is intentionally Linux-only.  This small classifier is kept separate from the
+ * portable snapshot recheck so tests can prove the Windows/macOS refusal without pretending to
+ * exercise a Linux descriptor route on those hosts.
+ */
+export function packageEditClosedInventoryPlatformCapability(platform: NodeJS.Platform = process.platform): PackageEditClosedInventoryPlatformCapability {
+  return platform === "linux"
+    ? Object.freeze({ available: true as const, proof: "linux-descriptor-relative" as const })
+    : Object.freeze({ available: false as const, refusal: "native_descriptor_or_dacl_proof_required" as const });
+}
+
+/** Refuse closed-tree COW before a non-Linux host can stage or mutate a candidate package. */
+export function assertPackageEditClosedInventoryAvailable(platform: NodeJS.Platform = process.platform): void {
+  if (packageEditClosedInventoryPlatformCapability(platform).available) return;
+  throw new PackageEditTransactionError(
+    "closed_inventory_unsupported",
+    "Package edit closed inventory requires Linux descriptor-relative verification; Windows and macOS are refused until native descriptor/DACL proof is implemented."
+  );
+}
 
 type PublicationEvidence = {
   readonly sha256: string;

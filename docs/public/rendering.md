@@ -235,9 +235,19 @@ image/video interpretation is not a portable Motion feature. Native PNG decode r
 raw 8-bit RGB(A) samples without ICC/gamma conversion. Browser image decoding,
 filtering, blending, and internal alpha behaviour remain Chromium-managed.
 
+The closed, source-generated [color pipeline contract](COLOR_PIPELINE.md) records the
+explicit legacy compatibility intent and one exact `linear-srgb-sdr@1` final route. That
+route is limited to a static opaque background plus bounded rectangles with normal
+source-over. Each rectangle is either one canonical flat fill or an F2a static linear/radial
+gradient with 2–16 canonical opaque stops interpolated in linear light; gradient keyframes and
+every other shape/style remain refused. The route is rendered in a premultiplied linear-sRGB WebGPU target, explicitly encoded
+to a straight-sRGB frame boundary, converted to limited BT.709 H.264 by the fixed
+FFmpeg contract, and inverse-decoded for mandatory frame comparison before publication.
+All other strict features, lanes, outputs, transports, audio, and fallbacks are refused.
+
 Native frame PNGs expose straight RGBA and only premultiply temporarily for native
-blur. Its normal and named blend modes work in encoded RGB; Motion therefore makes
-no linear-light or cross-renderer blend/filter-parity claim. HDR, wide-gamut, ICC
+blur. Its normal and named blend modes work in encoded RGB; outside the exact strict
+route Motion therefore makes no linear-light or cross-renderer blend/filter-parity claim. HDR, wide-gamut, ICC
 profile conversion, OCIO, and user-selectable working spaces are unsupported.
 
 ### Fenced HDR10 implementation

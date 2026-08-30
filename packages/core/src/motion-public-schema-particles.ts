@@ -11,8 +11,9 @@ import {
   PARTICLE_FIELD_V2_SCHEMA
 } from "./particle-field-types";
 import { PUBLIC_SCHEMA_EXTENSION_COMMENT, PUBLIC_SCHEMA_UNSIGNED_32_BIT_INTEGER } from "./motion-public-schema-environments";
+import { MAX_MOTION_COLOR_STRING_LENGTH } from "./color";
 
-const COLOR = { type: "string", minLength: 1 };
+const COLOR = { type: "string", minLength: 1, maxLength: MAX_MOTION_COLOR_STRING_LENGTH };
 const UNIT = { type: "number", minimum: 0, maximum: 1 };
 const STRENGTH = { type: "number", minimum: PARTICLE_FIELD_MIN_STRENGTH, maximum: PARTICLE_FIELD_MAX_STRENGTH };
 const V1_RADIAL_SOURCE = { type: "object", required: ["kind", "centerX", "centerY", "strength", "softening"], properties: { kind: { enum: ["radial", "vortex"] }, centerX: UNIT, centerY: UNIT, strength: STRENGTH, softening: { type: "number", minimum: PARTICLE_FIELD_MIN_SOFTENING, maximum: PARTICLE_FIELD_MAX_SOFTENING } } };

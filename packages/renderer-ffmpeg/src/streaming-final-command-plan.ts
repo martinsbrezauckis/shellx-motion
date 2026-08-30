@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { assertMotionAudioMasterDuration, normalizeMotionAudioMaster, type MotionAudioMasterBus } from "@shellx-motion/core";
+import { assertMotionAudioMasterDuration, normalizeMotionAudioMaster, sanitizeUntrustedDiagnostic, type MotionAudioMasterBus } from "@shellx-motion/core";
 import { buildEncodeImageSequenceCommand, resolveExportPreset, type FfmpegCommand } from "./index.js";
 import { resolveFinalAudioInputs } from "./final-encode-shared.js";
 import {
@@ -123,12 +123,10 @@ export function materializedTransportMessage(plan: Extract<FinalVideoFrameTransp
 }
 
 function safeStaticMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const safe = raw
-    .replace(/(?:[A-Za-z]:)?[\\/][^\s"']+/g, "<path>")
-    .replace(/\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*=\S+/g, (match) => `${match.split("=")[0]}=[redacted]`)
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return safe.length > 400 ? `${safe.slice(0, 399)}…` : safe || "Streaming command validation failed.";
+  const safe = sanitizeUntrustedDiagnostic(error instanceof Error ? error.message : String(error), {
+    rawMaxBytes: 4 * 1024,
+    publicMaxBytes: 400,
+    collapseWhitespace: true
+  });
+  return safe || "Streaming command validation failed.";
 }

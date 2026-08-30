@@ -64,5 +64,9 @@ describe("compileGpuPointsPreviewPlan", () => {
     const namedColor = motion();
     namedColor.layers[0].color = "red";
     expect(compileGpuPointsPreviewPlan(namedColor, 0)).toMatchObject({ ok: false, failure: { code: "gpu_unsupported_color", layerId: "stars" } });
+
+    const overBoundColor = motion();
+    overBoundColor.layers[0].color = `#fff${" ".repeat(126)}`;
+    expect(compileGpuPointsPreviewPlan(overBoundColor, 0)).toMatchObject({ ok: false, failure: { code: "gpu_unsupported_color", layerId: "stars" } });
   });
 });

@@ -5,6 +5,7 @@
  * Store roots, FFV1 artifacts, concat lists and low-level producers stay private to this package.
  */
 import {
+  colorPipelinePreallocationRefusal,
   createRenderReceipt,
   motionBehaviorLaneRefusal,
   motionLayoutGapAnimationLaneRefusal,
@@ -138,6 +139,8 @@ export async function renderSegmentedFinal(candidate: RenderSegmentedFinalInput)
   const { pkg, frameLane, segmented, toolPolicy, request } = parsed;
   try {
     const lane = frameLane === "browser" ? "ffmpeg-browser" : frameLane === "native" ? "ffmpeg-native" : "ffmpeg-gpu";
+    const colorPipelineRefusal = colorPipelinePreallocationRefusal(pkg.motion, `ffmpeg-segmented-${frameLane}`);
+    if (colorPipelineRefusal) return publicFailure("segmented_final_unsupported", colorPipelineRefusal.message, false, { phase: "preflight" });
     const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, lane);
     if (layoutGapAnimationRefusal) return publicFailure("segmented_final_unsupported", layoutGapAnimationRefusal.message, false, { phase: "preflight" });
     const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, lane);

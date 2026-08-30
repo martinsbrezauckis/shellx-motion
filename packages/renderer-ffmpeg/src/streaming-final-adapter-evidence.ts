@@ -1,4 +1,4 @@
-import type { OperationReceipt } from "@shellx-motion/core";
+import { sanitizeUntrustedDiagnostic, type OperationReceipt } from "@shellx-motion/core";
 import type { NativeFrameProducerEvidence } from "@shellx-motion/renderer-native";
 import type {
   StreamingFinalEncoderHandoffEvidence,
@@ -9,6 +9,7 @@ import type {
 const MAX_WARNINGS = 64;
 const MAX_AUDIO_HANDOFF_LAYERS = 64;
 const MAX_ERROR_MESSAGE_CHARS = 400;
+const MAX_STREAMING_DIAGNOSTIC_RAW_BYTES = 4 * 1024;
 
 /** Copy the internal handoff into the stable public shape without retaining mutable attempt state. */
 export function publicEncoderHandoff(value: StreamingFinalEncoderHandoffEvidence): StreamingFinalEncoderHandoffEvidence {
@@ -97,14 +98,13 @@ function boundedStrings(values: readonly string[], capacity: number): { values: 
 }
 
 function boundedDiagnostic(value: string, maximum: number): string {
-  const safe = value
-    .replace(/(?:[A-Za-z]:)?[\\/][^\s"']+/g, "<path>")
-    .replace(/\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*=\S+/g, (match) => `${match.split("=")[0]}=[redacted]`)
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const safe = sanitizeUntrustedDiagnostic(value, {
+    rawMaxBytes: MAX_STREAMING_DIAGNOSTIC_RAW_BYTES,
+    publicMaxBytes: maximum,
+    collapseWhitespace: true
+  });
   if (!safe) return "producer operation failed";
-  return safe.length > maximum ? `${safe.slice(0, maximum - 1)}…` : safe;
+  return safe;
 }
 
 function boundedText(value: string, maximum: number): string {

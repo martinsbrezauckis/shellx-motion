@@ -1,0 +1,39 @@
+{
+  "schema": "shellx-motion/linear-srgb-sdr-gradient-ramps@1",
+  "ramps": [
+    {
+      "name": "linear-black-white",
+      "gradient": {
+        "type": "linear",
+        "angle": 90,
+        "stops": [
+          { "offset": 0, "color": "#000000" },
+          { "offset": 1, "color": "#ffffff" }
+        ]
+      },
+      "samples": [
+        { "localX": 0.25, "localY": 0.5, "expectedStraightSrgb": { "r": 0.5370987304831942, "g": 0.5370987304831942, "b": 0.5370987304831942, "a": 1 }, "gammaWrongControl": { "r": 0.25, "g": 0.25, "b": 0.25, "a": 1, "minimumMaxChannelDelta": 0.28 } },
+        { "localX": 0.5, "localY": 0.5, "expectedStraightSrgb": { "r": 0.7353569830524495, "g": 0.7353569830524495, "b": 0.7353569830524495, "a": 1 }, "gammaWrongControl": { "r": 0.5, "g": 0.5, "b": 0.5, "a": 1, "minimumMaxChannelDelta": 0.23 } },
+        { "localX": 0.75, "localY": 0.5, "expectedStraightSrgb": { "r": 0.8808250210902997, "g": 0.8808250210902997, "b": 0.8808250210902997, "a": 1 }, "gammaWrongControl": { "r": 0.75, "g": 0.75, "b": 0.75, "a": 1, "minimumMaxChannelDelta": 0.13 } }
+      ]
+    },
+    {
+      "name": "radial-three-stop",
+      "gradient": {
+        "type": "radial",
+        "centerX": 0.5,
+        "centerY": 0.5,
+        "stops": [
+          { "offset": 0, "color": "#101820" },
+          { "offset": 0.5, "color": "#00ff40" },
+          { "offset": 1, "color": "#ffffff" }
+        ]
+      },
+      "samples": [
+        { "localX": 0.5, "localY": 0.5, "expectedStraightSrgb": { "r": 0.06274509803921569, "g": 0.09411764705882353, "b": 0.12549019607843137, "a": 1 }, "gammaWrongControl": { "r": 0.06274509803921569, "g": 0.09411764705882353, "b": 0.12549019607843137, "a": 1, "minimumMaxChannelDelta": 0 } },
+        { "localX": 0.5, "localY": 0.75, "expectedStraightSrgb": { "r": 0.01960779388026354, "g": 0.8595789967234468, "b": 0.22230109430850908, "a": 1 }, "gammaWrongControl": { "r": 0.018377613729471533, "g": 0.7346732017807548, "b": 0.2142251646979197, "a": 1, "minimumMaxChannelDelta": 0.12 } },
+        { "localX": 1, "localY": 1, "expectedStraightSrgb": { "r": 0.9999999999999999, "g": 0.9999999999999999, "b": 0.9999999999999999, "a": 1 }, "gammaWrongControl": { "r": 1, "g": 1, "b": 1, "a": 1, "minimumMaxChannelDelta": 0 } }
+      ]
+    }
+  ]
+}

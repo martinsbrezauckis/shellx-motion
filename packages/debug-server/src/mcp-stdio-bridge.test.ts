@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -7,16 +9,86 @@ import { describe, expect, it } from "vitest";
 import { MotionJobCoordinator, MotionJobLeaseDirectory, MotionJobRegistry, MotionJobView } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { startMotionDebugServer } from "./index";
-import { motionUserAccessPaths, readOrCreatePersistentCapabilityFile, writeMotionServerPort } from "./user-access";
+import { motionUserAccessPaths, readOrCreatePersistentCapabilityFile, writeMotionMcpBridgeDiscovery } from "./user-access";
 
 const BRIDGE = fileURLToPath(new URL("../bin/shellx-motion-mcp.mjs", import.meta.url));
 const RENDER_PACKAGE_ROOT = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
 
 describe("installed MCP stdio bridge", () => {
+  it("withholds the durable bearer from a stale rebound discovery port and resumes with a restarted listener", async () => {
+    const parent = await testRoot("motion-mcp-bridge-stale-discovery-");
+    const paths = motionUserAccessPaths(join(parent, "access"));
+    const access = await readOrCreatePersistentCapabilityFile(paths);
+    const firstCredential = newBridgeCredential();
+    let server = await startMotionDebugServer({
+      port: 0,
+      capabilityToken: access.token,
+      mcpBridgeCredential: firstCredential,
+      grantedTier: "read_motion",
+      context: { scratchRoot: join(parent, "scratch") },
+      useDefaultTemplateRoots: false
+    });
+    const port = Number(server.url.port);
+    await writeMotionMcpBridgeDiscovery(paths, { port, credential: firstCredential });
+    const bridgeCredentialOutsideMcp = await globalThis.fetch(new URL("/debug/contracts", server.url), {
+      headers: { "x-shellx-motion-mcp-bridge-credential": firstCredential }
+    });
+    expect(bridgeCredentialOutsideMcp.status).toBe(401);
+    const child = spawn(process.execPath, [BRIDGE], {
+      env: { ...process.env, SHELLX_MOTION_ACCESS_ROOT: paths.root },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const responses = responseReader(child);
+    let rebound: Server | undefined;
+    let sawDurableBearer = false;
+    let sawPerStartBridgeCredential = false;
+    try {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "before-crash", method: "tools/list", params: {} })}\n`);
+      expect(await responses.next()).toMatchObject({ id: "before-crash", result: { tools: expect.any(Array) } });
+
+      // Simulate a process death: the listener stops but its private discovery record is retained.
+      await server.close();
+      rebound = createServer((request, response) => {
+        sawDurableBearer ||= typeof request.headers.authorization === "string";
+        sawPerStartBridgeCredential ||= typeof request.headers["x-shellx-motion-mcp-bridge-credential"] === "string";
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(`${JSON.stringify({ jsonrpc: "2.0", id: "stale", error: { code: -32000, message: "unavailable" } })}\n`);
+      });
+      await listen(rebound, port);
+
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "stale", method: "tools/list", params: {} })}\n`);
+      expect(await responses.next()).toMatchObject({ id: "stale", error: { code: -32000 } });
+      expect(sawDurableBearer).toBe(false);
+      expect(sawPerStartBridgeCredential).toBe(true);
+
+      await close(rebound);
+      rebound = undefined;
+      const restartedCredential = newBridgeCredential();
+      server = await startMotionDebugServer({
+        port,
+        capabilityToken: access.token,
+        mcpBridgeCredential: restartedCredential,
+        grantedTier: "read_motion",
+        context: { scratchRoot: join(parent, "scratch-restarted") },
+        useDefaultTemplateRoots: false
+      });
+      await writeMotionMcpBridgeDiscovery(paths, { port, credential: restartedCredential });
+
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "after-restart", method: "tools/list", params: {} })}\n`);
+      expect(await responses.next()).toMatchObject({ id: "after-restart", result: { tools: expect.any(Array) } });
+    } finally {
+      if (rebound?.listening) await close(rebound);
+      if (server.server.listening) await server.close();
+      child.kill();
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 45_000);
+
   it("reads the private live connection, forwards MCP, and gives a clear stopped-engine result", async () => {
     const parent = await testRoot("motion-mcp-bridge-");
     const paths = motionUserAccessPaths(join(parent, "access"));
     const access = await readOrCreatePersistentCapabilityFile(paths);
+    const bridgeCredential = newBridgeCredential();
     const leases = new MotionJobLeaseDirectory({ leaseRoot: join(parent, "leases") });
     const records = new MotionJobRegistry({ recordRoot: join(parent, "records") });
     const endedAtMs = Date.now();
@@ -45,6 +117,7 @@ describe("installed MCP stdio bridge", () => {
     const server = await startMotionDebugServer({
       port: 0,
       capabilityToken: access.token,
+      mcpBridgeCredential: bridgeCredential,
       grantedTier: "read_motion",
       context: {
         scratchRoot: join(parent, "scratch"),
@@ -53,7 +126,7 @@ describe("installed MCP stdio bridge", () => {
       },
       useDefaultTemplateRoots: false
     });
-    await writeMotionServerPort(paths, Number(server.url.port));
+    await writeMotionMcpBridgeDiscovery(paths, { port: Number(server.url.port), credential: bridgeCredential });
     const child = spawn(process.execPath, [BRIDGE], {
       env: { ...process.env, SHELLX_MOTION_ACCESS_ROOT: paths.root },
       stdio: ["pipe", "pipe", "pipe"]
@@ -134,6 +207,7 @@ describe("installed MCP stdio bridge", () => {
     const parent = await testRoot("motion-mcp-bridge-owner-");
     const paths = motionUserAccessPaths(join(parent, "access"));
     const access = await readOrCreatePersistentCapabilityFile(paths);
+    const bridgeCredential = newBridgeCredential();
     const jobs = new MotionJobCoordinator({
       leases: new MotionJobLeaseDirectory({ leaseRoot: join(parent, "leases") }),
       records: new MotionJobRegistry({ recordRoot: join(parent, "records") }),
@@ -142,6 +216,7 @@ describe("installed MCP stdio bridge", () => {
     const server = await startMotionDebugServer({
       port: 0,
       capabilityToken: access.token,
+      mcpBridgeCredential: bridgeCredential,
       grantedTier: "render_motion",
       context: {
         scratchRoot: join(parent, "scratch"),
@@ -152,7 +227,7 @@ describe("installed MCP stdio bridge", () => {
       },
       useDefaultTemplateRoots: false
     });
-    await writeMotionServerPort(paths, Number(server.url.port));
+    await writeMotionMcpBridgeDiscovery(paths, { port: Number(server.url.port), credential: bridgeCredential });
     const owner = spawn(process.execPath, [BRIDGE], {
       env: { ...process.env, SHELLX_MOTION_ACCESS_ROOT: paths.root },
       stdio: ["pipe", "pipe", "pipe"]
@@ -234,9 +309,11 @@ describe("installed MCP stdio bridge", () => {
 
       const workspaceAuthority = await createTrustedWorkspaceAnchor(parent);
       await withTrustedWorkspaceAnchor(workspaceAuthority, async () => {
+      const bridgeCredential = newBridgeCredential();
       server = await startMotionDebugServer({
         port: 0,
         capabilityToken: access.token,
+        mcpBridgeCredential: bridgeCredential,
         grantedTier: "write_local",
         context: { scratchRoot: join(parent, "scratch") },
         useDefaultTemplateRoots: false
@@ -266,6 +343,7 @@ describe("installed MCP stdio bridge", () => {
       server = await startMotionDebugServer({
         port: 0,
         capabilityToken: access.token,
+        mcpBridgeCredential: bridgeCredential,
         grantedTier: "write_local",
         context: {
           scratchRoot: join(parent, "scratch"),
@@ -274,7 +352,7 @@ describe("installed MCP stdio bridge", () => {
         },
         useDefaultTemplateRoots: false
       });
-      await writeMotionServerPort(paths, Number(server.url.port));
+      await writeMotionMcpBridgeDiscovery(paths, { port: Number(server.url.port), credential: bridgeCredential });
 
       const created = await postDebug(server, access.token, {
         command: "motion.package.create",
@@ -435,4 +513,24 @@ function toolCall(id: string, name: string, args: Record<string, unknown>) {
     method: "tools/call",
     params: { name, arguments: { requestedTier: "render_motion", args } }
   };
+}
+
+function newBridgeCredential(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function listen(server: Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }

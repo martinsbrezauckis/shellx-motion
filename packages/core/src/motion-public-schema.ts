@@ -7,6 +7,8 @@ import { buildMotionRelationDefinitions } from "./motion-public-schema-relations
 import { buildMotionRelationActionDefinitions } from "./motion-relation-actions-public-schema";
 import { buildMotionScene3DAnimationDefinitions } from "./motion-scene3d-animation-public-schema";
 import { motionValidationSchemaComment } from "./motion-validation-contract";
+import { COLOR_PIPELINE_INTENTS, COLOR_PIPELINE_SCHEMA } from "./color-pipeline";
+import { MAX_MOTION_COLOR_STRING_LENGTH } from "./color";
 
 /**
  * The public identity and root required fields for a Motion document.
@@ -31,7 +33,7 @@ export const MOTION_DOCUMENT_REQUIRED = [
   "provenance"
 ] as const;
 
-const COLOR = { type: "string", minLength: 1 };
+const COLOR = { type: "string", minLength: 1, maxLength: MAX_MOTION_COLOR_STRING_LENGTH };
 
 /**
  * Builds the canonical published JSON Schema for `shellx-motion/motion@1`.
@@ -56,7 +58,17 @@ export function buildMotionPublicSchema(): Record<string, unknown> {
       fps: { type: "number", exclusiveMinimum: 0 },
       width: { type: "integer", exclusiveMinimum: 0 },
       height: { type: "integer", exclusiveMinimum: 0 },
-      background: COLOR,
+      background: { type: "string", minLength: 1 },
+      colorPipeline: {
+        type: "object",
+        required: ["schema", "intent"],
+        properties: {
+          schema: { const: COLOR_PIPELINE_SCHEMA },
+          intent: { enum: [...COLOR_PIPELINE_INTENTS] }
+        },
+        additionalProperties: false,
+        $comment: "Closed versioned colour-pipeline intent. Omission resolves to legacy-encoded-sdr@0.2.65."
+      },
       audio: { $ref: "#/$defs/audioDocument" },
       provenance: {
         type: "object",

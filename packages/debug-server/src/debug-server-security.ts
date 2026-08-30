@@ -15,6 +15,8 @@ export type MotionPermissionTier = MotionDebugContext["tier"];
 
 export interface MotionDebugServerSecurityContext extends EffectModuleWorkbenchSecurity {
   capabilityToken: string;
+  /** Per-listener MCP bridge credential; it never authorizes Debug, SDK, or Workbench routes. */
+  mcpBridgeCredential: string;
   /** Cleared synchronously after the first successful Workbench bootstrap exchange. */
   workbenchBootstrapToken: string | null;
   /** Removes the private bootstrap handoff after its one successful exchange. */

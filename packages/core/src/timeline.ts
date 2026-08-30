@@ -1,5 +1,6 @@
 import { compareCodeUnits } from "./canonical-json";
 import { isSupportedMotionColorString } from "./color";
+import { parseCubicBezierEasing, parseStepsEasing } from "./functional-easing";
 import { evaluateMotionGradientColorKeyframes } from "./motion-gradient-color-keyframes";
 // The evaluator's readability gate lives in core/keyframe-readability so validate, the panels and
 // this file cannot drift about which keyframes animate. See that module's header for the history.
@@ -21,6 +22,15 @@ import type { MotionAudioDucking, MotionAudioDuckingMode, MotionDocument, Motion
 import { MOTION_ANIMATION_PRESET_BY_ID, MOTION_ANIMATION_PRESETS, MOTION_EASING_PRESETS, NAMED_EASINGS, type MotionAnimationPreset, type MotionAnimationPresetId, type MotionAnimationPresetKind, type MotionEasingPreset } from "./timeline-presets";
 export { NAMED_EASINGS_LIST } from "./timeline-presets";
 export type { MotionAnimationPreset, MotionAnimationPresetId, MotionAnimationPresetKind, MotionEasingPreset } from "./timeline-presets";
+export {
+  MAX_MOTION_EASING_CODE_UNITS,
+  MAX_MOTION_EASING_NUMERIC_TOKEN_CODE_UNITS,
+  MAX_MOTION_EASING_STEP_COUNT_DIGITS,
+  MOTION_FUNCTIONAL_EASING_PATTERN,
+  parseCubicBezierEasing,
+  parseStepsEasing,
+  type MotionStepsEasing
+} from "./functional-easing";
 
 // The keyframe-target vocabulary (the accepted-target list and each target's value family) lives in
 // ./keyframe-targets: pure data, no behaviour, and the largest block between this file and its size
@@ -87,8 +97,6 @@ const SUPPORTED_MEDIA_SOURCE_LAYER_TYPES = new Set(["image", "video", "audio", "
 const SUPPORTED_TRANSITIONS = new Set(["fade", "slide", "wipe"]);
 const SUPPORTED_TRANSITION_DIRECTIONS = new Set(["left", "right", "up", "down"]);
 const SUPPORTED_KEYFRAME_SNAP_MODES = new Set<LayerKeyframeSnapMode>(["nearest", "floor", "ceil"]);
-const CUBIC_BEZIER_PATTERN = /^cubic-bezier\(\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)\s*\)$/i;
-const STEPS_PATTERN = /^steps\(\s*([1-9]\d*)\s*(?:,\s*(start|end|jump-start|jump-end))?\s*\)$/i;
 const DURATION_POLICY_EXTENSION_KEY = "x-shellx-duration-policy";
 
 interface TimelineDurationProtectedRegion {
@@ -4145,28 +4153,6 @@ function easeBounceOut(t: number): number {
   }
   clamped -= 2.625 / d1;
   return n1 * clamped * clamped + 0.984375;
-}
-
-export function parseCubicBezierEasing(easing: string | undefined): [number, number, number, number] | null {
-  if (!easing) return null;
-  const match = CUBIC_BEZIER_PATTERN.exec(easing);
-  if (!match) return null;
-  const values = match.slice(1, 5).map((value) => Number(value));
-  if (!values.every(Number.isFinite)) return null;
-  const [x1, y1, x2, y2] = values;
-  if (x1 < 0 || x1 > 1 || x2 < 0 || x2 > 1) return null;
-  return [x1, y1, x2, y2];
-}
-
-function parseStepsEasing(easing: string | undefined): { steps: number; position: "start" | "end" } | null {
-  if (!easing) return null;
-  const match = STEPS_PATTERN.exec(easing);
-  if (!match) return null;
-  const steps = Number(match[1]);
-  if (!Number.isInteger(steps) || steps < 1) return null;
-  const position = (match[2] ?? "end").toLowerCase();
-  if (position === "start" || position === "jump-start") return { steps, position: "start" };
-  return { steps, position: "end" };
 }
 
 function createStepsEasing(steps: number, position: "start" | "end"): (t: number) => number {

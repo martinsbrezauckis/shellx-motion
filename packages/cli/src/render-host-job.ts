@@ -18,6 +18,10 @@
  * `main.ts`.
  */
 import { JOB_STATUS_CONTRACT, MotionHostJob, runInMotionHostJob, type JobErrorCode } from "@shellx-motion/core";
+import {
+  isPairedOutputReceiptDestinationError,
+  pairedOutputReceiptDestinationErrorFields
+} from "./paired-output-receipt-publication.js";
 
 type CliResultLike = Record<string, unknown> & { ok: boolean };
 
@@ -96,6 +100,19 @@ async function runWithHostJob(
     // use afterwards, without having to dig it out of the resource evidence.
     return { ...result, jobId: job.jobId };
   } catch (error) {
+    if (isPairedOutputReceiptDestinationError(error)) {
+      const failure = pairedOutputReceiptDestinationErrorFields(error);
+      await job.failed({ error: { code: jobErrorCode(failure.code), message: failure.message } });
+      return {
+        ok: false,
+        command: "render",
+        lane: scope.lane,
+        outputPath: error.outputPath,
+        receiptPath: error.receiptPath,
+        error: failure,
+        jobId: job.jobId
+      };
+    }
     await job.failed({
       error: { code: jobErrorCode(undefined), message: error instanceof Error ? error.message : "Motion render threw." }
     });

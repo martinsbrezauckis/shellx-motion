@@ -217,7 +217,7 @@ export function prepareWebGpuPageSessionAfterimageStackPass(input: GpuPageAfteri
   function admit(value: unknown, identity: GpuPageAfterimageStackImplementationIdentity | undefined): { width: number; height: number; scopeGroupDrawId: string; seal: string } | null {
     if (!exactRecord(value, ["schema", "layerId", "drawId", "scopeGroupId", "scopeGroupDrawId", "moduleId", "version", "manifestSha256", "manifestByteLength", "registryEntrySha256", "installationProvenanceSha256", "pipelineImplementationSha256", "resourceCeilingSha256", "intrinsic", "rendererAbi", "parameterSchema", "referenceFingerprint", "width", "height", "echoes", "amountQ16", "uniformBytes", "textureLoadCount", "passCount", "retainedTextureCount", "descriptorFingerprint", "bindingFingerprint"])) return null;
     const width = readInteger(value.width, 1, 4096), height = readInteger(value.height, 1, 4096);
-    if (value.schema !== "shellx-motion/gpu-page-afterimage-stack@1" || value.intrinsic !== "motion.afterimage-stack.v1" || value.rendererAbi !== "shellx-motion/gpu-effect-module@1" || value.parameterSchema !== "motion.afterimage-stack.parameters@1" || !identity || value.pipelineImplementationSha256 !== identity.pipelineImplementationSha256 || value.resourceCeilingSha256 !== identity.resourceCeilingSha256 || !identifier(value.layerId) || !identifier(value.drawId) || !identifier(value.scopeGroupId) || !identifier(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !version(value.version) || !hash(value.manifestSha256) || !integer(value.manifestByteLength, 1, 16384) || !hash(value.registryEntrySha256) || !hash(value.installationProvenanceSha256) || !hash(value.pipelineImplementationSha256) || !hash(value.resourceCeilingSha256) || !hash(value.referenceFingerprint) || !hash(value.descriptorFingerprint) || !hash(value.bindingFingerprint) || width === null || height === null || width * height > 16777216 || !integer(value.amountQ16, 0, 65535) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > 4 || value.uniformBytes !== 160 || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== 1 || value.retainedTextureCount !== 0) return null;
+    if (value.schema !== "shellx-motion/gpu-page-afterimage-stack@1" || value.intrinsic !== "motion.afterimage-stack.v1" || value.rendererAbi !== "shellx-motion/gpu-effect-module@1" || value.parameterSchema !== "motion.afterimage-stack.parameters@1" || !identity || value.pipelineImplementationSha256 !== identity.pipelineImplementationSha256 || value.resourceCeilingSha256 !== identity.resourceCeilingSha256 || !identifier(value.layerId) || !identifier(value.drawId) || !identifier(value.scopeGroupId) || !identifier(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !coreSealedVersion(value.version) || !hash(value.manifestSha256) || !integer(value.manifestByteLength, 1, 16384) || !hash(value.registryEntrySha256) || !hash(value.installationProvenanceSha256) || !hash(value.pipelineImplementationSha256) || !hash(value.resourceCeilingSha256) || !hash(value.referenceFingerprint) || !hash(value.descriptorFingerprint) || !hash(value.bindingFingerprint) || width === null || height === null || width * height > 16777216 || !integer(value.amountQ16, 0, 65535) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > 4 || value.uniformBytes !== 160 || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== 1 || value.retainedTextureCount !== 0) return null;
     for (const echo of value.echoes) if (!exactRecord(echo, ["dxPx", "dyPx", "rgba8", "opacityQ16"]) || !integer(echo.dxPx, -256, 256) || !integer(echo.dyPx, -256, 256) || !integer(echo.opacityQ16, 0, 65535) || !Array.isArray(echo.rgba8) || echo.rgba8.length !== 4 || !echo.rgba8.every((channel) => integer(channel, 0, 255))) return null;
     return { width, height, scopeGroupDrawId: value.scopeGroupDrawId, seal: descriptorSeal(value) };
   }
@@ -226,8 +226,25 @@ export function prepareWebGpuPageSessionAfterimageStackPass(input: GpuPageAfteri
   function readInteger(value: unknown, minimum: number, maximum: number): number | null { return integer(value, minimum, maximum) ? value : null; }
   function validExtent(width: unknown, height: unknown): width is number { return integer(width, 1, 4096) && integer(height, 1, 4096) && width * height <= 16777216; }
   function identifier(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value); }
-  function moduleId(value: unknown): value is string { return typeof value === "string" && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/.test(value); }
-  function version(value: unknown): value is string { return typeof value === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:[0-9A-Za-z-]+)(?:\.(?:[0-9A-Za-z-]+))*)?$/.test(value); }
+  function moduleId(value: unknown): value is string { return typeof value === "string" && value.length <= 128 && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/.test(value); }
+  /** Serialized Core-equivalent grammar; page closures cannot import the Core module. */
+  function coreSealedVersion(value: unknown): value is string {
+    if (typeof value !== "string" || value.length === 0 || value.length > 128) return false;
+    let index = 0;
+    const digit = (code: number) => code >= 48 && code <= 57;
+    const numeric = () => { const start = index; while (index < value.length && digit(value.charCodeAt(index))) index += 1; return index > start && !(value.charCodeAt(start) === 48 && index - start > 1); };
+    if (!numeric() || value[index++] !== "." || !numeric() || value[index++] !== "." || !numeric()) return false;
+    if (index === value.length) return true;
+    if (value[index++] !== "-") return false;
+    while (index < value.length) {
+      const start = index; let allDigits = true;
+      while (index < value.length && value[index] !== ".") { const code = value.charCodeAt(index); if (!(digit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 45)) return false; if (!digit(code)) allDigits = false; index += 1; }
+      if (index === start || (allDigits && value.charCodeAt(start) === 48 && index - start > 1)) return false;
+      if (index === value.length) return true;
+      index += 1;
+    }
+    return false;
+  }
   function hash(value: unknown): value is string { return typeof value === "string" && /^[a-f0-9]{64}$/.test(value); }
   function descriptorSeal(value: Record<string, unknown>): string {
     return JSON.stringify([
@@ -270,7 +287,7 @@ export function renderWebGpuPageSessionAfterimageStackPass(input: GpuPageAfterim
   function admit(value: unknown, identity: GpuPageAfterimageStackImplementationIdentity | undefined): Descriptor | null {
     if (!exactRecord(value, ["schema", "layerId", "drawId", "scopeGroupId", "scopeGroupDrawId", "moduleId", "version", "manifestSha256", "manifestByteLength", "registryEntrySha256", "installationProvenanceSha256", "pipelineImplementationSha256", "resourceCeilingSha256", "intrinsic", "rendererAbi", "parameterSchema", "referenceFingerprint", "width", "height", "echoes", "amountQ16", "uniformBytes", "textureLoadCount", "passCount", "retainedTextureCount", "descriptorFingerprint", "bindingFingerprint"])) return null;
     const width = readInteger(value.width, 1, 4096), height = readInteger(value.height, 1, 4096);
-    if (value.schema !== "shellx-motion/gpu-page-afterimage-stack@1" || value.intrinsic !== "motion.afterimage-stack.v1" || value.rendererAbi !== "shellx-motion/gpu-effect-module@1" || value.parameterSchema !== "motion.afterimage-stack.parameters@1" || !identity || value.pipelineImplementationSha256 !== identity.pipelineImplementationSha256 || value.resourceCeilingSha256 !== identity.resourceCeilingSha256 || !identifier(value.layerId) || !identifier(value.drawId) || !identifier(value.scopeGroupId) || !identifier(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !version(value.version) || !hash(value.manifestSha256) || !integer(value.manifestByteLength, 1, 16384) || !hash(value.registryEntrySha256) || !hash(value.installationProvenanceSha256) || !hash(value.pipelineImplementationSha256) || !hash(value.resourceCeilingSha256) || !hash(value.referenceFingerprint) || !hash(value.descriptorFingerprint) || !hash(value.bindingFingerprint) || width === null || height === null || width * height > 16777216 || !integer(value.amountQ16, 0, 65535) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > 4 || value.uniformBytes !== 160 || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== 1 || value.retainedTextureCount !== 0) return null;
+    if (value.schema !== "shellx-motion/gpu-page-afterimage-stack@1" || value.intrinsic !== "motion.afterimage-stack.v1" || value.rendererAbi !== "shellx-motion/gpu-effect-module@1" || value.parameterSchema !== "motion.afterimage-stack.parameters@1" || !identity || value.pipelineImplementationSha256 !== identity.pipelineImplementationSha256 || value.resourceCeilingSha256 !== identity.resourceCeilingSha256 || !identifier(value.layerId) || !identifier(value.drawId) || !identifier(value.scopeGroupId) || !identifier(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !coreSealedVersion(value.version) || !hash(value.manifestSha256) || !integer(value.manifestByteLength, 1, 16384) || !hash(value.registryEntrySha256) || !hash(value.installationProvenanceSha256) || !hash(value.pipelineImplementationSha256) || !hash(value.resourceCeilingSha256) || !hash(value.referenceFingerprint) || !hash(value.descriptorFingerprint) || !hash(value.bindingFingerprint) || width === null || height === null || width * height > 16777216 || !integer(value.amountQ16, 0, 65535) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > 4 || value.uniformBytes !== 160 || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== 1 || value.retainedTextureCount !== 0) return null;
     const echoes: Echo[] = [];
     for (const rawEcho of value.echoes) { if (!exactRecord(rawEcho, ["dxPx", "dyPx", "rgba8", "opacityQ16"]) || !integer(rawEcho.dxPx, -256, 256) || !integer(rawEcho.dyPx, -256, 256) || !integer(rawEcho.opacityQ16, 0, 65535) || !Array.isArray(rawEcho.rgba8) || rawEcho.rgba8.length !== 4 || !rawEcho.rgba8.every((channel) => integer(channel, 0, 255))) return null; echoes.push({ dxPx: rawEcho.dxPx, dyPx: rawEcho.dyPx, rgba8: [rawEcho.rgba8[0], rawEcho.rgba8[1], rawEcho.rgba8[2], rawEcho.rgba8[3]], opacityQ16: rawEcho.opacityQ16 }); }
     return { width, height, echoes, amountQ16: value.amountQ16 };
@@ -280,8 +297,25 @@ export function renderWebGpuPageSessionAfterimageStackPass(input: GpuPageAfterim
   function readInteger(value: unknown, minimum: number, maximum: number): number | null { return integer(value, minimum, maximum) ? value : null; }
   function validExtent(width: unknown, height: unknown): width is number { return integer(width, 1, 4096) && integer(height, 1, 4096) && width * height <= 16777216; }
   function identifier(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value); }
-  function moduleId(value: unknown): value is string { return typeof value === "string" && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/.test(value); }
-  function version(value: unknown): value is string { return typeof value === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:[0-9A-Za-z-]+)(?:\.(?:[0-9A-Za-z-]+))*)?$/.test(value); }
+  function moduleId(value: unknown): value is string { return typeof value === "string" && value.length <= 128 && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/.test(value); }
+  /** Serialized Core-equivalent grammar; page closures cannot import the Core module. */
+  function coreSealedVersion(value: unknown): value is string {
+    if (typeof value !== "string" || value.length === 0 || value.length > 128) return false;
+    let index = 0;
+    const digit = (code: number) => code >= 48 && code <= 57;
+    const numeric = () => { const start = index; while (index < value.length && digit(value.charCodeAt(index))) index += 1; return index > start && !(value.charCodeAt(start) === 48 && index - start > 1); };
+    if (!numeric() || value[index++] !== "." || !numeric() || value[index++] !== "." || !numeric()) return false;
+    if (index === value.length) return true;
+    if (value[index++] !== "-") return false;
+    while (index < value.length) {
+      const start = index; let allDigits = true;
+      while (index < value.length && value[index] !== ".") { const code = value.charCodeAt(index); if (!(digit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 45)) return false; if (!digit(code)) allDigits = false; index += 1; }
+      if (index === start || (allDigits && value.charCodeAt(start) === 48 && index - start > 1)) return false;
+      if (index === value.length) return true;
+      index += 1;
+    }
+    return false;
+  }
   function hash(value: unknown): value is string { return typeof value === "string" && /^[a-f0-9]{64}$/.test(value); }
 }
 

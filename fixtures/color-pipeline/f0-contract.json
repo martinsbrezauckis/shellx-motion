@@ -1,0 +1,24 @@
+{
+  "schema": "shellx-motion/color-pipeline-conformance@1",
+  "legacy": {
+    "omitted": true,
+    "intent": "legacy-encoded-sdr@0.2.65",
+    "working": "legacy-encoded-renderer-defined",
+    "admission": "legacy-compatible"
+  },
+  "strict": {
+    "declaration": {
+      "schema": "shellx-motion/color-pipeline@1",
+      "intent": "linear-srgb-sdr@1"
+    },
+    "working": "premultiplied-linear-srgb",
+    "delivery": "sdr-bt709-limited",
+    "admission": "strict-route-available",
+    "requiredRoute": {
+      "frameLane": "gpu",
+      "finalLane": "ffmpeg",
+      "output": "mp4-h264",
+      "target": "final"
+    }
+  }
+}

@@ -9,8 +9,9 @@
  * Dependencies: `command-metadata-shared.ts` fragments; enum values by `enumRef`.
  * Primary caller: `command-metadata.ts`.
  */
+import { MAX_CAPTION_LAYER_PREFIX_LENGTH } from "@shellx-motion/core";
 import type { MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, LAYER_ID, PACKAGE_EDIT, readReceipt, TRACK_ID } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, LAYER_ID, MOTION_EASING_STRING, PACKAGE_EDIT, readReceipt, TRACK_ID } from "./command-metadata-shared.js";
 
 const EDIT = ["packageRoot", "outDir"];
 const EDIT_TRACK = [...EDIT, "trackId"];
@@ -116,7 +117,7 @@ export const TIMELINE_TRACK_COMMAND_METADATA = {
       edge: { type: "string", enumRef: "transitionEdge", description: "Which end of the layer the transition applies to." },
       type: { type: "string", enumRef: "transitionType", description: "Transition kind." },
       durationMs: { type: "number", minimum: 0, description: "Transition length in milliseconds; must be positive." },
-      easing: { type: "string", enumRef: "easing", description: "Optional easing for the transition." },
+      easing: MOTION_EASING_STRING,
       direction: { type: "string", enumRef: "transitionDirection", description: "Optional direction for slide and wipe transitions." },
       distance: { type: "number", minimum: 0, description: "Optional travel distance in pixels for slide transitions." }
     }),
@@ -134,7 +135,7 @@ export const TIMELINE_TRACK_COMMAND_METADATA = {
       durationMs: { type: "number", minimum: 0, description: "Preset duration in milliseconds; must be positive when supplied." },
       direction: { type: "string", enumRef: "transitionDirection", description: "Optional direction override for directional presets." },
       distance: { type: "number", minimum: 0, description: "Optional non-negative travel distance override in pixels." },
-      easing: { type: "string", enumRef: "easing", description: "Optional easing override for the preset." }
+      easing: MOTION_EASING_STRING
     }),
     expectedReceipts: editReceipt("timeline.transition.preset.apply")
   },
@@ -152,7 +153,11 @@ export const TIMELINE_TRACK_COMMAND_METADATA = {
       captionsPath: { type: "string", aliases: ["captionsFile", "path"], description: "Caption file inside a host-approved authoring input root. Required unless captionsText is given." },
       captionsText: { type: "string", aliases: ["source"], description: "Inline caption text, in place of captionsPath." },
       format: { type: "string", enumRef: "captionFormat", description: "Caption source format; inferred from the file extension when omitted." },
-      layerPrefix: { type: "string", description: "Prefix for generated caption layer ids." },
+      layerPrefix: {
+        type: "string",
+        maxLength: MAX_CAPTION_LAYER_PREFIX_LENGTH,
+        description: `Prefix for generated caption layer ids. At most ${MAX_CAPTION_LAYER_PREFIX_LENGTH} raw code units; Core reserves the generated cue suffix separately.`,
+      },
       ...CAPTION_PLACEMENT
     }),
     expectedReceipts: editReceipt("timeline.caption.import")

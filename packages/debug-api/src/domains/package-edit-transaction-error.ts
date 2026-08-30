@@ -4,6 +4,7 @@ export type PackageEditTransactionErrorCode =
   | "source_changed"
   | "copy_mismatch"
   | "closed_inventory_changed"
+  | "closed_inventory_unsupported"
   | "unsupported_source_entry"
   | "package_limit_exceeded"
   | "output_changed"

@@ -519,7 +519,35 @@
       "limitations": "JPEG delivery has no alpha channel and is a still output, not a final-video route."
     },
     {
+      "id": "sample.linear-srgb-sdr-final.gpu-h264@1",
+      "capabilityId": "render.gpu-mp4-h264@1",
+      "title": "Strict linear-sRGB SDR GPU final",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/linear-srgb-sdr-final", "fingerprint": "edb62191286a684e81e4d522eafa6a7a0c963befbc690c930fd2d147fcbaa785" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/linear-srgb-sdr-final.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/linear-srgb-sdr-final.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/linear-srgb-sdr-final.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "The exact linear-srgb-sdr@1 route accepts a static opaque background plus bounded flat or F2a linear/radial-gradient rectangles; this checked sample covers only flat rectangles. Gradients require 2–16 canonical opaque stops, static angle/centre, and linear-light interpolation. It requires admitted WebGPU, zscale, libx264, FFprobe validation, and decoded-frame comparison; all other strict content and fallback lanes refuse."
+    },
+    {
+      "id": "sample.linear-srgb-sdr-f2a-gradients.gpu-h264@1",
+      "sampleRole": "family-evidence",
+      "capabilityId": "render.gpu-mp4-h264@1",
+      "title": "Strict linear-sRGB SDR F2a gradient review",
+      "source": { "kind": "motion-package", "path": "fixtures/packages/linear-srgb-sdr-f2a-gradients", "fingerprint": "64b84ff2b5c29ac613ed17f83f8243c7794b1f7c463a7ac931d670d8dfa58593" },
+      "invocation": {
+        "sourceCheckout": ["pnpm", "--filter", "@shellx-motion/cli", "run", "cli", "--", "render", "{samplePath}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/linear-srgb-sdr-f2a-gradients.mp4"],
+        "installed": ["shellx-motion", "render", "{packageRoot}", "--lane", "ffmpeg", "--frame-lane", "gpu", "--preset", "mp4-h264", "--out", "{out}/linear-srgb-sdr-f2a-gradients.mp4"]
+      },
+      "expectedArtifact": { "kind": "file", "path": ".scratch/rendering-samples/linear-srgb-sdr-f2a-gradients.mp4", "mediaType": "video/mp4" },
+      "expectedReceipt": { "schema": "shellx-motion/receipt@1", "operation": "render.final", "location": "beside-output" },
+      "limitations": "One static opaque rectangle-only linear/radial gradient package. A retained exact Linux Node-24 source/runtime proof passed on RTX 5080/WebGPU enabled-readback with FFmpeg H.264; it binds accepted linear-light delivered points, gamma controls, cleanup, offline revalidation, and a review sheet still pending human review. It does not prove F2b screen, F2c blur/glow, HDR/wide gamut, Browser/Native parity, installed qualification, Windows/macOS, Release Studio control gates, remote CodeQL closure, or release readiness."
+    },
+    {
       "id": "sample.tideglass.gpu-h264@1",
+      "sampleRole": "family-evidence",
       "capabilityId": "render.gpu-mp4-h264@1",
       "title": "Accepted restricted-GLSL GPU final",
       "source": { "kind": "motion-package", "path": "fixtures/packages/gpu-v25b2-tideglass-almanac", "fingerprint": "261bfb430a50c01e9cfa8f22af5fe1eb7effa7151be7d93dee08bbb31d9e46b7" },
@@ -650,8 +678,11 @@
       "documentation": { "path": "docs/public/FEATURES.md", "anchor": "authoring-and-animation" },
       "machineAuthority": { "path": "schemas/actions.json", "kind": "action", "id": "motion.timeline.keyframe.upsert" },
       "registration": "registered",
-      "sampleIds": ["sample.keyframed-lower-third.browser-preview@1"],
-      "limitation": "This package proves ordinary shape/text/keyframe authoring and its browser-preview receipt boundary; it does not prove all rich-layer or renderer-lane variants."
+      "sampleIds": [
+        "sample.keyframed-lower-third.browser-preview@1",
+        "sample.linear-srgb-sdr-f2a-gradients.gpu-h264@1"
+      ],
+      "limitation": "These checked packages prove ordinary shape/text/keyframe authoring plus one bounded static F2a linear/radial-gradient rectangle final route. They do not prove all rich-layer or renderer-lane variants, gradients beyond the closed F2a contract, human visual acceptance, or host qualification."
     },
     {
       "id": "family.path-reveals@1",
@@ -846,6 +877,31 @@
           { "pointer": "/layers/0/type", "value": "shape" },
           { "pointer": "/layers/2/type", "value": "text" },
           { "pointer": "/layers/0/keyframes/transform.x/0/atMs", "value": 0 }
+        ]
+      }
+    },
+    {
+      "familyId": "family.2d-geometry-text-keyframes@1",
+      "sampleId": "sample.linear-srgb-sdr-f2a-gradients.gpu-h264@1",
+      "capabilityRecipe": {
+        "kind": "json-pointer-evidence",
+        "path": "fixtures/packages/linear-srgb-sdr-f2a-gradients/motion.json",
+        "expectedJsonValues": [
+          { "pointer": "/colorPipeline/intent", "value": "linear-srgb-sdr@1" },
+          { "pointer": "/layers/0/type", "value": "shape" },
+          { "pointer": "/layers/0/shape", "value": "rect" },
+          { "pointer": "/layers/0/gradient/type", "value": "linear" },
+          { "pointer": "/layers/0/gradient/angle", "value": 90 },
+          { "pointer": "/layers/0/gradient/stops/0/color", "value": "#000000" },
+          { "pointer": "/layers/0/gradient/stops/1/color", "value": "#ffffff" },
+          { "pointer": "/layers/1/type", "value": "shape" },
+          { "pointer": "/layers/1/shape", "value": "rect" },
+          { "pointer": "/layers/1/gradient/type", "value": "radial" },
+          { "pointer": "/layers/1/gradient/centerX", "value": 0.5 },
+          { "pointer": "/layers/1/gradient/centerY", "value": 0.5 },
+          { "pointer": "/layers/1/gradient/stops/0/color", "value": "#101820" },
+          { "pointer": "/layers/1/gradient/stops/1/color", "value": "#00ff40" },
+          { "pointer": "/layers/1/gradient/stops/2/color", "value": "#ffffff" }
         ]
       }
     },
@@ -1407,5 +1463,5 @@
     "state": "ready",
     "blockers": []
   },
-  "fingerprint": "8a9d49dd8e5ee964ffa02562e979525461ef5c29f6eac89f75cec6a1055c82ed"
+  "fingerprint": "c3e73ba37b78eab704631cfdf190715bd90d4ac26881f97c224c03517adf28d4"
 }

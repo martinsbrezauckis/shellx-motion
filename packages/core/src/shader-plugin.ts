@@ -34,7 +34,7 @@ export function validateRestrictedFragmentShader(
 ): RestrictedShaderValidationResult {
   const errors: string[] = [];
   if (new TextEncoder().encode(source).byteLength > MAX_RESTRICTED_SHADER_BYTES) {
-    errors.push(`shader source exceeds ${MAX_RESTRICTED_SHADER_BYTES} bytes`);
+    return { ok: false, errors: [`shader source exceeds ${MAX_RESTRICTED_SHADER_BYTES} bytes`] };
   }
   if (source.includes("\0")) errors.push("shader source contains a null byte");
   if (/#[A-Za-z]/.test(source)) errors.push("preprocessor directives are not allowed");
@@ -42,12 +42,12 @@ export function validateRestrictedFragmentShader(
   if (/\b(?:for|while|do|discard|uniform|attribute|varying|sampler\w*|void|main)\b/.test(source)) {
     errors.push("control flow, host declarations, samplers, discard, and main are not allowed");
   }
-  const match = /^\s*vec4\s+motionMain\s*\(\s*vec2\s+uv\s*\)\s*\{\s*return\s+([\s\S]*?)\s*;\s*\}\s*$/.exec(source);
-  if (!match) {
+  const wrappedExpression = readMotionMainExpression(source);
+  if (wrappedExpression === null) {
     errors.push("shader must contain exactly `vec4 motionMain(vec2 uv) { return <expression>; }`");
     return { ok: false, errors: [...new Set(errors)] };
   }
-  const expression = match[1].trim();
+  const expression = wrappedExpression.trim();
   if (expression.length === 0 || expression.length > MAX_RESTRICTED_SHADER_EXPRESSION_CHARS) {
     errors.push(`shader expression must contain 1-${MAX_RESTRICTED_SHADER_EXPRESSION_CHARS} characters`);
   }
@@ -91,6 +91,73 @@ export function validateRestrictedFragmentShader(
   return errors.length > 0
     ? { ok: false, errors: [...new Set(errors)] }
     : { ok: true, expression, errors: [] };
+}
+
+/** Deterministic wrapper reader; expression validation remains below this closed structural cut. */
+function readMotionMainExpression(source: string): string | null {
+  let index = skipWhitespace(source, 0);
+  index = readToken(source, index, "vec4");
+  if (index < 0) return null;
+  index = readRequiredWhitespace(source, index);
+  if (index < 0) return null;
+  index = readToken(source, index, "motionMain");
+  if (index < 0) return null;
+  index = skipWhitespace(source, index);
+  index = readCharacter(source, index, "(");
+  if (index < 0) return null;
+  index = skipWhitespace(source, index);
+  index = readToken(source, index, "vec2");
+  if (index < 0) return null;
+  index = readRequiredWhitespace(source, index);
+  if (index < 0) return null;
+  index = readToken(source, index, "uv");
+  if (index < 0) return null;
+  index = skipWhitespace(source, index);
+  index = readCharacter(source, index, ")");
+  if (index < 0) return null;
+  index = skipWhitespace(source, index);
+  index = readCharacter(source, index, "{");
+  if (index < 0) return null;
+  index = skipWhitespace(source, index);
+  index = readToken(source, index, "return");
+  if (index < 0) return null;
+  index = readRequiredWhitespace(source, index);
+  if (index < 0) return null;
+  const expressionStart = index;
+  let end = skipWhitespaceBackward(source, source.length);
+  if (end <= expressionStart || source[end - 1] !== "}") return null;
+  end = skipWhitespaceBackward(source, end - 1);
+  if (end <= expressionStart || source[end - 1] !== ";") return null;
+  return source.slice(expressionStart, end - 1);
+}
+
+function readToken(source: string, index: number, token: string): number {
+  if (!source.startsWith(token, index)) return -1;
+  const end = index + token.length;
+  return isIdentifierCharacter(source[end]) ? -1 : end;
+}
+
+function readCharacter(source: string, index: number, expected: string): number {
+  return source[index] === expected ? index + 1 : -1;
+}
+
+function readRequiredWhitespace(source: string, index: number): number {
+  const end = skipWhitespace(source, index);
+  return end > index ? end : -1;
+}
+
+function skipWhitespace(source: string, index: number): number {
+  while (index < source.length && source[index]!.trim() === "") index += 1;
+  return index;
+}
+
+function skipWhitespaceBackward(source: string, index: number): number {
+  while (index > 0 && source[index - 1]!.trim() === "") index -= 1;
+  return index;
+}
+
+function isIdentifierCharacter(value: string | undefined): boolean {
+  return value !== undefined && ((value >= "A" && value <= "Z") || (value >= "a" && value <= "z") || (value >= "0" && value <= "9") || value === "_");
 }
 
 export function compileRestrictedFragmentShader(source: string, uniformNames: string[] = []): string {

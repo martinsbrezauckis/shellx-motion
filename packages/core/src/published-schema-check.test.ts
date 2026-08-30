@@ -46,6 +46,11 @@ describe("published schema checker (JSON Schema subset)", () => {
     expect(() => validateAgainstPublishedSchema({ type: "string", maxLength: -1 }, "")).toThrow(/maxLength.*non-negative safe integer/);
   });
 
+  it("stops before pattern evaluation after a string exceeds its declared bound", () => {
+    expect(validateAgainstPublishedSchema({ type: "string", maxLength: 3, pattern: "^(a+)+$" }, "aaaa"))
+      .toEqual([{ path: "", message: "must contain at most 3 character(s)" }]);
+  });
+
   it("honours const and enum", () => {
     expect(isValidAgainstPublishedSchema({ const: "x" }, "x")).toBe(true);
     expect(isValidAgainstPublishedSchema({ const: "x" }, "y")).toBe(false);

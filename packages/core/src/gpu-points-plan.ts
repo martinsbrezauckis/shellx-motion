@@ -6,6 +6,7 @@ import {
   type GpuFramePlan,
   type GpuRgba
 } from "./gpu-frame-intent";
+import { parseMotionColorString } from "./color";
 import { effectivePointCloudAtMs, type MotionPointCloud } from "./motion-points";
 import type { MotionDocument, MotionLayer } from "./types";
 
@@ -134,10 +135,11 @@ function deterministicSeed(value: string): number {
 }
 
 function parseGpuColor(value: string): GpuRgba | null {
-  if (value === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
-  const match = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(value);
-  if (!match) return null;
-  const hex = match[1].length < 5 ? [...match[1]].map((part) => part + part).join("") : match[1];
+  const parsed = parseMotionColorString(value);
+  if (!parsed || parsed.value !== value) return null;
+  if (parsed.kind === "keyword") return value === "transparent" ? { r: 0, g: 0, b: 0, a: 0 } : null;
+  if (parsed.kind !== "hex") return null;
+  const hex = parsed.digits.length < 5 ? [...parsed.digits].map((part) => part + part).join("") : parsed.digits;
   const alpha = hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) : 255;
   return {
     r: Number.parseInt(hex.slice(0, 2), 16) / 255,

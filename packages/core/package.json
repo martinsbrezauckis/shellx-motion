@@ -1,10 +1,11 @@
 {
   "name": "@shellx-motion/core",
-  "version": "0.2.65",
+  "version": "0.2.66",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./internal/linear-srgb-sdr-final": "./src/linear-srgb-sdr-final-route.ts",
     "./internal/scene3d-gltf-material": "./src/scene-3d-gltf-material-package-route.ts",
     "./internal/scene3d-gltf-pbr-final": "./src/scene-3d-gltf-material-final-route.ts",
     "./internal/scene3d-gltf-pbr-hdr10-final": "./src/scene-3d-gltf-pbr-hdr10-final-route.ts",
@@ -43,6 +44,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      },
+      "./internal/linear-srgb-sdr-final": {
+        "types": "./dist/linear-srgb-sdr-final-route.d.ts",
+        "default": "./dist/linear-srgb-sdr-final-route.js"
       },
       "./internal/scene3d-gltf-material": {
         "types": "./dist/scene-3d-gltf-material-package-route.d.ts",
