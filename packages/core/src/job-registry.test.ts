@@ -442,11 +442,18 @@ describe("retention", () => {
 
   it("drops the oldest records past the count bound", async () => {
     const clock = { now: 1_000_000 };
-    const { records } = await stores(clock);
-    // One over the bound, so exactly the oldest must go and nothing else.
-    for (let index = 0; index <= JOB_RECORD_RETENTION_COUNT; index += 1) {
-      await records.record(endedRecord({ jobId: `job-${index}`, endedAtMs: clock.now - (JOB_RECORD_RETENTION_COUNT - index) }));
+    const { records, root } = await stores(clock);
+    const recordRoot = join(root, "records");
+    // Seed the retained bound without asking the high-level record path to rescan the growing
+    // directory after every fixture write. The one public write below is the behavior under test:
+    // crossing the bound must prune exactly the oldest record and keep the new one.
+    for (let index = 0; index < JOB_RECORD_RETENTION_COUNT; index += 1) {
+      await writeMotionJobRecord(recordRoot, endedRecord({
+        jobId: `job-${index}`,
+        endedAtMs: clock.now - (JOB_RECORD_RETENTION_COUNT - index)
+      }));
     }
+    await records.record(endedRecord({ jobId: `job-${JOB_RECORD_RETENTION_COUNT}`, endedAtMs: clock.now }));
 
     const kept = await records.list({ callerId: "cut:workspace-7" });
 
