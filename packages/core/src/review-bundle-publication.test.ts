@@ -73,7 +73,7 @@ describe("review bundle publication", () => {
       mutation.bytes = earlyReceipt.replace("early", "late");
       mutation.applied = false;
 
-      await expect(writeReviewBundle({ receiptsRoot, outDir, copyArtifacts: false })).rejects.toThrow(/package or receipt input changed before publication/i);
+      await expect(writeReviewBundle({ receiptsRoot, outDir, copyArtifacts: false })).rejects.toThrow(/stable review bundle receipt changed before publication: render\.receipt\.json/i);
       expect(mutation.applied).toBe(true);
       await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
@@ -118,7 +118,7 @@ describe("review bundle publication", () => {
       await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
       await writeFile(receiptPath, earlyReceipt, "utf8");
 
-      await expect(writeReviewBundle({ receiptsRoot, outDir, copyArtifacts: false })).rejects.toThrow(/package or receipt input changed before publication/i);
+      await expect(writeReviewBundle({ receiptsRoot, outDir, copyArtifacts: false })).rejects.toThrow(/stable review bundle receipt changed before publication: render\.receipt\.json/i);
       expect(mutatedAfterParse).toBe(true);
       await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
@@ -190,7 +190,7 @@ describe("review bundle publication", () => {
       entry.path = replacementPath;
 
       await expect(writeReviewBundle({ receipts: [entry], outDir, copyArtifacts: false }))
-        .rejects.toThrow(/package or receipt input changed before publication/i);
+        .rejects.toThrow(/^Review bundle receipt input changed before publication\.$/);
       await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(root, { recursive: true, force: true });
