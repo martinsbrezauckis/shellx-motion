@@ -1,6 +1,7 @@
 /** Package-validation verdicts plus optional, host-governed evidence persistence. */
 import {
   createPackageValidationReceipt,
+  colorPipelineRenderPlan,
   motionValidationReport,
   restoreMotionDocumentCompositing,
   unreadableKeyframesRefusal,
@@ -129,7 +130,7 @@ export async function validateWorkspacePackage(
     return persistValidationReceipt({
       ok: true,
       visibleState: { panel: "workspace", operation: "package.validate", packageRoot },
-      result: { ok: true, valid: true, packageRoot, ...summary, validation: staged.report },
+      result: { ok: true, valid: true, packageRoot, ...summary, colorPipeline: colorPipelineRenderPlan(pkg.motion), validation: staged.report },
       warnings: [],
     }, packageRoot, pkg, receiptsRoot, services.writeReceipt);
   } catch (error) {

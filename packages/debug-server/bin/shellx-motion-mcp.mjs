@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 const accessRoot = process.env.SHELLX_MOTION_ACCESS_ROOT || join(homedir(), ".shellx-motion");
-const tokenFile = join(accessRoot, "access.token");
-const portFile = join(accessRoot, "server.port");
+const discoveryFile = join(accessRoot, "mcp-bridge.discovery.json");
+const MCP_BRIDGE_CREDENTIAL_HEADER = "x-shellx-motion-mcp-bridge-credential";
+const MCP_BRIDGE_CREDENTIAL_PROTOCOL_PREFIX = "shellx-motion-mcp-bridge.";
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
 const COORDINATOR_TOOL_NAMES = new Set([
   "motion_job_submit",
@@ -68,15 +69,10 @@ async function sendMcpRequest(request, notification) {
 }
 
 async function sendHttpRequest(request, notification) {
-  const [token, portText] = await Promise.all([
-    readPrivateRegularFile(tokenFile),
-    readPrivateRegularFile(portFile)
-  ]);
-  const port = Number(portText.trim());
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid live port");
-  const response = await fetch(`http://127.0.0.1:${port}/rpc`, {
+  const discovery = await readLiveDiscovery();
+  const response = await fetch(`http://127.0.0.1:${discovery.port}/rpc`, {
     method: "POST",
-    headers: mcpHeaders(request, token.trim()),
+    headers: mcpHeaders(request, discovery.credential),
     body: JSON.stringify(request),
     signal: AbortSignal.timeout(30_000)
   });
@@ -92,23 +88,18 @@ async function sendHttpRequest(request, notification) {
 
 async function connectedBridge() {
   if (connection?.open) return connection;
-  const [token, portText] = await Promise.all([
-    readPrivateRegularFile(tokenFile),
-    readPrivateRegularFile(portFile)
-  ]);
-  const port = Number(portText.trim());
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid live port");
+  const discovery = await readLiveDiscovery();
 
-  const next = await openBridgeConnection(port, token.trim());
+  const next = await openBridgeConnection(discovery.port, discovery.credential);
   connection = next;
   return next;
 }
 
-function openBridgeConnection(port, token) {
+function openBridgeConnection(port, credential) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, [
       "shellx-motion-debug-v1",
-      `shellx-motion-token.${token}`
+      `${MCP_BRIDGE_CREDENTIAL_PROTOCOL_PREFIX}${credential}`
     ]);
     const pending = new Map();
     let open = false;
@@ -198,10 +189,29 @@ async function readPrivateRegularFile(path) {
   return readFile(path, "utf8");
 }
 
-function mcpHeaders(request, token) {
+async function readLiveDiscovery() {
+  const raw = await readPrivateRegularFile(discoveryFile);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("invalid live Motion bridge discovery");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("invalid live Motion bridge discovery");
+  }
+  const { port, credential } = parsed;
+  if (!Number.isInteger(port) || port < 1 || port > 65535
+    || typeof credential !== "string" || !/^[A-Za-z0-9_-]{32,}$/.test(credential)) {
+    throw new Error("invalid live Motion bridge discovery");
+  }
+  return { port, credential };
+}
+
+function mcpHeaders(request, credential) {
   const headers = {
     accept: "application/json, text/event-stream",
-    authorization: `Bearer ${token}`,
+    [MCP_BRIDGE_CREDENTIAL_HEADER]: credential,
     "content-type": "application/json"
   };
   const method = typeof request.method === "string" ? request.method : "";

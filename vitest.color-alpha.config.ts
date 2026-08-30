@@ -11,6 +11,10 @@ export default defineConfig({
   test: {
     include: [
       "packages/core/src/color-alpha-contract.test.ts",
+      "packages/core/src/color-pipeline.test.ts",
+      "packages/core/src/linear-srgb-sdr-final-route.test.ts",
+      "packages/renderer-browser/src/color-pipeline-preallocation.test.ts",
+      "packages/renderer-ffmpeg/src/color-pipeline-preallocation.test.ts",
       "packages/renderer-native/src/color-alpha-contract.test.ts",
       "packages/renderer-ffmpeg/src/color-alpha-contract.test.ts",
       "packages/debug-api/src/color-alpha-contract.test.ts",

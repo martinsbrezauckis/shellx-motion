@@ -1,11 +1,11 @@
 /** Public Debug contract source for closed exact-time persisted scene3d animation authoring. */
 import { MAX_MOTION_SCENE3D_ANIMATION_TIME_US } from "@shellx-motion/core";
 import type { MotionDebugArgPropertySchema, MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, MOTION_EASING, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
 
 const ID: MotionDebugArgPropertySchema = { type: "string", maxLength: 64, description: "Safe stable identifier; Core requires `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`." };
 const EXACT_US: MotionDebugArgPropertySchema = { type: "number", minimum: 0, maximum: MAX_MOTION_SCENE3D_ANIMATION_TIME_US, description: "Exact safe-integer physical microsecond timestamp; milliseconds and floating-point time are refused." };
-const EASING: MotionDebugArgPropertySchema = { type: ["string", "object"], description: "Optional canonical Motion easing for the following segment; Core validates its exact closed form." };
+const EASING: MotionDebugArgPropertySchema = MOTION_EASING;
 const COLOR: MotionDebugArgPropertySchema = { type: "string", description: "Opaque #RRGGBB scene color; Core canonicalizes it." };
 const VECTOR: MotionDebugArgPropertySchema = { type: "array", minItems: 3, maxItems: 3, items: { type: "number" }, description: "Exactly three finite numbers; Core applies the locator-specific scene3d bounds." };
 const VALUE: MotionDebugArgPropertySchema = { type: ["number", "string", "array"], description: "Locator-typed number, vec3, or #RRGGBB color. Generic paths and untyped JSON values are not accepted." };

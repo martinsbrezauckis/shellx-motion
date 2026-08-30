@@ -2,7 +2,7 @@ import { buildEnvironmentDefinitions, PUBLIC_SCHEMA_EXTENSION_COMMENT, PUBLIC_SC
 import { GENERATED_VISUAL_LAYER_TYPES } from "./generated-visual-layer-types";
 import { RESTRICTED_SHADER_LANGUAGE, RESTRICTED_SHADER_SCHEMA } from "./shader-plugin";
 import { buildGpuMaterialPublicSchema } from "./gpu-material-contract";
-import { NAMED_EASINGS_LIST } from "./timeline";
+import { MAX_MOTION_EASING_CODE_UNITS, MOTION_FUNCTIONAL_EASING_PATTERN, NAMED_EASINGS_LIST } from "./timeline";
 import { MAX_POINT_SAMPLES_PER_LAYER, MAX_POINTS_PER_LAYER } from "./motion-points";
 import { MAX_TRAIL_DURATION_MS, MAX_TRAIL_SAMPLES, MIN_TRAIL_SAMPLES } from "./motion-trail";
 import { PATH_REVEAL_SCHEMA } from "./motion-public-schema-path-reveal";
@@ -10,7 +10,7 @@ import { buildParticleDefinitions } from "./motion-public-schema-particles";
 import { buildEffectModuleDefinitions } from "./motion-public-schema-effect-module";
 import { buildShapeGeometryDefinitions } from "./motion-public-schema-shape-geometry";
 import { buildTextRunsDefinitions, TEXT_RUNS_LAYER_PROPERTY, textRunsLayerTypeConstraint } from "./motion-public-schema-text-runs";
-const COLOR = { type: "string", minLength: 1 }; const DIRECTION = { enum: ["left", "right", "up", "down"] };
+import { MAX_MOTION_COLOR_STRING_LENGTH } from "./color"; const COLOR = { type: "string", minLength: 1, maxLength: MAX_MOTION_COLOR_STRING_LENGTH }; const DIRECTION = { enum: ["left", "right", "up", "down"] };
 /** Definitions for the portable layer, animation, effect, and environment payload shapes. */
 export function buildLayerDefinitions(): Record<string, unknown> {
   return {
@@ -165,11 +165,10 @@ export function buildLayerDefinitions(): Record<string, unknown> {
       anyOf: [
         { enum: [...NAMED_EASINGS_LIST] },
         { enum: ["spring-gentle", "spring-snappy", "spring-bouncy"] },
-        { pattern: "^cubic-bezier\\(" },
-        { pattern: "^steps\\(" },
+        { type: "string", maxLength: MAX_MOTION_EASING_CODE_UNITS, pattern: MOTION_FUNCTIONAL_EASING_PATTERN },
         { $ref: "#/$defs/springEasing" }
       ],
-      $comment: "The runtime parses functional easing strings and checks spring parameter ranges; JSON Schema expresses the portable discriminant and number shapes."
+      $comment: `Functional easing strings are capped at ${MAX_MOTION_EASING_CODE_UNITS} UTF-16 code units and use the same bounded grammar as Core; spring parameter ranges remain runtime-validated.`
     },
     springEasing: {
       type: "object",

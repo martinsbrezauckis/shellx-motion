@@ -33,6 +33,9 @@ export async function renderGpuPreviewOneShot(
   const frameOptions = privateOutputPublication
     ? withRendererPrivateOutputPublication(publicFrameOptions, privateOutputPublication)
     : publicFrameOptions;
+  // The session performs the F0 preallocation check after O6 has either refused or replaced
+  // source Motion with Core's descriptor-safe snapshot. Reading pkg.motion here would bypass
+  // that boundary for the direct one-shot O6 route.
   const session = createSession(pkg, sessionOptions);
   let result: GpuPreviewResult | undefined;
   try {

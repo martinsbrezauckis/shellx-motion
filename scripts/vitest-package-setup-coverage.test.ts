@@ -21,4 +21,14 @@ describe("workspace Vitest fixture setup", () => {
 
     expect(missing).toEqual([]);
   });
+
+  it("keeps POSIX fixtures under project-owned scratch rather than trusting the ambient temp root", async () => {
+    const setup = await readFile(new URL("./vitest-setup-job-stores.ts", import.meta.url), "utf8");
+
+    expect(setup).toContain("hasAtomicCowAuthority(canonicalTempRoot)");
+    expect(setup).toContain('join(projectRoot, ".scratch", "tests")');
+    expect(setup).toContain("mkdtempSync(join(fixtureParent, \"vitest-\"))");
+    expect(setup).toContain("SHELLX_MOTION_TEST_IPC_TMPDIR");
+    expect(setup).not.toContain('from "@shellx-motion/core"');
+  });
 });

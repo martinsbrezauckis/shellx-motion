@@ -28,6 +28,7 @@
  * ----------------------
  * Nothing. Sole caller: `platform-requirements.ts`.
  */
+import { sanitizeUntrustedDiagnostic, stripDiagnosticControls, takeUtf8Prefix } from "@shellx-motion/core";
 
 /**
  * Maximum characters kept from a tool's version line.
@@ -37,6 +38,8 @@
  * vendor-padded banner from becoming an unbounded field on every receipt.
  */
 export const MOTION_TOOL_VERSION_MAX_CHARS = 160;
+const MOTION_TOOL_VERSION_RAW_MAX_BYTES = 512;
+const MOTION_TOOL_DETAIL_RAW_MAX_BYTES = 4 * 1024;
 
 /**
  * Characters that must never survive into a printed report.
@@ -51,47 +54,23 @@ export const MOTION_TOOL_VERSION_MAX_CHARS = 160;
  *
  * Stripped rather than escaped, because none of them carry meaning in a version banner.
  */
-const REPORT_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
-
-/**
- * Whole ANSI escape sequences — CSI (`ESC[...m`), OSC (`ESC]...BEL`) and the two-character forms.
- *
- * Removing the ESC alone already disarms the sequence: what remains is inert printable text. This
- * runs FIRST anyway so the residue does not remain either, because `Chromium 141.0[8m` in a report
- * is a puzzle for whoever reads it. The ordering only matters in one direction — the blanket
- * REPORT_CONTROL_CHARACTERS pass afterwards is what makes any sequence shape this pattern does not
- * anticipate harmless regardless.
- */
-const ANSI_ESCAPE_SEQUENCE = /\u001B(?:\[[0-?]*[ -\/]*[@-~]|\][\s\S]*?(?:\u0007|\u001B\\)|[@-Z\\-_])/g;
-
-/** Line terminators, including the two Unicode ones a `\r?\n` split silently keeps. */
-const ANY_LINE_BREAK = /[\r\n\u2028\u2029]/;
-
-/**
- * Absolute filesystem paths, POSIX or Windows.
- *
- * Same shape `redactProbeReason` in `index.ts` already uses for the same reason: a path names the
- * user's home directory, their username and their install layout, and it is not diagnostically
- * useful in a field a host may display or forward.
- */
-const ABSOLUTE_PATH = /(?:[A-Za-z]:)?[\\/][^\s"']+/g;
-
 /** Cap on the raw probe error kept in `detail`. Bounded for the same reason a version line is. */
 const MOTION_TOOL_DETAIL_MAX_CHARS = 400;
 
 export function stripReportControlCharacters(value: string): string {
-  return value.replace(ANSI_ESCAPE_SEQUENCE, "").replace(REPORT_CONTROL_CHARACTERS, "");
+  return stripDiagnosticControls(takeUtf8Prefix(value, MOTION_TOOL_DETAIL_RAW_MAX_BYTES).value);
 }
 
 export function boundedVersion(version: string | undefined): string | undefined {
-  // Split on EVERY line terminator before stripping, so `\r\n` still ends the line and a lone `\r`
-  // cannot be pulled onto it by the strip.
-  const line = stripReportControlCharacters(version?.split(ANY_LINE_BREAK, 1)[0] ?? "").trim();
-  if (!line) return undefined;
-  const redacted = line.replace(/\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*=(\S+)/g, (match) => `${match.split("=")[0]}=[redacted]`);
-  return redacted.length > MOTION_TOOL_VERSION_MAX_CHARS
-    ? `${redacted.slice(0, MOTION_TOOL_VERSION_MAX_CHARS - 1)}…`
-    : redacted;
+  const raw = takeUtf8Prefix(version ?? "", MOTION_TOOL_VERSION_RAW_MAX_BYTES);
+  const lineEnd = firstReportLineEnd(raw.value);
+  const line = raw.value.slice(0, lineEnd);
+  const redacted = sanitizeUntrustedDiagnostic(line, {
+    rawMaxBytes: MOTION_TOOL_VERSION_RAW_MAX_BYTES,
+    publicMaxBytes: MOTION_TOOL_VERSION_MAX_CHARS,
+    sourceTruncated: raw.truncated && lineEnd === raw.value.length
+  }).trim();
+  return redacted || undefined;
 }
 
 /**
@@ -108,10 +87,18 @@ export function boundedVersion(version: string | undefined): string | undefined 
  *   and length bounded. Undefined when nothing survives.
  */
 export function redactedDetail(detail: string): string | undefined {
-  const cleaned = stripReportControlCharacters(detail).replace(ABSOLUTE_PATH, "<path>").replace(/\s+/g, " ").trim();
-  if (!cleaned) return undefined;
-  return cleaned.length > MOTION_TOOL_DETAIL_MAX_CHARS
-    ? `${cleaned.slice(0, MOTION_TOOL_DETAIL_MAX_CHARS - 1)}…`
-    : cleaned;
+  const cleaned = sanitizeUntrustedDiagnostic(detail, {
+    rawMaxBytes: MOTION_TOOL_DETAIL_RAW_MAX_BYTES,
+    publicMaxBytes: MOTION_TOOL_DETAIL_MAX_CHARS,
+    collapseWhitespace: true
+  });
+  return cleaned || undefined;
 }
 
+function firstReportLineEnd(value: string): number {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) return index;
+  }
+  return value.length;
+}

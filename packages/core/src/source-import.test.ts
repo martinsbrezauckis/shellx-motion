@@ -20,6 +20,48 @@ describe("source import helpers", () => {
     ]);
   });
 
+  it("matches legacy URL and Markdown cleanup semantics, including source references", () => {
+    for (const { text, max } of [
+      { text: "See HTTP://Example.com/a...; then https://example.com/b?x=1! and https://example.com/b?x=1", max: 3 },
+      { text: "https://example.com/a)] https://example.com/b, https://example.com/c", max: 2 },
+      { text: "https://example.com/...?", max: 0 }
+    ]) {
+      expect(extractSourceUrls(text, max), text).toEqual(legacyExtractSourceUrls(text, max));
+    }
+
+    for (const markdown of [
+      "![Cover art](assets/cover.png) and [read more](https://example.com/read).",
+      "![empty]() then [visible](https://example.com/visible) and [not-a-link]().",
+      "![nested [label](https://example.com/nested) then [tail](https://example.com/tail)"
+    ]) {
+      const source = sourceDocument(`## Imported heading\n${markdown}`);
+      const scripted = buildScriptedVideoFromSourceImport(source, { maxFrames: 1 });
+      const expectedBody = legacyCleanMarkdown(markdown);
+
+      expect(scripted.frames[0]).toMatchObject({
+        title: "Imported heading",
+        body: expectedBody,
+        sourceRefs: [{ type: "article", title: "Imported source", url: "https://example.com/article" }]
+      });
+      expect(source.sha256).toBe("a".repeat(64));
+    }
+  });
+
+  it("matches the legacy token cleanups across a deterministic small-input corpus", () => {
+    const random = deterministicRandom(0x0266_1724);
+    const urlFragments = ["h", "H", "t", "T", "p", "P", "s", "S", "://", ".", ",", ";", ":", "!", "?", ")", "]", "}", " ", "\t", "<", "https://example.com/x"];
+    const markdownFragments = ["text", "!", "[", "]", "(", ")", " ", "![]", "[x]", "![x]", "(url)", "(x)y", "[nested", "\n"];
+    for (let document = 0; document < 400; document += 1) {
+      const urlText = fuzzText(random, urlFragments, 2, 16);
+      expect(extractSourceUrls(urlText, document % 5), urlText).toEqual(legacyExtractSourceUrls(urlText, document % 5));
+
+      const markdown = `x ${fuzzText(random, markdownFragments, 2, 12)}`;
+      const expected = legacyCleanMarkdown(markdown);
+      const actual = buildScriptedVideoFromSourceImport(sourceDocument(markdown), { maxFrames: 1 }).frames[0]?.body;
+      expect(actual, markdown).toBe(expected);
+    }
+  });
+
   it("rejects localhost and private-network source URLs before fetch", () => {
     expect(() => assertPublicSourceUrl("http://localhost:3000/article")).toThrow("refusing to fetch local host: localhost");
     expect(() => assertPublicSourceUrl("http://127.0.0.1/article")).toThrow("refusing to fetch private IP: 127.0.0.1");
@@ -365,6 +407,37 @@ describe("source import helpers", () => {
     });
   });
 
+  it("keeps URL and Markdown token cleanup near-linear through the 2 MiB remote-source ceiling", () => {
+    const smallBytes = 480 * 1024;
+    const largeBytes = smallBytes * 4;
+    const timeUrls = (trailingBytes: number): number => {
+      const text = `https://example.com/path${".".repeat(trailingBytes)}`;
+      const started = performance.now();
+      expect(extractSourceUrls(text)).toEqual(["https://example.com/path"]);
+      return performance.now() - started;
+    };
+    const timeMarkdown = (pairs: number): number => {
+      const markdown = `## Hostile source\n${"![".repeat(pairs)}`;
+      expect(Buffer.byteLength(markdown, "utf8")).toBeLessThanOrEqual(2 * 1024 * 1024);
+      const started = performance.now();
+      expect(buildScriptedVideoFromSourceImport(sourceDocument(markdown), { maxFrames: 1 }).frames).toHaveLength(1);
+      return performance.now() - started;
+    };
+
+    timeUrls(smallBytes);
+    const smallUrls = Math.max(timeUrls(smallBytes), 1);
+    const largeUrls = timeUrls(largeBytes);
+    expect(largeUrls).toBeLessThan(smallUrls * 9);
+
+    const smallPairs = Math.floor(smallBytes / 2);
+    const largePairs = smallPairs * 4;
+    timeMarkdown(smallPairs);
+    const smallMarkdown = Math.max(timeMarkdown(smallPairs), 1);
+    const largeMarkdown = timeMarkdown(largePairs);
+    // Four times the bounded fetched source must stay far below the 16x quadratic signature.
+    expect(largeMarkdown).toBeLessThan(smallMarkdown * 9);
+  });
+
   it("bounds source-to-scripted-video planner inputs", () => {
     const imported = buildSourceImportDocument({
       url: "https://example.com/article",
@@ -391,4 +464,54 @@ function sourceFetchResponse(text: string, contentType: string, status = 200, st
     },
     text: async () => text
   };
+}
+
+function legacyExtractSourceUrls(text: string, max = 3): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`)\]}]+/gi)) {
+    const url = match[0].replace(/[.,;:!?]+$/, "");
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+    if (urls.length >= max) break;
+  }
+  return urls;
+}
+
+function legacyCleanMarkdown(value: string): string {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_>#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sourceDocument(markdown: string) {
+  return {
+    url: "https://example.com/article",
+    title: "Imported source",
+    kind: "article" as const,
+    markdown,
+    truncated: false,
+    sourceChars: markdown.length,
+    keptChars: markdown.length,
+    sha256: "a".repeat(64)
+  };
+}
+
+function deterministicRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
+
+function fuzzText(random: () => number, fragments: readonly string[], minPieces: number, maxPieces: number): string {
+  const pieces = minPieces + Math.floor(random() * (maxPieces - minPieces + 1));
+  let text = "";
+  for (let piece = 0; piece < pieces; piece += 1) text += fragments[Math.floor(random() * fragments.length)] ?? "";
+  return text;
 }

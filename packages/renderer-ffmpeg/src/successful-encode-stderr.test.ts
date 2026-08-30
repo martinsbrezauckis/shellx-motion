@@ -88,6 +88,18 @@ describe("summarizeSuccessfulEncodeStderr", () => {
     expect(summarizeSuccessfulEncodeStderr(leaked)).not.toContain("abc123");
   });
 
+  it("bounds raw success diagnostics before processing a partial token or terminal-safe path", () => {
+    const partial = `sk-proj-${"a".repeat(20_000)}`;
+    const summary = summarizeSuccessfulEncodeStderr(`${partial}\nC:\\Users\\TestUser\\private.txt /opt/fixture/private\u001b[8m\u202E`);
+
+    expect(summary).toContain("[redacted]");
+    expect(summary).not.toContain(partial.slice(0, 24));
+    expect(summary).not.toContain("C:\\Users\\TestUser");
+    expect(summary).not.toContain("/opt/fixture/private");
+    expect(summary).not.toContain("\u001b");
+    expect(summary).not.toContain("\u202E");
+  });
+
   it("reports nothing for empty stderr", () => {
     expect(summarizeSuccessfulEncodeStderr("")).toBe("");
     expect(summarizeSuccessfulEncodeStderr("   \n  \n")).toBe("");

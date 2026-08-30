@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { inspectPngFileRegion, loadMotionPackage } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { renderMotionBrowserFrame } from "./index";
 
 const tempDirs: string[] = [];
@@ -28,9 +29,8 @@ afterEach(async () => {
 });
 
 /** A package holding one 400px shape centred on a dark field, filled with `gradient`. */
-async function shapePackage(shape: string, gradient: unknown): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "shellx-motion-gradient-"));
-  tempDirs.push(root);
+async function shapePackage(shape: string, gradient: unknown, parent = tmpdir()): Promise<string> {
+  const root = await mkdtemp(join(parent, "shellx-motion-gradient-"));
   await mkdir(root, { recursive: true });
   const motion = {
     schema: "shellx-motion/motion@1",
@@ -78,13 +78,18 @@ async function patchLuma(path: string, x: number, y: number): Promise<number> {
 }
 
 async function renderShape(shape: string, gradient: unknown): Promise<string> {
-  const packageRoot = await shapePackage(shape, gradient);
-  const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-gradient-out-"));
-  tempDirs.push(outDir);
-  const pkg = await loadMotionPackage(packageRoot);
-  const result = await renderMotionBrowserFrame(pkg, { atMs: 0, outDir });
-  if (!result.ok) throw new Error("gradient probe render failed");
-  return result.output.path;
+  // A host-selected workspace anchor lets the test exercise the same stable-file authority path
+  // as production without assuming the OS root directory belongs to the test principal.
+  const workspace = await mkdtemp(join(tmpdir(), "shellx-motion-gradient-workspace-"));
+  tempDirs.push(workspace);
+  const packageRoot = await shapePackage(shape, gradient, workspace);
+  const outDir = await mkdtemp(join(workspace, "out-"));
+  return await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(workspace), async () => {
+    const pkg = await loadMotionPackage(packageRoot);
+    const result = await renderMotionBrowserFrame(pkg, { atMs: 0, outDir });
+    if (!result.ok) throw new Error("gradient probe render failed");
+    return result.output.path;
+  });
 }
 
 const RADIAL = {
@@ -122,5 +127,14 @@ describe("gradients render on SVG-drawn shapes", () => {
     const mid = await patchLuma(path, 288, 300);
 
     expect(mid - low).toBeGreaterThan(20);
+  }, 60000);
+
+  it("gives a star a radial falloff too", async () => {
+    const path = await renderShape("star", RADIAL);
+
+    const centre = await patchLuma(path, 288, 288);
+    const topPoint = await patchLuma(path, 288, 116);
+
+    expect(centre - topPoint).toBeGreaterThan(40);
   }, 60000);
 });

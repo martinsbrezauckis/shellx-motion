@@ -12,7 +12,7 @@
  * means "every keyframe on this target", which is why they are optional rather than required.
  */
 import type { MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, KEYFRAME_TARGET, LAYER_ID, PACKAGE_EDIT } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, KEYFRAME_TARGET, LAYER_ID, MOTION_EASING, PACKAGE_EDIT } from "./command-metadata-shared.js";
 
 const EDIT_LAYER_TARGET = ["packageRoot", "outDir", "layerId", "target"];
 
@@ -24,11 +24,7 @@ const RANGE = {
   endMs: { type: "number" as const, minimum: 0, description: "Window end in milliseconds; unbounded when omitted." }
 };
 
-const EASING = {
-  type: "string" as const,
-  enumRef: "easing",
-  description: "Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object."
-};
+const EASING = MOTION_EASING;
 
 export const TIMELINE_KEYFRAME_COMMAND_METADATA = {
   "motion.timeline.keyframe.upsert": {

@@ -35,8 +35,13 @@ describe("fixed glTF PBR final dispatch", () => {
   });
 
   it("refuses a stale canonical source scene before Browser or generic GPU planning", async () => {
-    marker.mockReturnValue(true); resolveGeneric.mockReset(); resolvePbr.mockRejectedValue(new Error("exact immutable canonical source-lowered scene state"));
-    await expect(preflightGpuFinalDelivery({ pkg, frameLane: "gpu", outputPath: "/unused.mp4" })).resolves.toMatchObject({ ok: false, failure: { code: "gpu_resource_refused", message: expect.stringContaining("exact immutable canonical source-lowered scene state") } });
+    marker.mockReturnValue(true); resolveGeneric.mockReset(); resolvePbr.mockRejectedValue(new Error("exact immutable canonical source API_TOKEN=visible C:\\Users\\TestUser\\private.txt"));
+    const result = await preflightGpuFinalDelivery({ pkg, frameLane: "gpu", outputPath: "/unused.mp4" });
+    expect(result).toMatchObject({ ok: false, failure: { code: "gpu_resource_refused", message: expect.stringContaining("API_TOKEN=[redacted]") } });
+    if (!result.ok) {
+      expect(result.failure.message).not.toContain("visible");
+      expect(result.failure.message).not.toContain("C:\\Users\\TestUser");
+    }
     expect(resolveGeneric).not.toHaveBeenCalled();
   });
 

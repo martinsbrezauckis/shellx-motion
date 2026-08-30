@@ -9,15 +9,15 @@ import { DEBUG_COMMAND_CONTRACTS, configureAttestedRenderReuseProducerAuthority 
 import { startMotionDebugServer, type MotionDebugServerOptions } from "./index";
 import { DEBUG_SERVER_TRANSPORT_MANIFEST, type MotionDebugServerTransportManifest } from "./debug-server-transport.js";
 import {
-  clearMotionServerPort,
+  clearMotionMcpBridgeDiscovery,
   ensureMotionEffectModulesRoot,
   ensureMotionReceiptsRoot,
   motionUserAccessPaths,
   readOrCreatePersistentCapabilityFile,
   readOrCreateRenderReuseProducerKey,
   writeEphemeralCapabilityFile,
+  writeMotionMcpBridgeDiscovery,
   writeWorkbenchBootstrapHandoff,
-  writeMotionServerPort
 } from "./user-access";
 import { workbenchDesktopChildEnvironment } from "./workbench-child-environment.js";
 import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable.js";
@@ -142,6 +142,10 @@ export async function runMotionDebugServerCli(
   const persistentAccess = !configuredToken && plan.persistentAccess
     ? await readOrCreatePersistentCapabilityFile(accessPaths)
     : null;
+  // The installed stdio bridge receives this only through the owner-private discovery record
+  // after this exact server has bound. It is a short-lived bridge credential, never the durable
+  // Bearer capability, so a stale/rebound port cannot receive bearer material after a crash.
+  const mcpBridgeCredential = randomBytes(32).toString("base64url");
   const workbenchBootstrapToken = plan.openWorkbench ? randomBytes(32).toString("base64url") : null;
   // The trusted side of the receipts fence. Configured here, on every start, because the Debug API
   // refuses a caller-named receipts root that is not inside a root the HOST named -- and until this
@@ -177,13 +181,14 @@ export async function runMotionDebugServerCli(
     ...(plan.artifactRoots.length > 0 ? { artifactRoots: plan.artifactRoots } : {}),
     ...(plan.templateRoots.length > 0 ? { templateRoots: plan.templateRoots } : {}),
     updateAutoCheck: true,
+    mcpBridgeCredential,
     ...(configuredToken || persistentAccess ? { capabilityToken: configuredToken ?? persistentAccess!.token } : {}),
     ...(workbenchBootstrapToken
       ? { workbenchBootstrapToken, onWorkbenchBootstrapClaim: removeWorkbenchHandoff }
       : {})
   });
   let tokenRoot: string | null = null;
-  let publishedPort: number | null = null;
+  let publishedDiscovery: { port: number; credential: string } | null = null;
   try {
     let tokenFile: string | undefined;
     if (!configuredToken && !persistentAccess) {
@@ -192,8 +197,8 @@ export async function runMotionDebugServerCli(
       tokenFile = ephemeralToken.tokenFile;
     }
     if (persistentAccess) {
-      publishedPort = Number(handle.url.port);
-      await writeMotionServerPort(accessPaths, publishedPort);
+      publishedDiscovery = { port: Number(handle.url.port), credential: mcpBridgeCredential };
+      await writeMotionMcpBridgeDiscovery(accessPaths, publishedDiscovery);
     }
     io.stdout.write(`${JSON.stringify({
       ...plan,
@@ -229,7 +234,7 @@ export async function runMotionDebugServerCli(
   } finally {
     await handle.close();
     await removeWorkbenchHandoff();
-    if (publishedPort !== null) await clearMotionServerPort(accessPaths, publishedPort);
+    if (publishedDiscovery) await clearMotionMcpBridgeDiscovery(accessPaths, publishedDiscovery);
     if (tokenRoot) await rm(tokenRoot, { recursive: true, force: true });
   }
   return 0;

@@ -190,6 +190,10 @@ a template-root grant is catalog/plan authority, not a general package or render
 - HTTP and RPC clients send the capability as `Authorization: Bearer <token>`.
   WebSocket clients offer both the `shellx-motion-debug-v1` and
   `shellx-motion-token.<token>` subprotocols.
+- The bundled `shellx-motion-mcp` stdio bridge is the local-only exception: it reads an
+  owner-private, per-start listener credential and never forwards the durable Bearer capability to
+  the discovered port. A stale record is therefore fail-closed for a restarted listener; this does
+  not isolate another process running as the same OS user.
 - Everything except `GET /health` and the static workbench shell requires
   authentication. The server also rejects forged `Host` and unapproved `Origin`
   values and bounds request/WebSocket size and concurrency.

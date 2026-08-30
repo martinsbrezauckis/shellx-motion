@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_linear_srgb_sdr_final",
+  "name": "Linear sRGB SDR Final",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["gpu"],
+    "hosts": ["motion"]
+  }
+}

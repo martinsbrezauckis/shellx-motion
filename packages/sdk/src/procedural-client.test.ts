@@ -38,6 +38,53 @@ describe("procedural SDK transport guards", () => {
     })).toMatchObject({ code: "invalid_request", message: expect.stringContaining("boolean") });
   });
 
+  it("uses Core's property allow-list before synthesizing placeholder writes", () => {
+    const hostileProperties = [
+      "__proto__",
+      "__proto__.sdk_placeholder_polluted",
+      "prototype",
+      "prototype.sdk_placeholder_polluted",
+      "constructor",
+      "constructor.prototype.sdk_placeholder_polluted",
+    ];
+
+    for (const property of hostileProperties) {
+      const invalidTarget = validateProceduralRequest("proceduralSet", {
+        relationship: { ...relationship(), target: { layerId: "target", property } },
+      });
+      expect(invalidTarget).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("/relationships/relationships/0/target/property"),
+      });
+      expect(invalidTarget?.message).toContain("allow-listed numeric property");
+
+      const invalidPropertyNode = validateProceduralRequest("proceduralSet", {
+        relationship: {
+          ...relationship(),
+          nodes: [{ id: "source", type: "property", ref: { layerId: "driver", property } }, { id: "output", type: "abs", input: "source" }],
+          outputNodeId: "output",
+        },
+      });
+      expect(invalidPropertyNode).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("/relationships/relationships/0/nodes/0/ref/property"),
+      });
+      expect(invalidPropertyNode?.message).toContain("allow-listed numeric property");
+    }
+
+    expect((Object.prototype as { sdk_placeholder_polluted?: unknown }).sdk_placeholder_polluted).toBeUndefined();
+    expect(validateProceduralRequest("proceduralSet", {
+      relationship: { ...relationship(), target: { layerId: "target", property: "shader.uniforms.u_strength" } },
+    })).toBeNull();
+    expect(validateProceduralRequest("proceduralSet", {
+      relationship: {
+        ...relationship(),
+        nodes: [{ id: "source", type: "property", ref: { layerId: "driver", property: "shader.uniforms.u_strength" } }, { id: "output", type: "abs", input: "source" }],
+        outputNodeId: "output",
+      },
+    })).toBeNull();
+  });
+
   it("binds mutation state, summaries, receipts, and bake evidence to the request", () => {
     const output = mutationOutput();
     const request = { packageRoot: "/motion/source", outDir: "/motion/output", relationship: relationship() };

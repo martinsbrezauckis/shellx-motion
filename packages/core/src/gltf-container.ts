@@ -27,7 +27,7 @@ export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): Par
   }
   const parsed = format === "glb" ? parseGlb(bytes) : { jsonBytes: bytes, binaryChunk: undefined };
   if (parsed.jsonBytes.byteLength > MAX_GLTF_JSON_BYTES) throw new Error(`glTF JSON exceeds ${MAX_GLTF_JSON_BYTES} bytes.`);
-  const sourceText = new TextDecoder("utf-8", { fatal: true }).decode(parsed.jsonBytes).replace(/[\u0000\u0020\t\r\n]+$/g, "");
+  const sourceText = trimGltfJsonPadding(new TextDecoder("utf-8", { fatal: true }).decode(parsed.jsonBytes));
   assertBoundedGltfJsonText(sourceText);
   let jsonValue: unknown;
   try { jsonValue = JSON.parse(sourceText); } catch { throw new Error("glTF JSON is invalid."); }
@@ -56,6 +56,20 @@ export function parseGltfContainer(bytes: Buffer, format: GltfSourceFormat): Par
     bufferSha256: buffers.map(hashBuffer),
     byteLength: bytes.byteLength,
   };
+}
+
+/**
+ * GLB permits JSON chunks to be padded with NUL or JSON whitespace. Keep the raw bytes for the
+ * import identity, but remove only that terminal padding before the bounded structural scan.
+ */
+function trimGltfJsonPadding(sourceText: string): string {
+  let end = sourceText.length;
+  while (end > 0) {
+    const code = sourceText.charCodeAt(end - 1);
+    if (code !== 0x00 && code !== 0x20 && code !== 0x09 && code !== 0x0d && code !== 0x0a) break;
+    end -= 1;
+  }
+  return end === sourceText.length ? sourceText : sourceText.slice(0, end);
 }
 
 /**

@@ -6,7 +6,8 @@ import {
   EffectModuleRegistryError,
   MAX_EFFECT_MODULE_ENTRIES,
   createEffectModuleRegistryAuthority,
-  parseEffectModuleManifest
+  parseEffectModuleManifest,
+  safeEffectModuleVersion
 } from "./effect-module-registry.js";
 import { assertEffectModuleRegistryRoot } from "./effect-module-private-fs.js";
 
@@ -55,6 +56,23 @@ afterEach(async () => {
 });
 
 describe("C1 private effect-module registry", () => {
+  it("shares Core's bounded canonical SemVer parser across manifest and registry entry routes", async () => {
+    const accepted = ["1.2.3", "1.2.3-rc.1", "1.2.3-0"];
+    const rejected = ["v1.2.3", "1.2.3+build", "latest", "^1.2.3", "1.2.3-01", "1.2.3-rc.01", `1.2.3-${"a".repeat(128)}`];
+    for (const version of accepted) {
+      expect(safeEffectModuleVersion(version), version).toBe(true);
+      expect(parseEffectModuleManifest(Buffer.from(manifest(version), "utf8")).version, version).toBe(version);
+    }
+    for (const version of rejected) {
+      expect(safeEffectModuleVersion(version), version).toBe(false);
+      expect(() => parseEffectModuleManifest(Buffer.from(manifest(version), "utf8")), version).toThrow(/unsupported closed C1 fields/i);
+    }
+    const { stateRoot, source } = await setup();
+    await writeFile(source, manifest(`1.2.3-${"a".repeat(128)}`), { mode: 0o600 });
+    const authority = createEffectModuleRegistryAuthority({ stateRoot, readManifestFileForTest: testSourceReader() });
+    await expect(authority.prepareInstallFromManifestFile(source)).rejects.toMatchObject({ code: "invalid_manifest" });
+  });
+
   it("rejects malformed UTF-8 and duplicate closed-manifest keys before assigning meaning", () => {
     const malformed = Buffer.from(manifest(), "utf8");
     const displayNameOffset = malformed.indexOf(Buffer.from("Afterimage Stack", "utf8"));

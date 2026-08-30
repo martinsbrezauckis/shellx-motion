@@ -1,4 +1,5 @@
 import type { RendererColorAlphaCapability } from "./color-alpha-types";
+import type { RendererColorPipelineCapability } from "./color-pipeline";
 import type { RendererTypographyCapability } from "./renderer-typography-capability";
 
 export interface RendererCapability {
@@ -51,6 +52,8 @@ export interface RendererCapabilityCard extends RendererCapability {
   weaknesses: string[];
   runtime: RendererRuntimeRequirement;
   colorAlpha?: RendererColorAlphaCapability;
+  /** Closed color-pipeline admission state. This is separate from observed color/alpha facts. */
+  colorPipeline?: RendererColorPipelineCapability;
   typography?: RendererTypographyCapability;
   /** Artifacts an encoder consumes from a frame producer; undefined for lanes that make pixels. */
   frameInputs?: string[];
@@ -99,4 +102,6 @@ export interface RendererCapabilityMatchResult {
   matches: RendererCapabilityCardMatch[];
   recommendedLane: string | null;
   recommendedPipeline?: RendererCapabilityPipeline;
+  /** Canonical package-to-render projection, including the explicit legacy resolution. */
+  colorPipelinePlan: import("./color-pipeline").ColorPipelineRenderPlan;
 }

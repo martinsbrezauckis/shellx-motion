@@ -1,4 +1,4 @@
-import { canonicalJsonSha256, createGpuHybridTextureSourceSnapshot, createRenderReceipt, motionBehaviorLaneRefusal, motionLayoutGapAnimationLaneRefusal, motionRelationLaneRefusal, motionScene3DAnimationLaneRefusal, normalizeMotionAudioMaster, type GpuSceneBehaviorStaticPlan, type GpuSceneStaticPlan } from "@shellx-motion/core";
+import { canonicalJsonSha256, colorPipelinePreallocationRefusal, createGpuHybridTextureSourceSnapshot, createRenderReceipt, motionBehaviorLaneRefusal, motionLayoutGapAnimationLaneRefusal, motionRelationLaneRefusal, motionScene3DAnimationLaneRefusal, normalizeMotionAudioMaster, type GpuSceneBehaviorStaticPlan, type GpuSceneStaticPlan } from "@shellx-motion/core";
 import { hasScene3dGltfPbrHdr10FinalLocator } from "@shellx-motion/core/internal/scene3d-gltf-pbr-hdr10-final";
 import { runStreamingFinalEncodePolicy } from "./streaming-final-encode-policy.js";
 import type { StreamingFfmpegFinalInput } from "./streaming-foundation-types.js";
@@ -23,9 +23,7 @@ import type { FinalVideoFrameTransportPlan } from "./final-video-frame-transport
 import { admittedScene3dGltfPbrPreflight } from "./streaming-final-gltf-pbr.js";
 import { hasGpuScene3dGltfPbrFinalRouteMarker, resolveGpuScene3dGltfPbrFinalRoute, type GpuScene3dGltfPbrFinalRouteResolution } from "@shellx-motion/renderer-browser/internal/scene3d-gltf-pbr-final";
 import { activeGpuVideoKeyframedPlaybackRateLayer } from "./gpu-video-frame-schedule.js";
-
 type StreamingTransport = Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>;
-
 /**
  * The resolver is pure and runs before the outer FFmpeg governor.  The
  * resolution deliberately holds no registry lock; the lease linearizes the
@@ -36,14 +34,12 @@ export interface GpuEffectModuleFinalPreflight {
   readonly authority: GpuEffectModuleUseAuthority;
   readonly resolution: GpuEffectModuleUseResolution;
 }
-
 /** Internal direct-final seam; not exported from the package entrypoint. */
 export interface GpuEffectModuleReleaseState {
   complete: boolean;
   failed: boolean;
   lease?: GpuEffectModuleBeginUseLease;
 }
-
 /** Execute one already-publication-staged streamed final. GPU resources and video stay inside its admission. */
 export async function renderStreamingFinalUnpublished(input: RenderStreamingFinalInput): Promise<RenderStreamingFinalResult> {
   const { motion } = input.pkg;
@@ -62,7 +58,7 @@ export async function renderStreamingFinalUnpublished(input: RenderStreamingFina
   });
   if (!preliminaryPlan.ok) return preliminaryPlan;
   const preflight = await preflightDelivery(input);
-  if (!preflight.ok) return { ok: false, transport: preliminaryPlan.transport, error: preflight.failure };
+  if (!preflight.ok) return { ok: false, transport: preliminaryPlan.transport, error: { ...preflight.failure, message: publicStreamingFinalFailureMessage(preflight.failure.message) } };
   const audioMaster = normalizeMotionAudioMaster(input.audioMaster) ?? undefined;
   let producerEvidence: StreamingFinalProducerEvidence | undefined;
   let sourceRefusal: { code: string; message: string } | undefined;
@@ -98,6 +94,8 @@ async function preflightDelivery(input: RenderStreamingFinalInput): Promise<
   | { ok: true; staticPlan?: import("@shellx-motion/core").GpuSceneStaticPlan; behaviorStaticPlan?: GpuSceneBehaviorStaticPlan; effectModuleUse?: GpuEffectModuleFinalPreflight; pbrRoute?: Extract<GpuScene3dGltfPbrFinalRouteResolution, { kind: "present" }> }
   | { ok: false; failure: { code: string; message: string } }
 > {
+  const colorPipelineRefusal = colorPipelinePreallocationRefusal(input.pkg.motion, `ffmpeg-${input.frameLane}`);
+  if (colorPipelineRefusal) return { ok: false, failure: colorPipelineRefusal };
   const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(input.pkg.motion, input.frameLane === "browser"
     ? "ffmpeg-browser"
     : input.frameLane === "native"
@@ -158,6 +156,8 @@ export async function preflightGpuFinalDelivery(input: RenderStreamingFinalInput
   | { ok: true; pbrRoute: Extract<GpuScene3dGltfPbrFinalRouteResolution, { kind: "present" }> }
   | { ok: false; failure: GpuDeliveryFailure }
 > {
+  const colorPipelineRefusal = colorPipelinePreallocationRefusal(input.pkg.motion, "gpu-final");
+  if (colorPipelineRefusal) return { ok: false, failure: colorPipelineRefusal };
   const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(input.pkg.motion, "ffmpeg-gpu");
   if (layoutGapAnimationRefusal) return { ok: false, failure: { code: layoutGapAnimationRefusal.code, message: layoutGapAnimationRefusal.message } };
   const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(input.pkg.motion, "ffmpeg-gpu");
@@ -182,7 +182,7 @@ export async function preflightGpuFinalDelivery(input: RenderStreamingFinalInput
       if (resolved.kind !== "present") return { ok: false, failure: { code: "gpu_resource_refused", message: "The glTF PBR final marker was present but could not resolve an authenticated route." } };
       return { ok: true, pbrRoute: resolved };
     } catch (error) {
-      return { ok: false, failure: { code: "gpu_resource_refused", message: error instanceof Error ? `The glTF PBR final route was refused: ${error.message}` : "The glTF PBR final route was refused." } };
+      return { ok: false, failure: { code: "gpu_resource_refused", message: publicStreamingFinalFailureMessage(error instanceof Error ? `The glTF PBR final route was refused: ${error.message}` : "The glTF PBR final route was refused.") } };
     }
   }
   const authority = input.toolPolicy?.gpu?.effectModuleUseAuthority;
@@ -301,9 +301,9 @@ export function directGpuHybridTopologyPreflight(staticPlan: GpuSceneStaticPlan)
 
 function encodedFailure(encoded: Awaited<ReturnType<typeof runStreamingFinalEncodePolicy>>, transport: StreamingTransport, source?: { code: string; message: string }, gpu?: GpuDeliveryFailure, producer?: StreamingFinalProducerEvidence): RenderStreamingFinalResult {
   if (encoded.ok) throw new Error("Expected a failed streamed encoder result.");
-  return { ok: false, transport, error: { code: source?.code ?? gpu?.code ?? encoded.error.code, message: source?.message ?? gpu?.message ?? safeProducerMessage(encoded.error.message), ...(encoded.error.resources ? { resources: encoded.error.resources } : {}), ...(encoded.error.handoff ? { handoff: publicEncoderHandoff(encoded.error.handoff) } : {}), ...(encoded.error.partialOutput ? { partialOutput: encoded.error.partialOutput } : {}), ...(producer ? { producer } : {}) } };
+  return { ok: false, transport, error: { code: source?.code ?? gpu?.code ?? encoded.error.code, message: publicStreamingFinalFailureMessage(source?.message ?? gpu?.message ?? encoded.error.message), ...(encoded.error.resources ? { resources: encoded.error.resources } : {}), ...(encoded.error.handoff ? { handoff: publicEncoderHandoff(encoded.error.handoff) } : {}), ...(encoded.error.partialOutput ? { partialOutput: encoded.error.partialOutput } : {}), ...(producer ? { producer } : {}) } };
 }
-
+export const publicStreamingFinalFailureMessage = (value: string): string => safeProducerMessage(value);
 function encodedSuccess(input: RenderStreamingFinalInput, encoded: Extract<Awaited<ReturnType<typeof runStreamingFinalEncodePolicy>>, { ok: true }>, transport: StreamingTransport, producer: StreamingFinalProducerEvidence | undefined, effectModuleRelease: GpuEffectModuleReleaseState | undefined): RenderStreamingFinalResult {
   if (!producer) return missingProducerEvidence(encoded, transport);
   const scriptExecution = producer.frameLane === "browser" ? producer.evidence.scriptExecution : undefined;

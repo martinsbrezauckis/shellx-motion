@@ -7,25 +7,12 @@ import {
   MOTION_GRADIENT_COLOR_KEYFRAMES_SCHEMA,
 } from "@shellx-motion/core";
 import type { MotionDebugArgPropertySchema } from "./command-registry.js";
-import { argsSchema, editReceipt, LAYER_ID, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, LAYER_ID, MOTION_EASING, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
 
 const EDIT = ["packageRoot", "outDir", "layerId"];
 const AT_US = { type: "number" as const, minimum: 0, maximum: MAX_MOTION_GRADIENT_COLOR_KEYFRAME_TIME_US, description: "Exact non-negative safe-integer microsecond timestamp; Core rejects fractional values." };
 const COLOR: MotionDebugArgPropertySchema = { type: "string", maxLength: MAX_MOTION_GRADIENT_COLOR_KEYFRAME_COLOR_BYTES, description: "Supported static Motion color string; Core canonicalizes interpolation." };
-const EASING: MotionDebugArgPropertySchema = {
-  type: ["string", "object"],
-  oneOf: [
-    { type: "string", description: "Named or functional Motion easing." },
-    { type: "object", required: ["type", "stiffness", "damping"], additionalProperties: false, properties: {
-      type: { type: "string", enum: ["spring"], description: "Closed spring easing type." },
-      stiffness: { type: "number", exclusiveMinimum: 0, maximum: 100_000, description: "Finite positive spring stiffness." },
-      damping: { type: "number", exclusiveMinimum: 0, maximum: 100_000, description: "Finite positive spring damping." },
-      mass: { type: "number", exclusiveMinimum: 0, maximum: 100_000, description: "Optional finite positive spring mass." },
-      initialVelocity: { type: "number", minimum: -100_000, maximum: 100_000, description: "Optional finite initial velocity." },
-    } },
-  ],
-  description: "Optional exact segment easing; the Core timeline is the one evaluator authority.",
-};
+const EASING: MotionDebugArgPropertySchema = MOTION_EASING;
 const SNAPSHOT: MotionDebugArgPropertySchema = {
   type: "object", required: ["atUs", "colors"], additionalProperties: false,
   properties: {

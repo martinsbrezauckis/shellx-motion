@@ -195,8 +195,8 @@ before embedding it.
 | `GET /health` | Minimal unauthenticated liveness and contract count. |
 | `GET /debug/contracts` | Authenticated command/domain/tier/mutation registry. |
 | `POST /debug` | Native `{command,args,requestedTier?}` dispatch. |
-| `POST /rpc` | Authenticated JSON-RPC discovery and MCP-compatible tool dispatch. |
-| `WS /ws` | Authenticated persistent JSON-RPC transport. |
+| `POST /rpc` | Authenticated JSON-RPC discovery and MCP-compatible tool dispatch. The bundled local MCP bridge uses a private per-start listener credential instead of forwarding the durable Bearer capability. |
+| `WS /ws` | Authenticated persistent JSON-RPC transport. The bundled local MCP bridge uses the same private per-start listener credential. |
 | `POST /sdk` | Typed local SDK operation dispatch for trusted hosts. |
 | `GET /workbench` | Standalone local Motion editor shell; Start Motion authenticates its first tab automatically. |
 | `POST /workbench/bootstrap` | One-use exchange used only by the locally opened Start Motion tab. |
@@ -270,8 +270,13 @@ write, or receipt-selected read.
 
 The debug server binds loopback by default, rejects forged Host and unapproved Origin values, bounds
 request and WebSocket concurrency/size, and requires authentication for everything except health and
-static workbench files. Direct non-loopback binding is disabled. If a trusted tunnel or reverse
-proxy is ever added, it must provide its own authentication and explicit host/origin policy.
+static workbench files. The installed MCP bridge reads only a private, per-server-start discovery
+record after the listener binds; it never forwards the durable Bearer capability to the discovered
+port. A stale record rebound after a crash can therefore receive only a credential that died with
+the prior listener, while a restart publishes a new one. The record is owner-private on supported
+hosts; this boundary does not make a same-user process a distinct trusted principal. Direct
+non-loopback binding is disabled. If a trusted tunnel or reverse proxy is ever added, it must provide
+its own authentication and explicit host/origin policy.
 
 ## Agent-runtime prerequisite
 

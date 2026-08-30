@@ -6,6 +6,7 @@ import {
   prepareWebGpuPageSessionAfterimageStackPass,
   renderWebGpuPageSessionAfterimageStackPass
 } from "./gpu-page-afterimage-stack";
+import { isCanonicalMotionEffectModuleVersion } from "@shellx-motion/core";
 import { createGpuPageAfterimageStackFixture } from "./unadopted/gpu-page-afterimage-stack.test-support";
 
 const descriptor = createGpuPageAfterimageStackFixture({
@@ -70,6 +71,8 @@ describe("fixed WebGPU afterimage-stack page intrinsic", () => {
     const prepare = runInContext(`(${prepareWebGpuPageSessionAfterimageStackPass.toString()})`, context) as typeof prepareWebGpuPageSessionAfterimageStackPass;
     expect(await install(implementationIdentity)).toEqual({ ok: true });
     const source = { createView: () => "source" }, target = { createView: () => "target" };
+    expect(prepare({ descriptor: { ...descriptor, version: `1.2.3-${"a".repeat(128)}` }, source, sourceWidth: 5, sourceHeight: 3, uniformBuffer: {} })).toMatchObject({ ok: false });
+    expect(beginRenderPass).not.toHaveBeenCalled();
     expect(prepare({ descriptor, source, sourceWidth: 5, sourceHeight: 3, uniformBuffer: {} })).toMatchObject({ ok: true });
     const pageState = runInContext("globalThis.__shellxMotionGpuSessionV1", context) as { afterimageStackFrame?: { descriptorSeal: string } };
     pageState.afterimageStackFrame = { descriptorSeal: afterimageDescriptorSeal(descriptor) };
@@ -83,6 +86,32 @@ describe("fixed WebGPU afterimage-stack page intrinsic", () => {
     expect(execute({ ...base, descriptor: { ...descriptor, amountQ16: 12_345 } })).toMatchObject({ ok: false });
     expect(execute({ ...base, descriptor: { ...descriptor, echoes: [{ ...descriptor.echoes[0]!, dxPx: 7 }, ...descriptor.echoes.slice(1)] } })).toMatchObject({ ok: false });
     expect(writeBuffer).toHaveBeenCalledTimes(uploads);
+  });
+
+  it("matches Core's canonical SemVer corpus in both serialized page evaluators", () => {
+    const versions = [
+      "0.0.0", "1.2.3", "1.2.3-0", "1.2.3-rc.1", "1.2.3-alpha-01",
+      "v1.2.3", "1.2.3+build", "latest", "^1.2.3", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-00", "1.2.3-rc.01", `1.2.3-${"a".repeat(128)}`
+    ];
+    for (const version of versions) {
+      const context = createContext({
+        __shellxMotionGpuSessionV1: { device: { queue: { writeBuffer: vi.fn() }, createBindGroup: vi.fn(() => ({})) }, afterimageStackPipeline: { getBindGroupLayout: () => ({}) }, afterimageStackIdentity: implementationIdentity },
+        Array, ArrayBuffer, Int32Array, Uint32Array, Float32Array, Number, Object, Set
+      });
+      const prepare = runInContext(`(${prepareWebGpuPageSessionAfterimageStackPass.toString()})`, context) as typeof prepareWebGpuPageSessionAfterimageStackPass;
+      const render = runInContext(`(${renderWebGpuPageSessionAfterimageStackPass.toString()})`, context) as typeof renderWebGpuPageSessionAfterimageStackPass;
+      const source = { createView: () => "source" }, target = { createView: () => "target" };
+      const expected = isCanonicalMotionEffectModuleVersion(version);
+      const prepared = prepare({ descriptor: { ...descriptor, version }, source, sourceWidth: 5, sourceHeight: 3, uniformBuffer: {} });
+      expect(prepared.ok, `prepare ${version}`).toBe(expected);
+      if (prepared.ok) {
+        expect(render({ descriptor: { ...descriptor, version }, prepared: prepared.prepared, target, targetWidth: 5, targetHeight: 3, encoder: { beginRenderPass: () => ({ setPipeline: vi.fn(), setBindGroup: vi.fn(), draw: vi.fn(), end: vi.fn() }) } }), `render ${version}`).toMatchObject({ ok: true });
+        continue;
+      }
+      const valid = prepare({ descriptor, source, sourceWidth: 5, sourceHeight: 3, uniformBuffer: {} });
+      if (!valid.ok) throw new Error("valid fixture did not prepare");
+      expect(render({ descriptor: { ...descriptor, version }, prepared: valid.prepared, target, targetWidth: 5, targetHeight: 3, encoder: { beginRenderPass: vi.fn() } }), `render ${version}`).toMatchObject({ ok: false });
+    }
   });
 
   it("reuses one prepared isolated source-to-target pass across sequential Core bindings with no second-frame allocation", () => {
@@ -146,6 +175,7 @@ describe("fixed WebGPU afterimage-stack page intrinsic", () => {
       expectRefusalBeforeUpload({ ...base, targetWidth: 4 });
       expectRefusalBeforeUpload({ ...base, descriptor: { ...descriptor, code: "forbidden" } });
       expectRefusalBeforeUpload({ ...base, descriptor: withoutDrawId });
+      expectRefusalBeforeUpload({ ...base, descriptor: { ...descriptor, version: `1.2.3-${"a".repeat(128)}` } });
       expectRefusalBeforeUpload({ ...base, descriptor: { ...descriptor, pipelineImplementationSha256: "a".repeat(64) } });
       expectRefusalBeforeUpload({ ...base, target: source });
       expectRefusalBeforeUpload({ ...base, prepared: { ...prepared.prepared } });

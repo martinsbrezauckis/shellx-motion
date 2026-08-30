@@ -1,5 +1,6 @@
 import { MAX_BROWSER_WORKFLOW_TOTAL_WAIT_MS, MAX_BROWSER_WORKFLOW_WAIT_MS } from "./browser-workflow";
 import { isSupportedMotionColorString } from "./color";
+import { validateMotionColorPipeline } from "./color-pipeline";
 import { validateMotionDocumentAudioMaster } from "./motion-document-audio-validation";
 import { GENERATED_VISUAL_LAYER_TYPE_SET } from "./generated-visual-layer-types";
 import { validateMotionPointCloudLayers } from "./motion-points";
@@ -331,6 +332,10 @@ const SUPPORTED_CUT_IMPORT_OPERATION_VERBS = new Set([
   "cut.media.import_rendered",
   "cut.motion_overlay.create"
 ]);
+// These legacy primitives have a complete Browser paint implementation. Legacy path/freeform
+// data remains outside this set until its closure can be established by the same typed contract as
+// v1 geometry; accepting it here would turn an open contour into an implicit fill.
+const BROWSER_GRADIENT_SHAPES = new Set(["rect", "rectangle", "rounded-rect", "ellipse", "triangle", "star"]);
 const SCRIPTED_VIDEO_MAX_FRAME_COUNT = 120;
 const SCRIPTED_VIDEO_MAX_TOTAL_DURATION_MS = 600_000;
 
@@ -364,6 +369,7 @@ export function validateDocumentSync(schema: LoadedSchema, document: unknown): V
   }
   if (schema.name === "motion") {
     validateMotionDocumentScalars(record, errors);
+    validateMotionColorPipeline(record.colorPipeline, "/colorPipeline", errors);
     validateMotionLayoutApplicationRecords(record, errors);
     if ("layers" in record && !Array.isArray(record.layers)) {
       errors.push({ path: "/layers", message: "must be an array" });
@@ -4480,8 +4486,8 @@ function validateLayerGradient(
     errors.push({ path: `${path}/gradient`, message: "must be an object" });
     return;
   }
-  if (record.type !== "shape" || (record.shape !== undefined && record.shape !== "rect" && record.shape !== "rectangle" && record.shape !== "rounded-rect")) {
-    errors.push({ path: `${path}/gradient`, message: "is currently supported only on rectangular shape layers" });
+  if (record.type !== "shape" || (record.shape !== undefined && !BROWSER_GRADIENT_SHAPES.has(record.shape as string))) {
+    errors.push({ path: `${path}/gradient`, message: "is supported only on closed Browser shape primitives: rect, rounded-rect, ellipse, triangle, or star" });
   }
   if (gradient.type !== "linear" && gradient.type !== "radial") {
     errors.push({ path: `${path}/gradient/type`, message: "must be linear or radial" });

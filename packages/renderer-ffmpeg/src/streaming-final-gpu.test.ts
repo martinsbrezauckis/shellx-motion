@@ -95,7 +95,7 @@ describe("admitted GPU video delivery", () => {
     let decodes = 0;
     const runner: FfmpegRunner = async (command) => {
       if (command.executable === "ffprobe") {
-        controller.abort(new Error("cancel admitted GPU staging"));
+        controller.abort(new Error("cancel admitted GPU staging API_TOKEN=visible C:\\Users\\TestUser\\private.txt\u061c"));
         return probe();
       }
       decodes += 1;
@@ -107,7 +107,7 @@ describe("admitted GPU video delivery", () => {
       jobContext(scratchRoot, controller.signal)
     );
 
-    expect(prepared).toMatchObject({ ok: false, failure: { code: "gpu_video_resource_refused", message: "cancel admitted GPU staging" } });
+    expect(prepared).toMatchObject({ ok: false, failure: { code: "gpu_video_resource_refused", message: "cancel admitted GPU staging API_TOKEN=[redacted] <path>" } });
     expect(decodes).toBe(0);
     await expect(lstat(acquired[0]!)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(scratchRoot)).resolves.toMatchObject({ isDirectory: expect.any(Function) });

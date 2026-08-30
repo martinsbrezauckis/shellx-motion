@@ -106,6 +106,30 @@ describe("render encode lane output ownership", () => {
     expect(await readFile(framePath)).toEqual(frameAfterFirst);
   });
 
+  it("publishes distinct receipt sidecars when one package renders to two new final outputs", async () => {
+    const packageRoot = await writeTinyNativePackage();
+    const root = await workspace();
+    created.push(packageRoot);
+    const firstOutput = join(root, "take-one.mp4");
+    const secondOutput = join(root, "take-two.mp4");
+
+    const first = await runCli(renderArgs(packageRoot, firstOutput, join(root, "frames-one")), { ffmpegRunner });
+    const second = await runCli(renderArgs(packageRoot, secondOutput, join(root, "frames-two")), { ffmpegRunner });
+
+    expect(first).toMatchObject({
+      ok: true,
+      outputPath: firstOutput,
+      receiptPath: join(root, "take-one.mp4.receipt.json")
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      outputPath: secondOutput,
+      receiptPath: join(root, "take-two.mp4.receipt.json")
+    });
+    await expect(readFile(join(root, "take-one.mp4.receipt.json"), "utf8")).resolves.toContain("take-one.mp4");
+    await expect(readFile(join(root, "take-two.mp4.receipt.json"), "utf8")).resolves.toContain("take-two.mp4");
+  });
+
   it("wipes a caller's --frames-dir only when --force is passed", async () => {
     const packageRoot = await writeTinyNativePackage();
     const root = await workspace();
@@ -130,10 +154,47 @@ describe("render encode lane output ownership", () => {
 
     const result = await runCli(renderArgs(packageRoot, outputPath, join(root, "frames")), { ffmpegRunner });
 
-    expect(result).toMatchObject({ ok: false, command: "render", lane: "ffmpeg", error: { code: "derived_output_exists" } });
+    expect(result).toMatchObject({
+      ok: false,
+      command: "render",
+      lane: "ffmpeg",
+      error: {
+        code: "derived_output_exists",
+        artifact: "media_output",
+        path: outputPath,
+        message: `Render media output already exists at ${outputPath}; it was preserved rather than overwritten.`
+      }
+    });
     expect(await readFile(outputPath, "utf8")).toBe("MY FINAL CUT");
     // The refusal lands before any frame is drawn, so a wasted render never happens either.
     await expect(readdir(join(root, "frames"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("names a colliding receipt sidecar without blaming a new media output", async () => {
+    const packageRoot = await writeTinyNativePackage();
+    const root = await workspace();
+    created.push(packageRoot);
+    const outputPath = join(root, "new-take.mp4");
+    const receiptPath = `${outputPath}.receipt.json`;
+    await writeFile(receiptPath, "RECEIPT FROM ANOTHER TAKE", "utf8");
+
+    const result = await runCli(renderArgs(packageRoot, outputPath, join(root, "frames")), { ffmpegRunner });
+
+    expect(result).toMatchObject({
+      ok: false,
+      command: "render",
+      lane: "ffmpeg",
+      outputPath,
+      receiptPath,
+      error: {
+        code: "derived_output_exists",
+        artifact: "receipt_sidecar",
+        path: receiptPath,
+        message: `Render receipt sidecar already exists at ${receiptPath}; it was preserved rather than overwritten.`
+      }
+    });
+    await expect(readFile(receiptPath, "utf8")).resolves.toBe("RECEIPT FROM ANOTHER TAKE");
+    await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("overwrites an existing --out FILE when --force is passed", async () => {

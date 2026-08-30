@@ -1,4 +1,4 @@
-import { isSupportedMotionColorString } from "./color";
+import { isVisibleMotionColorString } from "./color";
 import { parseMotionPathViewBox, validateMotionPathData } from "./path-contract";
 import type { MotionLayer, MotionPathReveal } from "./types";
 
@@ -67,25 +67,7 @@ function countPathSubpaths(path: string): number {
 }
 
 function isVisibleStrokeColor(value: unknown): boolean {
-  if (!isSupportedMotionColorString(value) || typeof value !== "string") return false;
-  const color = value.trim().toLowerCase();
-  if (color === "transparent" || color === "currentcolor") return false;
-  if (/^#[0-9a-f]{4}$/i.test(color)) return color[4] !== "0";
-  if (/^#[0-9a-f]{8}$/i.test(color)) return color.slice(7, 9) !== "00";
-  const functional = /^(?:rgb|rgba|hsl|hsla)\((.*)\)$/i.exec(color);
-  if (!functional) return true;
-  const body = functional[1].trim();
-  const alpha = body.includes("/")
-    ? body.slice(body.lastIndexOf("/") + 1).trim()
-    : body.split(",").length === 4
-      ? body.split(",")[3].trim()
-      : null;
-  return alpha === null || !isZeroAlpha(alpha);
-}
-
-function isZeroAlpha(value: string): boolean {
-  if (/^[-+]?0*\.?0*%?$/.test(value)) return true;
-  return false;
+  return isVisibleMotionColorString(value);
 }
 
 function isUnitIntervalNumber(value: unknown): value is number {

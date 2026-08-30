@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseGltfContainer } from "./gltf-container";
+import { MAX_GLTF_JSON_BYTES, parseGltfContainer } from "./gltf-container";
 import { lowerGltfToMotion } from "./gltf-lowering";
 import { scene3dMeshGeometrySha256 } from "./scene-3d-geometry";
 import { loadSchema, validateDocument } from "./validate";
@@ -66,6 +67,43 @@ describe("bounded glTF and GLB lowering", () => {
     (escaped.bufferViews as Array<Record<string, unknown>>)[0].byteLength = 32;
     const escapedContainer = parseGltfContainer(Buffer.from(JSON.stringify(escaped)), "gltf");
     expect(() => lower(escapedContainer, "source/escaped.json")).toThrow(/exceeds its bounded bufferView/);
+  });
+
+  it("matches legacy glTF padding handling while retaining the exact raw-source identity", () => {
+    const json = Buffer.from(JSON.stringify(triangleGltf(true)), "utf8");
+    const raw = Buffer.concat([json, Buffer.from("\u0000 \t\r\n", "utf8")]);
+    const before = Buffer.from(raw);
+    const expectedSourceSha256 = createHash("sha256").update(raw).digest("hex");
+    const legacyTrimmed = new TextDecoder("utf-8", { fatal: true }).decode(raw).replace(/[\u0000\u0020\t\r\n]+$/g, "");
+
+    const parsed = parseGltfContainer(raw, "gltf");
+
+    expect(parsed.sourceSha256).toBe(expectedSourceSha256);
+    expect(parsed.json).toEqual(JSON.parse(legacyTrimmed));
+    expect(raw.equals(before)).toBe(true);
+    expect(createHash("sha256").update(raw).digest("hex")).toBe(expectedSourceSha256);
+  });
+
+  it("keeps terminal glTF padding growth near-linear at the 2 MiB JSON ceiling", () => {
+    const json = Buffer.from(JSON.stringify(triangleGltf(true)), "utf8");
+    const smallPadding = 480 * 1024;
+    const largePadding = smallPadding * 4;
+    expect(json.byteLength + largePadding).toBeLessThanOrEqual(MAX_GLTF_JSON_BYTES);
+    const timeFor = (paddingBytes: number): number => {
+      const source = Buffer.concat([json, Buffer.alloc(paddingBytes)]);
+      const started = performance.now();
+      for (let run = 0; run < 8; run += 1) {
+        expect(parseGltfContainer(source, "gltf").json.asset).toMatchObject({ version: "2.0" });
+      }
+      return performance.now() - started;
+    };
+
+    timeFor(smallPadding);
+    timeFor(largePadding);
+    const small = Math.max(timeFor(smallPadding), 1);
+    const large = timeFor(largePadding);
+    // Four times the bounded input should remain far from the ~16x signature of rescanning.
+    expect(large).toBeLessThan(small * 9);
   });
 
   it("lexically bounds JSON depth and structure before parsing while ignoring quoted punctuation", () => {

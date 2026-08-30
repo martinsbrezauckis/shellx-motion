@@ -4,10 +4,11 @@ import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { ffmpegLooksAbsent, ffmpegMissingMessage, ffmpegRequirement, ffmpegSuggestedAction, type MotionToolRequirement } from "./tool-requirements.js";
 import {
   FFMPEG_TIMEOUT_EXIT_CODE,
+  MAX_FFMPEG_DIAGNOSTIC_CHARS,
+  MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES,
   appendFfmpegProcessOutput,
   nativeWindowsJobObjectRequired,
   portableFfmpegContainmentEvidence,
-  redactFfmpegDiagnostic,
   summarizeFfmpegDiagnostic,
   unavailableWindowsContainment,
   windowsTaskkillFallbackEvidence,
@@ -81,6 +82,8 @@ import {
   DerivedOutputPublication,
   DerivedOutputPublicationError,
   isPublicationCommitUncertain,
+  sanitizeUntrustedDiagnostic,
+  takeUtf8Prefix,
   type PublicationCommitUncertainEvidence
 } from "@shellx-motion/core";
 import { probeMotionBrowserVersion } from "@shellx-motion/renderer-browser";
@@ -147,6 +150,8 @@ export type {
 } from "./final-video-frame-transport.js";
 export { planStreamingFinalCommand } from "./streaming-final-command-plan.js";
 export { renderStreamingFinal } from "./streaming-final-adapter.js";
+export { planLinearSrgbSdrFinalRender, preflightLinearSrgbSdrFinalRender } from "./linear-srgb-sdr-final-public.js";
+export type { LinearSrgbSdrFinalRenderPlan, LinearSrgbSdrFinalRenderPreflight } from "./linear-srgb-sdr-final-public.js";
 /** Recompute strict GPU receipt bindings before a connector projects renderer evidence. */
 export { gpuFinalReceiptInputHashes } from "./gpu-final-receipt-provenance.js";
 export { preliminaryGpuAudio } from "./streaming-final-gpu-audio.js";
@@ -157,6 +162,8 @@ export type {
   StreamingFinalCommandPlanResult,
   StreamingFinalEncoderHandoffEvidence,
   StreamingFinalFrameTransportEvidence,
+  LinearSrgbSdrFinalFrameTransportEvidence,
+  AnyStreamingFinalFrameTransportEvidence,
   StreamingFinalNativeProducerEvidence,
   StreamingFinalProducerEvidence,
   StreamingFinalToolPolicy
@@ -2946,6 +2953,15 @@ function parseLastDb(output: string, pattern: RegExp): number | null {
 }
 
 export {
+  MAX_FFMPEG_DIAGNOSTIC_CHARS,
+  MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES,
+  MAX_FFMPEG_OUTPUT_CHARS,
+  appendFfmpegProcessOutput,
+  redactFfmpegDiagnostic,
+  summarizeFfmpegDiagnostic,
+} from "./ffmpeg-process-control.js";
+
+export {
   chromiumInstallOptions,
   ffmpegInstallOptions,
   ffmpegLooksAbsent,
@@ -3612,7 +3628,8 @@ const ROUTINE_ENCODE_STDERR = [
  * `warnings.length > 0` could not distinguish a real problem from routine output.
  */
 export function summarizeSuccessfulEncodeStderr(stderr: string): string {
-  const flagged = stderr
+  const raw = takeUtf8Prefix(stderr, MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES);
+  const flagged = raw.value
     // FFmpeg updates progress with a bare carriage return. Treat it as a record boundary too, or
     // a genuine diagnostic following the progress entry remains on the same string and is dropped
     // by the anchored routine-progress filter.
@@ -3630,15 +3647,15 @@ export function summarizeSuccessfulEncodeStderr(stderr: string): string {
     .map((line) => line.replace(/\b0x[0-9a-f]+\b/gi, "[address]"));
   // Bounded: a pathological encode can emit thousands of identical complaints. Deduplicated AFTER
   // normalisation, so the same warning from two component instances collapses to one entry.
-  return redact([...new Set(flagged)].slice(0, 5).join(" "));
+  return sanitizeUntrustedDiagnostic([...new Set(flagged)].slice(0, 5).join(" "), {
+    rawMaxBytes: MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES,
+    publicMaxBytes: MAX_FFMPEG_DIAGNOSTIC_CHARS,
+    sourceTruncated: raw.truncated
+  });
 }
 
 function summarizeStderr(stderr: string): string {
   return summarizeFfmpegDiagnostic(stderr);
-}
-
-function redact(value: string): string {
-  return redactFfmpegDiagnostic(value);
 }
 
 function firstLine(value: string): string {

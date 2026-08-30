@@ -4904,6 +4904,33 @@ describe("Motion timeline interpolation", () => {
     expect(resolveEasing("steps(4, jump-end)")(0.5)).toBe(0.5);
   });
 
+  it("bounds complete functional easing grammar without narrowing valid controls", () => {
+    // The X controls stay on the monotonic time axis, while Y deliberately
+    // retains CSS-compatible overshoot. `steps(count)` keeps its legacy end
+    // default and all accepted spellings remain case-insensitive.
+    expect(timeline.isSupportedEasing("CUBIC-BEZIER(0, -2.5, 1, 3.5)")).toBe(true);
+    expect(timeline.isSupportedEasing("steps(4)")).toBe(true);
+    expect(timeline.isSupportedEasing("STEPS(4, JUMP-START)")).toBe(true);
+    expect(resolveEasing("steps(4)")(0.24)).toBe(0);
+
+    // A functional form can use all 256 code units in whitespace, but it may
+    // never make the parser inspect a 257th code unit or an unbounded token.
+    const exactLimit = `steps(${" ".repeat(248)}1)`;
+    const overLimit = `steps(${" ".repeat(249)}1)`;
+    expect(exactLimit).toHaveLength(256);
+    expect(timeline.isSupportedEasing(exactLimit)).toBe(true);
+    expect(timeline.isSupportedEasing(overLimit)).toBe(false);
+    expect(timeline.isSupportedEasing("cubic-bezier(0.12345678, 0, 1, 1)")).toBe(false);
+    expect(timeline.isSupportedEasing("steps(1000000000, end)")).toBe(false);
+    expect(timeline.readEasingValidationError(overLimit)).toBe("unsupported easing");
+    const grammar = new RegExp(timeline.MOTION_FUNCTIONAL_EASING_PATTERN);
+    for (const terminator of ["\n", "\r", "\u2028", "\u2029"]) {
+      const trailing = `steps(4, end)${terminator}`;
+      expect(grammar.test(trailing)).toBe(false);
+      expect(timeline.isSupportedEasing(trailing)).toBe(false);
+    }
+  });
+
   it("interpolates numeric keyframes with cubic-bezier easing", () => {
     expect(interpolateNumber([
       { atMs: 0, value: 0, easing: "cubic-bezier(0.42, 0, 1, 1)" },

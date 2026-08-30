@@ -7,6 +7,7 @@ import {
   hashPackageFile,
   integrationCapabilitiesForHost,
   loadMotionPackage,
+  MAX_CAPTION_LAYER_PREFIX_LENGTH,
   MOTION_DOCUMENT_LIMITS,
   type OperationReceipt
 } from "@shellx-motion/core";
@@ -977,15 +978,48 @@ describe("shellx-motion CLI", () => {
       });
     }
 
+    await expect(runCli(["actions", "find", "create 200 layers"])).resolves.toMatchObject({
+      ok: true,
+      command: "actions.find",
+      matched: true,
+      action: { id: "motion.package.patch", permission: "edit_motion" }
+    });
+    await expect(runCli(["actions", "find", "create text layer"])).resolves.toMatchObject({
+      ok: true,
+      command: "actions.find",
+      matched: true,
+      action: { id: "motion.timeline.layer.create", permission: "edit_motion" }
+    });
+
     const patch = await runCli(["actions", "guide", "apply JSON patch"]);
     expect(patch).toMatchObject({
       actionId: "motion.package.patch",
-      examples: [expect.objectContaining({ call: "motion.package.patch" })],
+      examples: expect.arrayContaining([expect.objectContaining({ call: "motion.package.patch" })]),
       related: expect.arrayContaining([expect.objectContaining({ id: "motion.revision.transaction" })])
     });
     expect((patch.steps as Array<{ call: string; requiredArgs?: string[] }>)).toEqual(expect.arrayContaining([
       expect.objectContaining({ call: "motion.package.patch", requiredArgs: ["packageRoot", "outDir", "patch"] })
     ]));
+
+    const largeLayerBatch = await runCli(["actions", "guide", "add 179 layers"]);
+    expect(largeLayerBatch).toMatchObject({
+      actionId: "motion.package.patch",
+      examples: expect.arrayContaining([
+        expect.objectContaining({
+          call: "motion.package.patch",
+          args: expect.objectContaining({
+            patch: [expect.objectContaining({ op: "add", path: "/layers/-", value: expect.objectContaining({ id: "caption-001" }) })]
+          })
+        })
+      ]),
+      related: [
+        expect.objectContaining({ id: "motion.timeline.layer.create" }),
+        expect.objectContaining({ id: "motion.revision.transaction" })
+      ]
+    });
+    expect((largeLayerBatch.steps as Array<{ call: string }>).map((step) => step.call)).toEqual([
+      "motion.state", "motion.package.patch", "motion.receipts.read"
+    ]);
 
     const lottie = await runCli(["actions", "guide", "import Lottie"]);
     expect(lottie).toMatchObject({
@@ -8019,6 +8053,40 @@ describe("shellx-motion CLI", () => {
     ]));
   });
 
+  it("keeps CLI and Debug caption imports aligned on the bounded layer-prefix refusal", async () => {
+    const sourcePackage = await writeTinyPackageWithTimeline();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-caption-boundary-"));
+    const packageRoot = join(workspaceRoot, "package");
+    const sourceRoot = join(workspaceRoot, "captions");
+    const captionsPath = join(sourceRoot, "captions.srt");
+    const outDir = join(workspaceRoot, "output");
+    const layerPrefix = "p".repeat(MAX_CAPTION_LAYER_PREFIX_LENGTH + 1);
+    tempDirs.push(sourcePackage, workspaceRoot);
+    await cp(sourcePackage, packageRoot, { recursive: true });
+    await mkdir(sourceRoot, { mode: 0o700 });
+    await writeFile(captionsPath, "00:00:00,000 --> 00:00:01,000\nCaption", "utf8");
+
+    const cli = await runCli([
+      "debug", "caption-import", "--tier", "edit_motion", "--package", packageRoot,
+      "--out", outDir, "--captions-file", captionsPath, "--format", "srt", "--layer-prefix", layerPrefix,
+    ]);
+    const debug = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(workspaceRoot), async () =>
+      await dispatchDebugCommand(
+        "motion.timeline.caption.import",
+        { packageRoot, outDir, captionsPath, format: "srt", layerPrefix },
+        { tier: "edit_motion", authoringInputRoots: [packageRoot, sourceRoot], authoringOutputRoots: [workspaceRoot] },
+      ),
+    );
+
+    expect(cli).toMatchObject({
+      ok: false,
+      command: "debug.caption-import",
+      error: { code: "timeline_caption_import_failed" },
+    });
+    expect(debug).toMatchObject({ ok: false, error: { code: "timeline_caption_import_failed" } });
+    expect((cli.error as { message?: unknown }).message).toBe(debug.ok ? undefined : debug.error.message);
+  });
+
   it("routes timeline caption upsert debug commands through the CLI", async () => {
     const packageRoot = await writeTinyPackageWithTimeline();
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-cli-caption-upsert-"));
@@ -12422,9 +12490,8 @@ describe("shellx-motion CLI", () => {
         workflowPath,
         "--catalog",
         catalogPath,
-        // All outputs in this catalog test share one package-derived receipt path. Replacement is
-        // therefore explicit even though the media output filename differs for each invocation.
-        "--force"
+        // Each output has a deterministic sibling receipt sidecar, so catalogue observations can
+        // render separate takes without replacing earlier receipt evidence.
       ], {
         ffmpegRunner: runner,
         scratchRoot
@@ -12446,10 +12513,10 @@ describe("shellx-motion CLI", () => {
       command: "render",
       workflowCatalogPath: catalogPath,
       workflowDrift: { status: "new" },
-      receiptPath: join(outDir, "pkg_cli_ffmpeg_sequence-render.receipt.json"),
+      receiptPath: join(outDir, "first.mp4.receipt.json"),
       receipt: {
         artifacts: expect.arrayContaining([
-          expect.objectContaining({ role: "render_receipt", path: join(outDir, "pkg_cli_ffmpeg_sequence-render.receipt.json"), status: "available", mediaType: "application/json" })
+          expect.objectContaining({ role: "render_receipt", path: join(outDir, "first.mp4.receipt.json"), status: "available", mediaType: "application/json" })
         ])
       }
     });
@@ -12538,9 +12605,8 @@ describe("shellx-motion CLI", () => {
         workflowPath,
         "--catalog",
         catalogPath,
-        // A changed workflow records a new receipt at the package-derived sibling path only with
-        // the same explicit overwrite authority as a corresponding output replacement.
-        "--force",
+        // A changed workflow at a distinct output path gets its own sibling receipt without
+        // replacing evidence from the baseline output.
         ...extraArgs
       ], {
         ffmpegRunner: runner,
@@ -15870,7 +15936,7 @@ describe("shellx-motion CLI", () => {
                   { role: "still_frame", path: adaOutputPath, status: "available", mediaType: imageCase.mimeType, primary: true },
                   {
                     role: "render_receipt",
-                    path: join(outDir, "render", "pkg_batch_card_ada-render.receipt.json"),
+                    path: `${adaOutputPath}.receipt.json`,
                     status: "available",
                     mediaType: "application/json"
                   }
@@ -15912,7 +15978,7 @@ describe("shellx-motion CLI", () => {
           { role: "still_frame", path: adaOutputPath, status: "available", mediaType: imageCase.mimeType, primary: true },
           {
             role: "render_receipt",
-            path: join(outDir, "render", "pkg_batch_card_ada-render.receipt.json"),
+            path: `${adaOutputPath}.receipt.json`,
             status: "available",
             mediaType: "application/json"
           }
@@ -15920,7 +15986,7 @@ describe("shellx-motion CLI", () => {
       });
       // The batch row receipt under receipts/ and the render receipt beside the frame are two
       // different files describing the same render; both must exist.
-      await expect(readFile(join(outDir, "render", "pkg_batch_card_ada-render.receipt.json"), "utf8")).resolves.toContain("render.final");
+      await expect(readFile(`${adaOutputPath}.receipt.json`, "utf8")).resolves.toContain("render.final");
       expect(commands).toHaveLength(0);
       await expect(readFile(adaOutputPath)).resolves.toEqual(expect.any(Buffer));
       await expect(readFile(graceOutputPath)).resolves.toEqual(expect.any(Buffer));

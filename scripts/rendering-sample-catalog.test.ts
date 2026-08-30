@@ -77,6 +77,8 @@ async function fixture(): Promise<string> {
     "environment-rain-cinematic",
     "rich-depth-promo",
     "gpu-v25b2-tideglass-almanac",
+    "linear-srgb-sdr-final",
+    "linear-srgb-sdr-f2a-gradients",
     "batch-card",
     "editable-lower-third",
     "path-reveal-browser",

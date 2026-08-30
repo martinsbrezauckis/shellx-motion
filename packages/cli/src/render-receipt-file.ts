@@ -16,7 +16,7 @@
  * (`image`, `image-sequence`, `ffmpeg`), plus the render failure paths in the same file.
  */
 import { writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   acquireDerivedOutputPublication,
   prepareBrowserWorkflowCatalogUpsert,
@@ -120,9 +120,9 @@ export async function abortPreparedRenderCatalog(prepared: RenderReceiptFinalize
  * `image-sequence` delivers into a directory, so the receipt goes inside it. The other lanes
  * deliver a file, so the receipt is a sibling of that file.
  */
-export function renderReceiptPathForOutput(packageId: string, outputPath: string, lane: RenderReceiptLane): string {
+export function renderReceiptPathForOutput(_packageId: string, outputPath: string, lane: RenderReceiptLane): string {
   const root = lane === "image-sequence" ? outputPath : dirname(outputPath);
-  return join(root, `${packageId}-render.receipt.json`);
+  return join(root, `${basename(outputPath)}.receipt.json`);
 }
 
 export function browserWorkflowDriftWarning(drift: BrowserWorkflowDriftSummary): string {

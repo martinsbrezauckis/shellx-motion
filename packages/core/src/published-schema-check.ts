@@ -18,14 +18,13 @@
  * `#/$defs/<name>` definitions or an explicit caller-supplied published-schema resolver.
  * Ignored (metadata): $schema, $id, $comment, title, description, examples, default, $defs.
  */
-
+import { isCanonicalMotionEffectModuleVersion, MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN } from "./effect-module";
 import { checkUniqueJsonItems } from "./published-schema-unique-items";
+import { isSupportedFunctionalEasing, MOTION_FUNCTIONAL_EASING_PATTERN } from "./functional-easing";
 import { isMotionPublishedSchema } from "./motion-scene3d-animation-root-preflight";
 import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
-
 /** A JSON Schema document (subset) as a plain JSON object. */
 export type JsonSchemaDocument = Record<string, unknown>;
-
 /** Resolve a non-local JSON Schema reference for a composed published contract. */
 export type PublishedSchemaResolver = (ref: string) => JsonSchemaDocument | undefined;
 
@@ -120,13 +119,12 @@ function checkNode(
  * source. A new published-schema pattern therefore needs an explicit source review and code change,
  * just like a new supported JSON Schema keyword.
  */
-const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp>([
+const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp | typeof isSupportedFunctionalEasing>([
   ["^#[0-9A-F]{8}$", /^#[0-9A-F]{8}$/],
   ["^#[0-9A-Fa-f]{6}$", /^#[0-9A-Fa-f]{6}$/],
   ["^#[0-9a-fA-F]{6}$", /^#[0-9a-fA-F]{6}$/],
   ["^#[0-9a-f]{6}$", /^#[0-9a-f]{6}$/],
   ["^(?!/)(?!.*(?:^|/)\\.\\.?/)[a-zA-Z0-9._/-]+$", /^(?!\/)(?!.*(?:^|\/)\.\.?\/)[a-zA-Z0-9._\/-]+$/],
-  ["^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$", /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/],
   ["^/", /^\//],
   ["^/[A-Za-z0-9_~./-]+$", /^\/[A-Za-z0-9_~.\/-]+$/],
   ["^[1-9][0-9]*:[1-9][0-9]*$", /^[1-9][0-9]*:[1-9][0-9]*$/],
@@ -159,6 +157,7 @@ const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp>([
   ["^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$/],
   ["^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$/],
   ["^checkpoint_storyboard_retained_trace_review_handle_[a-f0-9]{32}$", /^checkpoint_storyboard_retained_trace_review_handle_[a-f0-9]{32}$/],
+  [MOTION_FUNCTIONAL_EASING_PATTERN, isSupportedFunctionalEasing],
   ["^cubic-bezier\\(", /^cubic-bezier\(/],
   ["^https?://", /^https?:\/\//],
   ["^quality/(?!.*\\.\\.)[^/].*$", /^quality\/(?!.*\.\.)[^\/].*$/],
@@ -171,15 +170,18 @@ function checkString(node: JsonSchemaDocument, value: string, path: string, erro
   if (typeof node.minLength === "number" && scalarLength < node.minLength) {
     errors.push({ path, message: `must be at least ${node.minLength} character(s)` });
   }
-  if (typeof node.maxLength === "number" && scalarLength > node.maxLength) {
-    errors.push({ path, message: `must contain at most ${node.maxLength} character(s)` });
-  }
+  if (typeof node.maxLength === "number" && scalarLength > node.maxLength) { errors.push({ path, message: `must contain at most ${node.maxLength} character(s)` }); return; }
   if (typeof node.pattern === "string") {
+    if (node.pattern === MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN) {
+      if (!isCanonicalMotionEffectModuleVersion(value)) errors.push({ path, message: `must match pattern ${node.pattern}` });
+      return;
+    }
     const pattern = PUBLISHED_SCHEMA_PATTERNS.get(node.pattern);
     if (!pattern) {
       throw new Error(`published-schema-check: pattern at ${path} is not one of Motion's reviewed published-schema patterns and was not evaluated.`);
     }
-    if (!pattern.test(value)) {
+    const matches = pattern instanceof RegExp ? pattern.test(value) : pattern(value);
+    if (!matches) {
       errors.push({ path, message: `must match pattern ${node.pattern}` });
     }
   }

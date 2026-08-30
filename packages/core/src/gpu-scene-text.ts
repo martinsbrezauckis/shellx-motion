@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "./canonical-json";
+import { parseMotionColorString } from "./color";
 import { gpuSceneEffects } from "./gpu-scene-effects";
 import { parseGpuSceneColor } from "./gpu-scene-color";
 import type { GpuTextFitIntent, GpuTextIntent, GpuRgba, GpuTextShadow } from "./gpu-frame-intent";
@@ -100,14 +101,41 @@ function textDirection(value: unknown, text: string): "ltr" | "rtl" { return val
 function horizontalAlign(value: unknown, direction: "ltr" | "rtl"): "left" | "center" | "right" { if (value === "center") return "center"; if (value === "right" || value === "end") return direction === "rtl" && value === "end" ? "left" : "right"; if (value === "start") return direction === "rtl" ? "right" : "left"; return "left"; }
 function vertical(value: unknown): "top" | "middle" | "bottom" { return value === "bottom" ? "bottom" : value === "middle" || value === "center" ? "middle" : "top"; }
 function parseTextColor(value: string): GpuRgba | null {
-  const parsed = parseGpuSceneColor(value.trim()); if (parsed) return parsed;
-  const match = /^rgba?\(\s*([+-]?(?:\d+|\d*\.\d+)(?:%)?)\s*[,/]\s*([+-]?(?:\d+|\d*\.\d+)(?:%)?)\s*[,/]\s*([+-]?(?:\d+|\d*\.\d+)(?:%)?)(?:\s*[,/]\s*([+-]?(?:\d+|\d*\.\d+)(?:%)?))?\s*\)$/i.exec(value.trim());
-  if (!match || (value.trim().toLowerCase().startsWith("rgba") && !match[4])) return null;
-  const channel = (raw: string): number | null => raw.endsWith("%") ? bounded(Number(raw.slice(0, -1)) / 100) : bounded(Number(raw) / 255);
-  const alpha = match[4] === undefined ? 1 : match[4].endsWith("%") ? bounded(Number(match[4].slice(0, -1)) / 100) : bounded(Number(match[4]));
-  const [r, g, b] = [channel(match[1]), channel(match[2]), channel(match[3])];
+  const parsed = parseMotionColorString(value);
+  if (!parsed) return null;
+  const strict = parseGpuSceneColor(parsed.value); if (strict) return strict;
+  if (parsed.kind !== "functional" || (parsed.functionName !== "rgb" && parsed.functionName !== "rgba")) return null;
+  const parts = splitLegacyTextColorComponents(parsed.body);
+  if (parts.length !== 4 && (parsed.functionName === "rgba" || parts.length !== 3)) return null;
+  const channel = (raw: string): number | null => {
+    const number = parseLegacyTextColorNumber(raw);
+    return number === null ? null : number.percentage ? bounded(number.value / 100) : bounded(number.value / 255);
+  };
+  const alphaNumber = parts[3] === undefined ? { value: 1, percentage: false } : parseLegacyTextColorNumber(parts[3]);
+  const alpha = alphaNumber === null ? null : alphaNumber.percentage ? bounded(alphaNumber.value / 100) : bounded(alphaNumber.value);
+  const [r, g, b] = [channel(parts[0]!), channel(parts[1]!), channel(parts[2]!)];
   return r === null || g === null || b === null || alpha === null ? null : { r, g, b, a: alpha };
 }
+function splitLegacyTextColorComponents(value: string): string[] {
+  const parts: string[] = []; let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "," && value[index] !== "/") continue;
+    parts.push(value.slice(start, index)); start = index + 1;
+  }
+  parts.push(value.slice(start)); return parts;
+}
+function parseLegacyTextColorNumber(value: string): { value: number; percentage: boolean } | null {
+  const trimmed = value.trim(); if (!trimmed) return null;
+  const percentage = trimmed.at(-1) === "%"; const number = percentage ? trimmed.slice(0, -1) : trimmed;
+  if (!number) return null;
+  let index = number[0] === "+" || number[0] === "-" ? 1 : 0;
+  const integerStart = index; while (isAsciiDigit(number[index])) index += 1;
+  const hasInteger = index > integerStart; let hasFraction = false;
+  if (number[index] === ".") { index += 1; const fractionStart = index; while (isAsciiDigit(number[index])) index += 1; hasFraction = index > fractionStart; }
+  if ((!hasInteger && !hasFraction) || index !== number.length) return null;
+  const parsed = Number(number); return Number.isFinite(parsed) ? { value: parsed, percentage } : null;
+}
+function isAsciiDigit(value: string | undefined): boolean { return value !== undefined && value >= "0" && value <= "9"; }
 function bounded(value: number): number | null { return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null; }
 function readTextShadow(value: unknown, tokens: unknown): GpuTextShadow | null | undefined {
   if (value === undefined || value === null) return null;

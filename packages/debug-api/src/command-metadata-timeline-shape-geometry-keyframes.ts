@@ -1,7 +1,7 @@
 /** Public Debug contract source for exact-time persisted shape geometry snapshots. */
 import { MAX_MOTION_SHAPE_GEOMETRY_KEYFRAME_TIME_US } from "@shellx-motion/core";
 import type { MotionDebugArgPropertySchema, MotionDebugCommandMetadata } from "./command-registry.js";
-import { argsSchema, editReceipt, LAYER_ID, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
+import { argsSchema, editReceipt, LAYER_ID, MOTION_EASING, PACKAGE_EDIT, PACKAGE_ROOT } from "./command-metadata-shared.js";
 import { TIMELINE_SHAPE_GEOMETRY_VALUE_SCHEMA } from "./command-metadata-timeline-shape-geometry.js";
 
 const HOST_PACKAGE_EDIT = {
@@ -13,7 +13,7 @@ const HOST_PACKAGE_EDIT = {
   createdBy: PACKAGE_EDIT.createdBy,
 };
 const EXACT_US = { type: "number" as const, minimum: 0, maximum: MAX_MOTION_SHAPE_GEOMETRY_KEYFRAME_TIME_US, description: "Exact safe-integer physical microsecond timestamp; no milliseconds or floating-point bridge is accepted." };
-const EASING: MotionDebugArgPropertySchema = { type: ["string", "object"], description: "Optional exact Motion easing for the segment starting at this snapshot; Core validates the closed easing form." };
+const EASING: MotionDebugArgPropertySchema = MOTION_EASING;
 const SNAPSHOT: MotionDebugArgPropertySchema = {
   type: "object", required: ["atUs", "geometry"], additionalProperties: false,
   properties: { atUs: EXACT_US, geometry: TIMELINE_SHAPE_GEOMETRY_VALUE_SCHEMA, easing: EASING },

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +14,10 @@ import {
 } from "./cli";
 import { userLaunchArgs } from "./user-launcher";
 import {
-  clearMotionServerPort,
+  clearMotionMcpBridgeDiscovery,
   motionUserAccessPaths,
   readOrCreatePersistentCapabilityFile,
-  writeMotionServerPort
+  writeMotionMcpBridgeDiscovery
 } from "./user-access";
 import { resolveWorkbenchSystemExecutable } from "./workbench-system-executable";
 
@@ -187,7 +188,7 @@ describe("motion debug server CLI", () => {
     }
   });
 
-  it("reuses one private per-user access key and publishes only the live server port", async () => {
+  it("reuses one private per-user access key and publishes only a live per-start bridge discovery record", async () => {
     const parent = await mkdtemp(join(tmpdir(), "motion-user-access-test-"));
     const paths = motionUserAccessPaths(join(parent, "state"));
     try {
@@ -198,36 +199,44 @@ describe("motion debug server CLI", () => {
       expect(second.token).toBe(first.token);
       expect((await readFile(paths.tokenFile, "utf8")).trim()).toBe(first.token);
 
-      await writeMotionServerPort(paths, 43821);
-      expect(await readFile(paths.portFile, "utf8")).toBe("43821\n");
-      await clearMotionServerPort(paths, 11111);
-      expect(await readFile(paths.portFile, "utf8")).toBe("43821\n");
-      await clearMotionServerPort(paths, 43821);
-      await expect(readFile(paths.portFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      const discovery = { port: 43821, credential: randomBytes(32).toString("base64url") };
+      await writeMotionMcpBridgeDiscovery(paths, discovery);
+      expect(JSON.parse(await readFile(paths.mcpBridgeDiscoveryFile, "utf8"))).toMatchObject({ port: 43821 });
+      await clearMotionMcpBridgeDiscovery(paths, { ...discovery, port: 11111 });
+      expect(JSON.parse(await readFile(paths.mcpBridgeDiscoveryFile, "utf8"))).toMatchObject({ port: 43821 });
+      await clearMotionMcpBridgeDiscovery(paths, discovery);
+      await expect(readFile(paths.mcpBridgeDiscoveryFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
       if (process.platform !== "win32") {
-        const outside = join(parent, "outside-port-target");
+        const outside = join(parent, "outside-discovery-target");
         await writeFile(outside, "unchanged\n");
-        await symlink(outside, paths.portFile);
-        await expect(writeMotionServerPort(paths, 44991)).rejects.toThrow(/regular file/);
+        await symlink(outside, paths.mcpBridgeDiscoveryFile);
+        await expect(writeMotionMcpBridgeDiscovery(paths, { ...discovery, port: 44991 })).rejects.toThrow(/regular file/);
         expect(await readFile(outside, "utf8")).toBe("unchanged\n");
-        await rm(paths.portFile, { force: true });
+        await rm(paths.mcpBridgeDiscoveryFile, { force: true });
       }
+
+      await writeMotionMcpBridgeDiscovery(paths, discovery);
 
       if (process.platform === "win32") {
         await expectWindowsUserOnlyAcl(paths.root);
         await expectWindowsUserOnlyAcl(paths.tokenFile);
+        await expectWindowsUserOnlyAcl(paths.mcpBridgeDiscoveryFile);
 
         // Red-proof reuse: an explicit foreign ACE survives icacls /grant:r, so seed one
         // on both existing paths and require the next normal access-key read to replace it.
         await grantWindowsForeignReadAcl(paths.root);
         await grantWindowsForeignReadAcl(paths.tokenFile);
+        await grantWindowsForeignReadAcl(paths.mcpBridgeDiscoveryFile);
         await readOrCreatePersistentCapabilityFile(paths);
+        await writeMotionMcpBridgeDiscovery(paths, discovery);
         await expectWindowsUserOnlyAcl(paths.root);
         await expectWindowsUserOnlyAcl(paths.tokenFile);
+        await expectWindowsUserOnlyAcl(paths.mcpBridgeDiscoveryFile);
       } else {
         expect((await stat(paths.root)).mode & 0o777).toBe(0o700);
         expect((await stat(paths.tokenFile)).mode & 0o777).toBe(0o600);
+        expect((await stat(paths.mcpBridgeDiscoveryFile)).mode & 0o777).toBe(0o600);
       }
     } finally {
       await rm(parent, { recursive: true, force: true });

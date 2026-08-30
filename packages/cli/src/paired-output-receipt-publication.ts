@@ -1,45 +1,23 @@
 /**
  * Receipt-first paired publication for CLI delivery artifacts.
  *
- * Two independently named files cannot be made one filesystem-atomic commit.  The honest
- * ordering is therefore receipt first, output last: a crash can leave a receipt that names a
- * missing artifact, which `verifyPairedReceiptOutput` rejects, but it cannot leave a delivered
- * output without its already-durable matching receipt.  The final output commit is the last I/O
- * operation on the success path.  This helper intentionally does not promise physical two-path
- * atomicity.
+ * Two independently named files cannot be one filesystem-atomic commit. Receipt first, output
+ * last means a crash can leave a receipt naming a missing artifact (which verification rejects),
+ * but never a delivered output without its durable matching receipt. This intentionally does not
+ * promise physical two-path atomicity.
  */
 import { copyFile, lstat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import {
-  acquireDerivedOutputPublication,
-  isPublicationCommitUncertain,
-  type DerivedFilePublicationEvidence,
-  type DerivedOutputPublication,
-  type OperationReceipt,
-  type ReceiptArtifact
-} from "@shellx-motion/core";
+import { acquireDerivedOutputPublication, isPublicationCommitUncertain, type DerivedFilePublicationEvidence, type DerivedOutputPublication, type OperationReceipt, type ReceiptArtifact } from "@shellx-motion/core";
 import { PairedOutputReceiptCommitUncertainError } from "./paired-output-receipt-commit-uncertainty.js";
-import {
-  assertPairedReceiptAcceptance,
-  markPairedOutputReceipt,
-  verifyPairedReceiptOutput
-} from "@shellx-motion/core/internal/paired-output-receipt-verification";
-import {
-  assertPrivateSecondarySource,
-  assertReceiptBindsOutput,
-  bindSecondaryArtifacts,
-  normalizeReceiptArtifacts,
-  rebindReceiptOutput,
-  type BoundSecondaryArtifact
-} from "./paired-output-receipt-binding";
-import {
-  type PairedOutputArtifactSpec,
-  type PairedOutputReceiptPublicationOptions,
-  type PairedSecondaryArtifactInput
-} from "./paired-output-receipt-publication-types.js";
+import { assertPairedReceiptAcceptance, markPairedOutputReceipt, verifyPairedReceiptOutput } from "@shellx-motion/core/internal/paired-output-receipt-verification";
+import { assertPrivateSecondarySource, assertReceiptBindsOutput, bindSecondaryArtifacts, normalizeReceiptArtifacts, rebindReceiptOutput, type BoundSecondaryArtifact } from "./paired-output-receipt-binding";
+import { type PairedOutputArtifactSpec, type PairedOutputReceiptPublicationOptions, type PairedSecondaryArtifactInput } from "./paired-output-receipt-publication-types.js";
 import { releaseRetainedPairedPrivateReservations } from "./paired-output-receipt-retained-cleanup.js";
+import { pairedOutputReceiptDestinationError } from "./paired-output-receipt-destination-error.js";
 
 export { assertPairedReceiptAcceptance, verifyPairedReceiptOutput } from "@shellx-motion/core/internal/paired-output-receipt-verification";
+export { isPairedOutputReceiptDestinationError, pairedOutputReceiptDestinationErrorFields, PairedOutputReceiptDestinationError, type PairedOutputReceiptArtifact } from "./paired-output-receipt-destination-error.js";
 
 /**
  * The final link/rename may have succeeded before a post-publication identity recheck failed.
@@ -105,13 +83,18 @@ export class PairedOutputReceiptPublication {
     if (outputPath === receiptPath) throw new Error("Paired output and receipt destinations must be distinct.");
     if (dirname(outputPath) !== dirname(receiptPath)) throw new Error("Paired output and receipt must share one governed parent directory.");
     const acquire = options.testHooks?.acquirePublication ?? acquireDerivedOutputPublication;
-    const outputPublication = await acquire({ outputPath, kind: "file", force: options.forceOutput === true });
+    let outputPublication: DerivedOutputPublication;
+    try {
+      outputPublication = await acquire({ outputPath, kind: "file", force: options.forceOutput === true });
+    } catch (error) {
+      throw pairedOutputReceiptDestinationError("media_output", outputPath, receiptPath, error);
+    }
     try {
       const receiptPublication = await acquire({ outputPath: receiptPath, kind: "file", force: options.forceReceipt === true });
       return new PairedOutputReceiptPublication({ options, outputPublication, receiptPublication });
     } catch (error) {
       await outputPublication.abort();
-      throw error;
+      throw pairedOutputReceiptDestinationError("receipt_sidecar", outputPath, receiptPath, error);
     }
   }
 

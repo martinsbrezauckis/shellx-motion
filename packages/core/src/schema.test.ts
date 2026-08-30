@@ -2982,7 +2982,7 @@ describe("schemas", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("accepts bounded rectangular gradients and animated linear angles", async () => {
+  it("accepts bounded Browser shape gradients and animated linear angles", async () => {
     const schema = await loadSchema("motion");
     const result = await validateDocument(schema, motionWithLayerFields({
       type: "shape",
@@ -3007,6 +3007,40 @@ describe("schemas", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it.each(["rect", "rounded-rect", "ellipse", "triangle", "star"])("accepts a bounded radial gradient on the Browser-renderable %s primitive", async (shape) => {
+    const result = await validateDocument(await loadSchema("motion"), motionWithLayerFields({
+      type: "shape",
+      shape,
+      gradient: {
+        type: "radial",
+        centerX: 0.5,
+        centerY: 0.5,
+        stops: [{ offset: 0, color: "#3f7fe0" }, { offset: 1, color: "#080b14" }]
+      }
+    }));
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it.each(["path", "freeform"])("refuses a gradient on legacy %s data until its closure is contract-proven", async (shape) => {
+    const result = await validateDocument(await loadSchema("motion"), motionWithLayerFields({
+      type: "shape",
+      shape,
+      gradient: {
+        type: "radial",
+        stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }]
+      }
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [expect.objectContaining({
+        path: "/layers/0/gradient",
+        message: "is supported only on closed Browser shape primitives: rect, rounded-rect, ellipse, triangle, or star"
+      })]
+    });
+  });
+
   it("rejects unsafe or ambiguous gradients", async () => {
     const schema = await loadSchema("motion");
     const result = await validateDocument(schema, motionWithLayerFields({
@@ -3028,7 +3062,6 @@ describe("schemas", () => {
       ok: false,
       errors: [
         { path: "/layers/0/keyframes/gradient.angle", message: "requires a linear layer gradient" },
-        { path: "/layers/0/gradient", message: "is currently supported only on rectangular shape layers" },
         { path: "/layers/0/gradient/type", message: "must be linear or radial" },
         { path: "/layers/0/gradient/angle", message: "must be a finite number" },
         { path: "/layers/0/gradient/centerX", message: "must be a finite number between 0 and 1" },
@@ -3355,6 +3388,29 @@ describe("schemas", () => {
         { path: "/layers/0/keyframes/opacity/1/easing", message: "unsupported easing" }
       ]
     });
+  });
+
+  it("keeps public schema functional easing admission aligned with the bounded runtime parser", async () => {
+    const schema = await loadSchema("motion");
+    const exactLimit = `steps(${" ".repeat(248)}1)`;
+    const overLimit = `steps(${" ".repeat(249)}1)`;
+    expect(await validateDocument(schema, motionWithKeyframes({
+      opacity: [{ atMs: 0, value: 0, easing: exactLimit }, { atMs: 1000, value: 1 }]
+    }))).toEqual({ ok: true });
+    expect(await validateDocument(schema, motionWithKeyframes({
+      opacity: [{ atMs: 0, value: 0, easing: overLimit }, { atMs: 1000, value: 1 }]
+    }))).toEqual({
+      ok: false,
+      errors: [{ path: "/layers/0/keyframes/opacity/0/easing", message: "unsupported easing" }]
+    });
+    for (const terminator of ["\n", "\r", "\u2028", "\u2029"]) {
+      await expect(validateDocument(schema, motionWithKeyframes({
+        opacity: [{ atMs: 0, value: 0, easing: `steps(4, end)${terminator}` }, { atMs: 1000, value: 1 }]
+      }))).resolves.toEqual({
+        ok: false,
+        errors: [{ path: "/layers/0/keyframes/opacity/0/easing", message: "unsupported easing" }]
+      });
+    }
   });
 
   it("rejects transition cubic-bezier easing with out-of-range x control points", async () => {

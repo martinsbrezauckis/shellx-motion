@@ -108,6 +108,7 @@ import {
   assertMotionPointCapacity,
   browserExecutableCandidates,
   canonicalJson,
+  colorPipelinePreallocationRefusal,
   compareCodeUnits,
   compileRestrictedFragmentShader,
   removeFirstMarkupAttribute,
@@ -624,6 +625,10 @@ export async function preflightBrowserPackage(
   pkg: MotionPackage,
   networkAccess: BrowserNetworkAccessOptions = {}
 ): Promise<BrowserPreflightResult> {
+  const pbrRefusal = gltfPbrFinalEntrypointRefusal(pkg, "browser-preview");
+  if (pbrRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [pbrRefusal.message] };
+  const colorPipelineRefusal = colorPipelinePreallocationRefusal(pkg.motion, "browser-preview");
+  if (colorPipelineRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [colorPipelineRefusal.message] };
   const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(pkg.motion, "browser");
   if (layoutGapAnimationRefusal) return { ok: false, htmlEntries: [], blockedOrigins: [], warnings: [layoutGapAnimationRefusal.message] };
   const scene3dAnimationRefusal = motionScene3DAnimationLaneRefusal(pkg.motion, "browser");
@@ -1166,6 +1171,10 @@ export async function createMotionBrowserRenderSession(
   sourcePackage: MotionPackage,
   options: BrowserRenderSessionOptions = {}
 ): Promise<MotionBrowserRenderSession> {
+  const pbrRefusal = gltfPbrFinalEntrypointRefusal(sourcePackage, "browser-preview");
+  if (pbrRefusal) throw new GltfPbrFinalEntrypointError(pbrRefusal);
+  const colorPipelineRefusal = colorPipelinePreallocationRefusal(sourcePackage.motion, "browser-preview");
+  if (colorPipelineRefusal) throw new Error(colorPipelineRefusal.message);
   const terminalBoundarySession = await createCheckpointStoryboardTerminalBoundarySession(sourcePackage, options);
   if (terminalBoundarySession) return terminalBoundarySession;
   assertAdmittedBrowserPackageDocuments(sourcePackage);
@@ -1175,8 +1184,6 @@ export async function createMotionBrowserRenderSession(
   if (scene3dAnimationRefusal) throw new Error(scene3dAnimationRefusal.message);
   const relationRefusal = motionRelationLaneRefusal(sourcePackage.motion, "browser");
   if (relationRefusal) throw new Error(relationRefusal.message);
-  const pbrRefusal = gltfPbrFinalEntrypointRefusal(sourcePackage, "browser-preview");
-  if (pbrRefusal) throw new GltfPbrFinalEntrypointError(pbrRefusal);
   const behaviorRefusal = motionBehaviorLaneRefusal(sourcePackage.motion, "browser");
   if (behaviorRefusal) throw new Error(behaviorRefusal.message);
   // Network policy is an admission boundary in its own right.  Run it before

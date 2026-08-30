@@ -26,6 +26,7 @@ import type { EncodePolicyCache } from "./encode-policy.js";
 import type { FfmpegAudioInput, FfmpegCommand, FfmpegExportPreset, FfmpegRunner, ProbeMediaResult } from "./index.js";
 import type { StreamingFfmpegProcessFactory } from "./streaming-process.js";
 import type { FinalVideoFrameTransportPlan } from "./final-video-frame-transport.js";
+import type { LinearSrgbSdrFinalPreparation, LinearSrgbSdrFinalExecutionEvidence } from "./linear-srgb-sdr-final-adapter.js";
 import type { StreamingFrameFormat } from "./streaming-foundation-types.js";
 import type { GpuVideoStagingTestFacts } from "./streaming-final-gpu.js";
 import type { GpuVideoStagingLedger } from "./gpu-video-staging-budget.js";
@@ -112,6 +113,8 @@ export interface RenderStreamingFinalInput extends Omit<PlanStreamingFinalComman
   outputPublication?: DerivedOutputPublication;
   now?: () => string;
   toolPolicy?: StreamingFinalToolPolicy;
+  /** Opaque output-free strict-route authority returned by the public preflight. */
+  linearSrgbSdrFinalPreparation?: LinearSrgbSdrFinalPreparation;
 }
 
 /** Public, bounded observation of the image2pipe handoff. It does not expose the internal foundation API. */
@@ -186,6 +189,37 @@ export interface StreamingFinalFrameTransportEvidence {
   encoderHandoff: StreamingFinalEncoderHandoffEvidence;
 }
 
+/** Exact strict linear-light producer-to-delivery proof; generic GPU evidence is intentionally absent. */
+export interface LinearSrgbSdrFinalFrameTransportEvidence {
+  readonly schema: "shellx-motion/linear-srgb-sdr-final-transport@1";
+  readonly delivery: "streamed";
+  readonly frameLane: "gpu";
+  readonly frameCount: number;
+  readonly retainedFrameCount: 0;
+  readonly producer: {
+    readonly frameLane: "gpu-linear-srgb-sdr";
+    readonly evidence: LinearSrgbSdrFinalExecutionEvidence["producer"];
+  };
+  readonly colorPipeline: {
+    readonly requested: import("@shellx-motion/core").ColorPipelineContract;
+    readonly actual: {
+      readonly routeFingerprint: string;
+      readonly preparationFingerprint: string;
+      readonly ffmpegContractSha256: string;
+      readonly comparisonPolicySha256: string;
+      readonly retainedProducerFrame: LinearSrgbSdrFinalExecutionEvidence["retainedFrame"];
+      readonly commands: LinearSrgbSdrFinalExecutionEvidence["commands"];
+      readonly media: LinearSrgbSdrFinalExecutionEvidence["media"];
+      readonly comparison: LinearSrgbSdrFinalExecutionEvidence["comparison"];
+      readonly cleanup: LinearSrgbSdrFinalExecutionEvidence["cleanup"];
+      readonly fingerprint: string;
+    };
+  };
+  readonly resources: LocalMotionJobEvidence;
+}
+
+export type AnyStreamingFinalFrameTransportEvidence = StreamingFinalFrameTransportEvidence | LinearSrgbSdrFinalFrameTransportEvidence;
+
 /** Static command-planning result; errors are typed and no execution has begun. */
 export type StreamingFinalCommandPlanResult =
   | { ok: true; transport: Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>; command: FfmpegCommand }
@@ -193,7 +227,7 @@ export type StreamingFinalCommandPlanResult =
 
 /** Executed streamed-final result, carrying either a Core receipt or bounded failure evidence. */
 export type RenderStreamingFinalResult =
-  | { ok: true; command: FfmpegCommand; receipt: OperationReceipt; transport: StreamingFinalFrameTransportEvidence }
+  | { ok: true; command: FfmpegCommand; receipt: OperationReceipt; transport: AnyStreamingFinalFrameTransportEvidence }
   | {
       ok: false;
       transport: FinalVideoFrameTransportPlan;

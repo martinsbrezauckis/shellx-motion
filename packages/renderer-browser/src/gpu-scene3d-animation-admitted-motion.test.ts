@@ -56,6 +56,29 @@ describe("O6 Browser admitted Motion transport", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("applies F0 to Core's O6 snapshot before resource, runtime, or output work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-admitted-color-pipeline-"));
+    const pkg = scenePackage(root), source = pkg.motion;
+    source.colorPipeline = { schema: "shellx-motion/color-pipeline@1", intent: "linear-srgb-sdr@1" };
+    let reads = 0, prepared = 0, opened = 0;
+    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original O6 Motion must remain unread before F0 refusal"); } });
+    try {
+      const result = await renderMotionGpuPreview(pkg, {
+        atMs: 500,
+        outDir: join(root, "out"),
+        sessionOptions: {
+          async prepareResourcesForTest() { prepared += 1; throw new Error("resources must not prepare"); },
+          async openRuntime() { opened += 1; return await fakeRuntime(); },
+        },
+      });
+      expect(result).toMatchObject({ ok: false, error: { code: "color_pipeline_unsupported" } });
+      expect({ reads, prepared, opened }).toEqual({ reads: 0, prepared: 0, opened: 0 });
+      await expect(stat(join(root, "out", "pkg_o6_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function scenePackage(root: string): MotionPackage {

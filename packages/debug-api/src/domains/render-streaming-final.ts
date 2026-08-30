@@ -19,7 +19,9 @@ import {
 } from "@shellx-motion/renderer-browser";
 import {
   checkFfmpeg,
+  planLinearSrgbSdrFinalRender,
   planStreamingFinalCommand,
+  preflightLinearSrgbSdrFinalRender,
   preliminaryGpuAudio,
   renderStreamingFinal,
   type FfmpegExportPreset,
@@ -93,6 +95,11 @@ export async function runStreamedFinalDebugRender(input: {
     transport
   });
   if (!planned.ok) return { ok: false, error: planned.error, warnings };
+  const strictColorPlan = planLinearSrgbSdrFinalRender({
+    pkg, frameLane, outputPath, preset, ...packageAudio, ...(quality ? { quality } : {}), transport,
+    ...(context.streamingFinalRenderer ? { toolPolicy: { injectedFrameRenderer: true } } : {})
+  });
+  if (strictColorPlan.kind === "refused") return { ok: false, error: strictColorPlan.error, warnings: [] };
   if (dryRun) {
     return {
       ok: true,
@@ -108,7 +115,8 @@ export async function runStreamedFinalDebugRender(input: {
         ...(warnings.length ? { warnings } : {}),
         dryRun: true,
         frameTransport: planned.transport,
-        ffmpeg: planned.command
+        ffmpeg: strictColorPlan.kind === "strict" ? strictColorPlan.command : planned.command,
+        ...(strictColorPlan.kind === "strict" ? { colorPipeline: { intent: "linear-srgb-sdr@1", routeFingerprint: strictColorPlan.route.fingerprint, preflight: "not_run" } } : {})
       },
       warnings
     };
@@ -146,11 +154,20 @@ export async function runStreamedFinalDebugRender(input: {
     ...(context.executionSignal ? { signal: context.executionSignal } : {}),
     ...(context.scratchRoot ? { scratchRoot: context.scratchRoot } : {}),
     ...(context.callerId ? { callerId: context.callerId } : {}),
-    toolPolicy: streamedFinalToolPolicy(context, frameLane)
+    ...(strictColorPlan.kind === "strict" ? {} : { toolPolicy: streamedFinalToolPolicy(context, frameLane) })
+  };
+  const strictColorPreflight = await preflightLinearSrgbSdrFinalRender(streamingInput);
+  if (strictColorPreflight.kind === "refused") return { ok: false, error: strictColorPreflight.error, warnings: [] };
+  if (strictColorPreflight.kind === "strict" && context.streamingFinalRenderer) {
+    return { ok: false, error: { code: "linear_srgb_sdr_final_unsupported", message: "linear-srgb-sdr@1 requires Motion's fixed WebGPU and FFmpeg executor; an injected streamed-final renderer is refused before output publication." }, warnings: [] };
+  }
+  const preparedStreamingInput: RenderStreamingFinalInput = {
+    ...streamingInput,
+    ...(strictColorPreflight.kind === "strict" ? { linearSrgbSdrFinalPreparation: strictColorPreflight.preparation } : {})
   };
   const streamed = context.streamingFinalRenderer
-    ? await runInjectedStreamingFinal(context.streamingFinalRenderer, streamingInput, transport, context.ffmpegRunner)
-    : await runDefaultStreamingFinal(streamingInput, transport, context.ffmpegRunner);
+    ? await runInjectedStreamingFinal(context.streamingFinalRenderer, preparedStreamingInput, transport, context.ffmpegRunner)
+    : await runDefaultStreamingFinal(preparedStreamingInput, transport, context.ffmpegRunner);
   if (!streamed.ok) {
     const uncertainty = normalizePublicationUncertainty(streamed.error);
     return {
@@ -242,6 +259,7 @@ async function runDefaultStreamingFinal(
   transport: Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>,
   runner: FfmpegRunner | undefined
 ): Promise<RenderStreamingFinalResult> {
+  if (input.linearSrgbSdrFinalPreparation) return await renderStreamingFinal(input);
   const health = await checkFfmpeg({ runner });
   if (!health.ok) return { ok: false, transport, error: health.error };
   return await renderStreamingFinal({

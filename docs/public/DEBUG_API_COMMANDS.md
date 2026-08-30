@@ -2249,7 +2249,7 @@ Tier `edit_motion` · mutates: yes
 | `target` | `string` | yes |  | [`keyframeTarget`](#argument-value-enumerations) (115 values) | Animated property path the keyframes belong to. |
 | `atMs` | `number` | yes |  |  | Keyframe time in milliseconds. An existing keyframe at this time is replaced. |
 | `value` | `number,string` | yes |  |  | Keyframe value: a finite NUMBER for numeric targets (transform.*, opacity), or a CSS colour string for colour targets (fill, stroke). Numeric targets reject a numeric string such as "0". |
-| `easing` | `string` | no |  | [`easing`](#argument-value-enumerations) (9 values) | Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object. |
+| `easing` | `string,object` | no |  |  | Exact bounded Motion easing. Core remains the single evaluator authority. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
@@ -2323,7 +2323,7 @@ Tier `edit_motion` · mutates: yes
 | `createdBy` | `string` | no |  |  | Optional attribution recorded in the emitted receipt. |
 | `layerId` | `string` | yes | `layer` |  | Target layer id. |
 | `target` | `string` | yes |  | [`keyframeTarget`](#argument-value-enumerations) (115 values) | Animated property path the keyframes belong to. |
-| `easing` | `string` | yes |  | [`easing`](#argument-value-enumerations) (9 values) | Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object. |
+| `easing` | `string,object` | yes |  |  | Exact bounded Motion easing. Core remains the single evaluator authority. |
 | `atMs` | `number` | no |  |  | Apply to the single keyframe at this time; use startMs/endMs for a window instead. |
 | `startMs` | `number` | no |  |  | Window start in milliseconds; unbounded when omitted. |
 | `endMs` | `number` | no |  |  | Window end in milliseconds; unbounded when omitted. |
@@ -2466,7 +2466,7 @@ Tier `edit_motion` · mutates: yes
 | `atMs` | `number` | yes |  |  | Position time in milliseconds. |
 | `x` | `number` | yes |  |  | Horizontal position in pixels. |
 | `y` | `number` | yes |  |  | Vertical position in pixels. |
-| `easing` | `string` | no |  | [`easing`](#argument-value-enumerations) (9 values) | Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object. |
+| `easing` | `string,object` | no |  |  | Exact bounded Motion easing. Core remains the single evaluator authority. |
 | `spatial` | `object` | no |  |  | Optional tangent control { mode, in: { x, y }, out: { x, y } }. mode must be one of the spatialTangentMode values and all four handle numbers must be finite. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
@@ -2614,7 +2614,7 @@ Tier `edit_motion` · mutates: yes
 | `durationMs` | `number` | no |  |  | Preset duration in milliseconds; the preset default when omitted. |
 | `distancePx` | `number` | no |  |  | Travel distance for slide-style presets, in pixels. |
 | `staggerMs` | `number` | no |  |  | Delay added per layer when layerIds is used. |
-| `easing` | `string` | no |  | [`easing`](#argument-value-enumerations) (9 values) | Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object. |
+| `easing` | `string,object` | no |  |  | Exact bounded Motion easing. Core remains the single evaluator authority. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
@@ -2643,7 +2643,7 @@ Tier `edit_motion` · mutates: yes
 | `durationMs` | `number` | no |  |  | Preset duration in milliseconds; must be positive when supplied. |
 | `direction` | `string` | no |  | `left`, `right`, `up`, `down` | Optional direction override for directional presets. |
 | `distance` | `number` | no |  |  | Optional non-negative travel distance override in pixels. |
-| `easing` | `string` | no |  | [`easing`](#argument-value-enumerations) (9 values) | Optional easing override for the preset. |
+| `easing` | `string` | no |  |  | Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units). |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
@@ -4986,7 +4986,7 @@ Tier `edit_motion` · mutates: yes
 | `captionsPath` | `string` | no | `captionsFile`, `path` |  | Caption file inside a host-approved authoring input root. Required unless captionsText is given. |
 | `captionsText` | `string` | no | `source` |  | Inline caption text, in place of captionsPath. |
 | `format` | `string` | no |  | `srt`, `vtt`, `plain` | Caption source format; inferred from the file extension when omitted. |
-| `layerPrefix` | `string` | no |  |  | Prefix for generated caption layer ids. |
+| `layerPrefix` | `string` | no |  |  | Prefix for generated caption layer ids. At most 123 raw code units; Core reserves the generated cue suffix separately. |
 | `trackId` | `string` | no | `track` |  | Existing track to place caption layers on. |
 | `trackName` | `string` | no |  |  | Name for a caption track created when trackId is omitted. |
 | `transform` | `object` | no |  |  | Transform applied to every caption layer, for example { y: 900 }. |
@@ -5033,7 +5033,7 @@ Tier `edit_motion` · mutates: yes
 | `edge` | `string` | yes |  | `in`, `out` | Which end of the layer the transition applies to. |
 | `type` | `string` | yes |  | `fade`, `slide`, `wipe` | Transition kind. |
 | `durationMs` | `number` | yes |  |  | Transition length in milliseconds; must be positive. |
-| `easing` | `string` | no |  | [`easing`](#argument-value-enumerations) (9 values) | Optional easing for the transition. |
+| `easing` | `string` | no |  |  | Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units). |
 | `direction` | `string` | no |  | `left`, `right`, `up`, `down` | Optional direction for slide and wipe transitions. |
 | `distance` | `number` | no |  |  | Optional travel distance in pixels for slide transitions. |
 
@@ -5263,9 +5263,9 @@ Animatable keyframe target paths accepted by every motion.timeline.keyframe.* co
 
 ### `easing`
 
-Named easings. The same arguments also accept the parametric string forms cubic-bezier(x1,y1,x2,y2) and steps(count,start|end), and a spring object { type: "spring", stiffness, damping, mass?, initialVelocity? }.
+Named easings and spring preset aliases. Easing argument schemas also publish bounded cubic-bezier(x1,y1,x2,y2) and steps(count,start|end) grammar, plus the closed spring object { type: "spring", stiffness, damping, mass?, initialVelocity? }.
 
-`linear`, `hold`, `ease-in`, `ease-out`, `ease-in-out`, `back-out`, `bounce-out`, `step-start`, `step-end`
+`linear`, `hold`, `ease-in`, `ease-out`, `ease-in-out`, `back-out`, `bounce-out`, `step-start`, `step-end`, `spring-gentle`, `spring-snappy`, `spring-bouncy`
 
 ### `easingPreset`
 

@@ -3,6 +3,7 @@ import {
   DEFAULT_FFMPEG_COMMAND_TIMEOUT_MS,
   FFMPEG_TIMEOUT_EXIT_CODE,
   MAX_FFMPEG_DIAGNOSTIC_CHARS,
+  MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES,
   MAX_FFMPEG_OUTPUT_CHARS,
   appendFfmpegProcessOutput,
   nativeWindowsJobObjectRequired,
@@ -36,6 +37,27 @@ describe("FFmpeg contained-process authority", () => {
     expect(summary).not.toContain("also-visible");
     expect(summary.length).toBeLessThanOrEqual(MAX_FFMPEG_DIAGNOSTIC_CHARS);
     expect(redactFfmpegDiagnostic("KEEP=this API_KEY=value")).toBe("KEEP=this API_KEY=[redacted]");
+  });
+
+  it("caps before sanitizing partial credentials, terminal controls, and machine paths", () => {
+    const partial = `sk-proj-${"a".repeat(MAX_FFMPEG_DIAGNOSTIC_RAW_BYTES)}`;
+    const redacted = redactFfmpegDiagnostic(partial);
+    const disarmed = summarizeFfmpegDiagnostic("\u001b]8;;https://example.invalid\u0007hidden\u001b\\ C:\\Users\\TestUser\\private.txt /opt/fixture/private\u202E\u0001");
+
+    expect(redacted).toContain("[redacted]");
+    expect(redacted).not.toContain(partial.slice(0, 24));
+    expect(disarmed).not.toContain("\u001b");
+    expect(disarmed).not.toContain("C:\\Users\\TestUser");
+    expect(disarmed).not.toContain("/opt/fixture/private");
+    expect(disarmed).not.toContain("\u202E");
+    expect(Buffer.byteLength(redacted)).toBeLessThanOrEqual(MAX_FFMPEG_DIAGNOSTIC_CHARS);
+  });
+
+  it("keeps the actual terminal diagnostic when a bounded raw suffix is selected", () => {
+    const summary = summarizeFfmpegDiagnostic(`${"verbose prefix\n".repeat(8_000)}terminal API_TOKEN=visible C:\\Users\\TestUser\\private.txt`);
+
+    expect(summary).toContain("terminal API_TOKEN=[redacted] <path>");
+    expect(summary).not.toContain("visible");
   });
 
   it("accepts only finite non-negative timeout overrides and makes native Windows containment explicit", () => {

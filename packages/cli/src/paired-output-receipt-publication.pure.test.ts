@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { DerivedOutputPublicationError, PublicationCommitUncertainError, type DerivedOutputPublication, type OperationReceipt } from "@shellx-motion/core";
-import { PairedOutputReceiptCommitUncertainError, PairedOutputReceiptPublication, assertPairedReceiptAcceptance } from "./paired-output-receipt-publication.js";
+import {
+  PairedOutputReceiptCommitUncertainError,
+  PairedOutputReceiptPublication,
+  assertPairedReceiptAcceptance,
+  isPairedOutputReceiptDestinationError,
+  pairedOutputReceiptDestinationErrorFields
+} from "./paired-output-receipt-publication.js";
 
 const bytes = "private preview bytes";
 const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -71,6 +77,51 @@ async function staged(options: {
 }
 
 describe("paired output receipt publication (pure injection)", () => {
+  it("keeps true media and receipt-sidecar collisions distinct with stable vocabulary", async () => {
+    const mediaCollision = new DerivedOutputPublicationError("derived_output_exists", "Final output already exists.", "/public/take.mp4");
+    await expect(PairedOutputReceiptPublication.acquire({
+      outputPath: "/public/take.mp4",
+      receiptPath: "/public/take.mp4.receipt.json",
+      outputArtifact: { role: "rendered_media" },
+      receiptArtifact: { role: "render_receipt" },
+      testHooks: { acquirePublication: async () => { throw mediaCollision; } }
+    })).rejects.toSatisfy((error: unknown) => {
+      if (!isPairedOutputReceiptDestinationError(error)) return false;
+      expect(pairedOutputReceiptDestinationErrorFields(error)).toEqual({
+        code: "derived_output_exists",
+        artifact: "media_output",
+        path: "/public/take.mp4",
+        message: "Render media output already exists at /public/take.mp4; it was preserved rather than overwritten."
+      });
+      return true;
+    });
+
+    const events: string[] = [];
+    const output = fakePublication("take.mp4", events);
+    const sidecarCollision = new DerivedOutputPublicationError("derived_output_exists", "Final output already exists.", "/public/take.mp4.receipt.json");
+    await expect(PairedOutputReceiptPublication.acquire({
+      outputPath: output.outputPath,
+      receiptPath: "/public/take.mp4.receipt.json",
+      outputArtifact: { role: "rendered_media" },
+      receiptArtifact: { role: "render_receipt" },
+      testHooks: {
+        acquirePublication: async (input) => input.outputPath === output.outputPath
+          ? output
+          : Promise.reject(sidecarCollision)
+      }
+    })).rejects.toSatisfy((error: unknown) => {
+      if (!isPairedOutputReceiptDestinationError(error)) return false;
+      expect(pairedOutputReceiptDestinationErrorFields(error)).toEqual({
+        code: "derived_output_exists",
+        artifact: "receipt_sidecar",
+        path: "/public/take.mp4.receipt.json",
+        message: "Render receipt sidecar already exists at /public/take.mp4.receipt.json; it was preserved rather than overwritten."
+      });
+      return true;
+    });
+    expect(events).toContain("take.mp4.abort");
+  });
+
   it("orders verified receipt publication before the last output commit", async () => {
     const value = await staged();
     await value.pair.commit();

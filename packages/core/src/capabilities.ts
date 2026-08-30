@@ -1,9 +1,11 @@
 import type { CapabilityMatch, MotionDocument, RendererCapability, RendererCapabilityCard, RendererCapabilityCardMatch, RendererCapabilityMatchOptions, RendererCapabilityMatchResult, RendererCapabilityPipeline } from "./types";
 import { compareCodeUnits } from "./canonical-json";
 import { cloneRendererColorAlphaCapability } from "./color-alpha-contract";
+import { cloneRendererColorPipelineCapability, colorPipelineCapabilityUnsupported, colorPipelineRenderPlan, rendererColorPipelineCapability } from "./color-pipeline";
 import { isAudioOnlyFrameLaneUnsupported } from "./frame-lane-audio-feature";
 import { matchGpuSceneCapability } from "./gpu-capability-eligibility";
 import { geometryKeyframesLegacyCapabilityMatch, gpuGeometryKeyframesTargetUnsupported } from "./gpu-geometry-keyframes-capability-routing";
+import { recommendedRendererCapabilityLane, rendererCapabilityCardOptionMatch, strictLinearSrgbSdrRouteCapabilityMatch } from "./linear-srgb-sdr-final-capability";
 import { gpuRelationsStrictPreviewCapabilityMatch } from "./gpu-relations-capability-routing";
 import { gpuScene3DAnimationStrictPreviewCapabilityMatch } from "./gpu-scene3d-animation-capability-routing";
 import { requiredLayerFeatures } from "./layer-capability-features";
@@ -74,6 +76,7 @@ export function listRendererCapabilityCards(): RendererCapabilityCard[] {
       ...(card.runtime.readiness ? { readiness: { ...card.runtime.readiness, tools: [...card.runtime.readiness.tools] } } : {})
     },
     ...(card.colorAlpha ? { colorAlpha: cloneRendererColorAlphaCapability(card.colorAlpha) } : {}),
+    colorPipeline: cloneRendererColorPipelineCapability(card.colorPipeline ?? rendererColorPipelineCapability(card.lane)),
     ...(card.typography ? { typography: { ...card.typography, conformanceFixtureIds: [...card.typography.conformanceFixtureIds] } } : {}),
     ...(card.frameInputs ? { frameInputs: [...card.frameInputs] } : {}),
     ...(card.adapter ? {
@@ -132,12 +135,13 @@ export function matchRendererCapabilityCards(motion: MotionDocument, options: Re
   const matches = directMatches
     .map((match) => applyFrameProducerConstraint(match, directMatches))
     .sort((a, b) => b.score - a.score || cards.findIndex((card) => card.lane === a.lane) - cards.findIndex((card) => card.lane === b.lane));
-  const recommendedLane = matches.find((match) => match.ok)?.lane ?? null;
+  const recommendedLane = recommendedRendererCapabilityLane(motion, matches);
   const recommendedPipeline = resolveRendererCapabilityPipeline(matches, recommendedLane, options.preferLane);
   return {
     cards,
     matches,
     recommendedLane,
+    colorPipelinePlan: colorPipelineRenderPlan(motion),
     ...(recommendedPipeline ? { recommendedPipeline } : {})
   };
 }
@@ -306,6 +310,8 @@ export function unrenderablePackageRefusal(motion: MotionDocument): Unrenderable
 }
 
 export function matchRendererCapability(motion: MotionDocument, capability: RendererCapability): CapabilityMatch {
+  const colorPipelineUnsupported = colorPipelineCapabilityUnsupported(motion, capability.lane);
+  if (colorPipelineUnsupported.length > 0) return { ok: false, lane: capability.lane, unsupported: colorPipelineUnsupported };
   const layoutGapAnimationMatch = motionLayoutGapAnimationCapabilityMatch(motion, capability); if (layoutGapAnimationMatch) return layoutGapAnimationMatch;
   const scene3dAnimationMatch = motionScene3DAnimationCapabilityMatch(motion, capability); if (scene3dAnimationMatch) return scene3dAnimationMatch;
   const relationMatch = motionRelationCapabilityMatch(motion, capability);
@@ -351,7 +357,9 @@ export function matchRendererCapability(motion: MotionDocument, capability: Rend
 }
 
 function matchRendererCapabilityCard(motion: MotionDocument, card: RendererCapabilityCard, options: RendererCapabilityMatchOptions): RendererCapabilityCardMatch {
-  const baseCapabilityMatch = gpuScene3DAnimationStrictPreviewCapabilityMatch(motion, card, options)
+  const strictLinearSdrMatch = strictLinearSrgbSdrRouteCapabilityMatch(motion, card);
+  const baseCapabilityMatch = strictLinearSdrMatch
+    ?? gpuScene3DAnimationStrictPreviewCapabilityMatch(motion, card, options)
     ?? gpuRelationsStrictPreviewCapabilityMatch(motion, card, options)
     ?? matchRendererCapability(motion, card);
   // Static GPU planning intentionally admits a governed browser/restricted-shader source so the
@@ -393,11 +401,7 @@ function matchRendererCapabilityCard(motion: MotionDocument, card: RendererCapab
   const capabilityMatch = extraUnsupported.length > 0
     ? { ...baseCapabilityMatch, ok: false, unsupported: [...baseCapabilityMatch.unsupported, ...extraUnsupported] }
     : baseCapabilityMatch;
-  const outputOk = !options.output || card.outputs.includes(options.output);
-  const targetOk = !options.target || card.renderTargets.includes(options.target);
-  const alphaOk = options.needsAlpha !== true || card.alpha;
-  const audioOk = options.needsAudio !== true || card.audio !== "none";
-  const subtitlesOk = options.needsSubtitles !== true || card.subtitles;
+  const { outputOk, targetOk, alphaOk, audioOk, subtitlesOk } = rendererCapabilityCardOptionMatch(card, options, strictLinearSdrMatch?.ok === true);
   const reasons = [
     ...capabilityMatch.unsupported.map((item) => item.reason),
     ...(outputOk ? [] : [`Lane ${card.lane} does not output ${options.output}.`]),

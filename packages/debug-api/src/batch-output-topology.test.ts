@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,14 +11,29 @@ describe("Debug batch output topology", () => {
     try {
       for (const mode of [0o700, 0o755]) {
         const outDir = join(root, `batch-${mode.toString(8)}`);
-        await mkdir(outDir, { mode });
-        await chmod(outDir, mode);
+        await seedRetainedDebugBatchTopology(outDir, mode);
 
         const prepared = await prepareDebugBatchOutput(outDir, { resume: true });
 
         expect(prepared).not.toBeNull();
         await expect(prepared?.batchOutput.assertCurrent()).resolves.toBeUndefined();
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a missing required resume descendant without mutating the batch root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-batch-missing-resume-descendant-"));
+    const outDir = join(root, "batch");
+    try {
+      await mkdir(outDir, { mode: 0o755 });
+      await chmod(outDir, 0o755);
+
+      await expect(prepareDebugBatchOutput(outDir, { resume: true })).rejects.toThrow(/existing directory/i);
+
+      await expect(readdir(outDir)).resolves.toEqual([]);
+      expect((await stat(outDir)).mode & 0o777).toBe(0o755);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -66,3 +81,13 @@ describe("Debug batch output topology", () => {
     }
   });
 });
+
+async function seedRetainedDebugBatchTopology(outDir: string, batchMode: number): Promise<void> {
+  await mkdir(outDir, { mode: batchMode });
+  await chmod(outDir, batchMode);
+  for (const name of ["packages", "render", "receipts"]) {
+    const descendant = join(outDir, name);
+    await mkdir(descendant, { mode: 0o700 });
+    await chmod(descendant, 0o700);
+  }
+}

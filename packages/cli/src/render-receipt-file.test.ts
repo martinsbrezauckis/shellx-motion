@@ -17,7 +17,7 @@ import { renderReceiptPathForOutput, writeRenderReceiptFile } from "./render-rec
 
 const runCli = (argv: string[], options: RunCliOptions = {}) => runCliRaw(argv, { trustedLocalTier: true, ...options });
 
-/** The id declared by `writeTinyNativePackage`; the receipt file name is derived from it. */
+/** The id declared by `writeTinyNativePackage`; receipts still bind it, but the sidecar follows --out. */
 const PACKAGE_ID = "pkg_cli_ffmpeg_sequence";
 
 const tempDirs: string[] = [];
@@ -93,7 +93,7 @@ describe("render writes its receipt to disk", () => {
     expect(result).toMatchObject({ ok: true, command: "render", lane: "image" });
     // A file delivery puts the receipt next to the file, not inside it.
     const receiptPath = renderReceiptPathForOutput(PACKAGE_ID, outPath, "image");
-    expect(receiptPath).toBe(join(outRoot, `${PACKAGE_ID}-render.receipt.json`));
+    expect(receiptPath).toBe(join(outRoot, "still.png.receipt.json"));
     expect(result.receiptPath).toBe(receiptPath);
     await readReceiptFile(receiptPath);
   });
@@ -117,14 +117,24 @@ describe("render writes its receipt to disk", () => {
 });
 
 describe("renderReceiptPathForOutput", () => {
-  it("puts the receipt inside a sequence directory and beside a delivered file", () => {
+  it("derives a deterministic output-specific receipt sidecar for every delivery lane", () => {
     const outRoot = join(process.cwd(), "out");
     expect(renderReceiptPathForOutput("pkg_a", join(outRoot, "frames"), "image-sequence"))
-      .toBe(join(outRoot, "frames", "pkg_a-render.receipt.json"));
+      .toBe(join(outRoot, "frames", "frames.receipt.json"));
     expect(renderReceiptPathForOutput("pkg_a", join(outRoot, "clip.mp4"), "ffmpeg"))
-      .toBe(join(outRoot, "pkg_a-render.receipt.json"));
+      .toBe(join(outRoot, "clip.mp4.receipt.json"));
     expect(renderReceiptPathForOutput("pkg_a", join(outRoot, "still.png"), "image"))
-      .toBe(join(outRoot, "pkg_a-render.receipt.json"));
+      .toBe(join(outRoot, "still.png.receipt.json"));
+  });
+
+  it("does not collide when one package names two distinct final outputs in one directory", () => {
+    const outRoot = join(process.cwd(), "out");
+    const first = renderReceiptPathForOutput("pkg_a", join(outRoot, "take-one.mp4"), "ffmpeg");
+    const second = renderReceiptPathForOutput("pkg_a", join(outRoot, "take-two.mp4"), "ffmpeg");
+
+    expect(first).toBe(join(outRoot, "take-one.mp4.receipt.json"));
+    expect(second).toBe(join(outRoot, "take-two.mp4.receipt.json"));
+    expect(second).not.toBe(first);
   });
 });
 

@@ -50,12 +50,14 @@ export async function materializedDeliveryRefusal(
   outputPath: string,
   framesPath: string,
   options: { force: boolean; callerSupplied: boolean; withinRoot?: string }
-): Promise<OutputDirGuardError | { code: "derived_output_exists" | "derived_output_unsafe_parent"; message: string; path: string } | null> {
+): Promise<OutputDirGuardError | { code: "derived_output_exists" | "derived_output_unsafe_parent"; message: string; path: string; artifact?: "media_output" } | null> {
   if (!options.force) {
     const output = await outputFileRefusal(outputPath, { force: false });
     if (output) {
       const code = output.code === "output_path_unsafe_parent" ? "derived_output_unsafe_parent" : "derived_output_exists";
-      return { ...output, code };
+      return code === "derived_output_exists"
+        ? { code, path: output.path, artifact: "media_output", message: `Render media output already exists at ${output.path}; it was preserved rather than overwritten.` }
+        : { ...output, code };
     }
   }
   return await framesDirRefusal(framesPath, options);

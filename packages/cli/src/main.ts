@@ -123,12 +123,13 @@ import { cliAuthoringRoots } from "./debug-authoring-roots";
 import { debugCommandName } from "./debug-subcommands";
 import { debugRenderCachePlanArgs } from "./debug-render-cache-plan-args"; import { debugPackageAssetImportArgs } from "./debug-package-asset-import-cli";
 import { timelineTransitionDebugArgs } from "./timeline-transition-cli";
-import { cliDebugDispatchContext, debugRenderRoots, debugScratchRoot, debugTrustedInputRoots, sourceWorkspaceOperationPaths, withCliSourceWorkspaceAnchor } from "./debug-context-cli"; import { createCliTimelineHostReceiptStore } from "./shape-geometry-keyframes-host-receipt";
+import { cliDebugDispatchContext, debugRenderRoots, debugScratchRoot, debugTrustedInputRoots, rawDebugFileInputPaths, sourceWorkspaceOperationPaths, withCliSourceWorkspaceAnchor } from "./debug-context-cli"; import { createCliTimelineHostReceiptStore } from "./shape-geometry-keyframes-host-receipt";
 import { helpCommand } from "./help-command";
 import { renderGpuPointsPreviewCli } from "./gpu-preview-cli";
 import { previewCommandAdmissionRefusal } from "./gpu-preview-scene3d-refusal";
 import { mediaTypeForPath, publishJsonSidecar } from "./sidecar-publication";
 import { PairedOutputReceiptCommitUncertainError, PairedOutputReceiptPublication } from "./paired-output-receipt-publication";
+import { renderPairedPublicationFailure } from "./render-paired-publication-failure";
 import {
   corePublicationUncertaintyFields,
   pairedPublicationUncertaintyError,
@@ -152,6 +153,7 @@ import {
   renderBrowserFrameBatch
 } from "./render-browser-frame-batch";
 import { renderMaterializedFinalVideo, withoutTransientFrameSourcePaths } from "./render-final-video-materialized";
+import { linearSrgbSdrFinalCliDryRun, planLinearSrgbSdrFinalCliRender, preflightLinearSrgbSdrFinalCliRender, streamingFinalCliRenderInput, type StreamingFinalCliContext } from "./linear-srgb-sdr-final-cli";
 import {
   abortPreparedRenderCatalog,
   commitPreparedRenderCatalog,
@@ -214,6 +216,7 @@ import {
   preliminaryGpuAudio,
   renderSegmentedFinal,
   renderStreamingFinal,
+  summarizeFfmpegDiagnostic,
   stillFrameOutputPathError,
   type MotionExportPreset,
   type FfmpegExportPreset,
@@ -975,7 +978,7 @@ async function debugCommand(argv: string[], options: RunCliOptions = {}): Promis
     ffmpegRunner: options.ffmpegRunner, browserFrameRenderer: options.browserFrameRenderer,
     sourceFetcher: options.sourceFetcher, sourceResolver: options.sourceResolver
   });
-  const result = await withCliSourceWorkspaceAnchor(sourceWorkspaceOperationPaths(debugName, args, cliHostReceiptStore?.receiptsRoot), async () => await dispatchDebugCommand(debugName, args, context));
+  const result = await withCliSourceWorkspaceAnchor(sourceWorkspaceOperationPaths(args, authoringRoots, cliHostReceiptStore?.receiptsRoot, rawDebugFileInputPaths(debugArgv, resolveInputPath)), async () => await dispatchDebugCommand(debugName, args, context));
   return result.ok
     ? {
         ok: true,
@@ -2408,6 +2411,11 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         error: streamingPlan.error
       };
     }
+    const streamingRenderContext = { pkg, frameLane, outputPath: resolvedOutputPath, preset: ffmpegPreset, audio, audioTracks, audioMaster,
+      inputRoots: streamingInputRoots, outputRoots: [dirname(resolvedOutputPath)], quality, qualityManifest, keepFrames, force: forceOutput, transport: frameTransport, signal: options.signal } satisfies StreamingFinalCliContext;
+    const strictColorPlan = planLinearSrgbSdrFinalCliRender(streamingRenderContext,
+      { workflow, injectedFrameRenderer: options.browserFrameRenderer !== undefined });
+    if (strictColorPlan.kind === "refused") return { ok: false, command: "render", lane: "ffmpeg", frameLane, frameTransport, error: strictColorPlan.error };
     if (dryRun) {
       return {
         ok: true,
@@ -2423,11 +2431,21 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         ...(warnings.length > 0 ? { warnings } : {}),
         dryRun: true,
         frameTransport: streamingPlan.transport,
-        ffmpeg: streamingPlan.command
+        ...linearSrgbSdrFinalCliDryRun(strictColorPlan, streamingPlan.command)
       };
     }
-    const health = await checkFfmpeg({ ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
-    if (!health.ok) return { ok: false, command: "render", lane: "ffmpeg", frameTransport, error: health.error };
+    const health = strictColorPlan.kind === "strict"
+      ? undefined
+      : await checkFfmpeg({ ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
+    if (health && !health.ok) return { ok: false, command: "render", lane: "ffmpeg", frameTransport, error: health.error };
+    const streamingRenderInput = streamingFinalCliRenderInput(streamingRenderContext, strictColorPlan.kind === "strict" ? {} : {
+      runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, callerIdForRun), forceSoftwareEncode,
+      ffmpegVersion: health?.version, processFactory: options.streamingProcessFactory
+    }, strictColorPlan.kind === "strict");
+    const strictColorPreflight = await preflightLinearSrgbSdrFinalCliRender(streamingRenderInput);
+    if (strictColorPreflight.kind === "refused") {
+      return { ok: false, command: "render", lane: "ffmpeg", frameLane, frameTransport, error: strictColorPreflight.error };
+    }
     const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg");
     const publication = await PairedOutputReceiptPublication.acquire({
       outputPath: resolvedOutputPath, receiptPath,
@@ -2438,28 +2456,9 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     let streamed: Awaited<ReturnType<typeof renderStreamingFinal>>;
     try {
       streamed = await renderStreamingFinal({
-      pkg,
-      frameLane,
-      outputPath: resolvedOutputPath,
-      preset: ffmpegPreset,
-      ...(audio ? { audio } : {}),
-      ...(audioTracks ? { audioTracks } : {}),
-      ...(audioMaster ? { audioMaster } : {}),
-      inputRoots: streamingInputRoots,
-      outputRoots: [dirname(resolvedOutputPath)],
-      ...(quality ? { quality } : {}),
-      ...(qualityManifest ? { qualityManifest } : {}),
-      keepFrames,
-      ...(forceOutput ? { force: true } : {}),
+      ...streamingRenderInput,
       outputPublication: publication.outputPublication,
-      transport: frameTransport,
-      signal: options.signal,
-      toolPolicy: {
-        runner: options.ffmpegRunner ?? defaultFfmpegRunner(options.signal, callerIdForRun),
-        ...(forceSoftwareEncode ? { forceSoftwareEncode: true } : {}),
-        ...(health.version ? { ffmpegVersion: health.version } : {}),
-        ...(options.streamingProcessFactory ? { processFactory: options.streamingProcessFactory } : {})
-      }
+      ...(strictColorPreflight.kind === "strict" ? { linearSrgbSdrFinalPreparation: strictColorPreflight.preparation } : {})
       });
     } catch (error) {
       await publication.abort().catch(() => undefined);
@@ -2631,10 +2630,9 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
         lane: "ffmpeg",
         frameLane,
         frameTransport,
-        error: {
-          code: (error as { code?: string }).code ?? "derived_output_publish_failed",
-          message: error instanceof Error ? error.message : String(error)
-        }
+        outputPath: resolvedOutputPath,
+        receiptPath,
+        error: renderPairedPublicationFailure(error)
       };
     }
   }
@@ -5766,14 +5764,7 @@ function defaultFfmpegRunner(signal: AbortSignal | undefined, callerId?: string)
 }
 
 function summarizeProcessOutput(result: FfmpegProcessResult): string {
-  return redactProcessOutput((result.stderr || result.stdout).trim().split(/\r?\n/).filter(Boolean).slice(-2).join(" "));
-}
-
-function redactProcessOutput(value: string): string {
-  return value.replace(/\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*=([^\s]+)/g, (match) => {
-    const [key] = match.split("=");
-    return `${key}=[redacted]`;
-  });
+  return summarizeFfmpegDiagnostic(result.stderr || result.stdout);
 }
 
 function formatSeconds(seconds: number): string {

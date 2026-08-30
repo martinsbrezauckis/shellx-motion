@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH,
+  MAX_CAPTION_LAYER_PREFIX_LENGTH,
+  normalizeCaptionIdentifier,
+} from "./caption-identifiers";
 import type { MotionDocument } from "./types";
-import { importTimelineCaptions, parseCaptionCues, upsertTimelineCaption } from "./captions";
+import {
+  importTimelineCaptions,
+  parseCaptionCues,
+  upsertTimelineCaption,
+} from "./captions";
 
 describe("timeline captions", () => {
   it("parses SRT and VTT cues into normalized caption timing", () => {
@@ -29,6 +38,44 @@ describe("timeline captions", () => {
     expect(parseCaptionCues(vtt, { format: "vtt" })).toEqual([
       { id: "intro", startMs: 3000, durationMs: 1500, text: "VTT caption" }
     ]);
+  });
+
+  it("shares a bounded single-pass identifier normalizer between layer prefixes and named VTT cues", () => {
+    expect(normalizeCaptionIdentifier(" \t__Intro / scene!!__\n")).toBe("Intro_scene");
+    expect(normalizeCaptionIdentifier("___")).toBe("caption");
+    expect(normalizeCaptionIdentifier("a__!__b")).toBe("a_____b");
+
+    const prefix = "p".repeat(MAX_CAPTION_LAYER_PREFIX_LENGTH);
+    const imported = importTimelineCaptions(baseMotion(), {
+      source: "00:00:00,000 --> 00:00:01,000\nCaption",
+      format: "srt",
+      layerPrefix: prefix,
+    });
+    expect(imported.insertedLayerIds).toEqual([`${prefix}_0001`]);
+    expect(imported.insertedLayerIds[0]).toHaveLength(DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH);
+
+    const cueId = "v".repeat(DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH);
+    expect(parseCaptionCues([
+      "WEBVTT", "", cueId, "00:00:00.000 --> 00:00:01.000", "Caption",
+    ].join("\n"), { format: "vtt" })).toMatchObject([{ id: cueId }]);
+  });
+
+  it("rejects over-bound raw identifiers before normalizing them", () => {
+    expect(() => normalizeCaptionIdentifier(" ".repeat(DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH + 1)))
+      .toThrow(`at most ${DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH} code units`);
+    expect(() => importTimelineCaptions(baseMotion(), {
+      source: "00:00:00,000 --> 00:00:01,000\nCaption",
+      format: "srt",
+      layerPrefix: "p".repeat(MAX_CAPTION_LAYER_PREFIX_LENGTH + 1),
+    })).toThrow(`at most ${MAX_CAPTION_LAYER_PREFIX_LENGTH} code units`);
+    expect(() => parseCaptionCues([
+      "WEBVTT", "", "v".repeat(DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH + 1), "00:00:00.000 --> 00:00:01.000", "Caption",
+    ].join("\n"), { format: "vtt" })).toThrow(`at most ${DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH} code units`);
+  });
+
+  it("rejects a hostile over-bound identifier without scanning it", () => {
+    const hostile = "_".repeat(1_000_000);
+    expect(() => normalizeCaptionIdentifier(hostile)).toThrow(`at most ${DEFAULT_CAPTION_IDENTIFIER_MAX_LENGTH} code units`);
   });
 
   it("imports parsed caption cues as deterministic caption layers on a caption track", () => {

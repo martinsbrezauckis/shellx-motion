@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -10,6 +11,12 @@ import { runCli } from "./main";
 const roots: string[] = [];
 const fixture = resolve("../../fixtures/packages/lower-third");
 const proceduralFixture = resolve("../../fixtures/packages/procedural-relationships");
+// A negative test needs a route outside the source checkout. The test runner may redirect
+// tmpdir() into checkout-local scratch, so name the host's known unmanaged sticky root directly;
+// this is refusal-only and every created child is tracked for exact cleanup.
+const UNMANAGED_EXTERNAL_TEST_ROOT = process.platform === "win32" ? tmpdir() : realpathSync("/tmp");
+const MANAGED_ORDINARY_COW_REFUSAL = !hasAtomicCOWAuthority(UNMANAGED_EXTERNAL_TEST_ROOT)
+  && !hasAtomicCOWAuthority(process.cwd());
 const behaviorFixture = resolve("../../fixtures/packages/gpu-g9-particle-cathedral");
 
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
@@ -205,11 +212,11 @@ describe("CLI trusted workspace anchor", () => {
     }
   });
 
-  it.skipIf(hasAtomicCOWAuthority(tmpdir()))("keeps caller-selected external output roots on the normal refusing topology route", async () => {
+  it.skipIf(hasAtomicCOWAuthority(UNMANAGED_EXTERNAL_TEST_ROOT))("keeps caller-selected external output roots on the normal refusing topology route", async () => {
     const root = await mkdtemp(join(process.cwd(), ".shellx-motion-cli-cow-"));
     roots.push(root);
     const source = join(root, "source");
-    const externalRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-external-output-"));
+    const externalRoot = await mkdtemp(join(UNMANAGED_EXTERNAL_TEST_ROOT, "shellx-motion-cli-external-output-"));
     roots.push(externalRoot);
     await cp(fixture, source, { recursive: true });
 
@@ -222,8 +229,27 @@ describe("CLI trusted workspace anchor", () => {
     expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining("unrelated POSIX principal") } });
   });
 
-  it.skipIf(hasAtomicCOWAuthority(tmpdir()))("refuses an external shape geometry COW without any caller-selected receipts root", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-cli-external-geometry-keyframes-"));
+  it.skipIf(!MANAGED_ORDINARY_COW_REFUSAL)("falls back to ordinary topology and refuses only when a selected raw patch file and the checkout route lack full ancestor COW authority", async () => {
+    const root = await mkdtemp(join(process.cwd(), ".shellx-motion-cli-external-patch-file-"));
+    const externalRoot = await mkdtemp(join(UNMANAGED_EXTERNAL_TEST_ROOT, "shellx-motion-cli-external-patch-input-"));
+    roots.push(root, externalRoot);
+    const source = join(root, "source");
+    const outDir = join(root, "revision");
+    const patchFile = join(externalRoot, "patch.json");
+    await cp(fixture, source, { recursive: true });
+    await writeFile(patchFile, '[{"op":"replace","path":"/layers/0/text","value":"Must refuse"}]', "utf8");
+
+    const result = await runCli([
+      "debug", "package-patch", "--tier", "edit_motion", "--trusted-local-tier",
+      "--package", source, "--out", outDir, "--patch-file", patchFile,
+    ]);
+
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining("unrelated POSIX principal") } });
+    await expect(readFile(join(outDir, "motion.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.skipIf(hasAtomicCOWAuthority(UNMANAGED_EXTERNAL_TEST_ROOT))("refuses an external shape geometry COW without any caller-selected receipts root", async () => {
+    const root = await mkdtemp(join(UNMANAGED_EXTERNAL_TEST_ROOT, "shellx-motion-cli-external-geometry-keyframes-"));
     roots.push(root);
     const source = await writeGeometryPackage(join(root, "source"));
     const outDir = join(root, "revision");

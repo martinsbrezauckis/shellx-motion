@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -15,7 +15,8 @@ const PRODUCER_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export interface MotionUserAccessPaths {
   root: string;
   tokenFile: string;
-  portFile: string;
+  /** Private, per-server-start MCP bridge discovery record; never a durable bearer capability. */
+  mcpBridgeDiscoveryFile: string;
   /** Private durable HMAC key for authenticating public render-reuse producer proofs. */
   renderReuseProducerKeyFile: string;
   /**
@@ -33,7 +34,7 @@ export function motionUserAccessPaths(root = join(homedir(), ".shellx-motion")):
   return {
     root,
     tokenFile: join(root, "access.token"),
-    portFile: join(root, "server.port"),
+    mcpBridgeDiscoveryFile: join(root, "mcp-bridge.discovery.json"),
     renderReuseProducerKeyFile: join(root, "render-reuse-producer.key"),
     receiptsRoot: join(root, "receipts"),
     effectModulesRoot: join(root, "effect-modules")
@@ -103,29 +104,57 @@ export async function readOrCreatePersistentCapabilityFile(
   return { token, tokenFile: paths.tokenFile, created: true };
 }
 
-export async function writeMotionServerPort(paths: MotionUserAccessPaths, port: number): Promise<void> {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("Motion server port publication requires a bound TCP port.");
-  }
+export interface MotionMcpBridgeDiscovery {
+  port: number;
+  /** Random for one bound debug-server instance; valid only for that listener. */
+  credential: string;
+}
+
+/**
+ * Publish the bridge credential only after its listener is bound.  Unlike the retired port-only
+ * record, a stale record cannot authorize a bridge to disclose the durable access capability.
+ */
+export async function writeMotionMcpBridgeDiscovery(
+  paths: MotionUserAccessPaths,
+  discovery: MotionMcpBridgeDiscovery
+): Promise<void> {
+  assertMcpBridgeDiscovery(discovery);
   await securePrivateDirectory(paths.root);
   try {
-    const existing = await lstat(paths.portFile);
+    const existing = await lstat(paths.mcpBridgeDiscoveryFile);
     if (existing.isSymbolicLink() || !existing.isFile()) {
-      throw new Error("Motion server-port state must be a private regular file, not a link or directory.");
+      throw new Error("Motion MCP bridge discovery state must be a private regular file, not a link or directory.");
     }
   } catch (error) {
     if (!isMissingFileError(error)) throw error;
   }
-  await writeFile(paths.portFile, `${port}\n`, { encoding: "utf8", mode: 0o600 });
-  await securePrivateFile(paths.portFile);
+  await writeFile(paths.mcpBridgeDiscoveryFile, `${JSON.stringify(discovery)}\n`, { encoding: "utf8", mode: 0o600 });
+  await securePrivateFile(paths.mcpBridgeDiscoveryFile);
 }
 
-export async function clearMotionServerPort(paths: MotionUserAccessPaths, expectedPort: number): Promise<void> {
+/** A stopped older server must never remove a newer listener's discovery record. */
+export async function clearMotionMcpBridgeDiscovery(
+  paths: MotionUserAccessPaths,
+  expected: MotionMcpBridgeDiscovery
+): Promise<void> {
+  let raw: string;
   try {
-    const current = Number((await readFile(paths.portFile, "utf8")).trim());
-    if (current === expectedPort) await rm(paths.portFile, { force: true });
+    const metadata = await lstat(paths.mcpBridgeDiscoveryFile);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) return;
+    raw = await readFile(paths.mcpBridgeDiscoveryFile, "utf8");
   } catch (error) {
-    if (!isMissingFileError(error)) throw error;
+    if (isMissingFileError(error)) return;
+    throw error;
+  }
+  let current: MotionMcpBridgeDiscovery;
+  try {
+    current = parseMcpBridgeDiscovery(raw);
+  } catch {
+    // A malformed/replaced record is not ours to delete. The bridge treats it as unavailable.
+    return;
+  }
+  if (current.port === expected.port && secureTokenEqual(current.credential, expected.credential)) {
+    await rm(paths.mcpBridgeDiscoveryFile, { force: true });
   }
 }
 
@@ -207,10 +236,32 @@ async function readProducerKeyIfPresent(path: string): Promise<Buffer | null> {
   }
 }
 
-function assertCapabilityToken(token: string): void {
-  if (!TOKEN_PATTERN.test(token)) {
+function assertCapabilityToken(token: unknown): asserts token is string {
+  if (typeof token !== "string" || !TOKEN_PATTERN.test(token)) {
     throw new Error("Motion access keys must contain at least 32 URL-safe characters.");
   }
+}
+
+function assertMcpBridgeDiscovery(value: MotionMcpBridgeDiscovery): void {
+  if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535) {
+    throw new Error("Motion MCP bridge discovery requires a bound TCP port.");
+  }
+  assertCapabilityToken(value.credential);
+}
+
+function parseMcpBridgeDiscovery(raw: string): MotionMcpBridgeDiscovery {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Motion MCP bridge discovery is invalid.");
+  }
+  const value = parsed as Partial<MotionMcpBridgeDiscovery>;
+  const discovery: MotionMcpBridgeDiscovery = { port: value.port as number, credential: value.credential as string };
+  assertMcpBridgeDiscovery(discovery);
+  return discovery;
+}
+
+function secureTokenEqual(actual: string, expected: string): boolean {
+  return actual.length === expected.length && timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 
 async function securePrivateDirectory(path: string): Promise<void> {

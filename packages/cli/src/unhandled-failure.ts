@@ -8,8 +8,12 @@
  * Dependencies: `@shellx-motion/core` for the job error's machine-readable code.
  * Primary caller: `main()` in ./main.ts.
  */
-import { LocalMotionJobError } from "@shellx-motion/core";
+import { LocalMotionJobError, sanitizeUntrustedDiagnostic } from "@shellx-motion/core";
 import type { CliResult } from "./main.js";
+
+/** Escaped throws are untrusted process/provider text even in the CLI's final envelope. */
+export const MAX_CLI_UNHANDLED_FAILURE_RAW_BYTES = 64 * 1024;
+export const MAX_CLI_UNHANDLED_FAILURE_PUBLIC_BYTES = 4 * 1024;
 
 /**
  * Turn anything thrown out of `runCli` into the JSON envelope every other outcome uses.
@@ -38,7 +42,7 @@ export function unhandledFailure(error: unknown): CliResult {
     command: process.argv[2] ?? "shellx-motion",
     error: {
       code,
-      message: error instanceof Error ? error.message : String(error),
+      message: unhandledDiagnostic(error),
       suggestedAction: code === "job_rss_limit_exceeded"
         ? "The render exceeded Motion's process-tree memory ceiling. Reduce frame count, resolution, motion-blur samples or environment layers, or raise SHELLX_MOTION_MAX_JOB_RSS_BYTES. See skill/shellx-motion/references/environments-depth-and-budget.md."
         : code === "job_input_budget_exceeded"
@@ -46,4 +50,14 @@ export function unhandledFailure(error: unknown): CliResult {
         : "This is an unhandled Motion error. Re-run with the same arguments to confirm it reproduces, and report the code and message."
     }
   };
+}
+
+function unhandledDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const safe = sanitizeUntrustedDiagnostic(message, {
+    rawMaxBytes: MAX_CLI_UNHANDLED_FAILURE_RAW_BYTES,
+    publicMaxBytes: MAX_CLI_UNHANDLED_FAILURE_PUBLIC_BYTES,
+    collapseWhitespace: true
+  });
+  return safe || "Unhandled Motion error.";
 }

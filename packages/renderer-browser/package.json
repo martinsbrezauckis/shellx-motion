@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/renderer-browser",
-  "version": "0.2.65",
+  "version": "0.2.66",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -12,6 +12,7 @@
     "./internal/scene3d-gltf-pbr-final": "./src/gpu-scene3d-gltf-pbr-final.ts",
     "./internal/scene3d-gltf-pbr-hdr10": "./src/gpu-scene3d-gltf-pbr-hdr10-session.ts",
     "./internal/scene3d-gltf-pbr-hdr10-streaming": "./src/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.ts",
+    "./internal/linear-srgb-sdr-final": "./src/linear-srgb-sdr-final-webgpu-producer.ts",
     "./internal/gltf-object-retained-render": "./src/gpu-gltf-object-retained-session.ts"
   },
   "files": [
@@ -53,6 +54,10 @@
       "./internal/scene3d-gltf-pbr-hdr10-streaming": {
         "types": "./dist/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.d.ts",
         "default": "./dist/gpu-scene3d-gltf-pbr-hdr10-streaming-producer.js"
+      },
+      "./internal/linear-srgb-sdr-final": {
+        "types": "./dist/linear-srgb-sdr-final-webgpu-producer.d.ts",
+        "default": "./dist/linear-srgb-sdr-final-webgpu-producer.js"
       }
     }
   },

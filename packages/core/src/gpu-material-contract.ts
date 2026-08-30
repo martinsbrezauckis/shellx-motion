@@ -1,10 +1,10 @@
-import { isSupportedMotionColorString } from "./color";
+import { isSupportedMotionColorString, MAX_MOTION_COLOR_STRING_LENGTH } from "./color";
 import { GPU_MATERIAL_PRESETS, gpuMaterialUniformRule, isMotionGpuMaterialPreset, isMotionGpuMaterialUniform } from "./gpu-material";
 import { PUBLIC_SCHEMA_EXTENSION_COMMENT } from "./motion-public-schema-environments";
 
 export function buildGpuMaterialPublicSchema():Record<string,unknown>{return{
   type:"object",required:["preset","colors"],
-  properties:{preset:{enum:GPU_MATERIAL_PRESETS},colors:{type:"array",minItems:3,maxItems:3,items:{type:"string",minLength:1}}},
+  properties:{preset:{enum:GPU_MATERIAL_PRESETS},colors:{type:"array",minItems:3,maxItems:3,items:{type:"string",minLength:1,maxLength:MAX_MOTION_COLOR_STRING_LENGTH}}},
   $comment:"A fixed Motion-owned WebGPU material. Package GLSL remains the browser fallback and never crosses the WebGPU execution boundary. "+PUBLIC_SCHEMA_EXTENSION_COMMENT
 };}
 

@@ -23,6 +23,7 @@ import {
   MOTION_EXPORT_PRESETS,
   NAMED_EASINGS_LIST,
   readSupportedTransitionType,
+  SPRING_PRESET_IDS,
   SUPPORTED_KEYFRAME_TARGET_LIST,
   type MotionBlendMode,
   type MotionSpatialTangentMode,
@@ -84,10 +85,10 @@ export const MOTION_DEBUG_ARG_ENUMS: Readonly<Record<string, MotionDebugArgEnum>
     description: "Animatable keyframe target paths accepted by every motion.timeline.keyframe.* command."
   },
   easing: {
-    values: [...NAMED_EASINGS_LIST],
+    values: [...NAMED_EASINGS_LIST, ...SPRING_PRESET_IDS],
     description:
-      "Named easings. The same arguments also accept the parametric string forms cubic-bezier(x1,y1,x2,y2) and steps(count,start|end), "
-      + "and a spring object { type: \"spring\", stiffness, damping, mass?, initialVelocity? }."
+      "Named easings and spring preset aliases. Easing argument schemas also publish bounded cubic-bezier(x1,y1,x2,y2) and steps(count,start|end) grammar, "
+      + "plus the closed spring object { type: \"spring\", stiffness, damping, mass?, initialVelocity? }."
   },
   easingPreset: {
     values: listMotionEasingPresets().map((preset) => preset.id),

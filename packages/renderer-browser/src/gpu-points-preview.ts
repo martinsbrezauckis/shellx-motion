@@ -1,4 +1,4 @@
-import { defaultLocalMotionJobGovernor, gpuVideoTimelineAtUs, LocalMotionJobError, motionLayoutGapAnimationLaneRefusal, motionScene3DAnimationStorePresent, type MotionPackage } from "@shellx-motion/core";
+import { colorPipelinePreallocationRefusal, defaultLocalMotionJobGovernor, gpuVideoTimelineAtUs, LocalMotionJobError, motionLayoutGapAnimationLaneRefusal, type MotionPackage } from "@shellx-motion/core";
 import { compileGpuScene3DAnimationStaticPlan, type GpuScene3DAnimationFramePlan, type GpuScene3DAnimationStaticPlan } from "@shellx-motion/core/internal/scene3d-animation-gpu-preview";
 import { createGpuFrameRenderSession, DEFAULT_GPU_FRAME_OPERATION_TIMEOUT_MS, type GpuFrameRenderSession } from "./gpu-frame-renderer";
 import { deriveGpuEnvironmentSessionEnvelope } from "./gpu-page-environment-envelope";
@@ -6,6 +6,7 @@ import type { GpuPreviewDecodedVideoFrameBatch, GpuPreviewVideoFrameProvider, Gp
 import { previewVideoProbeFailure, previewVideoProviderEvidenceFailure, previewVideoReceiptEvidence, type PreviewVideoReceiptEvidence } from "./gpu-preview-video-orchestration";
 import { resolveGpuPreviewOutputPath } from "./gpu-preview-output";
 import { captureGpuPreviewManifestIdentity, captureGpuPreviewPackageSnapshot, gpuPreviewPackageSnapshotFreshness, type GpuPreviewManifestIdentity, type GpuPreviewPackageSnapshot } from "./gpu-preview-package-snapshot";
+import { admitGpuPreviewPackageMotion } from "./gpu-preview-package-motion-admission";
 import { gpuScene3DAnimationAdmittedMotionAuthority, gpuScene3DAnimationPackageSnapshotFreshness, packageWithGpuScene3DAnimationAdmittedMotion, refreshGpuScene3DAnimationAdmittedMotion } from "./gpu-scene3d-animation-admitted-motion";
 import { createGpuPreviewStaticPlanSession } from "./gpu-preview-static-plan-session";
 import { finalizeGpuPreviewFrame } from "./gpu-preview-frame-finalize";
@@ -20,7 +21,6 @@ import { prepareGpuPreviewVideo, type GpuPreviewVideoProviderAdmission, type Pre
 import { admitGpuPreviewEffectModuleResources, prepareGpuPreviewAdmittedSceneResources } from "./gpu-preview-effect-module-admission";
 import { gpuPreviewPlanFailure } from "./gpu-preview-refusal";
 import { compileBehaviorAwareGpuFrame, compileGpuGeometryKeyframesPreResourceFrame, compileGpuRelationsPreResourceFrame, compileGpuScene3DAnimationPreResourceFrame } from "./gpu-behavior-frame-routing";
-import { gltfPbrFinalEntrypointRefusal } from "./gltf-pbr-final-entrypoint-refusal";
 import { gpuScene3dAnimationManifestAssetRefusal, gpuScene3dAnimationManifestPbrRefusal } from "./gpu-scene3d-animation-manifest-assets";
 import {
   gpuEffectModuleApplicationLedger,
@@ -32,12 +32,10 @@ import {
 import type { GpuPreviewFrame, GpuPreviewFrameOptions, GpuPreviewResult, GpuPreviewSession, GpuPreviewSessionCleanupEvidence, GpuPreviewSessionOptions } from "./gpu-preview-session-types";
 export type { GpuPreviewFrame, GpuPreviewFrameOptions, GpuPreviewResult, GpuPreviewSession, GpuPreviewSessionCleanupEvidence, GpuPreviewSessionOptions } from "./gpu-preview-session-types";
 const gpuPreviewOneShotAuthority = Symbol("gpuPreviewOneShotAuthority"), gpuCollisionShowcaseAuthority = Symbol("gpuCollisionShowcaseAuthority");
-
 /** Public reusable sessions intentionally retain their existing non-Scene3DAnimation preview contract. */
 export function createGpuPreviewSession(pkg: MotionPackage, options: GpuPreviewSessionOptions = {}): GpuPreviewSession {
   return createGpuPreviewSessionInternal(pkg, options);
 }
-
 /** Only the direct one-shot entry point holds this module-private Scene3DAnimation authority. */
 function createGpuPreviewOneShotSession(pkg: MotionPackage, options: GpuPreviewSessionOptions = {}): GpuPreviewSession {
   return createGpuPreviewSessionInternal(pkg, options, gpuPreviewOneShotAuthority);
@@ -146,12 +144,11 @@ function createGpuPreviewSessionInternal(pkg: MotionPackage, options: GpuPreview
       if (closed) return { ok: false, error: { code: "gpu_cancelled", message: "The GPU preview session is closed." } };
       const cancellation = (): GpuPreviewResult | undefined => !gpuPreviewAbortRequested(frameOptions.signal, sessionAbort.signal) ? undefined : (closed = true, terminalPoison = true, { ok: false, error: { code: "gpu_cancelled", message: "The GPU preview request was cancelled before resource preparation or output-path setup." } });
       const initialCancellation = cancellation(); if (initialCancellation) return initialCancellation;
-      // Scene3DAnimation preflight is descriptor-only in Core. Retain the source reference only for the
-      // legacy branch; every Scene3DAnimation operation below receives its frozen Core-admitted snapshot.
-      const sourceMotion = pkg.motion;
+      const packageMotion = admitGpuPreviewPackageMotion(pkg);
+      if (!packageMotion.ok) return { ok: false, error: packageMotion.error };
+      const { sourceMotion, scene3dAnimationPresent } = packageMotion;
       const layoutGapAnimationRefusal = motionLayoutGapAnimationLaneRefusal(sourceMotion, "gpu-frame");
       if (layoutGapAnimationRefusal) return { ok: false, error: { code: "gpu_unsupported_feature", message: layoutGapAnimationRefusal.message } };
-      const scene3dAnimationPresent = motionScene3DAnimationStorePresent(sourceMotion);
       if (scene3dAnimationPresent && !oneShotAuthority && !retainedScene3dAnimationAuthority) {
         return { ok: false, error: { code: "gpu_unsupported_feature", message: "Reusable GPU preview sessions do not admit document scene3dAnimation@1; only the direct @shellx-motion/renderer-browser renderMotionGpuPreview API is available." } };
       }
@@ -166,8 +163,10 @@ function createGpuPreviewSessionInternal(pkg: MotionPackage, options: GpuPreview
         const manifestPbrRefusal = gpuScene3dAnimationManifestPbrRefusal(pkg);
         if (manifestPbrRefusal) return { ok: false, error: manifestPbrRefusal };
       }
-      const pbrRefusal = scene3dAnimationStatic?.ok ? undefined : gltfPbrFinalEntrypointRefusal(pkg, "gpu-preview");
-      if (pbrRefusal) return { ok: false, error: pbrRefusal };
+      // F0 stays before package hashing, resource preparation, runtime opening, and output
+      // setup. Scene3DAnimation uses only Core's frozen snapshot here, never raw caller Motion.
+      const colorPipelineRefusal = colorPipelinePreallocationRefusal(admittedScene3DAnimationMotion ?? sourceMotion, "gpu-preview");
+      if (colorPipelineRefusal) return { ok: false, error: colorPipelineRefusal };
       if (admittedScene3DAnimationMotion) admittedScene3DAnimationPackage = packageWithGpuScene3DAnimationAdmittedMotion(pkg, admittedScene3DAnimationMotion);
       // Scene3DAnimation's compiler executes synchronously above, so capture its manifest identity before the
       // await below can yield to a mutating caller. Legacy paths retain their previous ordering.
@@ -179,7 +178,7 @@ function createGpuPreviewSessionInternal(pkg: MotionPackage, options: GpuPreview
       if (refreshedScene3DAnimation && !refreshedScene3DAnimation.ok) return { ok: false, error: { code: "gpu_resource_refused", message: refreshedScene3DAnimation.message } };
       const motion = scene3dAnimationAuthority
         ? refreshedScene3DAnimation?.ok ? refreshedScene3DAnimation.motion : scene3dAnimationAuthority.motion
-        : pkg.motion;
+        : sourceMotion;
       if (refreshedScene3DAnimation?.ok) admittedScene3DAnimationPackage = packageWithGpuScene3DAnimationAdmittedMotion(pkg, refreshedScene3DAnimation.motion);
       const preResourcePlan = compileGpuScene3DAnimationPreResourceFrame(motion, atMs, staticResult.scene3dAnimationPlan)
         ?? compileGpuRelationsPreResourceFrame(motion, atMs, staticResult.relationsPlan)

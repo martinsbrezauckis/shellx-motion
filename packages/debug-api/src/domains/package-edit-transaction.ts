@@ -18,7 +18,7 @@ import { PackageEditTransactionError } from "./package-edit-transaction-error.js
 import { copyVerifiedAsset } from "./package-edit-verified-asset-copy.js";
 import { PackageEditWorkspace } from "./package-edit-transaction-workspace.js";
 import type { PackageEditClosedInventoryMode } from "./package-edit-closed-inventory.js";
-import { samePackageEditTreeSnapshot, snapshotPackageEditTree } from "./package-edit-tree-snapshot.js";
+import { samePackageEditTreeIdentitySnapshot, samePackageEditTreeSnapshot, snapshotPackageEditTree } from "./package-edit-tree-snapshot.js";
 import { assertConfiguredAuthoringPackageEditRoots } from "./authoring-root-policy.js";
 import type { PreparedImmutableJsonPair } from "./timeline-layout-application-authority-store.js";
 
@@ -358,7 +358,16 @@ export async function commitPackageEdit<T, U = undefined>(
     if (options.closedInventory) {
       await workspace.pinCompleteStagedInventory();
     }
+    const stagedAfterEdit = options.closedInventory
+      ? undefined
+      : await snapshotPackageEditTree(workspace.stagedPackageRoot);
     if (options.validate) await options.validate(workspace.stagedPackageRoot, editResult);
+    const stagedAfterValidation = options.closedInventory
+      ? undefined
+      : await snapshotPackageEditTree(workspace.stagedPackageRoot);
+    if (stagedAfterEdit && stagedAfterValidation && !samePackageEditTreeIdentitySnapshot(stagedAfterEdit, stagedAfterValidation)) {
+      throw new PackageEditTransactionError("source_changed", "Package edit validation changed staged package bytes or identity.");
+    }
     const sourceAfter = await snapshotPackageEditTree(sourceRoot);
     if (!samePackageEditTreeSnapshot(sourceBefore, sourceAfter)) {
       throw new PackageEditTransactionError("source_changed", "Source package changed while the edit transaction was running.");
@@ -377,6 +386,7 @@ export async function commitPackageEdit<T, U = undefined>(
     // a false foreign empty directory), which v2 recovery can safely classify as no-install.
     await workspace.claimOutput(initialOutput);
 
+    let stagedForPortableInstall = stagedAfterValidation;
     if (options.beforeCommit) {
       const sourceBeforeCommit = await snapshotPackageEditTree(sourceRoot);
       const stagedBeforeCommit = options.closedInventory
@@ -384,6 +394,13 @@ export async function commitPackageEdit<T, U = undefined>(
         : await snapshotPackageEditTree(workspace.stagedPackageRoot);
       if (!samePackageEditTreeSnapshot(sourceBefore, sourceBeforeCommit)) {
         throw new PackageEditTransactionError("source_changed", "Source package changed before the package edit commit checkpoint.");
+      }
+      // `beforeCommit` is advisory and must never establish a new portable stage baseline.  In
+      // particular, a same-UID writer cannot be allowed to replace the candidate after validation
+      // but before this callback's first snapshot; every later observation is compared back to the
+      // trusted post-validation snapshot.
+      if (stagedForPortableInstall && stagedBeforeCommit && !samePackageEditTreeIdentitySnapshot(stagedForPortableInstall, stagedBeforeCommit)) {
+        throw new PackageEditTransactionError("source_changed", "Package edit staged package changed after validation and before the commit checkpoint.");
       }
       await options.beforeCommit(workspace.stagedPackageRoot, editResult);
       const sourceAfterCommit = await snapshotPackageEditTree(sourceRoot);
@@ -394,13 +411,20 @@ export async function commitPackageEdit<T, U = undefined>(
         await workspace.assertPinnedStagedInventoryCurrent();
       } else {
         const stagedAfterCommit = await snapshotPackageEditTree(workspace.stagedPackageRoot);
-        if (!samePackageEditTreeSnapshot(stagedBeforeCommit!, stagedAfterCommit)) {
+        if (!samePackageEditTreeIdentitySnapshot(stagedForPortableInstall!, stagedAfterCommit)) {
           throw new PackageEditTransactionError("source_changed", "Package edit commit checkpoint changed staged or source package bytes.");
         }
       }
     }
 
-    installedIdentity = await workspace.install();
+    installedIdentity = await workspace.install(stagedForPortableInstall
+      ? async () => {
+        const stagedImmediatelyBeforeInstall = await snapshotPackageEditTree(workspace.stagedPackageRoot);
+        if (!samePackageEditTreeIdentitySnapshot(stagedForPortableInstall!, stagedImmediatelyBeforeInstall)) {
+          throw new PackageEditTransactionError("source_changed", "Package edit staged package changed after its final portable integrity recheck.");
+        }
+      }
+      : undefined);
     let afterCommitResult: U = undefined as U;
     if (options.afterCommit) {
       try {

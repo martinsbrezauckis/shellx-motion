@@ -14,6 +14,7 @@ import {
 } from "./motion-validation-contract";
 import { validateMotionDocumentInStages } from "./motion-validation";
 import { validateAgainstPublishedSchema, type JsonSchemaDocument } from "./published-schema-check";
+import { MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH, MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN } from "./effect-module";
 import { loadSchema, validateDocument } from "./validate";
 
 /**
@@ -62,6 +63,39 @@ function shippedMotionFixturePaths(directory = resolve("../../fixtures")): strin
 }
 
 describe("generated published motion schema contract", () => {
+  it("uses Core's bounded canonical effect-module SemVer check and skips pattern work once over bound", () => {
+    const effectModule = (version: string) => ({
+      ...baseMotion,
+      layers: [{
+        id: "afterimage",
+        type: "adjustment",
+        startMs: 0,
+        durationMs: 100,
+        effectModule: {
+          schema: "shellx-motion/effect-module-ref@1",
+          moduleId: "motion.afterimage-stack",
+          version,
+          parameters: { echoes: [{ dxPx: 0, dyPx: 0, color: "#FFFFFFFF", opacityQ16: 0 }], amountQ16: 0 }
+        }
+      }]
+    });
+    const versionSchema = (publishedSchema.$defs.effectModule as { properties: { version: Record<string, unknown> } }).properties.version;
+    expect(versionSchema).toMatchObject({ maxLength: MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH, pattern: MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN });
+    const externalPattern = new RegExp(String(versionSchema.pattern));
+    const accepted = ["0.0.0", "1.2.3", "1.2.3-rc.1", "1.2.3-0", "1.2.3-alpha-01"];
+    const rejected = ["v1.2.3", "1.2.3+build", "latest", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-00", "1.2.3-rc.01"];
+    for (const version of accepted) {
+      expect(externalPattern.test(version), `${version}: exported JSON Schema pattern`).toBe(true);
+      expect(schemaErrors(effectModule(version)), version).toEqual([]);
+    }
+    for (const version of rejected) {
+      expect(externalPattern.test(version), `${version}: exported JSON Schema pattern`).toBe(false);
+      expect(schemaErrors(effectModule(version)), version).toContainEqual({ path: "/layers/0/effectModule/version", message: `must match pattern ${MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN}` });
+    }
+    const overBound = `1.2.3-${"a".repeat(MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH)}`;
+    expect(schemaErrors(effectModule(overBound))).toEqual([{ path: "/layers/0/effectModule/version", message: `must contain at most ${MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH} character(s)` }]);
+  });
+
   it("publishes the code-owned two-stage vocabulary and ordering", () => {
     expect(MOTION_VALIDATION_CONTRACT).toBe("shellx-motion/motion-validation@1");
     expect(MOTION_VALIDATION_STAGE_ORDER).toEqual(["structural", "semantic"]);

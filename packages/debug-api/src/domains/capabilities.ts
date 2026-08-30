@@ -1,5 +1,5 @@
 import {
-  listRendererCapabilityCards,
+  listRendererCapabilityCards, colorPipelineRenderPlan,
   loadMotionPackage,
   matchRendererCapabilityCards,
   resolveRendererCapabilityPipeline,
@@ -87,7 +87,7 @@ interface CapabilitiesPanelResult {
   packageName?: string;
   motionId?: string;
   request: CapabilitiesPanelRequest;
-  summary: CapabilitiesPanelSummary;
+  colorPipelinePlan?: import("@shellx-motion/core").ColorPipelineRenderPlan; summary: CapabilitiesPanelSummary;
   categories: CapabilitiesPanelCategory[];
   cards: CapabilitiesPanelCard[];
   matches: RendererCapabilityCardMatch[];
@@ -130,7 +130,7 @@ function buildCapabilitiesPanel(input: {
       packageName: input.pkg.manifest.name,
       motionId: input.pkg.motion.id
     } : {}),
-    request,
+    request, ...(input.pkg ? { colorPipelinePlan: colorPipelineRenderPlan(input.pkg.motion) } : {}),
     summary,
     categories,
     cards: panelCards,

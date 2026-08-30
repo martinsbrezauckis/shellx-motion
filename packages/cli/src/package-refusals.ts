@@ -21,6 +21,7 @@
  */
 import {
   ignoredKeyframeFieldsWarning,
+  colorPipelineRenderPlan,
   motionValidationReport,
   unreadableKeyframesRefusal,
   unrenderablePackageRefusal,
@@ -155,6 +156,7 @@ export async function packageValidationResult(
     layers: pkg.motion.layers.length,
     hosts: pkg.manifest.compatibility.hosts,
     lanes: pkg.manifest.compatibility.lanes,
+    colorPipeline: colorPipelineRenderPlan(pkg.motion),
     validation: motionValidationReport(),
     // Omitted entirely when empty, so a clean package's output is byte-identical to before.
     ...(warnings.length > 0 ? { warnings } : {})

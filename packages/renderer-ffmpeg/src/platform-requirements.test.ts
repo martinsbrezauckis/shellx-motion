@@ -402,6 +402,26 @@ describe("motionToolReport redacts every field a third-party binary supplied", (
     }).detail).toBe("<path> is not a valid Win32 application");
   });
 
+  it("sanitizes raw tool detail while preserving an operator-supplied problem pin path", () => {
+    const problem = "The browser path C:\\Operators\\TestUser\\chrome.exe was explicitly pinned but could not start.";
+    const report = motionToolReport({
+      tool: "chromium",
+      source: "override",
+      resolvedFrom: "C:\\Operators\\TestUser\\chrome.exe",
+      status: "broken",
+      problem,
+      detail: "API_TOKEN=visible \u001b]8;;https://example.invalid\u0007hidden\u001b\\ /opt/fixture/private C:\\Users\\TestUser\\private.txt\u202E\r"
+    });
+
+    expect(report.problem).toBe(problem);
+    expect(report.detail).toContain("API_TOKEN=[redacted]");
+    expect(report.detail).not.toContain("visible");
+    expect(report.detail).not.toContain("\u001b");
+    expect(report.detail).not.toContain("/opt/fixture/private");
+    expect(report.detail).not.toContain("C:\\Users\\TestUser");
+    expect(report.detail).not.toContain("\u202E");
+  });
+
   it("keeps the diagnostic part of a loader failure while dropping the path", () => {
     // The message still has to be usable: what is stripped is the location, not the cause.
     expect(motionToolReport({

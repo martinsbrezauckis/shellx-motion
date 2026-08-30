@@ -589,6 +589,7 @@ export interface MotionDocument extends MotionExtensionFields {
   width: number;
   height: number;
   background?: string;
+  colorPipeline?: import("./color-pipeline").MotionColorPipelineDeclaration;
   audio?: MotionAudioDocument;
   scenes?: MotionScene[];
   tracks?: MotionTrack[];
@@ -621,7 +622,6 @@ export interface MotionDocument extends MotionExtensionFields {
     dataRowHash?: string;
   };
 }
-
 
 /** Package-local font face consumed by deterministic browser rendering. */
 export interface MotionFontAsset {

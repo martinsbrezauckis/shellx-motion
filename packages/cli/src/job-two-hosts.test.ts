@@ -43,7 +43,18 @@ const HOST_FIXTURE = fileURLToPath(new URL("./job-host.fixture.ts", import.meta.
 const TSX_CLI = createRequire(import.meta.url).resolve("tsx/cli");
 
 function runTsx(args: string[], options: Omit<ExecFileOptionsWithStringEncoding, "encoding"> = {}) {
-  return execFileAsync(process.execPath, [TSX_CLI, ...args], { ...options, encoding: "utf8" });
+  const ipcTmpdir = process.env.SHELLX_MOTION_TEST_IPC_TMPDIR;
+  const env = { ...process.env, ...options.env };
+  if (ipcTmpdir) {
+    // Vitest fixtures use checkout-local TMPDIR for Motion COW authority. tsx meanwhile opens a
+    // Unix-domain compiler socket below tmpdir(), whose pathname limit is much shorter than a
+    // nested worktree. This test-only subprocess opt-in preserves the pre-run short temp route
+    // for that IPC socket; all Motion package/output paths remain explicit fixture arguments.
+    env.TMPDIR = ipcTmpdir;
+    env.TEMP = ipcTmpdir;
+    env.TMP = ipcTmpdir;
+  }
+  return execFileAsync(process.execPath, [TSX_CLI, ...args], { ...options, env, encoding: "utf8" });
 }
 
 async function workspace() {

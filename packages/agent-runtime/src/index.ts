@@ -11,6 +11,8 @@ import {
   windowsJobObjectContainmentEvidence,
   WindowsJobObjectPlanError,
   createOwnedUnixProcessGroup,
+  sanitizeUntrustedDiagnostic,
+  takeUtf8Prefix,
   type LocalMotionJobErrorCode,
   type LocalMotionJobEvidence,
   type LocalMotionProcessContainmentEvidence,
@@ -207,21 +209,19 @@ const AGENT_OUTPUT_OVERFLOW_EXIT_CODE = 125;
 const AGENT_RESOURCE_LIMIT_EXIT_CODE = 126;
 export const DEFAULT_AGENT_OUTPUT_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_AGENT_TRANSCRIPT_MAX_BYTES = 64 * 1024;
+/** Public health fields are deliberately much smaller than a retained transcript. */
+export const AGENT_HEALTH_DIAGNOSTIC_MAX_BYTES = 512;
+/** Structured values can be useful evidence, but never an unbounded transport. */
+export const AGENT_STRUCTURED_SCALAR_MAX_BYTES = 64 * 1024;
 export const AGENT_CONTEXT_UNBOUNDED_CODE = "agent_context_unbounded";
 const AGENT_PROMPT_FILE_ARG = "<prompt-file>";
-const BARE_SECRET_PATTERNS = [
-  /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b/g,
-  /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g,
-  /\bnpm_[A-Za-z0-9_]{20,}\b/g,
-  /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g
-];
 
 export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRuntime {
   const adapters = options.adapters ?? createCliAgentAdapters();
   const runner = options.runner ?? spawnAgentCommand;
   const now = options.now ?? (() => new Date().toISOString());
-  const maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_AGENT_OUTPUT_MAX_BYTES);
-  const maxTranscriptBytes = positiveInteger(options.maxTranscriptBytes, DEFAULT_AGENT_TRANSCRIPT_MAX_BYTES);
+  const maxOutputBytes = boundedPositiveInteger(options.maxOutputBytes, DEFAULT_AGENT_OUTPUT_MAX_BYTES, DEFAULT_AGENT_OUTPUT_MAX_BYTES);
+  const maxTranscriptBytes = boundedPositiveInteger(options.maxTranscriptBytes, DEFAULT_AGENT_TRANSCRIPT_MAX_BYTES, DEFAULT_AGENT_TRANSCRIPT_MAX_BYTES);
 
   return {
     listAgents: () => [...adapters],
@@ -433,8 +433,8 @@ async function probeAgent(adapter: AgentAdapter, runner: AgentRunner, maxOutputB
   try {
     const result = boundProcessResult(await runner(command), maxOutputBytes);
     const status = classifyAgentProbe(result);
-    const detail = firstLine(redactSensitiveText(result.stdout || result.stderr || `exit ${result.exitCode}`));
-    const redactedStderr = firstLine(redactSensitiveText(result.stderr));
+    const detail = publicHealthDiagnostic(result.stdout || result.stderr || `exit ${result.exitCode}`);
+    const redactedStderr = publicHealthDiagnostic(result.stderr);
     return {
       agentId: adapter.id,
       available: status === "ready",
@@ -449,7 +449,7 @@ async function probeAgent(adapter: AgentAdapter, runner: AgentRunner, maxOutputB
       ...(status === "ready" ? {} : { failure: { exitCode: result.exitCode, ...(redactedStderr ? { stderr: redactedStderr } : {}) } })
     };
   } catch (error) {
-    const detail = firstLine(redactSensitiveText(error instanceof Error ? error.message : String(error)));
+    const detail = publicHealthDiagnostic(error instanceof Error ? error.message : String(error));
     const status = classifyAgentProbeError(error);
     return {
       agentId: adapter.id,
@@ -787,7 +787,7 @@ function runSpawnedAgentChild(
     let killTimer: NodeJS.Timeout | null = null;
     let groupSettlement: Promise<void> | null = null;
     const timeoutMs = command.timeoutMs ?? DEFAULT_AGENT_COMMAND_TIMEOUT_MS;
-    const maxOutputBytes = positiveInteger(command.maxOutputBytes, DEFAULT_AGENT_OUTPUT_MAX_BYTES);
+    const maxOutputBytes = boundedPositiveInteger(command.maxOutputBytes, DEFAULT_AGENT_OUTPUT_MAX_BYTES, DEFAULT_AGENT_OUTPUT_MAX_BYTES);
     const terminate = () => {
       terminateAgentProcessTree(child, false, terminationMode(), ownedUnixProcessGroup);
       if (!killTimer) {
@@ -841,13 +841,12 @@ function runSpawnedAgentChild(
     child.stderr.setEncoding("utf8");
     const appendOutput = (stream: "stdout" | "stderr", chunk: string) => {
       if (outputOverflow) return;
-      const chunkBytes = Buffer.byteLength(chunk);
       const remaining = Math.max(0, maxOutputBytes - outputBytes);
-      const bounded = takeUtf8Bytes(chunk, remaining);
-      if (stream === "stdout") stdout += bounded;
-      else stderr += bounded;
-      outputBytes += chunkBytes;
-      if (outputBytes > maxOutputBytes) {
+      const bounded = takeUtf8Prefix(chunk, remaining);
+      if (stream === "stdout") stdout += bounded.value;
+      else stderr += bounded.value;
+      outputBytes += Buffer.byteLength(bounded.value);
+      if (bounded.truncated) {
         outputOverflow = true;
         stderr = appendStderr(stderr, `Agent command exceeded output limit of ${maxOutputBytes} bytes.`);
         terminate();
@@ -930,28 +929,11 @@ function publicCommand(command: AgentCommand): PublicAgentCommand {
   };
 }
 
-function firstLine(value: string): string {
-  return value.trim().split(/\r?\n/, 1)[0] ?? "";
-}
-
 function redactSensitiveText(value: string): string {
-  let redacted = value
-    .replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*)=([^\s,}"']+)/gi, (_match, key: string) => {
-      return `${key}=[redacted]`;
-    })
-    .replace(/(["'])([^"']*(?:SECRET|TOKEN|KEY|PASSWORD)[^"']*)\1\s*:\s*(["'])(.*?)\3/gi, (_match, keyQuote: string, key: string, valueQuote: string) => {
-      return `${keyQuote}${key}${keyQuote}:${valueQuote}[redacted]${valueQuote}`;
-    })
-    .replace(/\b([A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD)[A-Z0-9_]*)\s*:\s*([^\s,}"']+)/gi, (_match, key: string) => {
-      return `${key}: [redacted]`;
-    })
-    .replace(/\b((?:Authorization\s*:\s*)?Bearer\s+)([A-Za-z0-9._~+/=-]{12,})\b/gi, (_match, prefix: string) => {
-      return `${prefix}[redacted]`;
-    });
-  for (const pattern of BARE_SECRET_PATTERNS) {
-    redacted = redacted.replace(pattern, "[redacted]");
-  }
-  return redacted;
+  return sanitizeUntrustedDiagnostic(value, {
+    rawMaxBytes: AGENT_STRUCTURED_SCALAR_MAX_BYTES,
+    publicMaxBytes: AGENT_STRUCTURED_SCALAR_MAX_BYTES
+  });
 }
 
 export function parseStructuredAgentOutput(stdout: string): unknown {
@@ -1015,8 +997,12 @@ function sanitizeStructuredValue(value: unknown): unknown {
       return entry;
     }
     if (typeof entry === "string") {
-      if (Buffer.byteLength(entry) > 64 * 1024) throw new Error("Agent structured output contains an oversized string.");
-      return redactSensitiveText(entry);
+      const raw = takeUtf8Prefix(entry, AGENT_STRUCTURED_SCALAR_MAX_BYTES);
+      if (raw.truncated) throw new Error("Agent structured output contains an oversized string.");
+      return sanitizeUntrustedDiagnostic(raw.value, {
+        rawMaxBytes: AGENT_STRUCTURED_SCALAR_MAX_BYTES,
+        publicMaxBytes: AGENT_STRUCTURED_SCALAR_MAX_BYTES
+      });
     }
     if (Array.isArray(entry)) {
       if (entry.length > 1000) throw new Error("Agent structured output contains an oversized array.");
@@ -1041,43 +1027,67 @@ function sanitizeStructuredValue(value: unknown): unknown {
 }
 
 function boundProcessResult(result: AgentProcessResult, maxBytes: number): AgentProcessResult {
-  const stdoutBytes = Buffer.byteLength(result.stdout);
-  const stderrBytes = Buffer.byteLength(result.stderr);
-  if (stdoutBytes + stderrBytes <= maxBytes && !result.outputOverflow) return result;
-  const stdout = takeUtf8Bytes(result.stdout, maxBytes);
+  const stdoutPrefix = takeUtf8Prefix(result.stdout, maxBytes);
+  const stdout = stdoutPrefix.value;
   const remaining = Math.max(0, maxBytes - Buffer.byteLength(stdout));
+  const stderrPrefix = takeUtf8Prefix(result.stderr, remaining);
+  if (!stdoutPrefix.truncated && !stderrPrefix.truncated && !result.outputOverflow) return result;
   const stderr = appendStderr(
-    takeUtf8Bytes(result.stderr, remaining),
+    stderrPrefix.value,
     `Agent command exceeded output limit of ${maxBytes} bytes.`
   );
   return { exitCode: AGENT_OUTPUT_OVERFLOW_EXIT_CODE, stdout, stderr, outputOverflow: true };
 }
 
 function publicTranscript(result: AgentProcessResult, maxBytes: number): AgentPublicTranscript {
-  const stdout = redactSensitiveText(result.stdout);
-  const stderr = redactSensitiveText(result.stderr);
   const stdoutBudget = Math.floor(maxBytes / 2);
   const stderrBudget = maxBytes - stdoutBudget;
-  const boundedStdout = takeUtf8Bytes(stdout, stdoutBudget);
-  const boundedStderr = takeUtf8Bytes(stderr, stderrBudget);
+  const stdoutRaw = takeUtf8Prefix(result.stdout, stdoutBudget);
+  const stderrRaw = takeUtf8Prefix(result.stderr, stderrBudget);
+  const boundedStdout = sanitizeUntrustedDiagnostic(stdoutRaw.value, {
+    rawMaxBytes: stdoutBudget,
+    publicMaxBytes: stdoutBudget,
+    sourceTruncated: stdoutRaw.truncated
+  });
+  const boundedStderr = sanitizeUntrustedDiagnostic(stderrRaw.value, {
+    rawMaxBytes: stderrBudget,
+    publicMaxBytes: stderrBudget,
+    sourceTruncated: stderrRaw.truncated
+  });
   return {
     stdout: boundedStdout,
     stderr: boundedStderr,
     redacted: true,
-    truncated: result.outputOverflow === true || Buffer.byteLength(stdout) > stdoutBudget || Buffer.byteLength(stderr) > stderrBudget,
+    truncated: result.outputOverflow === true || stdoutRaw.truncated || stderrRaw.truncated,
     maxBytes
   };
 }
 
 function takeUtf8Bytes(value: string, maxBytes: number): string {
-  if (maxBytes <= 0) return "";
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength <= maxBytes) return value;
-  return bytes.subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/u, "");
+  return takeUtf8Prefix(value, maxBytes).value;
 }
 
-function positiveInteger(value: unknown, fallback: number): number {
-  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+function boundedPositiveInteger(value: unknown, fallback: number, maximum: number): number {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Math.min(Number(value), maximum) : fallback;
+}
+
+function publicHealthDiagnostic(value: string): string {
+  const raw = takeUtf8Prefix(value, AGENT_HEALTH_DIAGNOSTIC_MAX_BYTES);
+  const lineEnd = firstDiagnosticLineEnd(raw.value);
+  const line = raw.value.slice(0, lineEnd);
+  return sanitizeUntrustedDiagnostic(line, {
+    rawMaxBytes: AGENT_HEALTH_DIAGNOSTIC_MAX_BYTES,
+    publicMaxBytes: AGENT_HEALTH_DIAGNOSTIC_MAX_BYTES,
+    sourceTruncated: raw.truncated && lineEnd === raw.value.length
+  }).trim();
+}
+
+function firstDiagnosticLineEnd(value: string): number {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) return index;
+  }
+  return value.length;
 }
 
 function dedupe(values: string[]): string[] {

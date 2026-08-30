@@ -119,6 +119,8 @@ export interface MotionDebugServerOptions {
   /** @deprecated Use grantedTier. This value is a server-owned maximum, never a client default. */
   defaultTier?: MotionPermissionTier;
   capabilityToken?: string;
+  /** Host-only per-listener credential for the installed MCP stdio bridge's /rpc and /ws routes. */
+  mcpBridgeCredential?: string;
   /** One-use launch value exchanged by the locally opened Workbench for the capability token; optionally removes its private handoff after exchange. */
   workbenchBootstrapToken?: string; onWorkbenchBootstrapClaim?: () => void | Promise<void>;
   allowedOrigins?: string[];
@@ -198,6 +200,8 @@ const MAX_REQUEST_BYTES = 1_000_000;
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const WEBSOCKET_PROTOCOL = "shellx-motion-debug-v1";
 const WEBSOCKET_TOKEN_PREFIX = "shellx-motion-token.";
+const MCP_BRIDGE_CREDENTIAL_HEADER = "x-shellx-motion-mcp-bridge-credential";
+const WEBSOCKET_MCP_BRIDGE_CREDENTIAL_PREFIX = "shellx-motion-mcp-bridge.";
 const MIN_CAPABILITY_TOKEN_LENGTH = 32;
 const CAPABILITY_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 16;
@@ -277,6 +281,10 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
   if (capabilityToken.length < MIN_CAPABILITY_TOKEN_LENGTH || !CAPABILITY_TOKEN_PATTERN.test(capabilityToken)) {
     throw new Error(`Motion debug server capability tokens must be at least ${MIN_CAPABILITY_TOKEN_LENGTH} URL-safe characters.`);
   }
+  const mcpBridgeCredential = options.mcpBridgeCredential ?? randomBytes(32).toString("base64url");
+  if (mcpBridgeCredential.length < MIN_CAPABILITY_TOKEN_LENGTH || !CAPABILITY_TOKEN_PATTERN.test(mcpBridgeCredential)) {
+    throw new Error(`Motion MCP bridge credentials must be at least ${MIN_CAPABILITY_TOKEN_LENGTH} URL-safe characters.`);
+  }
   const workbenchBootstrapToken = options.workbenchBootstrapToken ?? null;
   if (workbenchBootstrapToken !== null
     && (workbenchBootstrapToken.length < MIN_CAPABILITY_TOKEN_LENGTH || !CAPABILITY_TOKEN_PATTERN.test(workbenchBootstrapToken))) {
@@ -344,6 +352,7 @@ export async function startMotionDebugServer(options: MotionDebugServerOptions =
   const templateRootAuthorities = await retainExistingArtifactRoots(templateRoots);
   const security: MotionDebugServerSecurityContext = {
     capabilityToken,
+    mcpBridgeCredential,
     workbenchBootstrapToken, ...(options.onWorkbenchBootstrapClaim ? { onWorkbenchBootstrapClaim: options.onWorkbenchBootstrapClaim } : {}),
     workbenchOperatorSession: workbenchBootstrapToken ? randomBytes(32).toString("base64url") : null,
     grantedTier: options.grantedTier ?? options.defaultTier ?? "read_motion",
@@ -538,7 +547,8 @@ async function handleRequest(
       return;
     }
 
-    if (!hasHttpCapability(request, security.capabilityToken)) {
+    const mcpBridgeAuthorized = path === "/rpc" && hasMcpBridgeHttpCredential(request, security.mcpBridgeCredential);
+    if (!hasHttpCapability(request, security.capabilityToken) && !mcpBridgeAuthorized) {
       response.setHeader("www-authenticate", "Bearer realm=\"shellx-motion-debug\"");
       writeJson(response, 401, debugServerError("unauthorized", "Motion debug server authentication is required."));
       return;
@@ -1113,7 +1123,8 @@ function handleWebSocketUpgrade(
     rejectWebSocketUpgrade(socket, 403, "Forbidden Origin");
     return false;
   }
-  if (!hasWebSocketCapability(request, security.capabilityToken)) {
+  if (!hasWebSocketCapability(request, security.capabilityToken)
+    && !hasMcpBridgeWebSocketCredential(request, security.mcpBridgeCredential)) {
     rejectWebSocketUpgrade(socket, 401, "Unauthorized");
     return false;
   }
@@ -1256,6 +1267,12 @@ function hasHttpCapability(request: IncomingMessage, capabilityToken: string): b
   return secureTokenEqual(authorization.slice("Bearer ".length).trim(), capabilityToken);
 }
 
+/** The installed bridge uses this per-start capability instead of forwarding the durable bearer. */
+function hasMcpBridgeHttpCredential(request: IncomingMessage, credential: string): boolean {
+  const supplied = request.headers[MCP_BRIDGE_CREDENTIAL_HEADER];
+  return typeof supplied === "string" && secureTokenEqual(supplied.trim(), credential);
+}
+
 function hasWebSocketCapability(request: IncomingMessage, capabilityToken: string): boolean {
   const protocols = String(request.headers["sec-websocket-protocol"] ?? "")
     .split(",")
@@ -1264,6 +1281,20 @@ function hasWebSocketCapability(request: IncomingMessage, capabilityToken: strin
   if (!protocols.includes(WEBSOCKET_PROTOCOL)) return false;
   const tokenProtocol = protocols.find((value) => value.startsWith(WEBSOCKET_TOKEN_PREFIX));
   return Boolean(tokenProtocol && secureTokenEqual(tokenProtocol.slice(WEBSOCKET_TOKEN_PREFIX.length), capabilityToken));
+}
+
+function hasMcpBridgeWebSocketCredential(request: IncomingMessage, credential: string): boolean {
+  const protocols = webSocketProtocols(request);
+  if (!protocols.includes(WEBSOCKET_PROTOCOL)) return false;
+  const supplied = protocols.find((value) => value.startsWith(WEBSOCKET_MCP_BRIDGE_CREDENTIAL_PREFIX));
+  return Boolean(supplied && secureTokenEqual(supplied.slice(WEBSOCKET_MCP_BRIDGE_CREDENTIAL_PREFIX.length), credential));
+}
+
+function webSocketProtocols(request: IncomingMessage): string[] {
+  return String(request.headers["sec-websocket-protocol"] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 function secureTokenEqual(actual: string, expected: string): boolean {

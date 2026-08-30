@@ -445,9 +445,12 @@
         "back-out",
         "bounce-out",
         "step-start",
-        "step-end"
+        "step-end",
+        "spring-gentle",
+        "spring-snappy",
+        "spring-bouncy"
       ],
-      "description": "Named easings. The same arguments also accept the parametric string forms cubic-bezier(x1,y1,x2,y2) and steps(count,start|end), and a spring object { type: \"spring\", stiffness, damping, mass?, initialVelocity? }."
+      "description": "Named easings and spring preset aliases. Easing argument schemas also publish bounded cubic-bezier(x1,y1,x2,y2) and steps(count,start|end) grammar, plus the closed spring object { type: \"spring\", stiffness, damping, mass?, initialVelocity? }."
     },
     "easingPreset": {
       "values": [
@@ -5434,9 +5437,67 @@
             "description": "Keyframe value: a finite NUMBER for numeric targets (transform.*, opacity), or a CSS colour string for colour targets (fill, stroke). Numeric targets reject a numeric string such as \"0\"."
           },
           "easing": {
-            "type": "string",
-            "enumRef": "easing",
-            "description": "Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object."
+            "type": [
+              "string",
+              "object"
+            ],
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enumRef": "easing",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                  }
+                ],
+                "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "stiffness",
+                  "damping"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "spring"
+                    ],
+                    "description": "Closed spring easing type."
+                  },
+                  "stiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring stiffness."
+                  },
+                  "damping": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring damping."
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Optional finite positive spring mass."
+                  },
+                  "initialVelocity": {
+                    "type": "number",
+                    "description": "Optional finite initial velocity."
+                  }
+                }
+              }
+            ],
+            "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
           }
         },
         "additionalProperties": false
@@ -5712,9 +5773,67 @@
             "description": "Animated property path the keyframes belong to."
           },
           "easing": {
-            "type": "string",
-            "enumRef": "easing",
-            "description": "Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object."
+            "type": [
+              "string",
+              "object"
+            ],
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enumRef": "easing",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                  }
+                ],
+                "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "stiffness",
+                  "damping"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "spring"
+                    ],
+                    "description": "Closed spring easing type."
+                  },
+                  "stiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring stiffness."
+                  },
+                  "damping": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring damping."
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Optional finite positive spring mass."
+                  },
+                  "initialVelocity": {
+                    "type": "number",
+                    "description": "Optional finite initial velocity."
+                  }
+                }
+              }
+            ],
+            "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
           },
           "atMs": {
             "type": "number",
@@ -6260,9 +6379,67 @@
             "description": "Vertical position in pixels."
           },
           "easing": {
-            "type": "string",
-            "enumRef": "easing",
-            "description": "Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object."
+            "type": [
+              "string",
+              "object"
+            ],
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enumRef": "easing",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                  }
+                ],
+                "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "stiffness",
+                  "damping"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "spring"
+                    ],
+                    "description": "Closed spring easing type."
+                  },
+                  "stiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring stiffness."
+                  },
+                  "damping": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring damping."
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Optional finite positive spring mass."
+                  },
+                  "initialVelocity": {
+                    "type": "number",
+                    "description": "Optional finite initial velocity."
+                  }
+                }
+              }
+            ],
+            "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
           },
           "spatial": {
             "type": "object",
@@ -7470,9 +7647,67 @@
             "description": "Delay added per layer when layerIds is used."
           },
           "easing": {
-            "type": "string",
-            "enumRef": "easing",
-            "description": "Easing applied to the keyframe. Also accepts cubic-bezier(...)/steps(...) strings and a spring object."
+            "type": [
+              "string",
+              "object"
+            ],
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enumRef": "easing",
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                  }
+                ],
+                "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "stiffness",
+                  "damping"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "spring"
+                    ],
+                    "description": "Closed spring easing type."
+                  },
+                  "stiffness": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring stiffness."
+                  },
+                  "damping": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Finite positive spring damping."
+                  },
+                  "mass": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Optional finite positive spring mass."
+                  },
+                  "initialVelocity": {
+                    "type": "number",
+                    "description": "Optional finite initial velocity."
+                  }
+                }
+              }
+            ],
+            "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
           }
         },
         "additionalProperties": false
@@ -7571,8 +7806,20 @@
           },
           "easing": {
             "type": "string",
-            "enumRef": "easing",
-            "description": "Optional easing override for the preset."
+            "maxLength": 256,
+            "oneOf": [
+              {
+                "type": "string",
+                "enumRef": "easing",
+                "maxLength": 256
+              },
+              {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+              }
+            ],
+            "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
           }
         },
         "additionalProperties": false
@@ -20854,7 +21101,63 @@
                         "string",
                         "object"
                       ],
-                      "description": "Optional canonical Motion easing for the following segment; Core validates its exact closed form."
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 256,
+                          "oneOf": [
+                            {
+                              "type": "string",
+                              "enumRef": "easing",
+                              "maxLength": 256
+                            },
+                            {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                            }
+                          ],
+                          "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "type",
+                            "stiffness",
+                            "damping"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "spring"
+                              ],
+                              "description": "Closed spring easing type."
+                            },
+                            "stiffness": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "description": "Finite positive spring stiffness."
+                            },
+                            "damping": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "description": "Finite positive spring damping."
+                            },
+                            "mass": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "description": "Optional finite positive spring mass."
+                            },
+                            "initialVelocity": {
+                              "type": "number",
+                              "description": "Optional finite initial velocity."
+                            }
+                          }
+                        }
+                      ],
+                      "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
                     }
                   },
                   "description": "One complete exact-time typed keyframe. Core resolves value kind/bounds from the stored track locator."
@@ -20989,7 +21292,63 @@
                   "string",
                   "object"
                 ],
-                "description": "Optional canonical Motion easing for the following segment; Core validates its exact closed form."
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enumRef": "easing",
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                      }
+                    ],
+                    "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "stiffness",
+                      "damping"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "spring"
+                        ],
+                        "description": "Closed spring easing type."
+                      },
+                      "stiffness": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Finite positive spring stiffness."
+                      },
+                      "damping": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Finite positive spring damping."
+                      },
+                      "mass": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Optional finite positive spring mass."
+                      },
+                      "initialVelocity": {
+                        "type": "number",
+                        "description": "Optional finite initial velocity."
+                      }
+                    }
+                  }
+                ],
+                "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
               }
             },
             "description": "One complete exact-time typed keyframe. Core resolves value kind/bounds from the stored track locator."
@@ -21702,7 +22061,20 @@
                     "oneOf": [
                       {
                         "type": "string",
-                        "description": "Named or functional Motion easing."
+                        "maxLength": 256,
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "enumRef": "easing",
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "string",
+                            "maxLength": 256,
+                            "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                          }
+                        ],
+                        "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
                       },
                       {
                         "type": "object",
@@ -21742,7 +22114,7 @@
                         }
                       }
                     ],
-                    "description": "Exact string or closed spring behavior easing; Core is the evaluator authority."
+                    "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
                   }
                 }
               },
@@ -26052,7 +26424,20 @@
                 "oneOf": [
                   {
                     "type": "string",
-                    "description": "Named or functional Motion easing."
+                    "maxLength": 256,
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enumRef": "easing",
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                      }
+                    ],
+                    "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
                   },
                   {
                     "type": "object",
@@ -26073,31 +26458,26 @@
                       "stiffness": {
                         "type": "number",
                         "exclusiveMinimum": 0,
-                        "maximum": 100000,
                         "description": "Finite positive spring stiffness."
                       },
                       "damping": {
                         "type": "number",
                         "exclusiveMinimum": 0,
-                        "maximum": 100000,
                         "description": "Finite positive spring damping."
                       },
                       "mass": {
                         "type": "number",
                         "exclusiveMinimum": 0,
-                        "maximum": 100000,
                         "description": "Optional finite positive spring mass."
                       },
                       "initialVelocity": {
                         "type": "number",
-                        "minimum": -100000,
-                        "maximum": 100000,
                         "description": "Optional finite initial velocity."
                       }
                     }
                   }
                 ],
-                "description": "Optional exact segment easing; the Core timeline is the one evaluator authority."
+                "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
               }
             },
             "description": "Exact color snapshot for shellx-motion/gradient-color-keyframes@1; each gradient holds 1..32 ordered snapshots."
@@ -30187,7 +30567,63 @@
                   "string",
                   "object"
                 ],
-                "description": "Optional exact Motion easing for the segment starting at this snapshot; Core validates the closed easing form."
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enumRef": "easing",
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+                      }
+                    ],
+                    "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "type",
+                      "stiffness",
+                      "damping"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "spring"
+                        ],
+                        "description": "Closed spring easing type."
+                      },
+                      "stiffness": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Finite positive spring stiffness."
+                      },
+                      "damping": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Finite positive spring damping."
+                      },
+                      "mass": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Optional finite positive spring mass."
+                      },
+                      "initialVelocity": {
+                        "type": "number",
+                        "description": "Optional finite initial velocity."
+                      }
+                    }
+                  }
+                ],
+                "description": "Exact bounded Motion easing. Core remains the single evaluator authority."
               }
             },
             "description": "One complete fixed-topology shape geometry snapshot. It replaces only an equal exact atUs; partial geometry patches and generic keyframe targets are refused."
@@ -31254,7 +31690,8 @@
           },
           "layerPrefix": {
             "type": "string",
-            "description": "Prefix for generated caption layer ids."
+            "maxLength": 123,
+            "description": "Prefix for generated caption layer ids. At most 123 raw code units; Core reserves the generated cue suffix separately."
           },
           "trackId": {
             "type": "string",
@@ -31442,8 +31879,20 @@
           },
           "easing": {
             "type": "string",
-            "enumRef": "easing",
-            "description": "Optional easing for the transition."
+            "maxLength": 256,
+            "oneOf": [
+              {
+                "type": "string",
+                "enumRef": "easing",
+                "maxLength": 256
+              },
+              {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:[cC][uU][bB][iI][cC]-[bB][eE][zZ][iI][eE][rR]\\(\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*,\\s*[-+]?(?:(?:[0-9]{1,16}(?:\\.[0-9]{0,7})?)|(?:\\.[0-9]{1,22}))(?:[eE][-+]?[0-9]{1,5})?\\s*\\)|[sS][tT][eE][pP][sS]\\(\\s*[1-9][0-9]{0,8}\\s*(?:,\\s*(?:[sS][tT][aA][rR][tT]|[eE][nN][dD]|[jJ][uU][mM][pP]-[sS][tT][aA][rR][tT]|[jJ][uU][mM][pP]-[eE][nN][dD])\\s*)?\\))(?![\\s\\S])"
+              }
+            ],
+            "description": "Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units)."
           },
           "direction": {
             "type": "string",

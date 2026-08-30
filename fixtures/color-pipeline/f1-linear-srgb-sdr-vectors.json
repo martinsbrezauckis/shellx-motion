@@ -1,0 +1,33 @@
+{
+  "schema": "shellx-motion/linear-srgb-sdr-vectors@1",
+  "vectors": [
+    {
+      "name": "black-near-black-overlay",
+      "layers": [
+        { "fill": "#000000", "opacity": 1 },
+        { "fill": "#111111", "opacity": 0.5 }
+      ],
+      "expectedStraightSrgb": { "r": 0.03621082989234959, "g": 0.03621082989234959, "b": 0.03621082989234959, "a": 1 },
+      "gammaWrongControl": { "r": 0.03333333333333333, "g": 0.03333333333333333, "b": 0.03333333333333333, "a": 1, "minimumMaxChannelDelta": 0.002 }
+    },
+    {
+      "name": "black-white-highlight",
+      "layers": [
+        { "fill": "#000000", "opacity": 1 },
+        { "fill": "#ffffff", "opacity": 0.25 }
+      ],
+      "expectedStraightSrgb": { "r": 0.5370987304831942, "g": 0.5370987304831942, "b": 0.5370987304831942, "a": 1 },
+      "gammaWrongControl": { "r": 0.25, "g": 0.25, "b": 0.25, "a": 1, "minimumMaxChannelDelta": 0.28 }
+    },
+    {
+      "name": "saturated-semitransparent-overlays",
+      "layers": [
+        { "fill": "#101820", "opacity": 1 },
+        { "fill": "#ff0040", "opacity": 0.4 },
+        { "fill": "#0066ff", "opacity": 0.45 }
+      ],
+      "expectedStraightSrgb": { "r": 0.5082003455349758, "g": 0.27797886762494484, "b": 0.7125341174486, "a": 1 },
+      "gammaWrongControl": { "r": 0.24070588235294121, "g": 0.2110588235294118, "b": 0.5466274509803921, "a": 1, "minimumMaxChannelDelta": 0.26 }
+    }
+  ]
+}

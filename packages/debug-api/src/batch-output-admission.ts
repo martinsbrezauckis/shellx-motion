@@ -1,52 +1,57 @@
-import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { OutputDirectoryReservation, OutputPathTopologyError } from "@shellx-motion/core";
 
 export interface DebugBatchOutputRoots {
   batchOutput: OutputDirectoryReservation;
+  packagesOutput: OutputDirectoryReservation;
+  renderOutput: OutputDirectoryReservation;
+  receiptsOutput: OutputDirectoryReservation;
+  framesOutput?: OutputDirectoryReservation;
   packagesRoot: string;
   renderRoot: string;
   receiptsRoot: string;
   framesRoot: string;
+  /** Recheck the retained batch root and every descendant this batch will read or write. */
+  assertCurrent(): Promise<void>;
 }
 
 export async function prepareDebugBatchOutput(
   outDir: string,
-  options: { resume: boolean; keepFrames?: boolean },
-  retainedResumeOutput?: OutputDirectoryReservation
+  options: { resume: boolean; keepFrames?: boolean }
 ): Promise<DebugBatchOutputRoots | null> {
-  if (retainedResumeOutput && retainedResumeOutput.path !== resolve(outDir)) {
-    throw new OutputPathTopologyError("Retained batch output authority does not match the requested output directory.", outDir);
-  }
-  const batchOutput = retainedResumeOutput ?? await acquireDebugBatchOutput(outDir, options.resume);
+  const batchOutput = await acquireDebugBatchOutput(outDir, options.resume);
   if (!batchOutput) return null;
   const packagesRoot = join(outDir, "packages");
   const renderRoot = join(outDir, "render");
   const receiptsRoot = join(outDir, "receipts");
   const framesRoot = join(outDir, "frames");
   await batchOutput.assertCurrent();
-  await mkdir(packagesRoot, { recursive: true, mode: 0o700 });
+  const packagesOutput = await acquireDebugBatchDescendant(packagesRoot, { resume: options.resume, requireExistingOnResume: true });
   await batchOutput.assertCurrent();
-  await mkdir(renderRoot, { recursive: true, mode: 0o700 });
+  const renderOutput = await acquireDebugBatchDescendant(renderRoot, { resume: options.resume, requireExistingOnResume: true });
   await batchOutput.assertCurrent();
-  await mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
-  if (options.keepFrames) {
-    await batchOutput.assertCurrent();
-    await mkdir(framesRoot, { recursive: true, mode: 0o700 });
-  }
-  return { batchOutput, packagesRoot, renderRoot, receiptsRoot, framesRoot };
-}
-
-/**
- * Reopen an existing batch output for ownership validation without creating any child directory.
- * The returned reservation is then retained through the caller-approved resume write sequence.
- */
-export async function inspectDebugBatchResumeOutput(outDir: string): Promise<OutputDirectoryReservation> {
-  return await OutputDirectoryReservation.acquire(outDir, {
-    allowExistingContents: true,
-    requireExisting: true,
-    requireExclusiveChildAuthority: true
-  });
+  const receiptsOutput = await acquireDebugBatchDescendant(receiptsRoot, { resume: options.resume, requireExistingOnResume: true });
+  const framesOutput = options.keepFrames ? await acquireDebugBatchDescendant(framesRoot, { resume: options.resume, requireExistingOnResume: false }) : undefined;
+  const output = {
+    batchOutput,
+    packagesOutput,
+    renderOutput,
+    receiptsOutput,
+    ...(framesOutput ? { framesOutput } : {}),
+    packagesRoot,
+    renderRoot,
+    receiptsRoot,
+    framesRoot,
+    async assertCurrent(): Promise<void> {
+      await batchOutput.assertCurrent();
+      await packagesOutput.assertCurrent();
+      await renderOutput.assertCurrent();
+      await receiptsOutput.assertCurrent();
+      await framesOutput?.assertCurrent();
+    }
+  } satisfies DebugBatchOutputRoots;
+  await output.assertCurrent();
+  return output;
 }
 
 export function debugBatchOutputTopologyError(error: unknown): OutputPathTopologyError | null {
@@ -63,4 +68,10 @@ async function acquireDebugBatchOutput(outDir: string, resume: boolean): Promise
     if (error instanceof OutputPathTopologyError && error.message === "Output directory must be empty before this operation.") return null;
     throw error;
   }
+}
+
+async function acquireDebugBatchDescendant(path: string, options: { resume: boolean; requireExistingOnResume: boolean }): Promise<OutputDirectoryReservation> {
+  return await OutputDirectoryReservation.acquire(path, options.resume
+    ? { allowExistingContents: true, requirePrivate: true, ...(options.requireExistingOnResume ? { requireExisting: true } : {}) }
+    : { allowExistingContents: false });
 }

@@ -12,6 +12,16 @@ export const GPU_EFFECT_MODULE_PASS_COUNT = 1;
 export const GPU_EFFECT_MODULE_RETAINED_TEXTURE_COUNT = 0;
 export const GPU_EFFECT_MODULE_MAX_ECHOES = 4;
 export const GPU_EFFECT_MODULE_MAX_MANIFEST_BYTES = 16_384;
+/**
+ * Exact effect-module versions are short identifiers, not arbitrary manifest text. This matches
+ * the existing module-id ceiling while leaving ample room for normal prerelease labels.
+ */
+export const MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH = 128;
+/**
+ * The published JSON Schema repeats the exact bounded grammar for standard validators; Core owns
+ * the executable linear parser, and `published-schema-check` dispatches this marker back to it.
+ */
+export const MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN = "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?!0[0-9]+(?:\\.|$))[0-9A-Za-z-]+(?:\\.(?!0[0-9]+(?:\\.|$))[0-9A-Za-z-]+)*)?$";
 
 export interface MotionEffectModuleEcho { dxPx: number; dyPx: number; color: string; opacityQ16: number }
 export interface MotionEffectModuleReference {
@@ -79,10 +89,42 @@ export interface GpuEffectModuleDescriptorFailure { ok: false; message: string; 
 export type GpuEffectModuleDescriptorResolution = GpuEffectModuleDescriptorResult | GpuEffectModuleDescriptorFailure;
 type DerivedDescriptor = Omit<GpuEffectModuleStaticDescriptor, "manifestSha256" | "manifestByteLength" | "registryEntrySha256" | "installationProvenanceSha256" | "pipelineImplementationSha256" | "resourceCeilingSha256" | "descriptorFingerprint">;
 
+/**
+ * Parse the exact package/manifest SemVer subset in one bounded forward pass. Effect modules use
+ * stable versions and prereleases only: leading `v`, build metadata, ranges, and `latest` never
+ * name an installed immutable module.
+ */
+export function isCanonicalMotionEffectModuleVersion(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MOTION_EFFECT_MODULE_VERSION_MAX_LENGTH) return false;
+  let index = 0;
+  const numericIdentifier = (): boolean => {
+    const start = index;
+    while (index < value.length && digit(value.charCodeAt(index))) index += 1;
+    return index > start && !(value.charCodeAt(start) === 48 && index - start > 1);
+  };
+  if (!numericIdentifier() || value[index++] !== "." || !numericIdentifier() || value[index++] !== "." || !numericIdentifier()) return false;
+  if (index === value.length) return true;
+  if (value[index++] !== "-") return false;
+  while (index < value.length) {
+    const start = index;
+    let numeric = true;
+    while (index < value.length && value[index] !== ".") {
+      const code = value.charCodeAt(index);
+      if (!semverIdentifier(code)) return false;
+      if (!digit(code)) numeric = false;
+      index += 1;
+    }
+    if (index === start || (numeric && value.charCodeAt(start) === 48 && index - start > 1)) return false;
+    if (index === value.length) return true;
+    index += 1;
+  }
+  return false;
+}
+
 /** Checks the exact, executable-free package reference before any registry resolution. */
 export function motionEffectModuleReferenceProblem(value: unknown): string | null {
   if (!record(value, ["schema", "moduleId", "version", "parameters"])) return "contains unknown or missing fields";
-  if (value.schema !== MOTION_EFFECT_MODULE_REF_SCHEMA || !moduleId(value.moduleId) || !semver(value.version)) return "has an invalid schema, moduleId, or canonical version";
+  if (value.schema !== MOTION_EFFECT_MODULE_REF_SCHEMA || !moduleId(value.moduleId) || !isCanonicalMotionEffectModuleVersion(value.version)) return "has an invalid schema, moduleId, or canonical version";
   const parameters = value.parameters;
   if (!record(parameters, ["echoes", "amountQ16"]) || !Array.isArray(parameters.echoes) || parameters.echoes.length < 1 || parameters.echoes.length > GPU_EFFECT_MODULE_MAX_ECHOES || !q16(parameters.amountQ16)) return "has invalid bounded parameters";
   for (const echo of parameters.echoes) {
@@ -94,11 +136,11 @@ export function motionEffectModuleReferenceProblem(value: unknown): string | nul
 /** Validates the host-installed, data-only manifest without interpreting any executable payload. */
 export function motionEffectModuleManifestProblem(value: unknown): string | null {
   if (!record(value, ["schema", "moduleId", "version", "displayName", "intrinsic", "rendererAbi", "parameterSchema"])) return "contains unknown or missing fields";
-  return value.schema === MOTION_EFFECT_MODULE_MANIFEST_SCHEMA && moduleId(value.moduleId) && semver(value.version) && displayName(value.displayName) && value.intrinsic === MOTION_AFTERIMAGE_STACK_INTRINSIC && value.rendererAbi === GPU_EFFECT_MODULE_RENDERER_ABI && value.parameterSchema === MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA ? null : "has an invalid closed manifest field";
+  return value.schema === MOTION_EFFECT_MODULE_MANIFEST_SCHEMA && moduleId(value.moduleId) && isCanonicalMotionEffectModuleVersion(value.version) && displayName(value.displayName) && value.intrinsic === MOTION_AFTERIMAGE_STACK_INTRINSIC && value.rendererAbi === GPU_EFFECT_MODULE_RENDERER_ABI && value.parameterSchema === MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA ? null : "has an invalid closed manifest field";
 }
 /** Stable host helpers: no registry path, raw manifest bytes, or operator session crosses this boundary. */
 export function gpuEffectModuleInstallationProvenanceFingerprint(value: GpuEffectModuleInstallationProvenance): string { return canonicalJsonSha256(value); }
-export function gpuEffectModuleInstallationProvenanceProblem(value: unknown): string | null { return !record(value, ["schema", "moduleId", "version", "manifestSha256", "manifestByteLength", "installedAt", "authority"]) || value.schema !== "shellx-motion/effect-module-installation-provenance@1" || !moduleId(value.moduleId) || !semver(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !isoTime(value.installedAt) || value.authority !== "workbench-operator" ? "contains invalid installation provenance" : null; }
+export function gpuEffectModuleInstallationProvenanceProblem(value: unknown): string | null { return !record(value, ["schema", "moduleId", "version", "manifestSha256", "manifestByteLength", "installedAt", "authority"]) || value.schema !== "shellx-motion/effect-module-installation-provenance@1" || !moduleId(value.moduleId) || !isCanonicalMotionEffectModuleVersion(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !isoTime(value.installedAt) || value.authority !== "workbench-operator" ? "contains invalid installation provenance" : null; }
 export function gpuEffectModuleRegistryEntryFingerprint(value: Omit<GpuEffectModuleRegistryEntry, "registryEntrySha256" | "state">): string { return canonicalJsonSha256(value); }
 export function gpuEffectModuleResourceCeilingFingerprint(): string { return canonicalJsonSha256({ intrinsic: MOTION_AFTERIMAGE_STACK_INTRINSIC, rendererAbi: GPU_EFFECT_MODULE_RENDERER_ABI, maxEchoes: GPU_EFFECT_MODULE_MAX_ECHOES, uniformBytes: GPU_EFFECT_MODULE_UNIFORM_BYTES, textureLoadCount: GPU_EFFECT_MODULE_MAX_TEXTURE_LOADS, passCount: GPU_EFFECT_MODULE_PASS_COUNT, retainedTextureCount: GPU_EFFECT_MODULE_RETAINED_TEXTURE_COUNT }); }
 export function gpuEffectModuleRendererIdentityProblem(value: unknown): string | null { return !record(value, ["intrinsic", "rendererAbi", "parameterSchema", "pipelineImplementationSha256"]) || value.intrinsic !== MOTION_AFTERIMAGE_STACK_INTRINSIC || value.rendererAbi !== GPU_EFFECT_MODULE_RENDERER_ABI || value.parameterSchema !== MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA || !sha(value.pipelineImplementationSha256) ? "contains invalid renderer identity" : null; }
@@ -135,7 +177,7 @@ export function resolveGpuEffectModuleDescriptors(motion: MotionDocument, regist
 
 /** Re-admits a static descriptor before it is bound into a frame plan. */
 export function gpuEffectModuleStaticDescriptorProblem(value: unknown): string | null {
-  if (!record(value, descriptorKeys) || !id(value.layerId) || !id(value.drawId) || !id(value.scopeGroupId) || !id(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !semver(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !sha(value.registryEntrySha256) || !sha(value.installationProvenanceSha256) || !sha(value.pipelineImplementationSha256) || value.resourceCeilingSha256 !== gpuEffectModuleResourceCeilingFingerprint() || value.intrinsic !== MOTION_AFTERIMAGE_STACK_INTRINSIC || value.rendererAbi !== GPU_EFFECT_MODULE_RENDERER_ABI || value.parameterSchema !== MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA || !sha(value.referenceFingerprint) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > GPU_EFFECT_MODULE_MAX_ECHOES || !q16(value.amountQ16) || value.uniformBytes !== GPU_EFFECT_MODULE_UNIFORM_BYTES || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== GPU_EFFECT_MODULE_PASS_COUNT || value.retainedTextureCount !== GPU_EFFECT_MODULE_RETAINED_TEXTURE_COUNT || !sha(value.descriptorFingerprint)) return "contains invalid descriptor fields";
+  if (!record(value, descriptorKeys) || !id(value.layerId) || !id(value.drawId) || !id(value.scopeGroupId) || !id(value.scopeGroupDrawId) || !moduleId(value.moduleId) || !isCanonicalMotionEffectModuleVersion(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !sha(value.registryEntrySha256) || !sha(value.installationProvenanceSha256) || !sha(value.pipelineImplementationSha256) || value.resourceCeilingSha256 !== gpuEffectModuleResourceCeilingFingerprint() || value.intrinsic !== MOTION_AFTERIMAGE_STACK_INTRINSIC || value.rendererAbi !== GPU_EFFECT_MODULE_RENDERER_ABI || value.parameterSchema !== MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA || !sha(value.referenceFingerprint) || !Array.isArray(value.echoes) || value.echoes.length < 1 || value.echoes.length > GPU_EFFECT_MODULE_MAX_ECHOES || !q16(value.amountQ16) || value.uniformBytes !== GPU_EFFECT_MODULE_UNIFORM_BYTES || value.textureLoadCount !== value.echoes.length + 1 || value.passCount !== GPU_EFFECT_MODULE_PASS_COUNT || value.retainedTextureCount !== GPU_EFFECT_MODULE_RETAINED_TEXTURE_COUNT || !sha(value.descriptorFingerprint)) return "contains invalid descriptor fields";
   for (const echo of value.echoes) if (!record(echo, ["dxPx", "dyPx", "rgba8", "opacityQ16"]) || !offset(echo.dxPx) || !offset(echo.dyPx) || !rgba8(echo.rgba8) || !q16(echo.opacityQ16)) return "contains an invalid lowered echo";
   return value.descriptorFingerprint === canonicalJsonSha256(descriptorPayload(value as GpuEffectModuleStaticDescriptor)) ? null : "descriptor fingerprint is not canonical";
 }
@@ -191,7 +233,7 @@ function bindingProblem(value: unknown): string | null {
 const descriptorKeys = ["layerId", "drawId", "scopeGroupId", "scopeGroupDrawId", "moduleId", "version", "manifestSha256", "manifestByteLength", "registryEntrySha256", "installationProvenanceSha256", "pipelineImplementationSha256", "resourceCeilingSha256", "intrinsic", "rendererAbi", "parameterSchema", "referenceFingerprint", "echoes", "amountQ16", "uniformBytes", "textureLoadCount", "passCount", "retainedTextureCount", "descriptorFingerprint"];
 function withoutBinding(value: Record<string, unknown> | GpuEffectModuleBinding): Record<string, unknown> { const { bindingFingerprint: _bindingFingerprint, ...descriptor } = value; return descriptor; }
 function sameDescriptor(expected: DerivedDescriptor, binding: Pick<GpuEffectModuleStaticDescriptor, "layerId" | "drawId" | "scopeGroupId" | "scopeGroupDrawId" | "moduleId" | "version" | "intrinsic" | "rendererAbi" | "parameterSchema" | "referenceFingerprint" | "echoes" | "amountQ16" | "uniformBytes" | "textureLoadCount" | "passCount" | "retainedTextureCount">): boolean { return binding.layerId === expected.layerId && binding.drawId === expected.drawId && binding.scopeGroupId === expected.scopeGroupId && binding.scopeGroupDrawId === expected.scopeGroupDrawId && binding.moduleId === expected.moduleId && binding.version === expected.version && binding.intrinsic === expected.intrinsic && binding.rendererAbi === expected.rendererAbi && binding.parameterSchema === expected.parameterSchema && binding.referenceFingerprint === expected.referenceFingerprint && binding.amountQ16 === expected.amountQ16 && binding.uniformBytes === expected.uniformBytes && binding.textureLoadCount === expected.textureLoadCount && binding.passCount === expected.passCount && binding.retainedTextureCount === expected.retainedTextureCount && canonicalJsonSha256(binding.echoes) === canonicalJsonSha256(expected.echoes); }
-function registryProblem(value: unknown): string | null { return !record(value, ["moduleId", "version", "manifestSha256", "manifestByteLength", "registryEntrySha256", "installationProvenanceSha256", "installationProvenance", "intrinsic", "rendererAbi", "parameterSchema", "state"]) || !moduleId(value.moduleId) || !semver(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !sha(value.registryEntrySha256) || !sha(value.installationProvenanceSha256) || gpuEffectModuleInstallationProvenanceProblem(value.installationProvenance) || value.installationProvenance.moduleId !== value.moduleId || value.installationProvenance.version !== value.version || value.installationProvenance.manifestSha256 !== value.manifestSha256 || value.installationProvenance.manifestByteLength !== value.manifestByteLength || value.installationProvenanceSha256 !== gpuEffectModuleInstallationProvenanceFingerprint(value.installationProvenance) || value.intrinsic !== MOTION_AFTERIMAGE_STACK_INTRINSIC || value.rendererAbi !== GPU_EFFECT_MODULE_RENDERER_ABI || value.parameterSchema !== MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA || value.registryEntrySha256 !== gpuEffectModuleRegistryEntryFingerprint(withoutRegistryEntrySha(value as GpuEffectModuleRegistryEntry)) || (value.state !== "active" && value.state !== "revoked") ? "invalid host-derived registry entry" : null; }
+function registryProblem(value: unknown): string | null { return !record(value, ["moduleId", "version", "manifestSha256", "manifestByteLength", "registryEntrySha256", "installationProvenanceSha256", "installationProvenance", "intrinsic", "rendererAbi", "parameterSchema", "state"]) || !moduleId(value.moduleId) || !isCanonicalMotionEffectModuleVersion(value.version) || !sha(value.manifestSha256) || !byteLength(value.manifestByteLength) || !sha(value.registryEntrySha256) || !sha(value.installationProvenanceSha256) || gpuEffectModuleInstallationProvenanceProblem(value.installationProvenance) || value.installationProvenance.moduleId !== value.moduleId || value.installationProvenance.version !== value.version || value.installationProvenance.manifestSha256 !== value.manifestSha256 || value.installationProvenance.manifestByteLength !== value.manifestByteLength || value.installationProvenanceSha256 !== gpuEffectModuleInstallationProvenanceFingerprint(value.installationProvenance) || value.intrinsic !== MOTION_AFTERIMAGE_STACK_INTRINSIC || value.rendererAbi !== GPU_EFFECT_MODULE_RENDERER_ABI || value.parameterSchema !== MOTION_AFTERIMAGE_STACK_PARAMETER_SCHEMA || value.registryEntrySha256 !== gpuEffectModuleRegistryEntryFingerprint(withoutRegistryEntrySha(value as GpuEffectModuleRegistryEntry)) || (value.state !== "active" && value.state !== "revoked") ? "invalid host-derived registry entry" : null; }
 function activeLayers(motion: MotionDocument, atUs: number, targets: ReadonlySet<string>): string[] {
   const byId = new Map(motion.layers.map((layer) => [layer.id, layer])); const owned = new Set(motion.layers.filter((layer) => layer.type === "group").flatMap((layer) => layer.childLayerIds ?? [])); const active: string[] = [];
   const visit = (layer: MotionLayer, parentUs: number, ancestorVisible: boolean): void => { const start = us(layer.startMs), duration = us(layer.durationMs); if (start === null || duration === null || !ancestorVisible || layer.visible === false || parentUs < start || parentUs >= start + duration) return; if (layer.type === "group") for (const child of layer.childLayerIds ?? []) { const value = byId.get(child); if (value) visit(value, parentUs - start, true); } else if (targets.has(layer.id)) active.push(layer.id); };
@@ -225,7 +267,8 @@ function record(value: unknown, keys: readonly string[]): value is Record<string
 function plain(value: unknown): Record<string, any> | null { return typeof value === "object" && value !== null && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) ? value as Record<string, any> : null; }
 function id(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value); }
 function moduleId(value: unknown): value is string { return typeof value === "string" && value.length <= 128 && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+){1,7}$/.test(value); }
-function semver(value: unknown): value is string { return typeof value === "string" && /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$/.test(value); }
+function digit(code: number): boolean { return code >= 48 && code <= 57; }
+function semverIdentifier(code: number): boolean { return digit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 45; }
 function displayName(value: unknown): value is string { return typeof value === "string" && value === value.trim() && value.length >= 1 && value.length <= 96 && !/[\u0000-\u001f\u007f]/.test(value); }
 function offset(value: unknown): value is number { return typeof value === "number" && Number.isInteger(value) && value >= -256 && value <= 256; }
 function q16(value: unknown): value is number { return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 65_535; }

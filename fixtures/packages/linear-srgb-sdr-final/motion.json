@@ -1,0 +1,95 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_linear_srgb_sdr_final",
+  "name": "Linear sRGB SDR Final",
+  "durationMs": 2000,
+  "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "background": "#02040a",
+  "colorPipeline": {
+    "schema": "shellx-motion/color-pipeline@1",
+    "intent": "linear-srgb-sdr@1"
+  },
+  "layers": [
+    {
+      "id": "stage",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#0a1020",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 80, "y": 80, "width": 1120, "height": 560 }
+    },
+    {
+      "id": "near_black",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#010101",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 140, "y": 140, "width": 220, "height": 180 }
+    },
+    {
+      "id": "highlight",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#ffffff",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 390, "y": 140, "width": 220, "height": 180 }
+    },
+    {
+      "id": "cyan_base",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#00d5ff",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 640, "y": 140, "width": 220, "height": 180 }
+    },
+    {
+      "id": "magenta_overlay",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#ff006e",
+      "opacity": 0.55,
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 750, "y": 210, "width": 220, "height": 180 }
+    },
+    {
+      "id": "amber_overlay",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#ffb000",
+      "opacity": 0.35,
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 860, "y": 280, "width": 220, "height": 180 }
+    },
+    {
+      "id": "shadow_patch",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#05080f",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 140, "y": 360, "width": 220, "height": 180 }
+    },
+    {
+      "id": "mid_patch",
+      "type": "shape",
+      "shape": "rect",
+      "fill": "#7f8799",
+      "startMs": 0,
+      "durationMs": 2000,
+      "transform": { "x": 390, "y": 360, "width": 220, "height": 180 }
+    }
+  ],
+  "assets": [],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "linear-srgb-sdr-final-fixture"
+  }
+}

@@ -37,6 +37,7 @@ import {
   type GpuVideoStagingMedia,
   type PreparedGpuVideoFrameStaging
 } from "./gpu-video-frame-staging.js";
+import { safeProducerMessage } from "./streaming-final-adapter-evidence.js";
 
 export interface GpuDeliveryFailure {
   code: string;
@@ -316,11 +317,11 @@ function gpuAudioSourcePaths(input: RenderStreamingFinalInput): string[] {
 
 function gpuDeliveryFailure(error: unknown): GpuDeliveryFailure {
   if (error instanceof GpuSceneResourceError) {
-    return { code: error.code, message: error.message, ...(error.layerId ? { layerId: error.layerId } : {}) };
+    return { code: error.code, message: safeProducerMessage(error.message), ...(error.layerId ? { layerId: error.layerId } : {}) };
   }
   return {
     code: "gpu_video_resource_refused",
-    message: error instanceof Error ? error.message : "GPU video frames could not be staged."
+    message: safeProducerMessage(error instanceof Error ? error.message : "GPU video frames could not be staged.")
   };
 }
 
