@@ -1,4 +1,5 @@
 /** Filesystem mechanics for terminal job records; registry policy stays in job-registry.ts. */
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { motionJobOwnerKey } from "./job-id-file";
@@ -11,7 +12,7 @@ export interface MotionJobRecordFile {
 }
 
 export async function writeMotionJobRecord(root: string, record: MotionJobRecord): Promise<void> {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   await writeJsonAtomic(join(root, motionJobRecordFileName(record.callerId, record.jobId, record.endedAtMs)), record);
 }
 
@@ -77,7 +78,16 @@ export async function pruneMotionJobRecords(
   const aged = files.filter((file) => file.endedAtMs < cutoff);
   const fresh = files.filter((file) => file.endedAtMs >= cutoff)
     .sort((left, right) => right.endedAtMs - left.endedAtMs);
-  await Promise.all([...aged, ...fresh.slice(retentionCount)].map((file) =>
+  const freshByOwner = new Map<string, MotionJobRecordFile[]>();
+  for (const file of fresh) {
+    const record = await readMotionJobRecord(root, file.name);
+    if (!record) continue;
+    const owned = freshByOwner.get(record.callerId) ?? [];
+    owned.push(file);
+    freshByOwner.set(record.callerId, owned);
+  }
+  const overCount = [...freshByOwner.values()].flatMap((owned) => owned.slice(retentionCount));
+  await Promise.all([...aged, ...overCount].map((file) =>
     rm(join(root, file.name), { force: true }).catch(() => {})));
 }
 
@@ -90,7 +100,11 @@ export function isCurrentMotionJobRecordFile(name: string, record: MotionJobReco
 }
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "w" });
-  await rename(temporary, path);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
 }

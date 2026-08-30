@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { motionJobFileKey } from "./job-id-file";
 import type { MotionJobLeaseRecord } from "./job-lease-types";
 import { isMotionJobFrameLane } from "./job-frame-lane";
+import { PrivateMotionRuntimeDirectory } from "./private-runtime-directory";
 
 /** Opaque identity of one live lease run, never exposed by the caller-facing job-status contract. */
 export interface MotionJobLeaseRun {
@@ -40,7 +41,7 @@ export function compareMotionJobLeaseRunNonce(left: string | undefined, right: s
 export async function writeMotionJobLeaseJsonAtomic(path: string, value: unknown, pid: number): Promise<void> {
   const temporary = `${path}.${pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "w" });
+    await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
@@ -135,10 +136,18 @@ function positiveSafeInteger(value: unknown): number | null {
 
 /** Filesystem layout and publication operations for nonce-protected modern lease runs. */
 export class MotionJobLeaseRunStorage {
+  private readonly runtime: PrivateMotionRuntimeDirectory;
+
   constructor(
     private readonly root: string,
     private readonly pid: number
-  ) {}
+  ) {
+    this.runtime = new PrivateMotionRuntimeDirectory(root);
+  }
+
+  async assertCurrent(): Promise<void> {
+    await this.runtime.assertCurrent();
+  }
 
   recordPath(run: MotionJobLeaseRun): string {
     return join(this.directoryPath(run), "lease.json");
@@ -157,11 +166,12 @@ export class MotionJobLeaseRunStorage {
   }
 
   async publish(run: MotionJobLeaseRun, record: unknown): Promise<void> {
+    await this.assertCurrent();
     const directory = this.directoryPath(run);
     const temporary = `${directory}.${this.pid}.${randomUUID()}.tmp`;
     try {
-      await mkdir(temporary);
-      await writeFile(join(temporary, "lease.json"), `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "wx" });
+      await mkdir(temporary, { mode: 0o700 });
+      await writeFile(join(temporary, "lease.json"), `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
       // Publish a complete directory in one rename so readers never see a half-created record.
       await rename(temporary, directory);
     } finally {
@@ -170,11 +180,13 @@ export class MotionJobLeaseRunStorage {
   }
 
   async release(run: MotionJobLeaseRun): Promise<void> {
+    await this.assertCurrent();
     await rm(this.directoryPath(run), { recursive: true, force: true });
   }
 
   /** Read modern and legacy entries, deleting only records that ceased to be live evidence. */
   async readLive<T>(readRecord: (path: string) => Promise<T | null>, isAbandoned: (record: T) => boolean): Promise<T[]> {
+    await this.assertCurrent();
     const entries = await readdir(this.root).catch(() => [] as string[]);
     const live: T[] = [];
     for (const entry of entries) {

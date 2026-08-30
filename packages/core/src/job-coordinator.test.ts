@@ -458,10 +458,10 @@ describe("MotionJobCoordinator", () => {
     const ownerA = "cut:legacy-owner";
     const ownerB = "design-studio:current-owner";
     const endedAtMs = Date.now() - 1_000;
-    await mkdir(join(root, "records"), { recursive: true });
-    await writeFile(join(root, "records", `${motionJobFileKey(jobId)}--${endedAtMs}.job.json`), `${JSON.stringify(terminalRecord(jobId, ownerA, endedAtMs))}\n`);
-    await mkdir(eventsRoot, { recursive: true });
-    await writeFile(join(eventsRoot, `${motionJobFileKey(jobId)}.events.json`), `${JSON.stringify([event(1, "submitted"), event(2, "succeeded")])}\n`);
+    await mkdir(join(root, "records"), { recursive: true, mode: 0o700 });
+    await writeFile(join(root, "records", `${motionJobFileKey(jobId)}--${endedAtMs}.job.json`), `${JSON.stringify(terminalRecord(jobId, ownerA, endedAtMs))}\n`, { mode: 0o600 });
+    await mkdir(eventsRoot, { recursive: true, mode: 0o700 });
+    await writeFile(join(eventsRoot, `${motionJobFileKey(jobId)}.events.json`), `${JSON.stringify([event(1, "submitted"), event(2, "succeeded")])}\n`, { mode: 0o600 });
 
     await expect(jobs.events({ jobId, callerId: ownerA })).resolves.toMatchObject({
       ok: true, value: { events: [expect.objectContaining({ type: "submitted" }), expect.objectContaining({ type: "succeeded" })] }

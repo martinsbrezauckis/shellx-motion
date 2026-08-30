@@ -47,6 +47,36 @@ export interface RetainedDirectoryAuthority {
   assertCurrent(): Promise<void>;
 }
 
+/**
+ * Read-only identity for an existing directory selected earlier in an operation.
+ *
+ * Unlike OutputDirectoryReservation this never creates or adopts output state and does not require
+ * child-write authority. It retains the complete parent route plus the selected directory's own
+ * device/inode identity, so a later consumer cannot turn the original path string into a fresh
+ * filesystem grant by realpathing it again.
+ */
+export class ExistingDirectoryAuthority implements RetainedDirectoryAuthority {
+  private constructor(
+    readonly path: string,
+    private readonly topology: OutputPathTopology,
+    private readonly identity: OutputPathIdentity
+  ) {}
+
+  static async acquire(path: string): Promise<ExistingDirectoryAuthority> {
+    const targetPath = resolve(path);
+    const topology = await OutputPathTopology.inspect(targetPath);
+    const identity = await captureOutputDirectoryIdentity(targetPath, "Existing directory authority");
+    const authority = new ExistingDirectoryAuthority(targetPath, topology, identity);
+    await authority.assertCurrent();
+    return authority;
+  }
+
+  async assertCurrent(): Promise<void> {
+    await this.topology.assertCurrent();
+    await assertOutputDirectoryIdentity(this.path, this.identity, "Existing directory authority");
+  }
+}
+
 export type OutputPathLeafIdentity =
   | { kind: "missing" }
   | { kind: "file" | "directory" | "symlink" | "other"; dev: number; ino: number };

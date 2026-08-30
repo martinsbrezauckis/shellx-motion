@@ -1,6 +1,7 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
+  ExistingDirectoryAuthority,
   loadMotionPackage,
   loadSchema,
   readBoundedStableFile,
@@ -22,7 +23,11 @@ import { HtmlSnippetOutputTransaction } from "./html-snippet-output-transaction.
 export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImportOptions): Promise<HtmlSnippetImportResult> {
   const htmlPath = resolve(options.htmlPath);
   const packageDir = resolve(options.packageDir);
+  // A stable OS alias may be the caller-facing HTML path. Retain the directory it resolved to at
+  // admission, then stage every relative asset from that same identity even if the alias changes.
+  const sourceRootAuthority = await ExistingDirectoryAuthority.acquire(await realpath(dirname(htmlPath)));
 
+  await sourceRootAuthority.assertCurrent();
   const htmlInfo = await lstat(htmlPath);
   if (!htmlInfo.isFile() || htmlInfo.isSymbolicLink()) throw new Error("HTML snippet import requires a regular HTML file.");
   if (htmlInfo.size > MAX_HTML_SNIPPET_BYTES) throw new Error("HTML snippet import source exceeds the 8 MiB limit.");
@@ -32,6 +37,7 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
     withinRoot: dirname(htmlPath),
     allowRootAlias: true,
   });
+  await sourceRootAuthority.assertCurrent();
   const html = htmlSource.bytes.toString("utf8");
   const imported = parseHtmlSnippet(html, { createdBy: options.createdBy ?? "html-adapter" });
   const validation = await validateDocument(await loadSchema("motion"), imported.motion);
@@ -71,7 +77,8 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
   let transaction: HtmlSnippetOutputTransaction | undefined;
   try {
     transaction = await HtmlSnippetOutputTransaction.acquire(packageDir);
-    stagedAssets = await stageHtmlSnippetAssets({ htmlPath, transaction, assetRefs: imported.manifest.assets });
+    stagedAssets = await stageHtmlSnippetAssets({ sourceRootAuthority, transaction, assetRefs: imported.manifest.assets });
+    await sourceRootAuthority.assertCurrent();
     receipt.inputHashes = {
       [htmlPath]: htmlSource.sha256,
       ...Object.fromEntries(stagedAssets.map((asset) => [asset.path, asset.sha256]))
@@ -88,6 +95,7 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
     await transaction.writeFile(imported.manifest.motion, jsonBytes(imported.motion));
     await transaction.writeFile(`receipts/${HTML_SNIPPET_IMPORT_RECEIPT_FILE}`, jsonBytes(receipt));
     await loadMotionPackage(transaction.stagePath);
+    await sourceRootAuthority.assertCurrent();
     await transaction.publish();
   } catch (error) {
     await transaction?.abort().catch(() => undefined);

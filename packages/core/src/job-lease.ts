@@ -31,7 +31,7 @@
  *
  * Dependencies: node:fs only. Primary caller: `LocalMotionJobGovernor` in job-governor.ts.
  */
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
@@ -92,12 +92,19 @@ export interface LeaseClaimResult {
 export function defaultMotionJobLeaseRoot(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.SHELLX_MOTION_LEASE_ROOT?.trim();
   if (explicit) return explicit;
+  return join(defaultMotionRuntimeRoot(env), "job-leases");
+}
+
+/** One verified per-user parent for every default Motion runtime store. */
+export function defaultMotionRuntimeRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.SHELLX_MOTION_RUNTIME_ROOT?.trim();
+  if (explicit) return explicit;
   const xdg = env.XDG_RUNTIME_DIR?.trim();
-  if (xdg) return join(xdg, "shellx-motion", "job-leases");
+  if (xdg) return join(xdg, "shellx-motion");
   const localAppData = env.LOCALAPPDATA?.trim();
-  if (localAppData) return join(localAppData, "shellx-motion", "job-leases");
-  // Namespaced by user so a multi-user machine does not mix leases into one world-writable path.
-  return join(tmpdir(), `shellx-motion-leases-${safeUserToken()}`);
+  if (localAppData) return join(localAppData, "shellx-motion");
+  // Namespaced by user and admitted as a private directory before any child store is used.
+  return join(tmpdir(), `shellx-motion-${safeUserToken()}`);
 }
 
 function safeUserToken(): string {
@@ -166,7 +173,7 @@ export class MotionJobLeaseDirectory {
     const run = input.run ?? mintMotionJobLeaseRun(input.jobId);
     if (run.jobId !== input.jobId || !isMotionJobLeaseRunNonce(run.runNonce)) return null;
     try {
-      await mkdir(this.root, { recursive: true });
+      await this.runs.assertCurrent();
       // Re-announcing a job (pending -> running) must NOT reset its request time. `startedAtMs` is
       // when the job asked for capacity, and `queueWaitMs` is derived as admittedAtMs - startedAtMs;
       // recomputing it on promotion made every live queued job report a queue wait of 0 and a
@@ -298,6 +305,7 @@ export class MotionJobLeaseDirectory {
   async heartbeat(run: MotionJobLeaseRun | string): Promise<void> {
     if (this.degraded) return;
     try {
+      await this.runs.assertCurrent();
       const record = typeof run === "string"
         ? await this.readLegacyLease(run)
         : await this.readRunLease(run);
@@ -324,6 +332,7 @@ export class MotionJobLeaseDirectory {
   async release(run: MotionJobLeaseRun | string): Promise<void> {
     if (this.degraded) return;
     try {
+      await this.runs.assertCurrent();
       if (typeof run === "string") {
         const existing = await this.readLegacyLease(run);
         if (!existing || existing.jobId !== run) return;
@@ -342,6 +351,7 @@ export class MotionJobLeaseDirectory {
 
   /** Live leases held anywhere on this machine by this user, newest reap applied. */
   async readLiveLeases(): Promise<MotionJobLeaseRecord[]> {
+    await this.runs.assertCurrent();
     const cutoff = this.now() - LEASE_STALE_AFTER_MS;
     return this.runs.readLive((path) => readMotionJobLeaseRecord(path, UNATTRIBUTED_CALLER_ID), (record) => record.heartbeatAtMs < cutoff || !this.isProcessAlive(record.pid));
   }
@@ -377,12 +387,14 @@ export class MotionJobLeaseDirectory {
 
   private async readRunLease(run: MotionJobLeaseRun): Promise<MotionJobLeaseRecord | null> {
     if (!isMotionJobLeaseRunNonce(run.runNonce)) return null;
+    await this.runs.assertCurrent();
     const record = await readMotionJobLeaseRecord(this.runs.recordPath(run), UNATTRIBUTED_CALLER_ID);
     return record?.jobId === run.jobId && record.runNonce === run.runNonce ? record : null;
   }
 
   /** Old callers with only a job id can touch old flat records, never a nonce-protected run. */
   private async readLegacyLease(jobId: string): Promise<MotionJobLeaseRecord | null> {
+    await this.runs.assertCurrent();
     const record = await readMotionJobLeaseRecord(this.runs.legacyRecordPath(jobId), UNATTRIBUTED_CALLER_ID);
     return record?.jobId === jobId && record.runNonce === undefined ? record : null;
   }

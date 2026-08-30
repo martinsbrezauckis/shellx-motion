@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { motionJobFailure, motionJobFailureFromException, type MotionJobFailure } from "./job-failure";
 import type { MotionJobFrameLane } from "./job-frame-lane";
 import { MotionJobEventStore, type MotionJobCoordinatorEvent } from "./job-event-store";
-import { MotionJobLeaseDirectory } from "./job-lease";
+import { defaultMotionRuntimeRoot, MotionJobLeaseDirectory } from "./job-lease";
 import { assertMotionJobId, mintMotionJobId, MotionJobRegistry } from "./job-registry";
 import { motionJobOwnerKey } from "./job-id-file";
 import { MotionJobView, type MotionJobStatus } from "./job-view";
@@ -295,8 +295,7 @@ export class MotionJobCoordinator {
 function defaultCoordinatorRoot(): string {
   const explicit = process.env.SHELLX_MOTION_JOB_COORDINATOR_ROOT?.trim();
   if (explicit) return explicit;
-  const runtime = process.env.XDG_RUNTIME_DIR?.trim();
-  return runtime ? join(runtime, "shellx-motion") : ".scratch";
+  return defaultMotionRuntimeRoot();
 }
 
 function failure<T>(code: Exclude<MotionJobCoordinatorResult<T>, { ok: true }> ["code"], message: string): MotionJobCoordinatorResult<T> {

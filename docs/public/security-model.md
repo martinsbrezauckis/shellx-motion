@@ -248,7 +248,8 @@ disabled; a tunnel or reverse proxy would have to add its own authentication and
 host/origin policy. The server:
 
 - requires a capability token (`Authorization: Bearer`, or WebSocket subprotocol)
-  for everything except `GET /health` and the static workbench shell;
+  for everything except `GET /health`, the bounded public challenge at
+  `GET /mcp-bridge/proof`, and the static workbench shell;
 - rejects forged `Host` and unapproved `Origin` values;
 - bounds request and WebSocket size and concurrency;
 - binds the launch tier as a ceiling — a request can drop to a lower tier but
@@ -259,8 +260,10 @@ stores it outside project directories with user-only permissions. The first Work
 it through a one-use launch exchange. Its bootstrap value lives in an owner-only local HTML handoff;
 the OS opener receives only the non-secret `file:` URL, never the value in argv or environment.
 Motion removes the handoff after claim, opener failure, or shutdown, and consumes the value before
-cleanup. The bundled MCP bridge reads the persistent key directly rather than embedding it in agent
-configuration. Advanced direct server launches remain able to use an ephemeral private key file or
+cleanup. The bundled MCP bridge does not read or forward that durable key. It reads an owner-private
+per-start listener record, proves the current listener by random challenge and keyed HMAC, and only
+then sends the per-start credential and MCP body. A stale or rebound listener receives neither.
+Advanced direct server launches remain able to use an ephemeral private key file or
 `SHELLX_MOTION_DEBUG_TOKEN`. Theft of a high-tier key by another local process would grant that
 process Motion's filesystem/render authority — treat the key like any other local secret.
 

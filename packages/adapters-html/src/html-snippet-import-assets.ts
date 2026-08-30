@@ -1,7 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
-import { hashBuffer } from "@shellx-motion/core";
+import { extname, resolve } from "node:path";
+import { hashBuffer, type RetainedDirectoryAuthority } from "@shellx-motion/core";
 import {
   MAX_HTML_ASSET_BYTES,
   MAX_HTML_SVG_BYTES,
@@ -12,11 +12,12 @@ import { HtmlSnippetOutputTransaction, readBoundedDescriptor } from "./html-snip
 
 /** Stage each declared asset from the verified descriptor rather than resolving its path twice. */
 export async function stageHtmlSnippetAssets(input: {
-  htmlPath: string;
+  sourceRootAuthority: RetainedDirectoryAuthority;
   transaction: HtmlSnippetOutputTransaction;
   assetRefs: string[];
 }): Promise<Array<{ path: string; sha256: string; size: number }>> {
-  const sourceRoot = await realpath(dirname(input.htmlPath));
+  await input.sourceRootAuthority.assertCurrent();
+  const sourceRoot = input.sourceRootAuthority.path;
   const staged: Array<{ path: string; sha256: string; size: number }> = [];
   let totalBytes = 0;
   for (const assetRef of input.assetRefs) {
@@ -25,7 +26,7 @@ export async function stageHtmlSnippetAssets(input: {
     if (!pathIsInside(input.transaction.stagePath, destination)) {
       throw new Error(`HTML snippet import asset destination escapes packageDir: ${assetRef}.`);
     }
-    const handle = await openValidatedSnippetAsset(sourceRoot, assetRef, declaredExtension);
+    const handle = await openValidatedSnippetAsset(input.sourceRootAuthority, assetRef, declaredExtension);
     try {
       const info = await handle.stat();
       if (!info.isFile()) throw new Error(`HTML snippet import asset must be a regular file: ${assetRef}.`);
@@ -43,6 +44,7 @@ export async function stageHtmlSnippetAssets(input: {
       } else {
         staged.push({ path: assetRef, ...await input.transaction.copyFromDescriptor(assetRef, handle, info.size, assetRef) });
       }
+      await input.sourceRootAuthority.assertCurrent();
     } finally {
       await handle.close().catch(() => undefined);
     }
@@ -54,7 +56,9 @@ export async function stageHtmlSnippetAssets(input: {
  * Resolve and open one asset once, proving the descriptor is still the canonical in-root regular
  * file whose declared and resolved extensions agree. The caller owns the returned descriptor.
  */
-async function openValidatedSnippetAsset(sourceRoot: string, assetRef: string, declaredExtension: string): Promise<FileHandle> {
+async function openValidatedSnippetAsset(sourceAuthority: RetainedDirectoryAuthority, assetRef: string, declaredExtension: string): Promise<FileHandle> {
+  await sourceAuthority.assertCurrent();
+  const sourceRoot = sourceAuthority.path;
   const sourceCandidate = resolve(sourceRoot, ...assetRef.split("/"));
   const sourcePath = await realpath(sourceCandidate).catch(() => {
     throw new Error(`HTML snippet import asset is missing: ${assetRef}.`);
@@ -79,6 +83,7 @@ async function openValidatedSnippetAsset(sourceRoot: string, assetRef: string, d
     }
     const recheckPath = await realpath(sourceCandidate);
     const recheckInfo = await lstat(recheckPath);
+    await sourceAuthority.assertCurrent();
     if (recheckPath !== sourcePath
       || !pathIsInside(sourceRoot, recheckPath)
       || recheckInfo.dev !== opened.dev

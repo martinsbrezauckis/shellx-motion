@@ -42,6 +42,7 @@ describe("installed MCP stdio bridge", () => {
     let rebound: Server | undefined;
     let sawDurableBearer = false;
     let sawPerStartBridgeCredential = false;
+    let sawMcpRequestBody = false;
     try {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "before-crash", method: "tools/list", params: {} })}\n`);
       expect(await responses.next()).toMatchObject({ id: "before-crash", result: { tools: expect.any(Array) } });
@@ -51,6 +52,7 @@ describe("installed MCP stdio bridge", () => {
       rebound = createServer((request, response) => {
         sawDurableBearer ||= typeof request.headers.authorization === "string";
         sawPerStartBridgeCredential ||= typeof request.headers["x-shellx-motion-mcp-bridge-credential"] === "string";
+        sawMcpRequestBody ||= request.method === "POST";
         response.writeHead(503, { "content-type": "application/json" });
         response.end(`${JSON.stringify({ jsonrpc: "2.0", id: "stale", error: { code: -32000, message: "unavailable" } })}\n`);
       });
@@ -59,7 +61,8 @@ describe("installed MCP stdio bridge", () => {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "stale", method: "tools/list", params: {} })}\n`);
       expect(await responses.next()).toMatchObject({ id: "stale", error: { code: -32000 } });
       expect(sawDurableBearer).toBe(false);
-      expect(sawPerStartBridgeCredential).toBe(true);
+      expect(sawPerStartBridgeCredential).toBe(false);
+      expect(sawMcpRequestBody).toBe(false);
 
       await close(rebound);
       rebound = undefined;

@@ -3,6 +3,16 @@
 This changelog describes user-facing capability. Internal checkpoints and detailed remediation
 history remain in the private roadmap and release evidence.
 
+## 0.2.66 — 2026-08-30
+
+- Added gradient authoring for supported closed Browser shapes, including deterministic linear-light
+  interpolation and strict WebGPU evidence for the promoted path.
+- Added a strict linear-sRGB SDR final-output vertical with explicit color admission, GPU production,
+  FFmpeg delivery metadata, and fail-closed behavior when a lane cannot preserve the contract.
+- Added discoverable counted and bulk layer authoring through one bounded package transaction while
+  preserving the existing singular layer commands.
+- Bugfixes.
+
 ## 0.2.65 — 2026-08-28
 
 - Added a self-describing Motion-to-Cut connector contract with runtime discovery, generic job

@@ -811,15 +811,16 @@ principal. A non-coordinator compatibility render may remain unattributed when n
 is configured, but it cannot gain coordinator controls from that fallback.
 
 - **Live jobs** — `$XDG_RUNTIME_DIR/shellx-motion/job-leases` (`%LOCALAPPDATA%`
-  on Windows, or a per-user temp path). Overridable with
+  on Windows, or an owner-private per-user temp path). The shared default parent is overridable
+  with `SHELLX_MOTION_RUNTIME_ROOT`; leases alone remain overridable with
   `SHELLX_MOTION_LEASE_ROOT`.
 - **Finished jobs** — `.../job-records`, overridable with
-  `SHELLX_MOTION_JOB_RECORD_ROOT`, retained for 7 days or 1000 jobs, whichever
-  binds first.
+  `SHELLX_MOTION_JOB_RECORD_ROOT`, retained for 7 days or 1000 jobs per authenticated owner,
+  whichever binds first for that owner.
 - **Coordinator events** — `.../job-events`, under
   `SHELLX_MOTION_JOB_COORDINATOR_ROOT` when set, otherwise
-  `$XDG_RUNTIME_DIR/shellx-motion/job-events` (or `.scratch/job-events` without an
-  XDG runtime). Each job has an atomic ordered JSON event snapshot.
+  the same owner-private per-user runtime parent. Each job has an atomic ordered JSON event
+  snapshot. Motion refuses pre-created shared-write state instead of adopting it.
 
 Live leases and terminal records are generic best-effort reporting: a compatibility render may
 finish even if that reporting storage later degrades. Coordinator submission is stricter: Motion
