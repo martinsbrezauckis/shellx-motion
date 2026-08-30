@@ -56,6 +56,24 @@ normalized source, and lowering-receipt hashes. SDK artifact handles carry the m
 is source-revision evidence, not a claim that the whole package directory was atomically snapshotted
 or that a preview-only receipt became a final-delivery receipt.
 
+### Portable review and support bundles
+
+A portable review bundle takes filesystem receipts through a Core-bound stable snapshot: an approved
+root-relative path, digest, byte length, and opened-file identity. Core reopens and verifies the
+snapshot itself, uses its private receipt copy while composing the bundle, and rechecks the exact
+receipt and package identities immediately before publication. A changed, replaced, or mismatched
+input refuses publication rather than producing a bundle from mixed evidence.
+
+Each copied review artifact records `producerIdentity`. It is `producer_verified` only when the
+receipt-provided producer SHA-256, and any producer byte length when provided, match the digest and length
+observed while streaming the portable copy. Older or otherwise digest-unbound artifacts remain
+`unattested`; their observed digest and length are still recorded, but they are not renderer-bound
+evidence. A producer mismatch or a source mutation during copying refuses publication.
+
+With `motion.support.bundle` and a package root, the package summary and support receipt use one
+loader-owned document-hash snapshot. Motion reloads the package documents immediately before it
+publishes; a changed document returns `source_changed` and leaves no support bundle published.
+
 ### Typography evidence
 
 For browser-drawn generated MotionIR text, `output.typography` records Chromium as

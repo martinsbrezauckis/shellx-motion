@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeReviewBundle } from "./review-bundle";
+import { reviewBundleInputHashes } from "./review-bundle-receipt-data";
 import { OutputDirectoryReservation } from "./output-path-topology";
 
 const fixtureRoot = resolve("../../fixtures/packages/lower-third");
@@ -536,6 +537,49 @@ describe("review bundle", () => {
       ]));
       expect(inputHashes["receipt:render.receipt.json"]).toBeUndefined();
       expect(inputHashes["receipt:batch-a/render.receipt.json"]).not.toBe(inputHashes["receipt:batch-b/render.receipt.json"]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses duplicate receipt input identities instead of overwriting one hash", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-duplicate-receipt-"));
+    const receiptPath = join(tempRoot, "render.receipt.json");
+    try {
+      await writeFile(
+        receiptPath,
+        `${JSON.stringify({
+          schema: "shellx-motion/receipt@1",
+          id: "render-final-duplicate",
+          operation: "render.final",
+          status: "passed",
+          packageId: "pkg_lower_third",
+          inputHashes: {},
+          createdAt: "2026-07-01T12:00:00.000Z",
+          lane: "ffmpeg",
+          output: {},
+          warnings: []
+        }, null, 2)}\n`,
+        "utf8"
+      );
+      const receipt = {
+        schema: "shellx-motion/receipt@1" as const,
+        id: "render-final-duplicate",
+        operation: "render.final",
+        status: "passed" as const,
+        packageId: "pkg_lower_third",
+        inputHashes: {},
+        createdAt: "2026-07-01T12:00:00.000Z",
+        lane: "ffmpeg",
+        output: {},
+        warnings: []
+      };
+
+      await expect(reviewBundleInputHashes(undefined, [
+        { path: receiptPath, relativePath: "batch/render.receipt.json", receipt },
+        { path: receiptPath, relativePath: "batch/render.receipt.json", receipt }
+      ]))
+        .rejects.toThrow(/duplicate review bundle receipt input identity/i);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

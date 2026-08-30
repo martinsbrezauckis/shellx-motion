@@ -21,6 +21,7 @@ import {
   readReviewBundleReceiptEntries,
   reviewBundleInputHashes
 } from "./review-bundle-receipt-data";
+import { exactReviewBundleReceiptEntries } from "./review-bundle-stable-receipts";
 import {
   isFailedReviewQualityGateSummary,
   renderReviewQualityGateCell,
@@ -36,11 +37,14 @@ import type {
 } from "./review-bundle-types";
 
 export { readReviewBundleReceiptEntries } from "./review-bundle-receipt-data";
+export { bindStableReviewBundleReceiptEntries } from "./review-bundle-stable-receipts";
 export type {
+  BoundReviewBundleReceiptEntry,
   ReviewBundleCopiedArtifact,
   ReviewBundleOmittedArtifact,
   ReviewBundleReceiptEntry,
   ReviewBundleResult,
+  StableReviewBundleReceiptInput,
   WriteReviewBundleInput
 } from "./review-bundle-types";
 
@@ -57,7 +61,9 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
   try {
     const packageId = pkg?.manifest.id ?? "workspace";
     const createdAt = input.createdAt ?? new Date().toISOString();
-    const receiptEntries = input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot) : []);
+    const receiptEntries = exactReviewBundleReceiptEntries(
+      input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot) : [])
+    );
     // The cap applies to every receipt-controlled review path, including an HTML-only caller that
     // elected not to copy artifacts. It is a hard publication boundary, not an omission policy.
     boundedReviewArtifactAttributions(receiptEntries);
@@ -177,7 +183,16 @@ function createReviewBundleReceipt(input: {
   const hash = canonicalJsonSha256({
     packageId: input.packageId,
     receiptIds: [...Object.keys(input.inputHashes)].sort(compareCodeUnits),
-    copied: input.copiedArtifacts.map((artifact) => artifact.sha256),
+    copied: input.copiedArtifacts.map((artifact) => ({
+      receiptId: artifact.receiptId,
+      role: artifact.role,
+      relativePath: artifact.relativePath,
+      producerIdentity: artifact.producerIdentity,
+      observedSha256: artifact.observedSha256,
+      observedByteLength: artifact.observedByteLength,
+      ...(artifact.expectedProducerSha256 ? { expectedProducerSha256: artifact.expectedProducerSha256 } : {}),
+      ...(artifact.expectedProducerByteLength !== undefined ? { expectedProducerByteLength: artifact.expectedProducerByteLength } : {})
+    })),
     // Joined into the identity only when present: a clean bundle keeps the id it had before
     // omissions existed, while a bundle that had to withhold an artifact must not impersonate
     // the identity of its complete counterpart.
@@ -201,6 +216,9 @@ function createReviewBundleReceipt(input: {
       packageId: input.packageId,
       receiptCount: input.receiptCount,
       copiedArtifactCount: input.copiedArtifacts.length,
+      // These are portable relative-path/leaf-name records, never source host paths. They preserve
+      // both the receipt-producer expectation and the bytes observed while this bundle was built.
+      copiedArtifactIdentities: input.copiedArtifacts.map(portableCopiedArtifactIdentity),
       omittedArtifactCount: input.omittedArtifacts.length,
       // The omission list rides in output (not artifacts[]) because ReceiptArtifact entries need
       // a path, and the only honest paths here are host paths the portable receipt must not leak.
@@ -210,6 +228,21 @@ function createReviewBundleReceipt(input: {
     },
     artifacts,
     warnings: []
+  };
+}
+
+function portableCopiedArtifactIdentity(artifact: ReviewBundleCopiedArtifact): Record<string, unknown> {
+  return {
+    role: artifact.role,
+    sourceName: artifact.sourceName,
+    path: artifact.relativePath,
+    receiptId: artifact.receiptId,
+    operation: artifact.operation,
+    producerIdentity: artifact.producerIdentity,
+    observedSha256: artifact.observedSha256,
+    observedByteLength: artifact.observedByteLength,
+    ...(artifact.expectedProducerSha256 ? { expectedProducerSha256: artifact.expectedProducerSha256 } : {}),
+    ...(artifact.expectedProducerByteLength !== undefined ? { expectedProducerByteLength: artifact.expectedProducerByteLength } : {})
   };
 }
 
@@ -357,6 +390,9 @@ function artifactCard(artifact: ReviewBundleCopiedArtifact): string {
     ${preview}
     <h3>${escapeHtml(artifact.role)}</h3>
     <p class="muted">${escapeHtml(artifact.operation)} / ${escapeHtml(artifact.sourceName)}</p>
+    <p class="muted">${artifact.producerIdentity === "producer_verified"
+      ? "Producer SHA-256 verified against the streamed bundle copy."
+      : "Unattested: the receipt did not bind this artifact to a producer SHA-256."}</p>
     <p><a href="${href}">Open artifact</a></p>
   </article>`;
 }

@@ -264,11 +264,13 @@ configuration. Advanced direct server launches remain able to use an ephemeral p
 `SHELLX_MOTION_DEBUG_TOKEN`. Theft of a high-tier key by another local process would grant that
 process Motion's filesystem/render authority — treat the key like any other local secret.
 
-Workbench provider setup also treats the child boundary explicitly: it resolves the selected
-allowlisted provider from absolute PATH entries to a canonical executable, revalidates that exact
-target immediately before execution, and passes a filtered environment without Motion's bearer or
-ambient credential capabilities. The provider CLI performs its own normal configuration in place;
-Motion neither reads nor copies provider authentication material.
+Workbench provider setup also treats the child boundary explicitly. On POSIX, the built-in Claude
+Code and Grok providers ignore empty and relative `PATH` entries during health, retain the canonical
+absolute executable's device/inode identity, and execute the prompt through a rechecked retained
+descriptor. Windows uses its documented canonical-target and fixed PowerShell-wrapper path.
+Motion passes a filtered environment without Motion's bearer or ambient credential capabilities; the
+provider CLI performs its own normal configuration in place, and Motion neither reads nor copies
+provider authentication material.
 
 Attested render reuse has a separate private producer key. Motion uses it to authenticate a
 root-bound HMAC proof for each public reuse descriptor; output media, receipts, descriptors, and
@@ -314,14 +316,19 @@ transport boundary and covered by regression tests:
   redact before persistence if provider execution crosses the deadline. Copies exported before
   the deadline are explicitly outside this promise.
 - **Portable review bundles copy only what resolves inside an approved root.**
-  A receipt-referenced artifact outside the approved roots becomes an explicit
-  omission carrying its role and reason — never a silent copy of a host path the
-  reviewer was not meant to see, and never a silently missing file. Serialized
-  review receipts use bundle-relative paths and portable leaf names; immediate
-  local results keep their absolute published paths. One bundle accepts at most
-  1,024 artifact attributions and copies at most 256 canonical sources, 4 GiB per
-  source and 16 GiB aggregate. A limit breach or a source that changes while it is
-  copied aborts publication instead of producing a partial public bundle.
+  Core reopens each stable-reader receipt snapshot itself, retaining the approved
+  root-relative identity, digest, byte length, and file identity rather than trusting
+  a mutable caller entry. It substitutes that private snapshot when rendering the
+  review and rechecks the exact receipt/package identities immediately before
+  publication; a replacement, mutation, or changed input refuses the bundle. A
+  receipt-referenced artifact outside the approved roots becomes an explicit omission
+  carrying its role and reason — never a silent copy of a host path the reviewer was
+  not meant to see, and never a silently missing file. Serialized review receipts use
+  bundle-relative paths and portable leaf names; immediate local results keep their
+  absolute published paths. One bundle accepts at most 1,024 artifact attributions
+  and copies at most 256 canonical sources, 4 GiB per source and 16 GiB aggregate. A
+  limit breach or a source that changes while it is copied aborts publication instead
+  of producing a partial public bundle.
 
 ## What `push_remote` refusal means
 

@@ -7,6 +7,33 @@ export interface ReviewBundleReceiptEntry {
   receipt: OperationReceipt;
 }
 
+/** How strongly one copied attribution is bound to the receipt-producing renderer. */
+export type ReviewBundleProducerIdentity = "producer_verified" | "unattested";
+
+/**
+ * Stable facts produced by a host-owned receipt reader. Core reopens and verifies these facts
+ * before it grants the resulting entry its private snapshot authority.
+ */
+export interface StableReviewBundleReceiptInput {
+  readonly path: string;
+  readonly receipt: OperationReceipt;
+  readonly snapshot: {
+    readonly sha256: string;
+    readonly byteLength: number;
+    readonly identity: { readonly dev: number; readonly ino: number };
+  };
+}
+
+declare const boundReviewBundleReceiptEntryBrand: unique symbol;
+
+/**
+ * Returned only by Core's stable-receipt admission. The brand is compile-time opaque and the
+ * actual root, relative identity, digest, and opened-file identity remain private in Core.
+ */
+export interface BoundReviewBundleReceiptEntry extends ReviewBundleReceiptEntry {
+  readonly [boundReviewBundleReceiptEntryBrand]: never;
+}
+
 export interface ReviewBundleCopiedArtifact {
   role: string;
   sourceName: string;
@@ -16,7 +43,18 @@ export interface ReviewBundleCopiedArtifact {
   primary?: boolean;
   receiptId: string;
   operation: string;
+  /** Backward-compatible alias for the bytes observed while the bundle streamed this source. */
   sha256: string;
+  /** SHA-256 observed while the bundle streamed this source into its staged portable copy. */
+  observedSha256: string;
+  /** Byte count observed while the bundle streamed this source into its staged portable copy. */
+  observedByteLength: number;
+  /** Renderer-provided output SHA-256, when this attribution matched that output path. */
+  expectedProducerSha256?: string;
+  /** Renderer-provided output byte length, when that receipt carried one. */
+  expectedProducerByteLength?: number;
+  /** `producer_verified` only after a validated expected SHA-256 matched the streamed bytes. */
+  producerIdentity: ReviewBundleProducerIdentity;
 }
 
 export interface ReviewBundleOmittedArtifact {

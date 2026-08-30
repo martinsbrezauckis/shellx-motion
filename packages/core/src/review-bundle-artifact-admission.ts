@@ -1,13 +1,17 @@
-import { createWriteStream, constants as fsConstants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { mkdir, realpath, rename, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import {
   artifactCandidates,
   hasProtocolScheme
 } from "./review-bundle-receipt-data";
+import {
+  assertCompatibleProducerIdentity,
+  assertObservedProducerIdentity,
+  expectedProducerIdentityFor,
+  openApprovedArtifact,
+  type OpenApprovedArtifact,
+  type ReviewBundleArtifactAdmissionHooks
+} from "./review-bundle-artifact-integrity";
 import type {
   ReviewBundleCopiedArtifact,
   ReviewBundleOmittedArtifact,
@@ -37,12 +41,6 @@ interface PendingSource {
   firstAttribution: PendingAttribution;
   opened: OpenApprovedArtifact;
   attributions: PendingAttribution[];
-}
-
-interface OpenApprovedArtifact {
-  size: number;
-  copyAndHash: (targetPath: string) => Promise<string>;
-  close: () => Promise<void>;
 }
 
 /**
@@ -76,7 +74,8 @@ export async function copyReviewArtifacts(
   entries: ReviewBundleReceiptEntry[],
   outDir: string,
   approvedRoots: string[],
-  retainedAuthorities: WriteReviewBundleInput["artifactRootAuthorities"] = []
+  retainedAuthorities: WriteReviewBundleInput["artifactRootAuthorities"] = [],
+  hooks: ReviewBundleArtifactAdmissionHooks = {}
 ): Promise<{ copiedArtifacts: ReviewBundleCopiedArtifact[]; omittedArtifacts: ReviewBundleOmittedArtifact[] }> {
   const copied: ReviewBundleCopiedArtifact[] = [];
   const omitted: ReviewBundleOmittedArtifact[] = [];
@@ -138,6 +137,7 @@ export async function copyReviewArtifacts(
       const attribution: PendingAttribution = { entry, artifact, sourcePath };
       const existing = pendingSources.get(canonicalSource);
       if (existing) {
+        assertCompatibleProducerIdentity(existing.attributions, attribution);
         existing.attributions.push(attribution);
         continue;
       }
@@ -148,7 +148,7 @@ export async function copyReviewArtifacts(
       let opened: OpenApprovedArtifact;
       await assertRetainedAuthorities(retainedAuthorities);
       try {
-        opened = await openApprovedArtifact(canonicalSource);
+        opened = await openApprovedArtifact(canonicalSource, hooks);
       } catch {
         omission("unreadable_source", reviewArtifactSourceName(sourcePath));
         continue;
@@ -184,15 +184,18 @@ export async function copyReviewArtifacts(
       const temporaryPath = join(outDir, "artifacts", `.review-bundle-${stagedFileIndex++}.part`);
       try {
         await assertRetainedAuthorities(retainedAuthorities);
-        const digest = await source.opened.copyAndHash(temporaryPath);
+        const observed = await source.opened.copyAndHash(temporaryPath);
         await assertRetainedAuthorities(retainedAuthorities);
+        const expectedSourceIdentity = expectedProducerIdentityFor(source.attributions);
+        assertObservedProducerIdentity(expectedSourceIdentity, observed);
         // Display names stay receipt-declared so reviewers see familiar names. Every attribution
         // of this canonical source uses this one relative bundle file.
         const fileName = safeFileName(reviewArtifactSourceName(sourcePath) || `${artifact.role}${extname(sourcePath)}`);
-        const relativePath = `artifacts/${safeToken(artifact.role)}-${digest.slice(0, 12)}-${fileName}`;
+        const relativePath = `artifacts/${safeToken(artifact.role)}-${observed.sha256.slice(0, 12)}-${fileName}`;
         const targetPath = join(outDir, ...relativePath.split("/"));
         await rename(temporaryPath, targetPath);
         for (const attribution of source.attributions) {
+          const expectedAttributionIdentity = expectedProducerIdentityFor([attribution]);
           copied.push({
             role: attribution.artifact.role,
             sourceName: reviewArtifactSourceName(attribution.sourcePath),
@@ -202,7 +205,12 @@ export async function copyReviewArtifacts(
             ...(attribution.artifact.primary ? { primary: attribution.artifact.primary } : {}),
             receiptId: attribution.entry.receipt.id,
             operation: attribution.entry.receipt.operation,
-            sha256: digest
+            sha256: observed.sha256,
+            observedSha256: observed.sha256,
+            observedByteLength: observed.byteLength,
+            ...(expectedAttributionIdentity.expectedProducerSha256 ? { expectedProducerSha256: expectedAttributionIdentity.expectedProducerSha256 } : {}),
+            ...(expectedAttributionIdentity.expectedProducerByteLength !== undefined ? { expectedProducerByteLength: expectedAttributionIdentity.expectedProducerByteLength } : {}),
+            producerIdentity: expectedAttributionIdentity.expectedProducerSha256 ? "producer_verified" : "unattested"
           });
         }
       } finally {
@@ -230,65 +238,6 @@ export function boundedReviewArtifactAttributions(entries: ReviewBundleReceiptEn
 
 async function assertRetainedAuthorities(authorities: WriteReviewBundleInput["artifactRootAuthorities"]): Promise<void> {
   for (const authority of authorities ?? []) await authority.assertCurrent();
-}
-
-/**
- * Opens an approved artifact once and returns its retained descriptor, descriptor size, and a
- * single-pass copy-and-hash operation. The caller checks size/count/aggregate caps before asking
- * this object to read any bytes.
- *
- * `O_NOFOLLOW` (a no-op on Windows, where the constant is undefined and the bitwise OR coerces it
- * to 0) plus the dev/ino comparison against an `lstat` of the same canonical path rejects a
- * symlink or regular-file swap landing between the caller's `realpath` containment check and this
- * open. Mirrors the identity re-verification `hashFile` already performs.
- *
- * @param canonicalSource Realpath-resolved, root-bound path of the artifact to ship.
- * @returns `size` from the retained descriptor, `copyAndHash` (stream it once to a target path
- *   while calculating its sha256), and `close` (release the descriptor; the caller must always
- *   call it).
- * @throws When the path cannot be opened as the same regular file it was checked as.
- */
-async function openApprovedArtifact(
-  canonicalSource: string
-): Promise<OpenApprovedArtifact> {
-  const linkInfo = await lstat(canonicalSource);
-  if (!linkInfo.isFile() || linkInfo.isSymbolicLink()) throw new Error("Review bundle artifact must be a regular file.");
-  const handle = await open(canonicalSource, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== linkInfo.dev || opened.ino !== linkInfo.ino) {
-      throw new Error("Review bundle artifact changed before it could be read.");
-    }
-    return {
-      size: opened.size,
-      copyAndHash: async (targetPath: string) => {
-        const hash = createHash("sha256");
-        const hashAndCopy = new Transform({
-          transform(chunk, _encoding, callback) {
-            hash.update(chunk as Buffer);
-            callback(null, chunk);
-          }
-        });
-        const source = opened.size === 0
-          ? Readable.from([])
-          : handle.createReadStream({ start: 0, end: opened.size - 1, autoClose: false });
-        await pipeline(
-          source,
-          hashAndCopy,
-          createWriteStream(targetPath, { flags: "wx" })
-        );
-        const after = await handle.stat();
-        if (!after.isFile() || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size) {
-          throw new Error("Review bundle artifact changed while it was copied.");
-        }
-        return hash.digest("hex");
-      },
-      close: async () => { await handle.close().catch(() => undefined); }
-    };
-  } catch (error) {
-    await handle.close().catch(() => undefined);
-    throw error;
-  }
 }
 
 function formatBytes(bytes: number): string {
