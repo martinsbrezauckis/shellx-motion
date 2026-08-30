@@ -7,6 +7,8 @@ import { dispatchWorkspacePackageAssetImport, type WorkspacePackageAssetImportSe
 import { dispatchWorkspaceSupportCommand, type WorkspaceSupportServices } from "./workspace-support.js";
 import { validateWorkspacePackage } from "./workspace-validation.js";
 import type { WorkspaceReceiptEntry } from "./workspace-types.js";
+import { acquireConfiguredAuthoringInputRootAuthority } from "./authoring-root-policy.js";
+import { acquireTrustedReceiptsRootAuthority } from "./receipts-root-policy.js";
 
 export type { WorkspaceReceiptEntry } from "./workspace-types.js";
 
@@ -29,7 +31,13 @@ export interface WorkspaceDomainServices extends WorkspacePackagePatchServices, 
   summarizeReceiptsPanel?: (entries: WorkspaceReceiptEntry[], limit: number) => Record<string, unknown>;
   archivePackage?: (input: { packageRoot: string; archivePath: string; receiptPath?: string }) => Promise<WorkspaceArchiveResult>;
   extractPackage?: (input: { archivePath: string; packageRoot: string; receiptPath?: string }) => Promise<WorkspaceExtractResult>;
-  writeReviewBundle?: (input: { packageRoot?: string; receiptsRoot?: string; receipts?: ReviewBundleReceiptEntry[]; artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
+  writeReviewBundle?: (input: { packageRoot?: string; packageRootAuthority?: RetainedDirectoryAuthority; receiptsRoot?: string; receiptsRootAuthority?: RetainedDirectoryAuthority; receipts?: ReviewBundleReceiptEntry[]; artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[]; outDir: string; title?: string }) => Promise<WorkspaceReviewBundleResult>;
+  /** True only for arguments crossing an external or prompt caller boundary. */
+  callerSteeredFilesystemAuthority?: boolean;
+  authoringInputRoots?: string[];
+  scratchRoot?: string;
+  operatorReceiptRoots?: string[];
+  isPathInsideTrustedRoot?: (root: string, path: string) => Promise<boolean>;
   /**
    * Extra directories the HOST approved for review-bundle artifact copying. Never read from args:
    * see `artifactRoots` on MotionDebugContext for why a caller must not supply its own approvals.
@@ -188,9 +196,26 @@ async function reviewHtmlBundle(args: unknown, services: WorkspaceDomainServices
   if (!outDir) return invalidArgs("motion.review.html.bundle requires outDir.");
   if (!services.writeReviewBundle) return capabilityUnavailable("Motion review bundle writing is unavailable.");
   try {
+    const packageRootAuthority = packageRoot && services.callerSteeredFilesystemAuthority
+      ? await acquireConfiguredAuthoringInputRootAuthority(
+        packageRoot,
+        services.authoringInputRoots,
+        "motion.review.html.bundle packageRoot"
+      )
+      : undefined;
+    const receiptsRootAuthority = receiptsRoot && services.callerSteeredFilesystemAuthority
+      ? await acquireTrustedReceiptsRootAuthority("motion.review.html.bundle", receiptsRoot, {
+        ...(services.receiptsRoot ? { receiptsRoot: services.receiptsRoot } : {}),
+        ...(services.scratchRoot ? { scratchRoot: services.scratchRoot } : {}),
+        ...(services.operatorReceiptRoots ? { operatorReceiptRoots: services.operatorReceiptRoots } : {}),
+        ...(services.isPathInsideTrustedRoot ? { isPathInsideTrustedRoot: services.isPathInsideTrustedRoot } : {})
+      })
+      : undefined;
     const result = await services.writeReviewBundle({
       ...(packageRoot ? { packageRoot } : {}),
+      ...(packageRootAuthority ? { packageRootAuthority } : {}),
       ...(receiptsRoot ? { receiptsRoot } : {}),
+      ...(receiptsRootAuthority ? { receiptsRootAuthority } : {}),
       ...(services.artifactRoots && services.artifactRoots.length > 0 ? { artifactRoots: services.artifactRoots } : {}),
       ...(services.artifactRootAuthorities && services.artifactRootAuthorities.length > 0
         ? { artifactRootAuthorities: services.artifactRootAuthorities }

@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { arch, hostname, platform, release } from "node:os";
 import { fileURLToPath } from "node:url";
 import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
@@ -326,7 +326,39 @@ function resolveMotionCodecTools(repoRoot) {
 /** Env-or-PATH resolution in Motion's own vocabulary, for the no-workspace fallback path. */
 function motionToolFallback(envName, command) {
   const override = process.env[envName]?.trim();
-  return override ? { executable: override, source: "override" } : { executable: command, source: "path" };
+  const executable = locateTrustedCodecExecutable(override || command);
+  return executable
+    ? { executable, source: override ? "override" : "path" }
+    : { executable: missingCodecExecutable(command), source: override ? "override" : "path", problem: "trusted executable not found" };
+}
+
+function locateTrustedCodecExecutable(command) {
+  const value = String(command || "").trim();
+  const candidates = [];
+  if (isAbsolute(value)) candidates.push(value);
+  else if (value && !value.includes("/") && !value.includes("\\")) {
+    const fileName = platform() === "win32" ? `${value}.exe` : value;
+    for (const rawEntry of String(process.env.PATH || "").split(delimiter)) {
+      const entry = rawEntry.trim().replace(/^"|"$/gu, "");
+      if (entry && isAbsolute(entry)) candidates.push(join(entry, fileName));
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      const lexical = lstatSync(candidate);
+      if (platform() === "win32" && lexical.isSymbolicLink()) continue;
+      const canonical = realpathSync.native(candidate);
+      const target = lstatSync(canonical);
+      if (target.isFile() && (platform() === "win32" || (target.mode & 0o111) !== 0)) return canonical;
+    } catch {
+      // Continue through absolute candidates only.
+    }
+  }
+  return null;
+}
+
+function missingCodecExecutable(command) {
+  return platform() === "win32" ? `C:\\__shellx_motion_missing__\\${command}.exe` : `/__shellx_motion_missing__/${command}`;
 }
 
 /**

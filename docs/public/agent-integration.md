@@ -177,7 +177,9 @@ Archive/extract, review/support bundle and tracking-request commands use host au
 path role too: package/archive sources are inputs, created package/archive/review destinations and
 explicit receipt files are outputs, and support delivery remains host-owned scratch. The check is
 performed before package loading, media analysis or destination creation, including through the
-server SDK. Package-browser and template-catalog aliases and root arrays are checked entry by entry;
+server SDK. Caller-steered review package/receipt roots and HTML import source directories retain
+their admitted directory identity through publication, so a later path-alias replacement is not
+re-admitted. Package-browser and template-catalog aliases and root arrays are checked entry by entry;
 a template-root grant is catalog/plan authority, not a general package or render grant.
 
 - The server binds loopback only. Direct non-loopback binding is disabled; a
@@ -192,9 +194,10 @@ a template-root grant is catalog/plan authority, not a general package or render
   `shellx-motion-token.<token>` subprotocols.
 - The bundled `shellx-motion-mcp` stdio bridge is the local-only exception: it reads an
   owner-private, per-start listener record, authenticates the current listener with a random
-  challenge and keyed HMAC, and only then sends the per-start credential and MCP body. It never
-  forwards the durable Bearer capability. A stale or rebound listener receives neither credential
-  nor request body; this does not isolate another process running as the same OS user.
+  challenge and keyed HMAC, and sends the per-start credential and MCP body only on that same TCP
+  connection. Its input frames are capped at 1 MB and the public proof body is streamed under a
+  4 KiB cap. It never forwards the durable Bearer capability. A stale or rebound listener receives
+  neither credential nor request body; this does not isolate another process running as the same OS user.
 - Everything except `GET /health`, the bounded `GET /mcp-bridge/proof` challenge,
   and the static workbench shell requires authentication. The server also rejects forged `Host` and unapproved `Origin`
   values and bounds request/WebSocket size and concurrency.

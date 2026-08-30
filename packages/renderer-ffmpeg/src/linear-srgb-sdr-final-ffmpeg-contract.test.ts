@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalJsonSha256 } from "@shellx-motion/core";
 import type { FfmpegCommand, FfmpegRunner } from "./index.js";
@@ -16,8 +17,9 @@ import {
 describe("strict linear-sRGB SDR FFmpeg contract", () => {
   it("pins one exact output-free zscale/libx264 capability exercise", () => {
     const command = linearSrgbSdrFinalFfmpegPreflightCommand();
-    expect(command).toEqual({
-      executable: "ffmpeg",
+    expect(isAbsolute(command.executable)).toBe(true);
+    expect(command.executable).toMatch(/(?:^|[\\/])ffmpeg(?:\.exe)?$/iu);
+    expect(command).toMatchObject({
       shell: false,
       args: [
         "-hide_banner", "-v", "error", "-nostdin",

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MotionPackage } from "@shellx-motion/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,12 +24,14 @@ describe("GPU video frame staging", () => {
     await writeFile(join(root, "assets", "clip.mp4"), "bounded-video-fixture", { mode: 0o600 });
     const pkg = videoPackage(root);
     pkg.motion.layers[0]!.includeAudio = true;
-    const configuredFfmpeg = join(root, "configured-ffmpeg-not-path");
+    const configuredFfmpegPath = join(root, "configured-ffmpeg-not-path");
+    await writeFile(configuredFfmpegPath, "test executable, never spawned\n", { mode: 0o700 });
+    const configuredFfmpeg = await realpath(configuredFfmpegPath);
     vi.stubEnv("SHELLX_MOTION_FFMPEG", configuredFfmpeg);
     const commands: FfmpegCommand[] = []; let rawPath = "";
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 1_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 1_000);
       const outputPath = command.args.at(-1)!;
       if (outputPath.endsWith(".rgba")) {
         rawPath = outputPath;
@@ -47,7 +49,7 @@ describe("GPU video frame staging", () => {
     expect(decode.args).toEqual(expect.arrayContaining(["-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-frames:v", "2", "-f", "rawvideo"]));
     expect(prepared.inputHashes["assets/clip.mp4"]).toMatch(/^[a-f0-9]{64}$/);
     expect([...prepared.mediaSnapshots.values()][0]?.path.startsWith(stagingRoot.stagingRoot)).toBe(true);
-    const probe = commands.find((command) => command.executable === "ffprobe")!;
+    const probe = commands.find(isImmutableMediaProbe)!;
     const snapshotPath = probe.args[probe.args.indexOf("-i") + 1]!;
     expect(probe).toMatchObject({ shell: false });
     expect(probe.args).toEqual(expect.arrayContaining(["-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", snapshotPath]));
@@ -98,7 +100,7 @@ describe("GPU video frame staging", () => {
     let decodeIndex = 0;
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 1_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 1_000);
       const frameCount = Number(command.args[command.args.indexOf("-frames:v") + 1]);
       await writeFile(command.args.at(-1)!, Buffer.alloc(8 * frameCount, ++decodeIndex), { mode: 0o600 });
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -130,7 +132,7 @@ describe("GPU video frame staging", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 2_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 2_000);
       const output = command.args.at(-1)!;
       await writeFile(output, output.endsWith(".rgba")
         ? Buffer.alloc(8 * Number(command.args[command.args.indexOf("-frames:v") + 1]))
@@ -157,7 +159,7 @@ describe("GPU video frame staging", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 1_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 1_000);
       const output = command.args.at(-1)!;
       await writeFile(output, Buffer.alloc(16), { mode: 0o600 });
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -181,11 +183,13 @@ describe("GPU video frame staging", () => {
     pkg.motion.layers[0] = { ...pkg.motion.layers[0]!, assetId: "clip_asset", assetRef: undefined, includeAudio: true };
     pkg.motion.layers.unshift({ id: "hidden-scene", type: "group", visible: false, startMs: 0, durationMs: 1_000, childLayerIds: ["clip"] });
     const commands: FfmpegCommand[] = [];
-    const configuredFfmpeg = join(root, "configured-ffmpeg-hidden-audio-not-path");
+    const configuredFfmpegPath = join(root, "configured-ffmpeg-hidden-audio-not-path");
+    await writeFile(configuredFfmpegPath, "test executable, never spawned\n", { mode: 0o700 });
+    const configuredFfmpeg = await realpath(configuredFfmpegPath);
     vi.stubEnv("SHELLX_MOTION_FFMPEG", configuredFfmpeg);
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 1_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 1_000);
       await writeFile(command.args.at(-1)!, Buffer.from("RIFF-hidden-video-pcm"), { mode: 0o600 });
       return { exitCode: 0, stdout: "", stderr: "" };
     };
@@ -300,12 +304,12 @@ describe("GPU video frame staging", () => {
     const commands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       commands.push(command);
-      if (command.executable === "ffprobe") return successfulProbe(2, 1, 1_000);
+      if (isImmutableMediaProbe(command)) return successfulProbe(2, 1, 1_000);
       throw new Error("decoder must not run after aggregate budget refusal");
     };
     const preflight = await staging(root, bytes + 15);
     await expect(prepareGpuVideoFrameStaging({ pkg, runner, preflight })).rejects.toThrow("aggregate operation budget");
-    expect(commands.filter((command) => command.executable === "ffprobe")).toHaveLength(1);
+    expect(commands.filter(isImmutableMediaProbe)).toHaveLength(1);
     expect(commands.filter((command) => command.args.at(-1)?.endsWith(".rgba") || command.args.at(-1)?.endsWith(".wav"))).toHaveLength(0);
     await expect(readdir(preflight.stagingRoot)).resolves.toEqual([]);
   });
@@ -317,7 +321,7 @@ describe("GPU video frame staging", () => {
     await writeFile(join(root, "assets", "clip.mp4"), "bounded-video-fixture", { mode: 0o600 });
     const pkg = videoPackage(root);
     const preflight = await staging(root);
-    const runner: FfmpegRunner = async (command) => command.executable === "ffprobe"
+    const runner: FfmpegRunner = async (command) => isImmutableMediaProbe(command)
       ? successfulProbe(2, 1, 1_000)
       : { exitCode: 1, stdout: "", stderr: "" };
     await expect(prepareGpuVideoFrameStaging({ pkg, runner, preflight })).rejects.toThrow("decoder failed");
@@ -334,7 +338,7 @@ describe("GPU video frame staging", () => {
     const invalidPreflight = await staging(root);
     let decoderCalls = 0;
     const invalidRunner: FfmpegRunner = async (command) => {
-      if (command.executable === "ffprobe") return { exitCode: 0, stdout: "not json", stderr: "" };
+      if (isImmutableMediaProbe(command)) return { exitCode: 0, stdout: "not json", stderr: "" };
       decoderCalls += 1;
       return { exitCode: 0, stdout: "", stderr: "" };
     };
@@ -344,7 +348,7 @@ describe("GPU video frame staging", () => {
 
     const mismatchPreflight = await staging(root);
     mismatchPreflight.media = [{ assetRef: "assets/clip.mp4", width: 3, height: 1 }];
-    await expect(prepareGpuVideoFrameStaging({ pkg, runner: async (command) => command.executable === "ffprobe" ? successfulProbe(2, 1, 1_000) : { exitCode: 0, stdout: "", stderr: "" }, preflight: mismatchPreflight })).rejects.toThrow("does not match test media facts");
+    await expect(prepareGpuVideoFrameStaging({ pkg, runner: async (command) => isImmutableMediaProbe(command) ? successfulProbe(2, 1, 1_000) : { exitCode: 0, stdout: "", stderr: "" }, preflight: mismatchPreflight })).rejects.toThrow("does not match test media facts");
     await expect(readdir(mismatchPreflight.stagingRoot)).resolves.toEqual([]);
   });
 
@@ -358,7 +362,7 @@ describe("GPU video frame staging", () => {
     const controller = new AbortController();
     let decodes = 0;
     const runner: FfmpegRunner = async (command) => {
-      if (command.executable === "ffprobe") {
+      if (isImmutableMediaProbe(command)) {
         controller.abort(new Error("test GPU video staging abort"));
         return successfulProbe(2, 1, 1_000);
       }
@@ -370,6 +374,10 @@ describe("GPU video frame staging", () => {
     await expect(readdir(preflight.stagingRoot)).resolves.toEqual([]);
   });
 });
+
+function isImmutableMediaProbe(command: FfmpegCommand): boolean {
+  return command.args.includes("-show_streams") && command.args.includes("-show_format");
+}
 
 async function staging(root: string, maxBytes?: number): Promise<{ stagingRoot: string; media?: Array<{ assetRef: string; width: number; height: number }>; authority: { path: string; assertCurrent(): Promise<void> }; maxBytes?: number }> {
   const stagingRoot = join(root, `gpu-staging-${stagingNumber++}`);

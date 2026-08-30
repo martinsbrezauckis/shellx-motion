@@ -5,6 +5,7 @@ import type {
   PackageManifest,
   ReceiptArtifact
 } from "@shellx-motion/core";
+import type { RetainedDirectoryAuthority } from "@shellx-motion/core";
 
 export interface HtmlSnippetExportOptions {
   packageRoot: string;
@@ -36,6 +37,8 @@ export interface HtmlSnippetExportResult {
 export interface HtmlSnippetImportOptions {
   htmlPath: string;
   packageDir: string;
+  /** Host-retained source directory identity; never package or command data. */
+  sourceRootAuthority?: RetainedDirectoryAuthority;
   createdAt?: string;
   createdBy?: string;
 }

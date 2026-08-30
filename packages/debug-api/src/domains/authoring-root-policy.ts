@@ -1,5 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { ExistingDirectoryAuthority, type RetainedDirectoryAuthority } from "@shellx-motion/core";
 
 interface ApprovedRoot {
   lexical: string;
@@ -75,6 +76,41 @@ export async function assertConfiguredAuthoringInputFile(
     if (error instanceof AuthoringRootPolicyError) throw error;
     throw new AuthoringRootPolicyError(message);
   }
+}
+
+/** Capture the already-approved input directory identity for a later trusted consumer. */
+export async function acquireConfiguredAuthoringInputRootAuthority(
+  path: string,
+  roots: string[] | undefined,
+  subject = "Authoring input directory",
+): Promise<RetainedDirectoryAuthority> {
+  await assertConfiguredAuthoringInputRoot(path, roots, subject);
+  const lexical = resolve(path);
+  const authority = await ExistingDirectoryAuthority.acquire(await realpath(lexical));
+  await assertConfiguredAuthoringInputRoot(path, roots, subject);
+  if (resolve(await realpath(lexical)) !== resolve(authority.path)) {
+    throw new AuthoringRootPolicyError(`${subject} changed after admission.`);
+  }
+  await authority.assertCurrent();
+  return authority;
+}
+
+/** Capture the canonical parent of one approved input file for adapter-relative asset reads. */
+export async function acquireConfiguredAuthoringInputFileDirectoryAuthority(
+  path: string,
+  roots: string[] | undefined,
+  subject = "Authoring input file",
+): Promise<RetainedDirectoryAuthority> {
+  await assertConfiguredAuthoringInputFile(path, roots, subject);
+  const lexical = resolve(path);
+  const canonicalFile = await realpath(lexical);
+  const authority = await ExistingDirectoryAuthority.acquire(dirname(canonicalFile));
+  await assertConfiguredAuthoringInputFile(path, roots, subject);
+  if (resolve(dirname(await realpath(lexical))) !== resolve(authority.path)) {
+    throw new AuthoringRootPolicyError(`${subject} directory changed after admission.`);
+  }
+  await authority.assertCurrent();
+  return authority;
 }
 
 /** Enforce a host-configured output boundary for existing or not-yet-created directories. */

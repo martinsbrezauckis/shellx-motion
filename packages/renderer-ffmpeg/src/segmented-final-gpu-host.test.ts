@@ -45,7 +45,7 @@ describe("strict GPU segmented host refusal", () => {
         maxProcessTreeRssBytes: 512 * 1024 * 1024,
         runner: async (command) => {
           commands.push(command);
-          if (command.executable === "ffprobe") {
+          if (command.args.includes("-show_streams") && command.args.includes("-show_format")) {
             return {
               exitCode: 0,
               stdout: JSON.stringify({ streams: [{ codec_type: "video", width: 16, height: 16, duration: "1" }], format: { duration: "1" } }),
@@ -97,7 +97,7 @@ describe("strict GPU segmented host refusal", () => {
 
       expect(prepared.producer.identity.videoStaging).toMatchObject({ ledgerSha256: expect.stringMatching(/^[a-f0-9]{64}$/), pcmSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
       expect(prepared.audio.audio).toMatchObject({ layerId: "clip", receiptPath: join(assets, "clip.mp4"), path: expect.stringMatching(/\.wav$/) });
-      expect(commands.filter((command) => command.executable === "ffmpeg")).toHaveLength(1);
+      expect(commands.filter((command) => command.args.at(-1)?.endsWith(".wav"))).toHaveLength(1);
       expect(commands.some((command) => command.args.at(-1)?.endsWith(".rgba"))).toBe(false);
       expect(closed).toBe(1);
 

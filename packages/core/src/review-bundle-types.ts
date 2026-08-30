@@ -108,7 +108,11 @@ export interface ReviewBundleResult {
 
 export interface WriteReviewBundleInput {
   packageRoot?: string;
+  /** Host-retained identity captured when a caller-steered package root was admitted. */
+  packageRootAuthority?: RetainedDirectoryAuthority;
   receiptsRoot?: string;
+  /** Host-retained identity captured when a caller-steered receipts root was admitted. */
+  receiptsRootAuthority?: RetainedDirectoryAuthority;
   receipts?: ReviewBundleReceiptEntry[];
   outDir: string;
   title?: string;

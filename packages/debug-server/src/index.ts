@@ -272,6 +272,7 @@ function publishedDebugContracts(security: Pick<MotionDebugServerSecurityContext
   return DEBUG_COMMAND_CONTRACTS;
 }
 const MCP_PROTOCOL_VERSION = MCP_LEGACY_PROTOCOL_VERSION;
+const WORKBENCH_BOOTSTRAP_HEADER = "x-shellx-motion-workbench-bootstrap";
 export async function startMotionDebugServer(options: MotionDebugServerOptions = {}): Promise<MotionDebugServerHandle> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 0;
@@ -542,14 +543,11 @@ async function handleRequest(
     }
 
     // Start Motion exchanges a one-use URL-fragment value after the page clears it; ordinary URLs
-    // still connect manually, and a consumed/incorrect launch value cannot be replayed.
+    // still connect manually, and a consumed/incorrect launch value cannot be replayed. The token
+    // is a bounded header so an unauthenticated slow body never occupies the global request pool.
     if (request.method === "POST" && path === "/workbench/bootstrap") {
-      if (!hasJsonContentType(request)) {
-        writeJson(response, 415, debugServerError("unsupported_media_type", "Workbench bootstrap requires application/json."));
-        return;
-      }
-      const payload = await readJsonBody(request) as { bootstrap?: unknown };
-      const bootstrap = typeof payload.bootstrap === "string" ? payload.bootstrap : "";
+      const supplied = request.headers[WORKBENCH_BOOTSTRAP_HEADER];
+      const bootstrap = typeof supplied === "string" ? supplied : "";
       if (!security.workbenchBootstrapToken
         || !bootstrap
         || !secureTokenEqual(bootstrap, security.workbenchBootstrapToken)) {
@@ -1230,7 +1228,7 @@ async function handleWebSocketFrame(
 function setBaseHeaders(response: ServerResponse, allowedOrigin: string | null): void {
   if (allowedOrigin) response.setHeader("access-control-allow-origin", allowedOrigin);
   response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-  response.setHeader("access-control-allow-headers", "authorization, content-type, accept, mcp-protocol-version, mcp-method, mcp-name");
+  response.setHeader("access-control-allow-headers", "authorization, content-type, accept, mcp-protocol-version, mcp-method, mcp-name, x-shellx-motion-workbench-bootstrap");
   response.setHeader("cache-control", "no-store");
   response.setHeader("vary", "Origin");
   response.setHeader("x-content-type-options", "nosniff");

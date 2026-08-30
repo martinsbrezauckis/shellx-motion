@@ -171,15 +171,15 @@ describe("renderStreamingFinal", () => {
     const processCommands: FfmpegCommand[] = [];
     const runner: FfmpegRunner = async (command) => {
       runnerCommands.push(command);
-      if (command.executable === "ffprobe" && command.args.includes("stream=width,height")) {
+      if (command.args.includes("stream=width,height")) {
         return { exitCode: 0, stdout: JSON.stringify({ streams: [{ width: 16, height: 16 }] }), stderr: "" };
       }
       const target = command.args.at(-1) ?? "";
-      if (command.executable === "ffmpeg" && target.endsWith(".wav")) {
+      if (target.endsWith(".wav")) {
         await writeFile(target, Buffer.from("RIFF-immutable-pcm-wave"), { mode: 0o600 });
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (command.executable === "ffprobe" && command.args.includes("-show_streams")) {
+      if (command.args.includes("-show_streams")) {
         return {
           exitCode: 0,
           stdout: JSON.stringify({
@@ -205,7 +205,7 @@ describe("renderStreamingFinal", () => {
       video: null,
       videoStaging: { ledger: { plannedRgbaBytes: 0, plannedPcmBytes: expect.any(Number) } }
     } } } });
-    expect(runnerCommands.filter((command) => command.executable === "ffmpeg")).toHaveLength(1);
+    expect(runnerCommands.filter((command) => command.args.at(-1)?.endsWith(".wav"))).toHaveLength(1);
     expect(runnerCommands.some((command) => command.args.at(-1)?.endsWith(".rgba"))).toBe(false);
     const encode = processCommands.at(-1)!;
     expect(encode.args).toEqual(expect.arrayContaining(["-protocol_whitelist", "file", "-format_whitelist", "wav"]));
@@ -235,7 +235,7 @@ describe("renderStreamingFinal", () => {
     await writeFile(motionPath, `${JSON.stringify(motion)}\n`);
     const outputPath = join(root, "gpu-invalid-probe.mp4");
     let processStarts = 0;
-    const invalidProbe: FfmpegRunner = async (command) => command.executable === "ffprobe"
+    const invalidProbe: FfmpegRunner = async (command) => command.args.includes("-show_streams")
       ? { exitCode: 0, stdout: "not JSON", stderr: "" }
       : { exitCode: 0, stdout: "", stderr: "" };
     const result = await renderStreamingFinal({

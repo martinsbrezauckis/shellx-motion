@@ -58,11 +58,12 @@ or that a preview-only receipt became a final-delivery receipt.
 
 ### Portable review and support bundles
 
-A portable review bundle takes filesystem receipts through a Core-bound stable snapshot: an approved
-root-relative path, digest, byte length, and opened-file identity. Core reopens and verifies the
-snapshot itself, uses its private receipt copy while composing the bundle, and rechecks the exact
-receipt and package identities immediately before publication. A changed, replaced, or mismatched
-input refuses publication rather than producing a bundle from mixed evidence.
+A portable review bundle retains the admitted package and receipt directory identities and takes
+filesystem receipts through a Core-bound stable snapshot: an approved root-relative path, digest,
+byte length, and opened-file identity. Core reopens and verifies the snapshot itself, uses its
+private receipt copy while composing the bundle, and rechecks the exact roots, receipt, and package
+identities immediately before publication. A changed, replaced, or mismatched input refuses
+publication rather than producing a bundle from mixed evidence.
 
 Each copied review artifact records `producerIdentity`. It is `producer_verified` only when the
 receipt-provided producer SHA-256, and any producer byte length when provided, match the digest and length

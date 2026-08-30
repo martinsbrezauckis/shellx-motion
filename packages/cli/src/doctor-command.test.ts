@@ -193,9 +193,8 @@ describe("CLI and MCP agree on the same machine", () => {
     expect((mcp.result as Record<string, any>).satisfied).toBe(cli.satisfied);
   }, 120_000);
 
-  it("agrees when FFprobe is deliberately absent", async () => {
-    // The override is the same one a user with a non-standard install would set; nothing is
-    // uninstalled. This is the case that used to have no representation at all on either surface.
+  it("agrees when an FFprobe override is invalid", async () => {
+    // An explicit unusable pin is a broken configuration, distinct from an uninstalled PATH tool.
     const previous = process.env.SHELLX_MOTION_FFPROBE;
     process.env.SHELLX_MOTION_FFPROBE = "/nonexistent/shellx-motion-test/ffprobe";
     try {
@@ -206,7 +205,7 @@ describe("CLI and MCP agree on the same machine", () => {
       expect(cli.satisfied).toBe(false);
       expect((mcp.result as Record<string, any>).satisfied).toBe(false);
       const ffprobe = cli.requirements.tools.find((tool: { tool: string }) => tool.tool === "ffprobe");
-      expect(ffprobe).toMatchObject({ status: "missing", source: "override" });
+      expect(ffprobe).toMatchObject({ status: "broken", source: "override" });
       // Encoding is unaffected: whatever this machine could render before, it still can — only the
       // readback is gone. Asserted relative to the same machine's baseline rather than pinned to
       // `satisfied:true`, because a CI host with no browser is legitimately not render-ready.

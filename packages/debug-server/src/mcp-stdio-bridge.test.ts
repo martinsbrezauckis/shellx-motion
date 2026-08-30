@@ -246,16 +246,12 @@ describe("installed MCP stdio bridge", () => {
       await initializeBridge(owner, ownerResponses, "owner-initialize");
       await initializeBridge(other, otherResponses, "other-initialize");
 
-      owner.stdin.write(`${JSON.stringify(toolCall("submit", "motion_job_submit", {
+      owner.stdin.write(`${JSON.stringify({ ...toolCall("submit", "motion_job_submit", {
         jobId,
         packageRoot: RENDER_PACKAGE_ROOT,
         outputPath: join(parent, "missing-motion-output.mp4"),
         preset: "mp4-h264"
-      }))}\n`);
-      expect(await ownerResponses.next()).toMatchObject({
-        id: "submit",
-        result: { isError: false, structuredContent: { ok: true, command: "motion.job.submit", result: { jobId } } }
-      });
+      }), id: undefined })}\n`);
 
       owner.stdin.write(`${JSON.stringify(toolCall("owner-get", "motion_job_get", { jobId }))}\n`);
       expect(await ownerResponses.next()).toMatchObject({
@@ -280,6 +276,27 @@ describe("installed MCP stdio bridge", () => {
         id: "other-list",
         result: { isError: false, structuredContent: { ok: true, result: { jobCount: 0, jobs: [] } } }
       });
+
+      // Notifications intentionally have no acknowledgement. Cancel through the same owner-bound
+      // connection, then wait until the submitted worker is terminal before removing its events.
+      owner.stdin.write(`${JSON.stringify(toolCall("owner-cancel", "motion_job_cancel", {
+        jobId,
+        reason: "stdio notification test teardown"
+      }))}\n`);
+      expect(await ownerResponses.next()).toMatchObject({
+        id: "owner-cancel",
+        result: { isError: false, structuredContent: { ok: true } }
+      });
+      let ended = false;
+      for (let attempt = 0; attempt < 500 && !ended; attempt += 1) {
+        owner.stdin.write(`${JSON.stringify(toolCall(`owner-settle-${attempt}`, "motion_job_get", { jobId }))}\n`);
+        const response = await ownerResponses.next() as {
+          result?: { structuredContent?: { result?: { job?: { lifecycle?: unknown } } } };
+        };
+        ended = response.result?.structuredContent?.result?.job?.lifecycle === "ended";
+        if (!ended) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(ended).toBe(true);
     } finally {
       // The bridge keeps coordinator ownership on upgraded sockets; server shutdown must end those
       // sockets itself rather than waiting for each stdio process to exit first.

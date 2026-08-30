@@ -40,7 +40,10 @@ memory and retain their existing 8 MiB SVG-specific ceiling. Its parser permits 
 attributes and 64 CSS declarations for an element, 64,128 of each across the document, 64 KiB of
 attribute/style string materialization for an element, and 8 MiB in aggregate. Lossiness output is
 also bounded to 2,048 findings and 768 KiB of serialized finding/warning data. These are refusal
-limits; they do not expand the supported HTML/CSS subset or make the lowering lossless.
+limits; they do not expand the supported HTML/CSS subset or make the lowering lossless. For a
+caller-steered import, Motion retains the admitted source-directory identity through relative-asset
+staging and final package publication; replacing the path alias refuses rather than adopting new
+source bytes.
 
 ## Canvas and scripted-video inputs
 
@@ -74,8 +77,9 @@ Every admitted source is a regular file opened with no-follow semantics and chec
 identity before and after the read. Canvas assets are hashed from those admitted bytes, copied from
 those same bytes into an exclusive no-follow destination, and then re-read and re-hashed before
 they are considered published. Symlinked source parents, package parents, and destinations are
-refused. Inline scripted-video content stays in memory; it is never first written to a caller's
-`scriptPath`.
+refused. HTML imports additionally keep relative assets under the originally admitted source
+directory identity through publication. Inline scripted-video content stays in memory; it is never
+first written to a caller's `scriptPath`.
 
 ## Caller and executable identity
 

@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep, win32 } from "no
 import { promisify } from "node:util";
 import { packageRenderLineageInputHashes, validatePackageRenderLineage, type PackageRenderLineage } from "./package-render-lineage";
 import { childEnvironment } from "./child-environment";
+import { resolveTrustedExecutable } from "./trusted-executable";
 import type { OperationReceipt } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -320,14 +321,12 @@ export function artifactProbeChildEnvironment(source: NodeJS.ProcessEnv = proces
   return childEnvironment({ source });
 }
 
-export function resolveArtifactFfprobeExecutable(
-  options: { ffprobePath?: string; env?: NodeJS.ProcessEnv } = {}
-): string {
-  const configured = options.ffprobePath?.trim()
-    || (options.env ?? process.env).SHELLX_MOTION_FFPROBE?.trim()
-    || "ffprobe";
-  if (configured.includes("\0")) throw new Error("artifact ffprobe executable path must not contain null bytes");
-  return configured;
+export function resolveArtifactFfprobeExecutable(options: { ffprobePath?: string; env?: NodeJS.ProcessEnv } = {}): string {
+  const env = options.env ?? process.env;
+  const override = options.ffprobePath?.trim() || env.SHELLX_MOTION_FFPROBE?.trim();
+  const resolution = resolveTrustedExecutable({ toolName: "ffprobe", ...(override ? { override } : {}), env });
+  if (!resolution.executable) throw new Error(`artifact ${resolution.problem ?? "ffprobe executable is unavailable"}`);
+  return resolution.executable;
 }
 
 async function canonicalExistingRootFile(rootInput: string, fileInput: string, label: string): Promise<{ root: string; path: string; rootRelativePath: string }> {

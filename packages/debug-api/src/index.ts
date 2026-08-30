@@ -370,6 +370,8 @@ export interface MotionDebugContext extends DebugAgentScriptHostContext, DebugHo
    * one level up, so this arrives only from host configuration.
    */
   artifactRoots?: string[]; artifactRootAuthorities?: readonly RetainedDirectoryAuthority[];
+  /** Internal marker set only when command arguments crossed a caller boundary. */
+  callerSteeredFilesystemAuthority?: boolean;
   /** Trusted host-only cap/policy evidence for materialized final-render frame sequences. */
   materializedFrameSequencePreflight?: MaterializedFrameSequencePreflightOptions;
 }
@@ -486,7 +488,7 @@ export async function dispatchCallerSteeredCommand(command: MotionDebugCommand, 
   const renderPathRefusal = await refuseUntrustedCallerRenderPaths(command, args, context);
   if (renderPathRefusal) return renderPathRefusal;
   const packageAuthoringRefusal = await refuseUntrustedCallerPackageAuthoring(command, args, context); if (packageAuthoringRefusal) return packageAuthoringRefusal;
-  return dispatchDebugCommand(command, args, context);
+  return dispatchDebugCommand(command, args, { ...context, callerSteeredFilesystemAuthority: true });
 }
 
 export { callerSuppliedReceiptsRoot } from "./caller-boundary.js";
@@ -680,13 +682,14 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     summarizeReceiptsPanel: receiptsPanelSummary,
     listPlatformReceiptEntries: readPlatformReceiptEntries,
     summarizePlatformReceipt: platformReceiptSummary,
-    isPathInsideTrustedRoot,
+    isPathInsideTrustedRoot, callerSteeredFilesystemAuthority: context.callerSteeredFilesystemAuthority === true,
     archivePackage: writeMotionPackageArchive,
     extractPackage: extractMotionPackageArchive,
     writeReviewBundle: async (input) => input.receiptsRoot
       ? await writeReviewBundleFromStableReceipts(input, await receiptOwnershipAccess(context).list(input.receiptsRoot))
       : await writeReviewBundle(input),
     ...(context.artifactRoots ? { artifactRoots: context.artifactRoots } : {}), ...(context.artifactRootAuthorities ? { artifactRootAuthorities: context.artifactRootAuthorities } : {}),
+    operatorReceiptRoots: context.operatorReceiptRoots,
     scriptedPackageWriter: writeScriptedMotionPackage,
     htmlSnippetExporter: writeHtmlSnippetExport,
     htmlSnippetImporter: importHtmlSnippetToMotionPackage,

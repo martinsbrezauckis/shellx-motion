@@ -48,7 +48,7 @@ describe("review bundle", () => {
         receiptsRoot,
         outDir,
         artifactRootAuthorities: [authority]
-      })).rejects.toThrow(/changed after Motion captured its identity|topology changed after admission/i);
+      })).rejects.toThrow(/changed after Motion captured its identity|changed after admission|topology changed/i);
       await expect(readdir(outDir)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

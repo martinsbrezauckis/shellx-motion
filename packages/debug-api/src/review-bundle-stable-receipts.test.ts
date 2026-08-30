@@ -1,12 +1,97 @@
 import { writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { hashBuffer, writeReviewBundle, type OperationReceipt } from "@shellx-motion/core";
+import { ExistingDirectoryAuthority, hashBuffer, writeReviewBundle, type OperationReceipt } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { dispatchDebugCommand } from "./index";
+import { dispatchWorkspaceCommand } from "./domains/workspace.js";
+import { writeReviewBundleFromStableReceipts } from "./review-bundle-stable-receipts.js";
 
 describe("stable review-bundle receipt handoff", () => {
+  it.runIf(process.platform === "linux")("checks the retained receipt root before Core rebinds stable reader entries", async () => {
+    const tempRoot = await reviewScratch("retained-stable-reader-root-");
+    const receiptsRoot = join(tempRoot, "receipts");
+    const displacedRoot = join(tempRoot, "receipts-admitted");
+    const outDir = join(tempRoot, "review");
+    const receiptPath = join(receiptsRoot, "render.receipt.json");
+    const receipt = reviewReceipt({ id: "render-final-retained-stable-root", operation: "render.final", lane: "ffmpeg" });
+    const bytes = Buffer.from(receiptJson(receipt), "utf8");
+    try {
+      await mkdir(receiptsRoot, { mode: 0o700 });
+      await writeFile(receiptPath, bytes);
+      const file = await stat(receiptPath);
+      const authority = await ExistingDirectoryAuthority.acquire(receiptsRoot);
+
+      await rename(receiptsRoot, displacedRoot);
+      await mkdir(receiptsRoot, { mode: 0o700 });
+      await writeFile(receiptPath, receiptJson(reviewReceipt({ id: "replacement", operation: "render.final", lane: "ffmpeg" })), "utf8");
+
+      await expect(writeReviewBundleFromStableReceipts({
+        receiptsRoot,
+        receiptsRootAuthority: authority,
+        outDir
+      }, [{
+        path: receiptPath,
+        receipt,
+        snapshot: {
+          sha256: hashBuffer(bytes),
+          byteLength: bytes.byteLength,
+          identity: { dev: file.dev, ino: file.ino },
+          postPurge: { state: "not_needed" }
+        }
+      }])).rejects.toThrow(/changed after Motion captured its identity|changed after admission|topology changed/i);
+      await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "linux")("retains caller-steered package and receipt root identities through Core publication", async () => {
+    for (const selected of ["package", "receipts"] as const) {
+      const tempRoot = await reviewScratch(`retained-${selected}-`);
+      const packageRoot = join(tempRoot, "package");
+      const receiptsRoot = join(tempRoot, "receipts");
+      const outDir = join(tempRoot, "review");
+      const selectedRoot = selected === "package" ? packageRoot : receiptsRoot;
+      const displaced = `${selectedRoot}-admitted`;
+      try {
+        await Promise.all([
+          mkdir(packageRoot, { mode: 0o700 }),
+          mkdir(receiptsRoot, { mode: 0o700 })
+        ]);
+        const anchor = await createTrustedWorkspaceAnchor(tempRoot);
+        const result = await withTrustedWorkspaceAnchor(anchor, async () => await dispatchWorkspaceCommand(
+          "motion.review.html.bundle",
+          {
+            outDir,
+            ...(selected === "package" ? { packageRoot } : { receiptsRoot })
+          },
+          {
+            callerSteeredFilesystemAuthority: true,
+            authoringInputRoots: [tempRoot],
+            receiptsRoot,
+            scratchRoot: tempRoot,
+            isPathInsideTrustedRoot: async (root, candidate) => {
+              const relation = relative(resolve(root), resolve(candidate));
+              return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
+            },
+            writeReviewBundle: async (input) => {
+              await rename(selectedRoot, displaced);
+              await mkdir(selectedRoot, { mode: 0o700 });
+              return await writeReviewBundle(input);
+            }
+          }
+        ));
+
+        expect(result).toMatchObject({ ok: false, error: { code: "review_html_bundle_failed", message: expect.stringMatching(/changed after admission|topology changed|directory authority changed/i) } });
+        await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
   it.runIf(process.platform === "linux")("refuses a receipt replaced after the Debug reader parsed its stable snapshot", async () => {
     const tempRoot = await reviewScratch("replacement-");
     const receiptsRoot = join(tempRoot, "input-receipts");

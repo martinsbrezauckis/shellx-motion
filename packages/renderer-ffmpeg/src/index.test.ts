@@ -1,6 +1,6 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   defaultLocalMotionJobGovernor,
@@ -56,6 +56,10 @@ const H264_SDR_OUTPUT_ARGS = [
 const WAV_INPUT_ARGS = (path: string) => ["-protocol_whitelist", "file", "-format_whitelist", "wav", "-i", path];
 const SNAPSHOT_WAV_PATH = expect.stringMatching(/\/shellx-motion-ffmpeg-media-[^/]+\/[a-f0-9]{64}\.wav$/);
 const SNAPSHOT_WAV_INPUT_ARGS = ["-protocol_whitelist", "file", "-format_whitelist", "wav", "-i", SNAPSHOT_WAV_PATH];
+
+function isFfprobeCommand(command: FfmpegCommand): boolean {
+  return /^ffprobe(?:\.exe)?$/i.test(basename(command.executable));
+}
 
 async function writeFfmpegTestOutput(command: FfmpegCommand, contents: string): Promise<void> {
   if (command.args.includes("-frames:v")) await writeFile(command.args.at(-1) as string, contents, "utf8");
@@ -193,7 +197,7 @@ describe("ffmpeg finalization lane", () => {
       mode: "software-preferred"
     });
     expect(commands).toEqual([
-      { executable: "ffmpeg", args: ["-hide_banner", "-encoders"], shell: false }
+      { executable: resolveFfmpegExecutable(), args: ["-hide_banner", "-encoders"], shell: false }
     ]);
     expect(parseFfmpegVideoEncoders(" V..... libx264 x\n A..... aac y\n V..... libx264 duplicate")).toEqual(["libx264"]);
   });
@@ -341,7 +345,7 @@ describe("ffmpeg finalization lane", () => {
         message: "Export preset mp4-hevc requires a supported software HEVC encoder (libx265); compiled HEVC encoders: hevc_nvenc."
       }
     });
-    expect(commands).toEqual([{ executable: "ffmpeg", args: ["-hide_banner", "-encoders"], shell: false }]);
+    expect(commands).toEqual([{ executable: resolveFfmpegExecutable(), args: ["-hide_banner", "-encoders"], shell: false }]);
     await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -372,11 +376,16 @@ describe("ffmpeg finalization lane", () => {
     tempDirs.push(outDir);
     const outputPath = join(outDir, "render.mp4");
     await writeContrastFrames(outDir, 2);
+    const configuredFfmpeg = join(outDir, "ffmpeg-custom");
+    const configuredFfprobe = join(outDir, "ffprobe-custom");
+    await writeFile(configuredFfmpeg, "test executable\n", "utf8");
+    await writeFile(configuredFfprobe, "test executable\n", "utf8");
+    if (process.platform !== "win32") await Promise.all([chmod(configuredFfmpeg, 0o755), chmod(configuredFfprobe, 0o755)]);
 
     await withExecutableEnv(
       {
-        SHELLX_MOTION_FFMPEG: "/opt/shellx/bin/ffmpeg-custom",
-        SHELLX_MOTION_FFPROBE: "/opt/shellx/bin/ffprobe-custom"
+        SHELLX_MOTION_FFMPEG: configuredFfmpeg,
+        SHELLX_MOTION_FFPROBE: configuredFfprobe
       },
       async () => {
         const commands: FfmpegCommand[] = [];
@@ -414,10 +423,10 @@ describe("ffmpeg finalization lane", () => {
         // `probeMedia` above. The readback is the third entry, and it is what proves the readback
         // resolves the CONFIGURED ffprobe rather than a bare `ffprobe` off PATH.
         expect(commands.map((command) => ({ executable: command.executable, shell: command.shell }))).toEqual([
-          { executable: "/opt/shellx/bin/ffmpeg-custom", shell: false },
-          { executable: "/opt/shellx/bin/ffmpeg-custom", shell: false },
-          { executable: "/opt/shellx/bin/ffprobe-custom", shell: false },
-          { executable: "/opt/shellx/bin/ffprobe-custom", shell: false }
+          { executable: await realpath(configuredFfmpeg), shell: false },
+          { executable: await realpath(configuredFfmpeg), shell: false },
+          { executable: await realpath(configuredFfprobe), shell: false },
+          { executable: await realpath(configuredFfprobe), shell: false }
         ]);
       }
     );
@@ -664,8 +673,10 @@ describe("ffmpeg finalization lane", () => {
     tempDirs.push(localAppData);
     const shellxCutFfmpegDir = join(localAppData, "ShellX Cut", "tools", "ffmpeg", "bin");
     await mkdir(shellxCutFfmpegDir, { recursive: true });
-    await writeFile(join(shellxCutFfmpegDir, "ffmpeg.exe"), "", "utf8");
-    await writeFile(join(shellxCutFfmpegDir, "ffprobe.exe"), "", "utf8");
+    const ffmpeg = join(shellxCutFfmpegDir, "ffmpeg.exe"), ffprobe = join(shellxCutFfmpegDir, "ffprobe.exe");
+    await writeFile(ffmpeg, "", "utf8");
+    await writeFile(ffprobe, "", "utf8");
+    if (process.platform !== "win32") await Promise.all([chmod(ffmpeg, 0o755), chmod(ffprobe, 0o755)]);
 
     await withExecutableEnv(
       {
@@ -685,8 +696,10 @@ describe("ffmpeg finalization lane", () => {
     tempDirs.push(localAppData);
     const shellxMotionFfmpegDir = join(localAppData, "ShellX Motion", "tools", "ffmpeg", "ffmpeg-8.1.1-essentials_build", "bin");
     await mkdir(shellxMotionFfmpegDir, { recursive: true });
-    await writeFile(join(shellxMotionFfmpegDir, "ffmpeg.exe"), "", "utf8");
-    await writeFile(join(shellxMotionFfmpegDir, "ffprobe.exe"), "", "utf8");
+    const ffmpeg = join(shellxMotionFfmpegDir, "ffmpeg.exe"), ffprobe = join(shellxMotionFfmpegDir, "ffprobe.exe");
+    await writeFile(ffmpeg, "", "utf8");
+    await writeFile(ffprobe, "", "utf8");
+    if (process.platform !== "win32") await Promise.all([chmod(ffmpeg, 0o755), chmod(ffprobe, 0o755)]);
 
     await withExecutableEnv(
       {
@@ -1114,7 +1127,7 @@ describe("ffmpeg finalization lane", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(commands[0]).toEqual({
-          executable: "ffmpeg",
+          executable: resolveFfmpegExecutable(),
           args: [
             "-y",
             "-framerate",
@@ -1238,7 +1251,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -1460,7 +1473,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -1779,7 +1792,7 @@ describe("ffmpeg finalization lane", () => {
       commands.push(command);
       return {
         exitCode: 0,
-        stdout: command.executable === "ffprobe"
+        stdout: isFfprobeCommand(command)
           ? JSON.stringify({ streams: [{ codec_type: "video", codec_name: "h264", width: 640, height: 360, avg_frame_rate: "30/1" }], format: { duration: "1.000000", format_name: "mov,mp4" } })
           : "[Parsed_volumedetect_0 @ 0x1] n_samples: 48000\n[Parsed_volumedetect_0 @ 0x1] mean_volume: -18.0 dB\n[Parsed_volumedetect_0 @ 0x1] max_volume: -3.0 dB",
         stderr: ""
@@ -1842,7 +1855,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -2030,7 +2043,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -2232,7 +2245,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -2460,7 +2473,7 @@ describe("ffmpeg finalization lane", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(commands[0]).toEqual({
-      executable: "ffmpeg",
+      executable: resolveFfmpegExecutable(),
       args: [
         "-y",
         "-framerate",
@@ -2760,7 +2773,7 @@ describe("ffmpeg finalization lane", () => {
     });
     expect(commands).toEqual([
       {
-        executable: "ffmpeg",
+        executable: resolveFfmpegExecutable(),
         args: [
           "-hide_banner",
           "-nostats",

@@ -25,19 +25,23 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
   const packageDir = resolve(options.packageDir);
   // A stable OS alias may be the caller-facing HTML path. Retain the directory it resolved to at
   // admission, then stage every relative asset from that same identity even if the alias changes.
-  const sourceRootAuthority = await ExistingDirectoryAuthority.acquire(await realpath(dirname(htmlPath)));
+  const sourceRootAuthority = options.sourceRootAuthority
+    ?? await ExistingDirectoryAuthority.acquire(await realpath(dirname(htmlPath)));
 
-  await sourceRootAuthority.assertCurrent();
+  await assertHtmlSourceRootCurrent(htmlPath, sourceRootAuthority);
   const htmlInfo = await lstat(htmlPath);
   if (!htmlInfo.isFile() || htmlInfo.isSymbolicLink()) throw new Error("HTML snippet import requires a regular HTML file.");
   if (htmlInfo.size > MAX_HTML_SNIPPET_BYTES) throw new Error("HTML snippet import source exceeds the 8 MiB limit.");
   const htmlSource = await readBoundedStableFile(htmlPath, {
     label: "HTML snippet import source",
     maxBytes: MAX_HTML_SNIPPET_BYTES,
+    // The stable reader needs the caller-facing lexical root to preserve a supported OS alias.
+    // `assertHtmlSourceRootCurrent` binds that alias to the retained canonical authority before and
+    // after this read, while the reader itself canonicalizes and retains the exact routed topology.
     withinRoot: dirname(htmlPath),
     allowRootAlias: true,
   });
-  await sourceRootAuthority.assertCurrent();
+  await assertHtmlSourceRootCurrent(htmlPath, sourceRootAuthority);
   const html = htmlSource.bytes.toString("utf8");
   const imported = parseHtmlSnippet(html, { createdBy: options.createdBy ?? "html-adapter" });
   const validation = await validateDocument(await loadSchema("motion"), imported.motion);
@@ -78,7 +82,7 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
   try {
     transaction = await HtmlSnippetOutputTransaction.acquire(packageDir);
     stagedAssets = await stageHtmlSnippetAssets({ sourceRootAuthority, transaction, assetRefs: imported.manifest.assets });
-    await sourceRootAuthority.assertCurrent();
+    await assertHtmlSourceRootCurrent(htmlPath, sourceRootAuthority);
     receipt.inputHashes = {
       [htmlPath]: htmlSource.sha256,
       ...Object.fromEntries(stagedAssets.map((asset) => [asset.path, asset.sha256]))
@@ -95,7 +99,7 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
     await transaction.writeFile(imported.manifest.motion, jsonBytes(imported.motion));
     await transaction.writeFile(`receipts/${HTML_SNIPPET_IMPORT_RECEIPT_FILE}`, jsonBytes(receipt));
     await loadMotionPackage(transaction.stagePath);
-    await sourceRootAuthority.assertCurrent();
+    await assertHtmlSourceRootCurrent(htmlPath, sourceRootAuthority);
     await transaction.publish();
   } catch (error) {
     await transaction?.abort().catch(() => undefined);
@@ -116,6 +120,18 @@ export async function importHtmlSnippetToMotionPackage(options: HtmlSnippetImpor
     artifacts,
     warnings: receipt.warnings
   };
+}
+
+async function assertHtmlSourceRootCurrent(
+  htmlPath: string,
+  authority: { path: string; assertCurrent(): Promise<void> }
+): Promise<void> {
+  await authority.assertCurrent();
+  const current = await realpath(dirname(htmlPath));
+  if (resolve(current) !== resolve(authority.path)) {
+    throw new Error("HTML snippet source root changed after admission; Motion left the output unpublished.");
+  }
+  await authority.assertCurrent();
 }
 
 function jsonBytes(value: unknown): Buffer {

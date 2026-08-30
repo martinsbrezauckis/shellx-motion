@@ -13,6 +13,7 @@ const receiptsRoot = join(outDir, "receipts");
 const patchedPackageRoot = join(outDir, "package");
 const previewOutDir = join(outDir, "preview");
 const previewPath = join(previewOutDir, "frame.png");
+const callerId = "prompt-execution-smoke";
 
 await assertPrivateRepoScratchPath(repoRoot, outDir);
 await rm(outDir, { recursive: true, force: true });
@@ -30,6 +31,7 @@ const debugResult = await dispatchDebugCommand(
   },
   {
     tier: "edit_motion",
+    callerId,
     scratchRoot: outDir,
     receiptsRoot,
     authoringInputRoots: [packageRoot, outDir],
@@ -142,7 +144,7 @@ assert(
 const transcriptResult = await dispatchDebugCommand(
   "motion.agent.transcript",
   { receiptsRoot, receiptId: debugResult.receiptId, limit: 1 },
-  { tier: "read_motion", receiptsRoot }
+  { tier: "read_motion", callerId, receiptsRoot }
 );
 assert(transcriptResult.ok, `Agent transcript smoke failed: ${JSON.stringify(transcriptResult, null, 2)}`);
 assert(readObjectField(transcriptResult.visibleState, "sessionCount", "transcript.visibleState.sessionCount") === 1, "transcript panel must show one prompt session");
