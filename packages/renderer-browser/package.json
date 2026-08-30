@@ -69,6 +69,6 @@
   "dependencies": {
     "@shellx-motion/compositing-keying": "workspace:*",
     "@shellx-motion/core": "workspace:*",
-    "playwright-core": "^1.57.0"
+    "playwright-core": "^1.62.1"
   }
 }
