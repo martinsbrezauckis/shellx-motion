@@ -96,9 +96,9 @@ receipts retain their logical owner; reads and controls ignore another caller's 
 ownerless receipts fail closed unless the host explicitly grants the operator-level cross-caller
 scope already used by `motion.job.*`.
 
-On POSIX, the built-in Claude Code and Grok providers ignore empty and relative `PATH` entries
-during health. They select only a canonical absolute executable from an absolute entry (or an
-absolute requested path), retain its device/inode identity, and recheck it before each prompt.
+On POSIX, built-in agent providers ignore empty and relative `PATH` entries during health. They
+select only a canonical absolute executable from an absolute entry (or an absolute requested
+path), retain its device/inode identity, and recheck it before each prompt.
 Prompt execution opens that verified executable and launches through the retained descriptor, so a
 path replacement refuses instead of inheriting executable authority from the prompt working
 directory. This binds the executable filesystem object, not an immutable content hash.
