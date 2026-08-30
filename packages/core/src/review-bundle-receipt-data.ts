@@ -1,20 +1,23 @@
 import { readdir, realpath } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { compareCodeUnits } from "./canonical-json";
 import { resolvePackageAsset } from "./package";
 import { loadedPackageInputHashes } from "./package-loaded-inputs";
-import { hashFile, readReceiptActor } from "./receipts";
+import { hashFile } from "./receipts";
 import { readBoundedStableFile } from "./stable-file-read";
+import {
+  assertBoundFilesystemReceiptEntry,
+  bindLoadedReviewBundleReceipt,
+  boundFilesystemReceipt,
+  MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
+  readReviewBundleReceipt,
+  recheckBoundFilesystemReceipt,
+  reviewReceiptRelativePath
+} from "./review-bundle-stable-receipts";
 import type { MotionPackage, OperationReceipt, ReceiptArtifact } from "./types";
 import type { ReviewBundleReceiptEntry } from "./review-bundle-types";
 
-/** Receipts are control-plane inputs, not an unbounded log-ingestion channel. */
-export const MAX_REVIEW_BUNDLE_RECEIPT_BYTES = 16 * 1024 * 1024;
-
-// A caller may construct or mutate a ReviewBundleReceiptEntry, so the parsed snapshot authority
-// must remain private and identity-bound rather than live on the public object.
-const filesystemReceiptHashes = new WeakMap<ReviewBundleReceiptEntry, string>();
-const filesystemReceiptRoots = new WeakMap<ReviewBundleReceiptEntry, string>();
+export { MAX_REVIEW_BUNDLE_RECEIPT_BYTES } from "./review-bundle-stable-receipts";
 
 export async function readReviewBundleReceiptEntries(receiptsRoot: string): Promise<ReviewBundleReceiptEntry[]> {
   const root = resolve(receiptsRoot);
@@ -25,17 +28,17 @@ export async function readReviewBundleReceiptEntries(receiptsRoot: string): Prom
     const source = await readBoundedStableFile(path, {
       label: "Review bundle receipt",
       maxBytes: MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
-      withinRoot: canonicalRoot
+      withinRoot: canonicalRoot,
+      captureIdentity: true
     });
-    const receipt = readOperationReceipt(JSON.parse(source.bytes.toString("utf8")));
+    const receipt = readReviewBundleReceipt(JSON.parse(source.bytes.toString("utf8")));
     if (receipt) {
       const entry = {
-        path,
-        relativePath: reviewReceiptRelativePath(root, path),
+        path: source.canonicalPath,
+        relativePath: reviewReceiptRelativePath(canonicalRoot, source.canonicalPath),
         receipt
       } satisfies ReviewBundleReceiptEntry;
-      filesystemReceiptHashes.set(entry, source.sha256);
-      filesystemReceiptRoots.set(entry, canonicalRoot);
+      bindLoadedReviewBundleReceipt(entry, canonicalRoot, source);
       entries.push(entry);
     }
   }
@@ -64,42 +67,75 @@ export async function reviewBundleInputHashes(
     }
   }
   for (const entry of receipts) {
-    if (!entry.path) continue;
-    const key = `receipt:${entry.relativePath ?? basename(entry.path)}`;
-    const retainedReceiptHash = filesystemReceiptHashes.get(entry);
-    const retainedReceiptRoot = filesystemReceiptRoots.get(entry);
-    if (options.useRetainedReceiptHashes !== false && retainedReceiptHash) {
-      inputHashes[key] = retainedReceiptHash;
-    } else if (retainedReceiptHash && retainedReceiptRoot) {
-      // Directory-loaded entries must compare their parsed snapshot with a bounded, stable live
-      // reread at publication. Direct in-memory entries deliberately keep the historic hashFile
-      // behavior below, even when a caller attaches an identically named field.
-      inputHashes[key] = (await readBoundedStableFile(entry.path, {
-        label: "Review bundle receipt",
-        maxBytes: MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
-        withinRoot: retainedReceiptRoot
-      })).sha256;
+    const retained = boundFilesystemReceipt(entry);
+    if (retained) assertBoundFilesystemReceiptEntry(entry, retained);
+    const path = retained?.path ?? entry.path;
+    if (!path) continue;
+    const key = `receipt:${retained?.relativePath ?? entry.relativePath ?? basename(path)}`;
+    if (Object.hasOwn(inputHashes, key)) {
+      throw new Error(`Duplicate review bundle receipt input identity: ${key}`);
+    }
+    if (options.useRetainedReceiptHashes !== false && retained) {
+      inputHashes[key] = retained.sha256;
+    } else if (retained) {
+      inputHashes[key] = await recheckBoundFilesystemReceipt(retained);
     } else {
-      inputHashes[key] = await hashFile(entry.path);
+      inputHashes[key] = await hashFile(path);
     }
   }
   return inputHashes;
 }
 
-export function artifactCandidates(receipt: OperationReceipt): ReceiptArtifact[] {
-  const candidates = Array.isArray(receipt.artifacts) ? [...receipt.artifacts] : [];
+/**
+ * A receipt artifact together with the producer identity carried by its matching output path.
+ *
+ * `ReceiptArtifact` deliberately stays a presentation/reference shape. Renderer receipts bind
+ * their final bytes in `output`, so the review-bundle boundary carries that identity separately
+ * rather than pretending every historical artifact declaration had one.
+ */
+export interface ReviewBundleArtifactCandidate extends ReceiptArtifact {
+  expectedProducerSha256?: string;
+  expectedProducerByteLength?: number;
+}
+
+export function artifactCandidates(receipt: OperationReceipt): ReviewBundleArtifactCandidate[] {
+  const candidates: ReviewBundleArtifactCandidate[] = Array.isArray(receipt.artifacts)
+    ? receipt.artifacts.map((artifact) => ({ ...artifact }))
+    : [];
   const output = recordOf(receipt.output);
   const outputPath = typeof output?.path === "string" ? output.path : typeof output?.outputPath === "string" ? output.outputPath : null;
-  if (outputPath && !candidates.some((artifact) => artifact.path && sameLocalPath(artifact.path, outputPath))) {
-    candidates.push({
-      role: "receipt_output",
-      path: outputPath,
-      status: "available",
-      mediaType: mediaTypeForPath(outputPath),
-      primary: candidates.length === 0
-    });
+  if (outputPath) {
+    const producerIdentity = outputArtifactProducerIdentity(output);
+    const matchingOutputCandidates = candidates.filter((artifact) => artifact.path && sameLocalPath(artifact.path, outputPath));
+    if (matchingOutputCandidates.length > 0) {
+      for (const candidate of matchingOutputCandidates) Object.assign(candidate, producerIdentity);
+    } else {
+      candidates.push({
+        role: "receipt_output",
+        path: outputPath,
+        status: "available",
+        mediaType: mediaTypeForPath(outputPath),
+        primary: candidates.length === 0,
+        ...producerIdentity
+      });
+    }
   }
   return candidates;
+}
+
+function outputArtifactProducerIdentity(output: Record<string, unknown> | null): Pick<ReviewBundleArtifactCandidate, "expectedProducerSha256" | "expectedProducerByteLength"> {
+  const sha256 = output?.sha256;
+  const byteLength = output?.byteLength;
+  if (sha256 !== undefined && (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256))) {
+    throw new Error("Review bundle receipt output sha256 must be a lowercase SHA-256 digest when present.");
+  }
+  if (byteLength !== undefined && (typeof byteLength !== "number" || !Number.isSafeInteger(byteLength) || byteLength < 0)) {
+    throw new Error("Review bundle receipt output byteLength must be a non-negative safe integer when present.");
+  }
+  return {
+    ...(typeof sha256 === "string" ? { expectedProducerSha256: sha256 } : {}),
+    ...(typeof byteLength === "number" ? { expectedProducerByteLength: byteLength } : {})
+  };
 }
 
 export function recordOf(value: unknown): Record<string, unknown> | null {
@@ -139,64 +175,7 @@ async function listJsonFiles(root: string): Promise<string[]> {
   return files.flat();
 }
 
-function readOperationReceipt(value: unknown): OperationReceipt | null {
-  const record = recordOf(value);
-  if (!record) return null;
-  if (record.schema !== "shellx-motion/receipt@1") return null;
-  if (typeof record.id !== "string" || typeof record.operation !== "string" || typeof record.packageId !== "string") return null;
-  const status = readReceiptStatus(record.status);
-  if (!status || typeof record.lane !== "string" || typeof record.createdAt !== "string") return null;
-  return {
-    schema: "shellx-motion/receipt@1",
-    id: record.id,
-    operation: record.operation,
-    status,
-    packageId: record.packageId,
-    inputHashes: readStringRecord(record.inputHashes),
-    createdAt: record.createdAt,
-    lane: record.lane,
-    output: record.output,
-    ...(Array.isArray(record.artifacts) ? { artifacts: record.artifacts.map(readArtifact).filter((artifact): artifact is ReceiptArtifact => artifact !== null) } : {}),
-    warnings: Array.isArray(record.warnings) ? record.warnings.filter((warning): warning is string => typeof warning === "string") : [],
-    // Preserve actor attribution through the review-bundle round-trip; a validator that dropped it
-    // would strip the "BY WHO" evidence from any receipt copied into a review bundle.
-    ...(readReceiptActor(record.actor) ? { actor: readReceiptActor(record.actor) } : {})
-  };
-}
-
-function readArtifact(value: unknown): ReceiptArtifact | null {
-  const record = recordOf(value);
-  if (!record || typeof record.role !== "string" || typeof record.path !== "string") return null;
-  if (record.status !== "available" && record.status !== "planned" && record.status !== "not_required" && record.status !== "failed") return null;
-  return {
-    role: record.role,
-    path: record.path,
-    status: record.status,
-    ...(typeof record.label === "string" ? { label: record.label } : {}),
-    ...(typeof record.mediaType === "string" ? { mediaType: record.mediaType } : {}),
-    ...(typeof record.primary === "boolean" ? { primary: record.primary } : {})
-  };
-}
-
-function readStringRecord(value: unknown): Record<string, string> {
-  const record = recordOf(value);
-  if (!record) return {};
-  const strings: Record<string, string> = {};
-  for (const [key, item] of Object.entries(record)) {
-    if (typeof item === "string") strings[key] = item;
-  }
-  return strings;
-}
-
-function readReceiptStatus(value: unknown): OperationReceipt["status"] | null {
-  return value === "passed" || value === "failed" || value === "warning" || value === "not_run" ? value : null;
-}
-
 function sameLocalPath(left: string, right: string): boolean {
   if (hasProtocolScheme(left) || hasProtocolScheme(right)) return false;
   return resolve(left) === resolve(right);
-}
-
-function reviewReceiptRelativePath(root: string, path: string): string {
-  return relative(root, path).split(/[/\\]+/).join("/");
 }

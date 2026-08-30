@@ -24,6 +24,8 @@ import {
 import { antigravityAdapter } from "./antigravity";
 import { materializeAgentPromptFile } from "./agent-prompt-file";
 import { terminateAgentProcessTree, type AgentProcessTerminationMode } from "./agent-process-control";
+import { bindPinnedProviderIdentity, probeAgent, runPinnedPosixAgentCommand, type AgentProbeSupport } from "./agent-provider-identity";
+import { revalidateNativePosixAgentCommand, type NativePosixAgentExecutableIdentity } from "./posix-agent-command";
 import { resolveNativeWindowsAgentCommand, revalidateNativeWindowsAgentCommand } from "./windows-agent-command";
 
 export {
@@ -58,6 +60,10 @@ export interface AgentCommand {
   promptFileArg?: string;
   /** Internal argv indexes replaced with neutral labels in panels and receipts. */
   redactedArgIndexes?: number[];
+  /** Internal provider identity retained from a successful POSIX health check. */
+  providerIdentity?: NativePosixAgentExecutableIdentity;
+  /** Internal inherited descriptor for atomically launching a verified POSIX provider. */
+  providerExecutableFd?: number;
   shell: false;
 }
 
@@ -87,6 +93,8 @@ export interface AgentAdapter {
   billing: AgentBilling;
   probeCommand: () => AgentCommand;
   promptCommand: (input: AgentPromptInput) => AgentCommand;
+  /** Pin a POSIX provider executable from health through prompt execution. */
+  pinProviderIdentity?: boolean;
   /** Required for prompt execution; an omitted mode is unsafe before command construction, probing, or spawn. */
   promptContextMode?: AgentPromptContextMode;
   setup?: Partial<AgentSetupHints>;
@@ -193,7 +201,7 @@ export interface AgentRuntimeOptions {
   maxTranscriptBytes?: number;
 }
 
-export type PublicAgentCommand = Omit<AgentCommand, "stdin" | "env" | "maxOutputBytes" | "promptFileArg" | "redactedArgIndexes">;
+export type PublicAgentCommand = Omit<AgentCommand, "stdin" | "env" | "maxOutputBytes" | "promptFileArg" | "redactedArgIndexes" | "providerIdentity" | "providerExecutableFd">;
 
 export interface AgentPublicTranscript {
   stdout: string;
@@ -216,6 +224,15 @@ export const AGENT_STRUCTURED_SCALAR_MAX_BYTES = 64 * 1024;
 export const AGENT_CONTEXT_UNBOUNDED_CODE = "agent_context_unbounded";
 const AGENT_PROMPT_FILE_ARG = "<prompt-file>";
 
+const agentProbeSupport: AgentProbeSupport = {
+  agentSetupHints,
+  boundProcessResult,
+  classifyAgentProbe,
+  classifyAgentProbeError,
+  publicCommand,
+  publicHealthDiagnostic
+};
+
 export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRuntime {
   const adapters = options.adapters ?? createCliAgentAdapters();
   const runner = options.runner ?? spawnAgentCommand;
@@ -225,7 +242,8 @@ export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunti
 
   return {
     listAgents: () => [...adapters],
-    health: async () => Promise.all(adapters.map((adapter) => probeAgent(adapter, runner, maxOutputBytes))),
+    health: async () => (await Promise.all(adapters.map((adapter) => probeAgent(adapter, runner, maxOutputBytes, agentProbeSupport))))
+      .map((result) => result.health),
     runPrompt: async (input) => {
       const adapter = adapters.find((candidate) => candidate.id === (input.agentId ?? "codex"));
       if (!adapter) {
@@ -250,7 +268,8 @@ export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunti
         };
       }
 
-      const health = await probeAgent(adapter, runner, maxOutputBytes);
+      const probeResult = await probeAgent(adapter, runner, maxOutputBytes, agentProbeSupport);
+      const health = probeResult.health;
       if (!health.available) {
         return {
           ok: false,
@@ -262,8 +281,11 @@ export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunti
         };
       }
 
-      const command = { ...adapter.promptCommand(input), maxOutputBytes };
-      const result = boundProcessResult(await runner(command), maxOutputBytes);
+      const command = {
+        ...bindPinnedProviderIdentity(adapter, adapter.promptCommand(input), probeResult.command),
+        maxOutputBytes
+      };
+      const result = boundProcessResult(await runPinnedPosixAgentCommand(command, runner), maxOutputBytes);
       const transcript = publicTranscript(result, maxTranscriptBytes);
       const receipt = createAgentReceipt({
         adapter,
@@ -337,6 +359,7 @@ export function createCliAgentAdapters(): AgentAdapter[] {
       billing: "cli-subscription",
       probeCommand: () => ({ executable: "claude", args: ["--version"], shell: false }),
       promptCommand: claudeCodeCliCommand,
+      pinProviderIdentity: true,
       promptContextMode: "prompt-only",
       setup: {
         authHint: "Authenticate Claude Code CLI locally before running Motion prompts.",
@@ -350,6 +373,7 @@ export function createCliAgentAdapters(): AgentAdapter[] {
       billing: "cli-subscription",
       probeCommand: () => ({ executable: "grok", args: ["--version"], shell: false }),
       promptCommand: grokCliCommand,
+      pinProviderIdentity: true,
       promptContextMode: "prompt-only", // Exact empty `--tools=` disables the tool surface.
       setup: {
         authHint: "Authenticate Grok CLI locally before running Motion prompts.",
@@ -424,46 +448,6 @@ export function grokCliCommand(input: AgentPromptInput): AgentCommand {
 
 export function describeAgentSetup(adapter: AgentAdapter): AgentSetupHints {
   return agentSetupHints(adapter, adapter.probeCommand());
-}
-
-async function probeAgent(adapter: AgentAdapter, runner: AgentRunner, maxOutputBytes: number): Promise<AgentHealth> {
-  const command = { ...adapter.probeCommand(), maxOutputBytes };
-  const setup = agentSetupHints(adapter, command);
-  const probe = publicCommand(command);
-  try {
-    const result = boundProcessResult(await runner(command), maxOutputBytes);
-    const status = classifyAgentProbe(result);
-    const detail = publicHealthDiagnostic(result.stdout || result.stderr || `exit ${result.exitCode}`);
-    const redactedStderr = publicHealthDiagnostic(result.stderr);
-    return {
-      agentId: adapter.id,
-      available: status === "ready",
-      command: command.executable,
-      transport: adapter.transport,
-      billing: adapter.billing,
-      detail,
-      status,
-      ...(status === "ready" && detail ? { version: detail } : {}),
-      setup,
-      probe,
-      ...(status === "ready" ? {} : { failure: { exitCode: result.exitCode, ...(redactedStderr ? { stderr: redactedStderr } : {}) } })
-    };
-  } catch (error) {
-    const detail = publicHealthDiagnostic(error instanceof Error ? error.message : String(error));
-    const status = classifyAgentProbeError(error);
-    return {
-      agentId: adapter.id,
-      available: false,
-      command: command.executable,
-      transport: adapter.transport,
-      billing: adapter.billing,
-      detail,
-      status,
-      setup,
-      probe,
-      failure: { stderr: detail }
-    };
-  }
 }
 
 function agentSetupHints(adapter: AgentAdapter, command: AgentCommand): AgentSetupHints {
@@ -605,6 +589,17 @@ async function runAgentChild(command: AgentCommand, options: RunAgentChildOption
     memoryLimit: mode === "unix-process-group" ? "rss-monitor" : "none",
     ...(mode === "direct-child" ? { reasonCode: "unsupported_platform" as const } : {}),
   });
+  if (command.providerExecutableFd === undefined) {
+    try {
+      await revalidateNativePosixAgentCommand(command);
+    } catch (error) {
+      return {
+        exitCode: 127,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : "Motion could not revalidate the trusted POSIX agent executable."
+      };
+    }
+  }
   return runSpawnedAgentChild(command, options.signal, options.watchProcess, () => mode);
 }
 
@@ -752,7 +747,11 @@ function runSpawnedAgentChild(
   return new Promise((resolveResult) => {
     let child;
     try {
-      child = spawn(command.executable, command.args, {
+      const providerExecutableFd = command.providerExecutableFd;
+      const executable = providerExecutableFd === undefined
+        ? command.executable
+        : process.platform === "linux" ? "/proc/self/fd/3" : "/dev/fd/3";
+      child = spawn(executable, command.args, {
         cwd: command.cwd,
         // The adapters here are the operator's own subscription CLIs (Codex, Claude Code,
         // grok), not third-party binaries -- so this is not a supply-chain exposure. It is still the
@@ -765,13 +764,21 @@ function runSpawnedAgentChild(
         // comes through `command.env`, which is applied after redaction.
         env: childEnvironment({ extra: command.env }),
         shell: false,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: providerExecutableFd === undefined ? ["pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe", providerExecutableFd],
         detached: process.platform !== "win32",
         windowsHide: true,
       });
     } catch (error) {
       const spawnError = error as NodeJS.ErrnoException;
       resolveResult({ exitCode: spawnError.code === "ENOENT" ? 127 : 1, stdout: "", stderr: spawnError.message });
+      return;
+    }
+    const childStdin = child.stdin;
+    const childStdout = child.stdout;
+    const childStderr = child.stderr;
+    if (!childStdin || !childStdout || !childStderr) {
+      try { child.kill(); } catch { /* spawn is already terminating */ }
+      resolveResult({ exitCode: 1, stdout: "", stderr: "Motion agent spawn did not provide piped standard streams." });
       return;
     }
     if (child.pid) watchProcess(child.pid);
@@ -837,8 +844,8 @@ function runSpawnedAgentChild(
       });
     };
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
+    childStdout.setEncoding("utf8");
+    childStderr.setEncoding("utf8");
     const appendOutput = (stream: "stdout" | "stderr", chunk: string) => {
       if (outputOverflow) return;
       const remaining = Math.max(0, maxOutputBytes - outputBytes);
@@ -852,9 +859,9 @@ function runSpawnedAgentChild(
         terminate();
       }
     };
-    child.stdout.on("data", (chunk) => { appendOutput("stdout", chunk); });
-    child.stderr.on("data", (chunk) => { appendOutput("stderr", chunk); });
-    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+    childStdout.on("data", (chunk) => { appendOutput("stdout", chunk); });
+    childStderr.on("data", (chunk) => { appendOutput("stderr", chunk); });
+    childStdin.on("error", (error: NodeJS.ErrnoException) => {
       stderr = appendStderr(stderr, error.message);
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
@@ -870,11 +877,11 @@ function runSpawnedAgentChild(
     });
 
     if (command.stdin) {
-      child.stdin.write(command.stdin, (error?: Error | null) => {
+      childStdin.write(command.stdin, (error?: Error | null) => {
         if (error) stderr = appendStderr(stderr, error.message);
       });
     }
-    child.stdin.end();
+    childStdin.end();
   });
 }
 
@@ -922,7 +929,7 @@ function nativeSetupFailedStatus(): WindowsJobObjectStatus {
 function publicCommand(command: AgentCommand): PublicAgentCommand {
   const redactedIndexes = new Set(command.redactedArgIndexes ?? []);
   return {
-    executable: command.executable,
+    executable: command.providerIdentity?.displayExecutable ?? command.executable,
     args: command.args.map((arg, index) => redactedIndexes.has(index) ? "<prompt>" : arg),
     cwd: command.cwd,
     shell: command.shell

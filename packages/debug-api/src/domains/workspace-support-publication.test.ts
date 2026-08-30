@@ -1,8 +1,10 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hashBuffer, type OperationReceipt } from "@shellx-motion/core";
+import { hashBuffer, loadMotionPackage, type OperationReceipt } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 
 const faults = vi.hoisted(() => ({
   failStageWrite: undefined as undefined | ((path: string) => boolean),
@@ -75,6 +77,7 @@ import { dispatchDomainCommand } from "./router.js";
 
 const roots: string[] = [];
 const itLinux = process.platform === "linux" ? it : it.skip;
+const LOWER_THIRD_FIXTURE_ROOT = fileURLToPath(new URL("../../../../fixtures/packages/lower-third/", import.meta.url));
 
 describe("motion.support.bundle governed directory publication", () => {
   itLinux("publishes exactly the bundle and required receipt from one private directory stage", async () => {
@@ -103,6 +106,22 @@ describe("motion.support.bundle governed directory publication", () => {
       ]
     });
     expect(JSON.stringify(receipt)).not.toContain(fixture.outDir);
+  });
+
+  itLinux("binds the package summary and receipt to the same loader-owned document hashes", async () => {
+    const fixture = await createFixture();
+    const expectedInputHashes = {
+      "manifest.json": hashBuffer(await readFile(join(fixture.packageRoot, "manifest.json"))),
+      "motion.json": hashBuffer(await readFile(join(fixture.packageRoot, "motion.json")))
+    };
+
+    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, { packageRoot: fixture.packageRoot });
+    expect(result).toMatchObject({ ok: true });
+    const bundle = JSON.parse(await readFile(join(fixture.outDir, "support-bundle.json"), "utf8")) as Record<string, any>;
+    const receipt = JSON.parse(await readFile(join(fixture.outDir, "support-bundle.receipt.json"), "utf8")) as Record<string, any>;
+
+    expect(bundle).toMatchObject({ package: { inputHashes: expectedInputHashes } });
+    expect(receipt).toMatchObject({ inputHashes: expectedInputHashes });
   });
 
   itLinux("omits absolute paths and path-bearing diagnostics from shareable support artifacts", async () => {
@@ -175,7 +194,7 @@ describe("motion.support.bundle governed directory publication", () => {
     faults.failPosixAnchor = true;
     faults.failTransactionCreate = true;
 
-    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, "win32");
+    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, { runtimePlatform: "win32" });
     expect(result).toMatchObject({
       ok: false,
       error: { code: "support_bundle_failed", message: "injected Windows output transaction reached" }
@@ -219,6 +238,50 @@ describe("motion.support.bundle governed directory publication", () => {
       ok: false,
       error: { code: "support_bundle_failed", message: "injected support bundle staged-write failure" }
     });
+    await expect(stat(fixture.outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(dirname(fixture.outDir))).some((name) => name.startsWith(".bundle.shellx-motion-stage-"))).toBe(false);
+  });
+
+  itLinux.each(["manifest.json", "motion.json"] as const)("rejects %s mutated after package load", async (document) => {
+    const fixture = await createFixture();
+    let hookFired = false;
+
+    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, {
+      packageRoot: fixture.packageRoot,
+      afterPackageLoadForTest: async (packageRoot) => {
+        hookFired = true;
+        await mutatePackageDocument(packageRoot, document, "after-load");
+      }
+    });
+
+    expect(hookFired).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "source_changed", message: "Support bundle package documents changed before publication." }
+    });
+    expect(faults.stagedPublicationCommitCalls).toBe(0);
+    await expect(stat(fixture.outDir)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await readdir(dirname(fixture.outDir))).some((name) => name.startsWith(".bundle.shellx-motion-stage-"))).toBe(false);
+  });
+
+  itLinux.each(["manifest.json", "motion.json"] as const)("rejects %s mutated at the publication boundary", async (document) => {
+    const fixture = await createFixture();
+    let hookFired = false;
+
+    const result = await dispatchSupportBundle(fixture.root, fixture.outDir, {
+      packageRoot: fixture.packageRoot,
+      beforeSupportBundlePublicationForTest: async () => {
+        hookFired = true;
+        await mutatePackageDocument(fixture.packageRoot, document, "publication-boundary");
+      }
+    });
+
+    expect(hookFired).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "source_changed", message: "Support bundle package documents changed before publication." }
+    });
+    expect(faults.stagedPublicationCommitCalls).toBe(0);
     await expect(stat(fixture.outDir)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await readdir(dirname(fixture.outDir))).some((name) => name.startsWith(".bundle.shellx-motion-stage-"))).toBe(false);
   });
@@ -345,23 +408,54 @@ async function expectClosedTreeRefusal(): Promise<void> {
   await expect(stat(dirname(fixture.outDir))).rejects.toMatchObject({ code: "ENOENT" });
 }
 
-async function createFixture(): Promise<{ root: string; outDir: string }> {
+async function createFixture(): Promise<{ root: string; outDir: string; packageRoot: string }> {
   const root = resolve(await mkdtemp(join(tmpdir(), "shellx-motion-support-bundle-")));
   roots.push(root);
-  return { root, outDir: join(root, "published", "bundle") };
+  const packageRoot = join(root, "package");
+  await mkdir(packageRoot, { recursive: true, mode: 0o700 });
+  await Promise.all(["manifest.json", "motion.json"].map(async (document) => await copyFile(
+    join(LOWER_THIRD_FIXTURE_ROOT, document),
+    join(packageRoot, document)
+  )));
+  return { root, outDir: join(root, "published", "bundle"), packageRoot };
 }
 
-async function dispatchSupportBundle(root: string, outDir: string, runtimePlatform?: NodeJS.Platform) {
+interface DispatchSupportBundleOptions {
+  runtimePlatform?: NodeJS.Platform;
+  packageRoot?: string;
+  afterPackageLoadForTest?: (packageRoot: string) => void | Promise<void>;
+  beforeSupportBundlePublicationForTest?: () => void | Promise<void>;
+}
+
+async function dispatchSupportBundle(root: string, outDir: string, options: DispatchSupportBundleOptions = {}) {
+  const packageWorkspaceAuthority = options.packageRoot && process.platform !== "win32"
+    ? await createTrustedWorkspaceAnchor(root)
+    : undefined;
   return await dispatchDomainCommand(
     "workspace",
     "motion.support.bundle",
-    { outDir },
+    { outDir, ...(options.packageRoot ? { packageRoot: options.packageRoot } : {}) },
     {
       scratchRoot: root,
-      ...(runtimePlatform ? { runtimePlatform } : {}),
+      ...(options.runtimePlatform ? { runtimePlatform: options.runtimePlatform } : {}),
+      ...(options.packageRoot ? {
+        packageLoader: async (packageRoot: string) => packageWorkspaceAuthority
+          ? await withTrustedWorkspaceAnchor(packageWorkspaceAuthority, async () => await loadMotionPackage(packageRoot))
+          : await loadMotionPackage(packageRoot),
+        isUnsafePackageOutputDirectory: async () => false,
+        ...(options.afterPackageLoadForTest ? { afterPackageLoadForTest: options.afterPackageLoadForTest } : {}),
+        ...(options.beforeSupportBundlePublicationForTest ? { beforeSupportBundlePublicationForTest: options.beforeSupportBundlePublicationForTest } : {})
+      } : {}),
       isPathInsideTrustedRoot: async (trustedRoot, candidate) => isInside(trustedRoot, candidate)
     }
   );
+}
+
+async function mutatePackageDocument(packageRoot: string, document: "manifest.json" | "motion.json", phase: string): Promise<void> {
+  const path = join(packageRoot, document);
+  const parsed = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  parsed.name = `Mutated ${document} at ${phase}`;
+  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
 }
 
 function isInside(root: string, candidate: string): boolean {

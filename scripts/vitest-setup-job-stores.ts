@@ -60,7 +60,6 @@ if (process.platform === "win32") {
 } else {
   process.env.TMPDIR = canonicalTempRoot;
 }
-if (process.platform !== "win32") process.env.TMPDIR = realpathSync(tmpdir());
 
 const root = mkdtempSync(join(tmpdir(), "shellx-motion-test-jobs-"));
 process.env.SHELLX_MOTION_LEASE_ROOT = join(root, "leases");

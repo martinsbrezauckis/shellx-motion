@@ -2,12 +2,10 @@
 import { ACTIONS } from "@shellx-motion/actions";
 import {
   hashBuffer,
-  hashPackageFile,
   inspectMotionTimeline,
   isPublicationCommitUncertain,
   OutputDirectoryTransaction,
   readBoundedStableFile,
-  resolvePackageAsset,
   writeVerifiedBoundedFile,
   type MotionPackage,
   type OperationReceipt,
@@ -21,6 +19,11 @@ import { DEBUG_COMMANDS, type MotionDebugCommand, type MotionDebugResult } from 
 import { corePublicationUncertainty } from "../publication-uncertainty.js";
 import { stringArg } from "./args.js";
 import { projectShareableValue, shareablePlatformReceiptSummary, shareableSupportReceiptSummary } from "./workspace-support-shareable.js";
+import {
+  assertSupportBundlePackageCurrent,
+  SupportBundleSourceChangedError,
+  supportBundleDocumentHashes
+} from "./workspace-support-source-current.js";
 import type { WorkspacePlatformReceiptEntry, WorkspaceReceiptEntry } from "./workspace-types.js";
 
 export interface WorkspaceSupportServices {
@@ -35,6 +38,10 @@ export interface WorkspaceSupportServices {
   summarizeReceipt?: (entry: WorkspaceReceiptEntry) => Record<string, unknown>;
   listPlatformReceiptEntries?: (receiptsRoot: string) => Promise<WorkspacePlatformReceiptEntry[]>;
   summarizePlatformReceipt?: (entry: WorkspacePlatformReceiptEntry) => Record<string, unknown>;
+  /** Test-only seam; command arguments cannot invoke it. */
+  afterPackageLoadForTest?: (packageRoot: string) => void | Promise<void>;
+  /** Test-only seam immediately before the source-current publication check. */
+  beforeSupportBundlePublicationForTest?: () => void | Promise<void>;
 }
 
 export async function dispatchWorkspaceSupportCommand(
@@ -68,6 +75,7 @@ export async function dispatchWorkspaceSupportCommand(
   try {
     const bundleDir = resolve(outDir);
     const pkg = packageRoot ? await services.packageLoader!(packageRoot) : null;
+    if (pkg) await services.afterPackageLoadForTest?.(pkg.root);
     if (pkg && await services.isUnsafePackageOutputDirectory!(pkg.root, bundleDir)) {
       return invalidArgs("motion.support.bundle outDir must be outside packageRoot.");
     }
@@ -77,13 +85,9 @@ export async function dispatchWorkspaceSupportCommand(
     if (await outputPathExists(bundleDir)) {
       return invalidArgs("motion.support.bundle outDir must be absent before bundle collection.");
     }
-    const inputHashes: Record<string, string> = {};
+    const inputHashes = pkg ? supportBundleDocumentHashes(pkg) : {};
     let packageSummary: Record<string, unknown> | undefined;
     if (pkg) {
-      const manifestPath = resolvePackageAsset(pkg, "manifest.json");
-      const motionPath = resolvePackageAsset(pkg, pkg.manifest.motion);
-      inputHashes["manifest.json"] = await hashPackageFile(manifestPath);
-      inputHashes[pkg.manifest.motion] = await hashPackageFile(motionPath);
       const timeline = inspectMotionTimeline(pkg.motion);
       packageSummary = {
         id: pkg.manifest.id,
@@ -170,7 +174,9 @@ export async function dispatchWorkspaceSupportCommand(
       scratchRoot: services.scratchRoot,
       runtimePlatform: services.runtimePlatform ?? process.platform,
       bundleBytes,
-      receiptBytes: jsonBytes(receipt)
+      receiptBytes: jsonBytes(receipt),
+      beforeSupportBundlePublicationForTest: services.beforeSupportBundlePublicationForTest,
+      assertPackageCurrent: pkg ? async () => await assertSupportBundlePackageCurrent(pkg, inputHashes, services.packageLoader!) : undefined
     });
     return {
       ok: true,
@@ -200,6 +206,8 @@ interface SupportBundlePublicationInput {
   runtimePlatform: NodeJS.Platform;
   bundleBytes: Buffer;
   receiptBytes: Buffer;
+  beforeSupportBundlePublicationForTest?: () => void | Promise<void>;
+  assertPackageCurrent?: () => Promise<void>;
 }
 
 /**
@@ -213,6 +221,8 @@ async function publishSupportBundle(input: SupportBundlePublicationInput): Promi
     const transaction = await OutputDirectoryTransaction.create(input.bundleDir, { requireAbsent: true, requireClosedTree: true });
     try {
       const expectedInventory = await stageSupportBundle(transaction, input.bundleBytes, input.receiptBytes);
+      await input.beforeSupportBundlePublicationForTest?.();
+      await input.assertPackageCurrent?.();
       await transaction.commit(expectedInventory);
       await transaction.assertPublishedCurrent();
     } catch (error) {
@@ -292,6 +302,9 @@ async function outputPathExists(path: string): Promise<boolean> {
 }
 
 function supportBundleFailure(error: unknown): MotionDebugResult {
+  if (error instanceof SupportBundleSourceChangedError) {
+    return { ok: false, error: { code: error.code, message: error.message }, warnings: [] };
+  }
   if (isPublicationCommitUncertain(error)) {
     const uncertainty = corePublicationUncertainty(error)!;
     return {

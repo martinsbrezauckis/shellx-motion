@@ -29,6 +29,7 @@ describe("workspace Vitest fixture setup", () => {
     expect(setup).toContain('join(projectRoot, ".scratch", "tests")');
     expect(setup).toContain("mkdtempSync(join(fixtureParent, \"vitest-\"))");
     expect(setup).toContain("SHELLX_MOTION_TEST_IPC_TMPDIR");
+    expect(setup).not.toContain('process.env.TMPDIR = realpathSync(tmpdir())');
     expect(setup).not.toContain('from "@shellx-motion/core"');
   });
 });

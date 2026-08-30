@@ -157,6 +157,7 @@ import { coordinatedJobDomainServices } from "./coordinator-submit-handler.js";
 import { gpuBatchPlanRefusal } from "./gpu-batch-policy.js";
 import { type MotionPromptRuntime } from "@shellx-motion/prompt";
 import { enforceReceiptReadAcceptance } from "./receipt-raw-prompt-purge.js";
+import { writeReviewBundleFromStableReceipts } from "./review-bundle-stable-receipts.js";
 import { readVerifiedJsonReceipt, readPlatformReceiptEntries, type PlatformReceiptEntry } from "./receipt-store-discovery.js";
 import { hasStableReceiptStoreCapability, readStableReceiptEntries, readStableReceiptEntry, type ReceiptStoreReadServices, type StableReceiptSnapshot } from "./receipt-store-stable-reader.js";
 import { reserveStableReceiptRoot } from "./stable-receipt-root-reservation.js";
@@ -682,7 +683,9 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
     isPathInsideTrustedRoot,
     archivePackage: writeMotionPackageArchive,
     extractPackage: extractMotionPackageArchive,
-    writeReviewBundle: async (input) => await writeReviewBundle({ ...input, ...(input.receiptsRoot ? { receipts: (await receiptOwnershipAccess(context).list(input.receiptsRoot)).map(({ path, receipt }) => ({ path, receipt })) } : {}) }),
+    writeReviewBundle: async (input) => input.receiptsRoot
+      ? await writeReviewBundleFromStableReceipts(input, await receiptOwnershipAccess(context).list(input.receiptsRoot))
+      : await writeReviewBundle(input),
     ...(context.artifactRoots ? { artifactRoots: context.artifactRoots } : {}), ...(context.artifactRootAuthorities ? { artifactRootAuthorities: context.artifactRootAuthorities } : {}),
     scriptedPackageWriter: writeScriptedMotionPackage,
     htmlSnippetExporter: writeHtmlSnippetExport,
