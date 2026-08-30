@@ -3,6 +3,7 @@ import { join, relative, resolve } from "node:path";
 import { canonicalJsonSha256, compareCodeUnits } from "./canonical-json";
 import { loadMotionPackage } from "./package";
 import { OutputDirectoryTransaction } from "./output-directory-transaction";
+import { ExistingDirectoryAuthority } from "./output-path-topology";
 import {
   escapeReviewHtml as escapeHtml,
   isPathInsideOrEqual,
@@ -53,7 +54,17 @@ const REVIEW_BUNDLE_RECEIPT_RELATIVE_PATH = "review-html-bundle.receipt.json";
 
 export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<ReviewBundleResult> {
   const outDir = resolve(input.outDir);
+  const selectedRootAuthorities = await Promise.all([
+    input.packageRoot,
+    input.receiptsRoot
+  ].filter((root): root is string => Boolean(root)).map(async (root) => await ExistingDirectoryAuthority.acquire(root)));
+  const retainedRootAuthorities = [
+    ...selectedRootAuthorities,
+    ...(input.artifactRootAuthorities ?? [])
+  ];
+  await assertReviewRootAuthorities(retainedRootAuthorities);
   const pkg = input.packageRoot ? await loadMotionPackage(input.packageRoot) : undefined;
+  await assertReviewRootAuthorities(retainedRootAuthorities);
   if (pkg && isPathInsideOrEqual(pkg.root, outDir)) {
     throw new Error("Review HTML bundle outDir must be outside packageRoot.");
   }
@@ -64,6 +75,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     const receiptEntries = exactReviewBundleReceiptEntries(
       input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot) : [])
     );
+    await assertReviewRootAuthorities(retainedRootAuthorities);
     // The cap applies to every receipt-controlled review path, including an HTML-only caller that
     // elected not to copy artifacts. It is a hard publication boundary, not an omission policy.
     boundedReviewArtifactAttributions(receiptEntries);
@@ -76,10 +88,10 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
       input.receiptsRoot,
       ...(input.artifactRoots ?? []),
       ...(input.artifactRootAuthorities ?? []).map((authority) => authority.path)
-    ], input.artifactRootAuthorities);
+    ], retainedRootAuthorities);
     const stagedArtifacts = input.copyArtifacts === false
       ? { copiedArtifacts: [], omittedArtifacts: [] }
-      : await copyReviewArtifacts(receiptEntries, transaction.stagingPath, approvedArtifactRoots, input.artifactRootAuthorities);
+      : await copyReviewArtifacts(receiptEntries, transaction.stagingPath, approvedArtifactRoots, retainedRootAuthorities);
     const copiedArtifacts = stagedArtifacts.copiedArtifacts.map((artifact) => ({
       ...artifact,
       path: publishedReviewPath(transaction.stagingPath, outDir, artifact.path)
@@ -131,6 +143,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     if (!sameReviewInputHashes(inputHashes, currentInputHashes)) {
       throw new Error("Review bundle package or receipt input changed before publication.");
     }
+    await assertReviewRootAuthorities(retainedRootAuthorities);
     await transaction.assertCurrent();
     await writeFile(join(transaction.stagingPath, "review-html-bundle.receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
     await transaction.commit();
@@ -153,6 +166,10 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     await transaction.abort();
     throw error;
   }
+}
+
+async function assertReviewRootAuthorities(authorities: readonly { assertCurrent(): Promise<void> }[]): Promise<void> {
+  for (const authority of authorities) await authority.assertCurrent();
 }
 
 function createReviewBundleReceipt(input: {

@@ -191,11 +191,12 @@ a template-root grant is catalog/plan authority, not a general package or render
   WebSocket clients offer both the `shellx-motion-debug-v1` and
   `shellx-motion-token.<token>` subprotocols.
 - The bundled `shellx-motion-mcp` stdio bridge is the local-only exception: it reads an
-  owner-private, per-start listener credential and never forwards the durable Bearer capability to
-  the discovered port. A stale record is therefore fail-closed for a restarted listener; this does
-  not isolate another process running as the same OS user.
-- Everything except `GET /health` and the static workbench shell requires
-  authentication. The server also rejects forged `Host` and unapproved `Origin`
+  owner-private, per-start listener record, authenticates the current listener with a random
+  challenge and keyed HMAC, and only then sends the per-start credential and MCP body. It never
+  forwards the durable Bearer capability. A stale or rebound listener receives neither credential
+  nor request body; this does not isolate another process running as the same OS user.
+- Everything except `GET /health`, the bounded `GET /mcp-bridge/proof` challenge,
+  and the static workbench shell requires authentication. The server also rejects forged `Host` and unapproved `Origin`
   values and bounds request/WebSocket size and concurrency.
 
 ```bash

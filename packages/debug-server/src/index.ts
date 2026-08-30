@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -202,6 +202,7 @@ const WEBSOCKET_PROTOCOL = "shellx-motion-debug-v1";
 const WEBSOCKET_TOKEN_PREFIX = "shellx-motion-token.";
 const MCP_BRIDGE_CREDENTIAL_HEADER = "x-shellx-motion-mcp-bridge-credential";
 const WEBSOCKET_MCP_BRIDGE_CREDENTIAL_PREFIX = "shellx-motion-mcp-bridge.";
+const MCP_LISTENER_PROOF_CONTEXT = "shellx-motion-mcp-listener@1:";
 const MIN_CAPABILITY_TOKEN_LENGTH = 32;
 const CAPABILITY_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 16;
@@ -521,6 +522,22 @@ async function handleRequest(
         contractCount: publishedDebugContracts(security).length,
         sdkSchema: MOTION_SDK_SCHEMA
       });
+      return;
+    }
+
+    // The stdio bridge proves it reached this exact per-start listener before it transmits either
+    // its bridge credential or an MCP request. The random challenge is public; only the current
+    // listener and the owner-private discovery record hold the HMAC key.
+    if (request.method === "GET" && path === "/mcp-bridge/proof") {
+      const nonce = requestUrl.searchParams.get("nonce") ?? "";
+      if (!/^[A-Za-z0-9_-]{43}$/.test(nonce)) {
+        writeJson(response, 400, debugServerError("invalid_args", "Motion MCP listener proof requires one bounded nonce."));
+        return;
+      }
+      const proof = createHmac("sha256", security.mcpBridgeCredential)
+        .update(`${MCP_LISTENER_PROOF_CONTEXT}${nonce}`, "utf8")
+        .digest("base64url");
+      writeJson(response, 200, { ok: true, proof });
       return;
     }
 

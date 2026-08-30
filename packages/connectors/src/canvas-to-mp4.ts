@@ -162,7 +162,7 @@ export async function runCanvasMp4Export(input: CanvasMp4ExportInput): Promise<C
       });
 
   renderResult.receipt.inputHashes = { ...renderResult.receipt.inputHashes, operation: operationHash };
-  await writeJson(renderReceiptPath, renderResult.receipt);
+  await writeJson(renderReceiptPath, renderResult.receipt, true);
   const renderOk = renderResult.receipt.status !== "failed";
   const warnings = [
     ...writtenPackage.missingAssetRefs.map((assetRef) => `Canvas asset was not copied into package: ${assetRef}`),

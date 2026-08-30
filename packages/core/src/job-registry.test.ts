@@ -6,7 +6,7 @@
  * received addressed nothing; and the lease was removed on completion, so every finished job
  * answered `job_unknown`. Both were invisible to unit tests that only ever looked at one store.
  */
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ import {
   type MotionJobRecord
 } from "./job-registry";
 import { motionJobFileKey } from "./job-id-file";
+import { pruneMotionJobRecords, writeMotionJobRecord } from "./job-registry-storage";
 import { MotionJobView } from "./job-view";
 import { MotionHostJob, runInMotionHostJob } from "./host-job";
 
@@ -454,6 +455,38 @@ describe("retention", () => {
     expect(kept.some((job) => job.jobId === `job-${JOB_RECORD_RETENTION_COUNT}`)).toBe(true);
   }, 45_000);
 
+  it("applies the count bound per authenticated owner instead of pruning a quiet caller", async () => {
+    const clock = { now: 2_000_000 };
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-job-retention-owner-"));
+    tempRoots.push(root);
+    const recordRoot = join(root, "records");
+    const quiet = endedRecord({ jobId: "quiet-only", callerId: "quiet:workspace", endedAtMs: clock.now - 10_000 });
+    await writeMotionJobRecord(recordRoot, quiet);
+    for (let index = 0; index <= JOB_RECORD_RETENTION_COUNT; index += 1) {
+      await writeMotionJobRecord(recordRoot, endedRecord({
+        jobId: `noisy-${index}`,
+        callerId: "noisy:workspace",
+        endedAtMs: clock.now - (JOB_RECORD_RETENTION_COUNT - index)
+      }));
+    }
+
+    await pruneMotionJobRecords(recordRoot, clock.now, JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
+    const records = new MotionJobRegistry({ recordRoot, now: () => clock.now });
+    await expect(records.read({ jobId: quiet.jobId, callerId: quiet.callerId }))
+      .resolves.toMatchObject({ ok: true, record: { callerId: "quiet:workspace" } });
+    expect((await records.list({ callerId: "noisy:workspace" })).length).toBe(JOB_RECORD_RETENTION_COUNT);
+  }, 45_000);
+
+  it.skipIf(process.platform === "win32")("creates terminal state with private directory and file modes", async () => {
+    const { records, root } = await stores();
+    await records.record(endedRecord({ jobId: "private-record" }));
+    const recordRoot = join(root, "records");
+    const [recordFile] = await readdir(recordRoot);
+
+    expect((await stat(recordRoot)).mode & 0o777).toBe(0o700);
+    expect((await stat(join(recordRoot, recordFile!))).mode & 0o777).toBe(0o600);
+  });
+
   it("keeps rendering when the record store cannot be written", async () => {
     // Recording is observability layered over rendering. A host with an unwritable runtime
     // directory must still be able to render; it simply cannot report afterwards.
@@ -516,8 +549,8 @@ describe("terminal records of colliding job ids", () => {
     const callerId = "cut:legacy-owner";
     const record = endedRecord({ jobId, callerId, endedAtMs: NOW - 1_000 });
     const recordRoot = join(root, "records");
-    await mkdir(recordRoot, { recursive: true });
-    await writeFile(join(recordRoot, `${motionJobFileKey(jobId)}--${record.endedAtMs}.job.json`), `${JSON.stringify(record)}\n`);
+    await mkdir(recordRoot, { recursive: true, mode: 0o700 });
+    await writeFile(join(recordRoot, `${motionJobFileKey(jobId)}--${record.endedAtMs}.job.json`), `${JSON.stringify(record)}\n`, { mode: 0o600 });
 
     await expect(records.read({ jobId, callerId })).resolves.toMatchObject({ ok: true, record: { callerId } });
     await expect(records.read({ jobId, callerId: "design-studio:other" })).resolves.toEqual({ ok: false, code: "job_unknown" });

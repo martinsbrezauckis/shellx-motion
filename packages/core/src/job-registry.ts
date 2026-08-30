@@ -30,8 +30,9 @@
  * `LocalMotionJobGovernor` in job-governor.ts (writes) and the `motion.job.*` debug commands (read).
  */
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { defaultMotionJobLeaseRoot } from "./job-lease";
+import { dirname, join } from "node:path";
+import { defaultMotionJobLeaseRoot, defaultMotionRuntimeRoot } from "./job-lease";
+import { PrivateMotionRuntimeDirectory } from "./private-runtime-directory";
 import { motionJobOwnerKey } from "./job-id-file";
 import { compareCodeUnits } from "./canonical-json";
 import type { JobOutcome, JobSkipCode } from "./generated/job-status";
@@ -105,7 +106,9 @@ export interface MotionJobRegistryServices {
 export function defaultMotionJobRecordRoot(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.SHELLX_MOTION_JOB_RECORD_ROOT?.trim();
   if (explicit) return explicit;
-  return join(defaultMotionJobLeaseRoot(env), "..", "job-records");
+  const explicitLease = env.SHELLX_MOTION_LEASE_ROOT?.trim();
+  if (explicitLease) return join(dirname(defaultMotionJobLeaseRoot(env)), "job-records");
+  return join(defaultMotionRuntimeRoot(env), "job-records");
 }
 
 /**
@@ -150,12 +153,14 @@ export function assertMotionJobId(jobId: string): string {
 export class MotionJobRegistry {
   private readonly root: string;
   private readonly now: () => number;
+  private readonly runtime: PrivateMotionRuntimeDirectory;
   /** Latches once a filesystem operation fails, so a broken directory is not retried per job. */
   private degraded = false;
 
   constructor(services: MotionJobRegistryServices = {}) {
     this.root = services.recordRoot ?? defaultMotionJobRecordRoot();
     this.now = services.now ?? Date.now;
+    this.runtime = new PrivateMotionRuntimeDirectory(this.root);
   }
 
   /** True once recording has failed; rendering continues, reporting does not. */
@@ -172,6 +177,7 @@ export class MotionJobRegistry {
   async record(record: MotionJobRecord): Promise<void> {
     if (this.degraded) return;
     try {
+      await this.runtime.assertCurrent();
       await writeMotionJobRecord(this.root, record);
     } catch {
       this.degraded = true;
@@ -203,6 +209,12 @@ export class MotionJobRegistry {
     positionalPatch?: Pick<Partial<MotionJobRecord>, "receiptPath" | "warnings">
   ): Promise<void> {
     if (this.degraded) return;
+    try {
+      await this.runtime.assertCurrent();
+    } catch {
+      this.degraded = true;
+      return;
+    }
     const authenticated = typeof input !== "string";
     const existing = authenticated
       ? await this.findRecord({ jobId: input.jobId, callerId: input.callerId })
@@ -248,6 +260,7 @@ export class MotionJobRegistry {
    * asking for the last twenty jobs reads twenty files, not the whole retained history.
    */
   async list(input: { callerId: string; scope?: "own" | "all"; limit?: number }): Promise<MotionJobRecord[]> {
+    await this.runtime.assertCurrent();
     const files = (await listMotionJobRecordFiles(this.root)).sort((left, right) => right.endedAtMs - left.endedAtMs);
     const limit = Math.max(0, Math.min(input.limit ?? JOB_RECORD_RETENTION_COUNT, JOB_RECORD_RETENTION_COUNT));
     const visible: MotionJobRecord[] = [];
@@ -282,11 +295,13 @@ export class MotionJobRegistry {
    */
   async prune(): Promise<void> {
     if (this.degraded) return;
+    await this.runtime.assertCurrent();
     await pruneMotionJobRecords(this.root, this.now(), JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
   }
 
   /** Internal compatibility guard for ownerless legacy event snapshots. */
   async hasExclusiveOwnedLegacyEventRecord(input: { callerId: string; jobId: string }): Promise<boolean> {
+    await this.runtime.assertCurrent();
     return await hasExclusiveOwnedLegacyMotionJobRecord(this.root, input);
   }
 
@@ -298,6 +313,7 @@ export class MotionJobRegistry {
    * same prefix, and returning the wrong job's evidence would be worse than returning none.
    */
   private async findRecord(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<MotionJobRecord | null> {
+    await this.runtime.assertCurrent();
     const candidates = (await listMotionJobRecordFiles(this.root))
       .sort((left, right) => right.endedAtMs - left.endedAtMs || compareCodeUnits(left.name, right.name));
     let deniedCurrent: MotionJobRecord | null = null;

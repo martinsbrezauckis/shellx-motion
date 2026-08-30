@@ -83,6 +83,7 @@ export * from "./package";
 export * from "./package-asset-read";
 export * from "./package-asset-snapshot";
 export * from "./output-path-topology";
+export * from "./private-runtime-directory";
 export * from "./publication-commit-uncertainty";
 export * from "./output-directory-transaction";
 export {

@@ -20,7 +20,7 @@ Use this skill for local ShellX Motion package work and Motion-owned rendering c
 
 ## Cold-start recipe
 
-When configured as MCP, Motion's bridge reads the private key and live port per call; never put a token in agent config. If stopped, ask the host to start Motion with the required authoring roots and separate render package/input/output roots (or use the Workbench launcher and human Browse grants), then retry; request fields never create those authorities and remote publishing stays off.
+When configured as MCP, Motion's bridge reads the owner-private per-start listener record, authenticates that listener before sending the per-start credential or request body, and never forwards the durable Workbench key; never put a token in agent config. If stopped, ask the host to start Motion with the required authoring roots and separate render package/input/output roots (or use the Workbench launcher and human Browse grants), then retry; request fields never create those authorities and remote publishing stays off.
 
 ```bash
 # Installed form. In a source checkout: pnpm --filter @shellx-motion/cli run cli -- <cmd>

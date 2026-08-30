@@ -1,8 +1,9 @@
 /** Durable, validated event streams for coordinator-owned jobs. */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { motionJobFileKey, motionJobOwnerKey } from "./job-id-file";
+import { PrivateMotionRuntimeDirectory } from "./private-runtime-directory";
 
 export const MOTION_JOB_EVENT_MAX_BYTES = 256 * 1024;
 export const MOTION_JOB_EVENT_MAX_DATA_BYTES = 8 * 1024;
@@ -23,11 +24,14 @@ export interface MotionJobCoordinatorEvent {
 /** Atomic per-job snapshots, serialized so an older append can never overwrite a newer one. */
 export class MotionJobEventStore {
   private readonly writes = new Map<string, Promise<void>>();
+  private readonly runtime: PrivateMotionRuntimeDirectory;
 
   constructor(
     private readonly root: string,
     private readonly options: { writeSnapshot?: (path: string, serialized: string) => Promise<void> } = {}
-  ) {}
+  ) {
+    this.runtime = new PrivateMotionRuntimeDirectory(root);
+  }
 
   async write(input: { callerId: string; jobId: string; events: MotionJobCoordinatorEvent[] }): Promise<void> {
     const { callerId, jobId, events } = input;
@@ -35,9 +39,10 @@ export class MotionJobEventStore {
     const identity = motionJobOwnerKey(callerId, jobId);
     const previous = this.writes.get(identity) ?? Promise.resolve();
     const write = previous.catch(() => {}).then(async () => {
-      await mkdir(this.root, { recursive: true });
+      await this.runtime.assertCurrent();
       const path = this.pathFor(callerId, jobId);
       await (this.options.writeSnapshot ?? writeSnapshotAtomic)(path, serialized);
+      await this.runtime.assertCurrent();
     });
     this.writes.set(identity, write);
     try {
@@ -48,6 +53,7 @@ export class MotionJobEventStore {
   }
 
   async read(input: { callerId: string; jobId: string; allowLegacy?: boolean }): Promise<MotionJobCoordinatorEvent[] | null> {
+    await this.runtime.assertCurrent();
     const current = await this.readSnapshot(this.pathFor(input.callerId, input.jobId));
     if (current.found || !input.allowLegacy) return current.events;
     return (await this.readSnapshot(this.legacyPathFor(input.jobId))).events;
@@ -78,7 +84,7 @@ export class MotionJobEventStore {
 async function writeSnapshotAtomic(path: string, serialized: string): Promise<void> {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, serialized, "utf8");
+    await writeFile(temporary, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true }).catch(() => {});

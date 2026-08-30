@@ -42,7 +42,7 @@ export async function runCutGenerateToCutLegacy(input: CutGenerateToCutConnector
   const scriptedExport = convertScriptedFramesToMotionPackage(scriptInput.script, { createdAt, inputPath: scriptInput.label });
   await writeScriptedMotionPackage(scriptedExport, { packageDir });
   const preview = await renderNativePreviewFrame({ packageRoot: packageDir, outputPath: previewPath, outputRoots: [outDir], atMs: 0, now: () => createdAt });
-  await writeCutGenerateJson(previewReceiptPath, preview.receipt);
+  await writeCutGenerateJson(previewReceiptPath, preview.receipt, true);
   const pkg = await loadMotionPackage(packageDir);
   const renderOutputPath = join(outDir, "render", `${pkg.manifest.id}.mp4`);
   const baseCutImport = planCutImport(pkg, cutTargetCapabilitiesForMode({ targetId: "shellx-cut", mode: input.cutImportMode ?? "rendered_media" }));
@@ -60,7 +60,7 @@ export async function runCutGenerateToCutLegacy(input: CutGenerateToCutConnector
   const renderReceipt = renderResult.receipt;
   renderReceipt.inputHashes = { ...renderReceipt.inputHashes, operation: operationHash };
   const renderOk = renderReceipt.status !== "failed";
-  await writeCutGenerateJson(renderReceiptPath, renderReceipt);
+  await writeCutGenerateJson(renderReceiptPath, renderReceipt, true);
   let cutPlan = renderRequired && dryRunRender ? attachRenderedMediaToCutPlan(plannedCutImport, { plannedPath: renderOutputPath, receiptPath: renderReceiptPath, dryRun: true }) : plannedCutImport;
   const warnings = [...preview.warnings, ...renderReceipt.warnings, ...cutPlan.receipt.warnings];
   const previewFailureFatal = renderRequired && dryRunRender && !preview.ok;

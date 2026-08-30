@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { lstat, readFile } from "node:fs/promises";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -8,6 +9,7 @@ const accessRoot = process.env.SHELLX_MOTION_ACCESS_ROOT || join(homedir(), ".sh
 const discoveryFile = join(accessRoot, "mcp-bridge.discovery.json");
 const MCP_BRIDGE_CREDENTIAL_HEADER = "x-shellx-motion-mcp-bridge-credential";
 const MCP_BRIDGE_CREDENTIAL_PROTOCOL_PREFIX = "shellx-motion-mcp-bridge.";
+const MCP_LISTENER_PROOF_CONTEXT = "shellx-motion-mcp-listener@1:";
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
 const COORDINATOR_TOOL_NAMES = new Set([
   "motion_job_submit",
@@ -70,6 +72,7 @@ async function sendMcpRequest(request, notification) {
 
 async function sendHttpRequest(request, notification) {
   const discovery = await readLiveDiscovery();
+  await assertLiveListener(discovery);
   const response = await fetch(`http://127.0.0.1:${discovery.port}/rpc`, {
     method: "POST",
     headers: mcpHeaders(request, discovery.credential),
@@ -89,10 +92,41 @@ async function sendHttpRequest(request, notification) {
 async function connectedBridge() {
   if (connection?.open) return connection;
   const discovery = await readLiveDiscovery();
+  await assertLiveListener(discovery);
 
   const next = await openBridgeConnection(discovery.port, discovery.credential);
   connection = next;
   return next;
+}
+
+/** Authenticate the current listener without sending the bridge credential or MCP request body. */
+async function assertLiveListener(discovery) {
+  const nonce = randomBytes(32).toString("base64url");
+  const response = await fetch(`http://127.0.0.1:${discovery.port}/mcp-bridge/proof?nonce=${encodeURIComponent(nonce)}`, {
+    method: "GET",
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(5_000)
+  });
+  if (!response.ok) throw new Error("Motion MCP listener proof failed.");
+  const raw = await response.text();
+  if (Buffer.byteLength(raw, "utf8") > 4_096) throw new Error("Motion MCP listener proof is oversized.");
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new Error("Motion MCP listener proof is invalid.");
+  }
+  const supplied = body && typeof body === "object" && !Array.isArray(body) ? body.proof : undefined;
+  if (typeof supplied !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(supplied)) {
+    throw new Error("Motion MCP listener proof is invalid.");
+  }
+  const expected = createHmac("sha256", discovery.credential)
+    .update(`${MCP_LISTENER_PROOF_CONTEXT}${nonce}`, "utf8")
+    .digest();
+  const actual = Buffer.from(supplied, "base64url");
+  if (actual.byteLength !== expected.byteLength || !timingSafeEqual(actual, expected)) {
+    throw new Error("Motion MCP listener proof does not match discovery.");
+  }
 }
 
 function openBridgeConnection(port, credential) {

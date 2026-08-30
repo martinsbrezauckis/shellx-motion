@@ -8,7 +8,7 @@
  * The safety posture matters as much as the coordination: a host whose runtime directory is
  * missing or read-only must still render, bounded process-locally, rather than fail closed.
  */
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -307,7 +307,20 @@ describe("lease root selection", () => {
     const fallback = defaultMotionJobLeaseRoot({});
     // Per-user scope is the documented boundary; a world-shared path would be a security change.
     expect(fallback.startsWith(tmpdir())).toBe(true);
-    expect(fallback).toMatch(/shellx-motion-leases-/);
+    expect(fallback).toMatch(/shellx-motion-[^/]+[\\/]job-leases$/);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a preclaimed shared-write fallback root and degrades safely", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "shellx-motion-lease-preclaim-"));
+    tempDirs.push(parent);
+    const root = join(parent, "job-leases");
+    await mkdir(root, { mode: 0o700 });
+    await chmod(root, 0o777);
+    const leases = new MotionJobLeaseDirectory({ leaseRoot: root, pid: 991, now: () => 1_000 });
+
+    await expect(leases.claim({ jobId: "preclaimed", lane: "ffmpeg", operation: "render.final", limit: 1 }))
+      .resolves.toMatchObject({ admitted: true, machineWide: false, run: null });
+    expect(leases.isDegraded).toBe(true);
   });
 });
 

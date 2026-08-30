@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  ExistingDirectoryAuthority,
   OutputDirectoryReservation,
   OutputPathTopology
 } from "./output-path-topology";
@@ -18,6 +19,19 @@ const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
 
 describe("output directory reservations", () => {
+  it("rejects replacement of an existing read root after its authority is retained", async () => {
+    const root = await scratch();
+    const selected = join(root, "selected");
+    const previous = join(root, "selected-previous");
+    await mkdir(selected, { mode: 0o700 });
+    const authority = await ExistingDirectoryAuthority.acquire(selected);
+
+    await rename(selected, previous);
+    await mkdir(selected, { mode: 0o700 });
+
+    await expect(authority.assertCurrent()).rejects.toThrow(/changed after Motion captured its identity|topology changed after admission/i);
+  });
+
   it.skipIf(process.platform === "win32")("refuses a literal sticky shared root when the retained store requires exclusive child authority", async () => {
     const root = await scratch();
     const store = join(root, "shared-store");
