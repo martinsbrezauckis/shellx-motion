@@ -193,14 +193,14 @@ before embedding it.
 | Route | Purpose |
 |---|---|
 | `GET /health` | Minimal unauthenticated liveness and contract count. |
-| `GET /mcp-bridge/proof?nonce=` | Bounded unauthenticated challenge used by the installed stdio bridge to authenticate the current per-start listener before it sends a credential or MCP body. |
+| `GET /mcp-bridge/proof?nonce=` | Bounded unauthenticated challenge used by the installed stdio bridge to authenticate the current per-start listener; privileged HTTP and WebSocket delivery then reuse that exact TCP connection. |
 | `GET /debug/contracts` | Authenticated command/domain/tier/mutation registry. |
 | `POST /debug` | Native `{command,args,requestedTier?}` dispatch. |
 | `POST /rpc` | Authenticated JSON-RPC discovery and MCP-compatible tool dispatch. The bundled local MCP bridge first authenticates the listener, then uses a private per-start credential instead of forwarding the durable Bearer capability. |
 | `WS /ws` | Authenticated persistent JSON-RPC transport. Coordinator calls from the bundled bridge use the listener-authenticated private per-start credential. |
 | `POST /sdk` | Typed local SDK operation dispatch for trusted hosts. |
 | `GET /workbench` | Standalone local Motion editor shell; Start Motion authenticates its first tab automatically. |
-| `POST /workbench/bootstrap` | One-use exchange used only by the locally opened Start Motion tab. |
+| `POST /workbench/bootstrap` | One-use header exchange used only by the locally opened Start Motion tab; the route never waits for an unauthenticated request body. |
 | `GET /workbench/connections` | Human agent/API connection and local-key configuration surface. |
 | `POST /workbench/artifact-session` | Authenticated Workbench browser-session exchange for opaque preview handles. |
 | `GET /workbench/artifact?handle=` | Authenticated, browser-session-bound preview artifact serving; raw paths are never accepted. |
@@ -271,12 +271,14 @@ write, or receipt-selected read.
 
 The debug server binds loopback by default, rejects forged Host and unapproved Origin values, bounds
 request and WebSocket concurrency/size, and requires authentication for everything except health,
-the bounded MCP listener-proof challenge, and static workbench files. The installed MCP bridge reads only a private, per-server-start discovery
-record after the listener binds; it first sends a random public challenge and requires the current
-listener's keyed HMAC proof. It sends neither the private listener credential nor the MCP request
-body when that proof fails, and it never forwards the durable Bearer capability to the discovered
-port. A stale record rebound after a crash therefore receives no credential or MCP body, while a
-restart publishes a new record and key. The record is owner-private on supported hosts; this
+the bounded MCP listener-proof challenge, and static workbench files. The installed MCP bridge reads
+only a private, per-server-start discovery record after the listener binds; it first sends a random
+public challenge and requires the current listener's keyed HMAC proof. The proof response is streamed
+under a 4 KiB cap, stdio request frames are capped at 1 MB, and privileged HTTP or WebSocket delivery
+must reuse the exact TCP connection that supplied the proof. It sends neither the private listener
+credential nor the MCP request body when that proof or socket binding fails, and it never forwards
+the durable Bearer capability to the discovered port. A stale record rebound after a crash therefore
+receives no credential or MCP body, while a restart publishes a new record and key. The record is owner-private on supported hosts; this
 boundary does not make a same-user process a distinct trusted principal. Direct
 non-loopback binding is disabled. If a trusted tunnel or reverse proxy is ever added, it must provide
 its own authentication and explicit host/origin policy.

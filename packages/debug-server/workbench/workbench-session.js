@@ -56,8 +56,7 @@ export async function claimWorkbenchBootstrap() {
   history.replaceState(null, "", `${location.pathname}${location.search}`);
   const response = await fetch("/workbench/bootstrap", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ bootstrap })
+    headers: { "x-shellx-motion-workbench-bootstrap": bootstrap }
   });
   const body = await response.json().catch(() => ({}));
   const capabilityToken = text(object(body).capabilityToken);

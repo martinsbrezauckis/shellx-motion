@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   artifactProbeChildEnvironment,
@@ -82,11 +82,18 @@ describe("attested artifact handles", () => {
     await expect(writeAttestedArtifactHandle(handlePath, handle)).rejects.toMatchObject({ code: "EEXIST" });
   });
 
-  it("uses the configured ffprobe executable for artifact verification", () => {
-    expect(resolveArtifactFfprobeExecutable({
-      env: { SHELLX_MOTION_FFPROBE: " /opt/shellx/bin/ffprobe-custom " }
-    })).toBe("/opt/shellx/bin/ffprobe-custom");
-    expect(resolveArtifactFfprobeExecutable({ env: {} })).toBe("ffprobe");
+  it("uses only canonical absolute ffprobe executables for artifact verification", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-artifact-ffprobe-"));
+    roots.push(root);
+    const executable = join(root, process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
+    await writeFile(executable, "test executable\n", "utf8");
+    if (process.platform !== "win32") await chmod(executable, 0o755);
+    const canonical = await realpath(executable);
+
+    expect(resolveArtifactFfprobeExecutable({ env: { SHELLX_MOTION_FFPROBE: ` ${executable} ` } })).toBe(canonical);
+    expect(resolveArtifactFfprobeExecutable({ env: { PATH: `.${delimiter}${root}` } })).toBe(canonical);
+    expect(() => resolveArtifactFfprobeExecutable({ ffprobePath: "./ffprobe", env: { PATH: root } })).toThrow("absolute executable path");
+    expect(() => resolveArtifactFfprobeExecutable({ env: { PATH: "." } })).toThrow("No trusted");
     expect(() => resolveArtifactFfprobeExecutable({ ffprobePath: "bad\0path", env: {} })).toThrow("null bytes");
   });
 

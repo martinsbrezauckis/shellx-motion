@@ -33,6 +33,9 @@
  * root the host named counts, so an unconfigured host fails closed instead of trusting `./.scratch`.
  */
 import type { MotionDebugResult } from "../command-registry.js";
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
+import { ExistingDirectoryAuthority, type RetainedDirectoryAuthority } from "@shellx-motion/core";
 
 export interface ReceiptsRootPolicyServices {
   /** Host-configured receipts root. Trusted by construction: the host operator, not a caller, sets it. */
@@ -119,4 +122,23 @@ export async function callerReceiptsRootRefusal(
     },
     warnings: []
   };
+}
+
+/** Revalidate one caller-selected receipt root, then retain its exact directory identity. */
+export async function acquireTrustedReceiptsRootAuthority(
+  subject: string,
+  requestedReceiptsRoot: string,
+  services: ReceiptsRootPolicyServices
+): Promise<RetainedDirectoryAuthority> {
+  const first = await callerReceiptsRootRefusal(subject, requestedReceiptsRoot, services);
+  if (first && !first.ok) throw new Error(first.error.message);
+  const lexical = resolve(requestedReceiptsRoot);
+  const authority = await ExistingDirectoryAuthority.acquire(await realpath(lexical));
+  const second = await callerReceiptsRootRefusal(subject, requestedReceiptsRoot, services);
+  if (second && !second.ok) throw new Error(second.error.message);
+  if (resolve(await realpath(lexical)) !== resolve(authority.path)) {
+    throw new Error(`${subject} receiptsRoot changed after admission.`);
+  }
+  await authority.assertCurrent();
+  return authority;
 }

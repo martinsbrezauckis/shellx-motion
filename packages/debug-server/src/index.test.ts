@@ -67,30 +67,56 @@ describe("motion debug loopback server", () => {
     try {
       const wrong = await globalThis.fetch(new URL("/workbench/bootstrap", server.url), {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bootstrap: "wrong-bootstrap-00000000000000000000000000" })
+        headers: { "x-shellx-motion-workbench-bootstrap": "wrong-bootstrap-00000000000000000000000000" }
       });
       expect(wrong.status).toBe(401);
       expect(await wrong.json()).toMatchObject({ error: { code: "invalid_bootstrap" } });
 
       const claimed = await globalThis.fetch(new URL("/workbench/bootstrap", server.url), {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bootstrap })
+        headers: { "x-shellx-motion-workbench-bootstrap": bootstrap }
       });
       expect(claimed.status).toBe(200);
       expect(await claimed.json()).toEqual({ ok: true, capabilityToken: TEST_CAPABILITY_TOKEN });
 
       const replay = await globalThis.fetch(new URL("/workbench/bootstrap", server.url), {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bootstrap })
+        headers: { "x-shellx-motion-workbench-bootstrap": bootstrap }
       });
       expect(replay.status).toBe(401);
 
       const workbench = await globalThis.fetch(new URL("/workbench", server.url));
       expect(await workbench.text()).not.toContain(TEST_CAPABILITY_TOKEN);
     } finally {
+      await server.close();
+    }
+  });
+
+  it("does not let an unauthenticated slow bootstrap body occupy the request pool", async () => {
+    const server = await startTestServer({ port: 0, maxConcurrentRequests: 1 });
+    let slow!: ReturnType<typeof httpRequest>;
+    const refused = new Promise<number>((resolve, reject) => {
+      slow = httpRequest({
+        host: server.url.hostname,
+        port: Number(server.url.port),
+        path: "/workbench/bootstrap",
+        method: "POST",
+        headers: { "content-type": "application/json", "content-length": "1000000" }
+      }, (response) => {
+        response.resume();
+        resolve(response.statusCode ?? 0);
+      });
+      slow.once("error", reject);
+    });
+    slow.on("error", () => {});
+    slow.write('{"bootstrap":"partial');
+    try {
+      expect(await refused).toBe(401);
+      const health = await globalThis.fetch(new URL("/health", server.url));
+      expect(health.status).toBe(200);
+      expect(await health.json()).toMatchObject({ ok: true });
+    } finally {
+      slow.destroy();
       await server.close();
     }
   });

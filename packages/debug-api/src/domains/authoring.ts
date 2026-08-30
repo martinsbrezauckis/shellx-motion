@@ -16,9 +16,8 @@ import { dispatchLottieAuthoringCommand, type LottieAuthoringServices } from "./
 import { dispatchAgentScriptAuthoringCommand, type AgentScriptAuthoringServices } from "./authoring-agent-script.js";
 import { dispatchCutoutRigAuthoringCommand, type CutoutRigAuthoringServices } from "./authoring-cutout-rig.js";
 import {
-  assertConfiguredAuthoringInputFile,
-  assertConfiguredAuthoringInputRoot,
-  assertConfiguredAuthoringOutputFile,
+  acquireConfiguredAuthoringInputFileDirectoryAuthority, assertConfiguredAuthoringInputFile,
+  assertConfiguredAuthoringInputRoot, assertConfiguredAuthoringOutputFile,
   assertConfiguredAuthoringOutputRoot,
   configuredAuthoringInputRoot,
 } from "./authoring-root-policy.js";
@@ -44,6 +43,7 @@ export interface AuthoringDomainServices
   scriptedPackageWriter?: typeof writeScriptedMotionPackage;
   htmlSnippetExporter?: typeof writeHtmlSnippetExport;
   htmlSnippetImporter?: typeof importHtmlSnippetToMotionPackage;
+  callerSteeredFilesystemAuthority?: boolean; // Only arguments crossing an external caller boundary.
   otioExporter?: typeof exportMotionPackageToOtio;
   otioImporter?: typeof importOtioTimelineToMotionPackage;
 }
@@ -220,9 +220,10 @@ async function importHtmlSnippet(args: unknown, services: AuthoringDomainService
   if (!services.htmlSnippetImporter) return capabilityUnavailable("HTML snippet import is unavailable.");
   if (!hasConfiguredAuthoringRoots(services)) return authoringRootsUnavailable("HTML snippet import");
   try {
-    await assertConfiguredAuthoringInputFile(htmlPath, services.authoringInputRoots, "HTML snippet source");
+    const sourceRootAuthority = services.callerSteeredFilesystemAuthority ? await acquireConfiguredAuthoringInputFileDirectoryAuthority(htmlPath, services.authoringInputRoots, "HTML snippet source") : undefined;
+    if (!sourceRootAuthority) await assertConfiguredAuthoringInputFile(htmlPath, services.authoringInputRoots, "HTML snippet source");
     await assertConfiguredAuthoringOutputRoot(packageDir, services.authoringOutputRoots, "HTML snippet package output");
-    const result = await services.htmlSnippetImporter({ htmlPath, packageDir, ...(createdAt ? { createdAt } : {}) });
+    const result = await services.htmlSnippetImporter({ htmlPath, packageDir, ...(sourceRootAuthority ? { sourceRootAuthority } : {}), ...(createdAt ? { createdAt } : {}) });
     return {
       ok: true,
       receiptId: result.receipt.id,

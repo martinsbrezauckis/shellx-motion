@@ -38,7 +38,7 @@ describe("admitted GPU video delivery", () => {
     expect(acquired).toHaveLength(1);
     expect(prepared.delivery.stagingRoot).toBe(acquired[0]);
     expect(prepared.delivery.stagingRoot?.startsWith(`${scratchRoot}/gpu-video-`)).toBe(true);
-    expect(commands.map((command) => command.executable)).toEqual(["ffprobe", "ffmpeg"]);
+    expect(commands.map(commandKind)).toEqual(["ffprobe", "ffmpeg"]);
     await expect(lstat(prepared.delivery.stagingRoot!)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
 
     await prepared.delivery.release();
@@ -73,7 +73,7 @@ describe("admitted GPU video delivery", () => {
     );
 
     expect(prepared).toMatchObject({ ok: false, failure: { code: "gpu_video_resource_refused", message: expect.stringContaining("aggregate operation budget") } });
-    expect(commands.map((command) => command.executable)).toEqual(["ffprobe"]);
+    expect(commands.map(commandKind)).toEqual(["ffprobe"]);
     await expect(lstat(acquired[0]!)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(scratchRoot)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
   });
@@ -94,7 +94,7 @@ describe("admitted GPU video delivery", () => {
     const controller = new AbortController();
     let decodes = 0;
     const runner: FfmpegRunner = async (command) => {
-      if (command.executable === "ffprobe") {
+      if (commandKind(command) === "ffprobe") {
         controller.abort(new Error("cancel admitted GPU staging API_TOKEN=visible C:\\Users\\TestUser\\private.txt\u061c"));
         return probe();
       }
@@ -132,11 +132,15 @@ function jobContext(scratchRoot: string, signal = new AbortController().signal) 
 function stagingRunner(commands: FfmpegCommand[]): FfmpegRunner {
   return async (command) => {
     commands.push(command);
-    if (command.executable === "ffprobe") return probe();
+    if (commandKind(command) === "ffprobe") return probe();
     const output = command.args.at(-1)!;
     await writeFile(output, Buffer.from([0, 0, 0, 255, 255, 255, 255, 255, 10, 80, 180, 255, 250, 30, 40, 255]), { mode: 0o600 });
     return { exitCode: 0, stdout: "", stderr: "" };
   };
+}
+
+function commandKind(command: FfmpegCommand): "ffmpeg" | "ffprobe" {
+  return command.args.includes("-show_streams") && command.args.includes("-show_format") ? "ffprobe" : "ffmpeg";
 }
 
 function probe(): FfmpegProcessResult {

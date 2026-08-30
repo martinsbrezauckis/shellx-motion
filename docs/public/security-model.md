@@ -157,8 +157,9 @@ Two native processes consume untrusted bytes and run with your OS privileges:
   external files, and undeclared origins blocked; package-local file URLs and
   data/blob URLs are allowed.
 - **FFmpeg / FFprobe (ffmpeg lane)** parse untrusted media. Motion invokes them
-  with `shell:false` through argument arrays, validates input/output roots and
-  preset extensions, and bounds diagnostic output.
+  by canonical absolute path with `shell:false` through argument arrays, ignores
+  empty or relative `PATH` entries, requires absolute overrides, validates
+  input/output roots and preset extensions, and bounds diagnostic output.
 
 Motion contains PID-visible render/agent subprocesses in process groups on Unix.
 On Windows, native process-tree containment is proved only when a receipt reports
@@ -259,10 +260,13 @@ The normal Start Motion launcher creates one private per-user key, reuses it acr
 stores it outside project directories with user-only permissions. The first Workbench tab receives
 it through a one-use launch exchange. Its bootstrap value lives in an owner-only local HTML handoff;
 the OS opener receives only the non-secret `file:` URL, never the value in argv or environment.
-Motion removes the handoff after claim, opener failure, or shutdown, and consumes the value before
-cleanup. The bundled MCP bridge does not read or forward that durable key. It reads an owner-private
-per-start listener record, proves the current listener by random challenge and keyed HMAC, and only
-then sends the per-start credential and MCP body. A stale or rebound listener receives neither.
+Motion removes the handoff after claim, opener failure, or shutdown, consumes the value before
+cleanup, and claims it through a bounded one-use header without waiting for an unauthenticated
+request body. The bundled MCP bridge does not read or forward that durable key. It reads an
+owner-private per-start listener record, proves the current listener by random challenge and keyed
+HMAC, and sends the per-start credential and MCP body only on that same retained TCP connection.
+The public proof response is streamed under a 4 KiB cap and stdio request frames are bounded to
+1 MB. A stale or rebound listener receives neither credential nor request body.
 Advanced direct server launches remain able to use an ephemeral private key file or
 `SHELLX_MOTION_DEBUG_TOKEN`. Theft of a high-tier key by another local process would grant that
 process Motion's filesystem/render authority — treat the key like any other local secret.
@@ -308,7 +312,9 @@ transport boundary and covered by regression tests:
   than by permission-tier name alone; legacy Canvas/Cut connector routes enforce the input and/or
   output root classes their operation actually uses. Raw Debug, RPC, MCP and server-SDK fields
   cannot widen those grants, and refusal occurs before an adapter or analyzer runs or an outside
-  destination is created.
+  destination is created. Caller-steered review package/receipt roots and an HTML import's resolved
+  source directory retain their admitted directory identity through final publication; swapping a
+  stable path alias does not grant the replacement directory.
 - **Retained raw prompts die at their stated deadline.** Raw retention is admitted only on Linux,
   where the descriptor-relative stable-reader and purge capability can enforce its deletion
   deadline at every read. After the deadline, reads return the receipt without the prompt and the
@@ -319,7 +325,8 @@ transport boundary and covered by regression tests:
   redact before persistence if provider execution crosses the deadline. Copies exported before
   the deadline are explicitly outside this promise.
 - **Portable review bundles copy only what resolves inside an approved root.**
-  Core reopens each stable-reader receipt snapshot itself, retaining the approved
+  Core retains the admitted package and receipt directory identities, then reopens each
+  stable-reader receipt snapshot itself, retaining the approved
   root-relative identity, digest, byte length, and file identity rather than trusting
   a mutable caller entry. It substitutes that private snapshot when rendering the
   review and rechecks the exact receipt/package identities immediately before

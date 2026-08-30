@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
+import { importHtmlSnippetToMotionPackage } from "@shellx-motion/adapters-html";
 import { dispatchDebugCommand } from "../index.js";
+import { dispatchAuthoringCommand } from "./authoring.js";
 
 const tempDirs: string[] = [];
 
@@ -12,6 +14,38 @@ afterEach(async () => {
 });
 
 describe("legacy authoring adapter root fence", () => {
+  it.runIf(process.platform === "linux")("retains a caller-steered HTML source directory through adapter publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-html-retained-root-"));
+    tempDirs.push(root);
+    const inputRoot = join(root, "inputs");
+    const displacedRoot = join(root, "inputs-admitted");
+    const outputRoot = join(root, "outputs");
+    const htmlPath = join(inputRoot, "snippet.html");
+    const packageDir = join(outputRoot, "package");
+    const html = `<!doctype html><html><body><main data-composition-id="motion_retained" data-duration="1000" style="width:320px;height:180px"><div data-layer-id="safe" data-layer-type="shape" data-start="0" data-duration="1000"></div></main></body></html>`;
+    await Promise.all([mkdir(inputRoot, { mode: 0o700 }), mkdir(outputRoot, { mode: 0o700 })]);
+    await writeFile(htmlPath, html, "utf8");
+
+    const result = await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => await dispatchAuthoringCommand(
+      "motion.html.snippet.import",
+      { htmlPath, packageDir },
+      {
+        callerSteeredFilesystemAuthority: true,
+        authoringInputRoots: [inputRoot],
+        authoringOutputRoots: [outputRoot],
+        htmlSnippetImporter: async (options) => {
+          await rename(inputRoot, displacedRoot);
+          await mkdir(inputRoot, { mode: 0o700 });
+          await writeFile(htmlPath, html.replace("motion_retained", "motion_replaced"), "utf8");
+          return await importHtmlSnippetToMotionPackage(options);
+        }
+      }
+    ));
+
+    expect(result).toMatchObject({ ok: false, error: { code: "html_snippet_import_failed", message: expect.stringMatching(/changed after Motion captured its identity|changed after admission|topology changed/i) } });
+    await expect(readFile(join(packageDir, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails closed for every legacy adapter when the host did not configure both root services", async () => {
     const commands = [
       ["motion.script.compile", { script: scriptedVideo(), packageDir: "/untrusted/package" }],

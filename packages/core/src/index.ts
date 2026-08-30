@@ -133,6 +133,7 @@ export * from "./compositing-graph-types";
 export * from "./compositing-graph-validate";
 export * from "./compositing-graph-compile";
 export * from "./timeline-inspect";
+export * from "./trusted-executable";
 export * from "./template";
 export * from "./template-quality";
 export * from "./template-parity";

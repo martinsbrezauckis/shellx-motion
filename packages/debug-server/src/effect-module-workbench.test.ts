@@ -68,7 +68,7 @@ function factory(stateRoot: string) {
 
 async function bootstrap(server: MotionDebugServerHandle): Promise<string> {
   const response = await globalThis.fetch(new URL("/workbench/bootstrap", server.url), {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bootstrap: BOOTSTRAP })
+    method: "POST", headers: { "x-shellx-motion-workbench-bootstrap": BOOTSTRAP }
   });
   expect(response.status).toBe(200);
   const cookie = response.headers.get("set-cookie");

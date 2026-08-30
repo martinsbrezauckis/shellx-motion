@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { canonicalJsonSha256 } from "./canonical-json";
+import { ExistingDirectoryAuthority, type RetainedDirectoryAuthority } from "./output-path-topology";
 import { readReceiptActor } from "./receipts";
 import { readBoundedStableFile, type StableFileIdentity } from "./stable-file-read";
 import type { OperationReceipt, ReceiptArtifact } from "./types";
@@ -35,11 +36,17 @@ const boundFilesystemReceipts = new WeakMap<ReviewBundleReceiptEntry, BoundFiles
  */
 export async function bindStableReviewBundleReceiptEntries(
   receiptsRoot: string,
-  supplied: readonly StableReviewBundleReceiptInput[]
+  supplied: readonly StableReviewBundleReceiptInput[],
+  retainedRootAuthority?: RetainedDirectoryAuthority
 ): Promise<BoundReviewBundleReceiptEntry[]> {
-  const canonicalRoot = await realpath(resolve(receiptsRoot));
+  const lexicalRoot = resolve(receiptsRoot);
+  const rootAuthority = retainedRootAuthority
+    ?? await ExistingDirectoryAuthority.acquire(await realpath(lexicalRoot));
+  await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
+  const canonicalRoot = rootAuthority.path;
   const entries: BoundReviewBundleReceiptEntry[] = [];
   for (const candidate of supplied) {
+    await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
     const source = await readBoundedStableFile(candidate.path, {
       label: "Stable review bundle receipt",
       maxBytes: MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
@@ -69,7 +76,19 @@ export async function bindStableReviewBundleReceiptEntries(
     });
     entries.push(entry);
   }
+  await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
   return entries;
+}
+
+async function assertReceiptRootCurrent(
+  lexicalRoot: string,
+  authority: RetainedDirectoryAuthority
+): Promise<void> {
+  await authority.assertCurrent();
+  if (resolve(await realpath(lexicalRoot)) !== resolve(authority.path)) {
+    throw new Error("Review bundle receiptsRoot changed after admission.");
+  }
+  await authority.assertCurrent();
 }
 
 /**

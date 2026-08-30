@@ -61,10 +61,11 @@ it does not permit changing ownership or weakening the fail-closed topology
 checks for shared ancestors.
 
 Rendering to final media (MP4/WebM/GIF/stills) needs **FFmpeg** and **FFprobe**.
-Motion resolves them from `PATH` by default; you can also point
-`SHELLX_MOTION_FFMPEG` and `SHELLX_MOTION_FFPROBE` at explicit executables. The
-browser lane needs a Chromium available through Playwright. The native lane needs
-neither.
+Motion resolves them only from absolute `PATH` entries and launches the canonical
+absolute executable. You can instead point `SHELLX_MOTION_FFMPEG` and
+`SHELLX_MOTION_FFPROBE` at existing absolute regular executable files; relative
+overrides refuse rather than falling back to the current directory. The browser lane needs a
+Chromium available through Playwright. The native lane needs neither.
 
 ## Start Motion
 

@@ -47,7 +47,7 @@
  * `exports` subpath `@shellx-motion/core/test-support`, which `publishConfig.exports` deliberately
  * omits, so the published package still exposes `.` alone.
  */
-import { lstatSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { MOTION_BROWSER_OVERRIDE_ENV_VAR } from "./browser-executable";
@@ -92,8 +92,8 @@ export interface MotionToolPins {
  *
  * The files are created because the browser pin is validated before use: `SHELLX_MOTION_BROWSER`
  * naming a path with no file at it is an unusable pin, which reports `broken` WITHOUT calling the
- * runner. They are ordinary empty files, not executables — nothing spawns them, because the point of
- * pinning is that a fake runner answers instead.
+ * runner. They are executable placeholder files so the same trust checks used in production admit
+ * the pins; nothing spawns them, because the fake runner answers instead.
  *
  * @param label Included in the temporary directory name so a leaked directory names its suite.
  * @returns The pinned paths, the executable->tool mapping a fake runner needs, and `release()`.
@@ -107,12 +107,13 @@ export function pinMotionToolExecutables(label: string): MotionToolPins {
 
   for (const tool of MOTION_PINNABLE_TOOLS) {
     const path = join(directory, tool);
-    writeFileSync(path, `stub for ${tool}: pinned by a test suite, never executed\n`);
-    executable[tool] = path;
-    byExecutable.set(path, tool);
+    writeFileSync(path, `stub for ${tool}: pinned by a test suite, never executed\n`, { mode: 0o700 });
+    const canonicalPath = realpathSync(path);
+    executable[tool] = canonicalPath;
+    byExecutable.set(canonicalPath, tool);
     const variable = MOTION_TOOL_PIN_ENV_VAR[tool];
     previous.set(variable, process.env[variable]);
-    process.env[variable] = path;
+    process.env[variable] = canonicalPath;
   }
 
   let released = false;

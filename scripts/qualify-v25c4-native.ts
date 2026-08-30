@@ -7,10 +7,10 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { loadMotionPackage, motionBrowserExecutableVerificationProblem, resolveMotionBrowserExecutable } from "../packages/core/src/index";
+import { loadMotionPackage, motionBrowserExecutableVerificationProblem, resolveMotionBrowserExecutable, resolveTrustedExecutable } from "../packages/core/src/index";
 import { createEffectModuleRegistryAuthority, createEffectModuleRegistryUseAuthority } from "../packages/renderer-browser/src/effect-module-registry";
 import { renderStreamingFinal, type RenderStreamingFinalResult } from "../packages/renderer-ffmpeg/src/index";
 
@@ -175,7 +175,7 @@ function assertEqualIdentity(first: QualifiedRender, replay: QualifiedRender): v
 function coldIdentity(first: QualifiedRender, replay: QualifiedRender): Json { return { expected: first.identities, observed: replay.identities, matched: true }; }
 
 async function ffprobe(path: string, width: number, height: number, fps: number, durationMs: number): Promise<Json> {
-  const { stdout } = await runFile("ffprobe", ["-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", path], { maxBuffer: 1_000_000 });
+  const { stdout } = await runFile(trustedCodecPath("ffprobe"), ["-v", "error", "-count_frames", "-show_streams", "-show_format", "-of", "json", path], { maxBuffer: 1_000_000 });
   const parsed = mustObject(JSON.parse(String(stdout)), "ffprobe JSON");
   const video = mustArray(parsed.streams, "ffprobe streams").map((value) => mustObject(value, "ffprobe stream")).filter((stream) => stream.codec_type === "video");
   assert.equal(video.length, 1, "Final must have exactly one video stream.");
@@ -196,7 +196,7 @@ async function compareDecodedFrames(moduleOn: string, moduleOff: string, width: 
 }
 
 async function decodeFrame(path: string): Promise<Buffer> {
-  const { stdout } = await runFile("ffmpeg", ["-v", "error", "-ss", String(frameAtSeconds), "-i", path, "-map", "0:v:0", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  const { stdout } = await runFile(trustedCodecPath("ffmpeg"), ["-v", "error", "-ss", String(frameAtSeconds), "-i", path, "-map", "0:v:0", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
   assert(Buffer.isBuffer(stdout), "FFmpeg frame decode did not return bytes."); return stdout;
 }
 
@@ -231,8 +231,8 @@ async function browserEvidence(): Promise<Json> {
   return { source: location.source, executable: await realpath(location.executable), sha256: await sha256File(location.executable) };
 }
 
-async function executableEvidence(command: string): Promise<Json> { const path = await resolveExecutable(command); const version = await runFile(path, ["-version"], { maxBuffer: 32_000 }); return { path, sha256: await sha256File(path), version: String(version.stdout).split("\n")[0] ?? "" }; }
-async function resolveExecutable(command: string): Promise<string> { for (const directory of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) { const candidate = join(directory, command); const candidateFacts = await lstat(candidate).catch(() => null); if (!candidateFacts || (!candidateFacts.isFile() && !candidateFacts.isSymbolicLink())) continue; const resolved = await realpath(candidate); const facts = await lstat(resolved); if (facts.isFile() && (facts.mode & 0o111) !== 0) return resolved; } throw new Error(`${command} was not a regular executable on PATH.`); }
+async function executableEvidence(command: "ffmpeg" | "ffprobe"): Promise<Json> { const path = trustedCodecPath(command); const version = await runFile(path, ["-version"], { maxBuffer: 32_000 }); return { path, sha256: await sha256File(path), version: String(version.stdout).split("\n")[0] ?? "" }; }
+function trustedCodecPath(command: "ffmpeg" | "ffprobe"): string { const override = process.env[command === "ffmpeg" ? "SHELLX_MOTION_FFMPEG" : "SHELLX_MOTION_FFPROBE"]; const result = resolveTrustedExecutable({ toolName: command, ...(override ? { override } : {}) }); if (!result.executable) throw new Error(result.problem); return result.executable; }
 async function git(...args: string[]): Promise<string> { return (await runFile("git", args, { cwd: repoRoot })).stdout.trim(); }
 async function sha256File(path: string): Promise<string> { return createHash("sha256").update(await readFile(path)).digest("hex"); }
 function sha256Bytes(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }

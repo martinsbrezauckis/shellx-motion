@@ -72,11 +72,12 @@ describe("isolated frame-to-video encoder benchmark contract", () => {
       "--mediabunny-bundle", "/scratch/mediabunny.mjs",
       "--out-dir", "/scratch/run-1",
       "--source-revision", "abcdef1",
-      "--ffmpeg", "ffmpeg",
-      "--ffprobe", "ffprobe",
+      "--ffmpeg", process.execPath,
+      "--ffprobe", process.execPath,
     ]);
     expect(parsed).toMatchObject({ browser: "/tools/chrome", mediabunnyBundle: "/scratch/mediabunny.mjs", outDir: "/scratch/run-1", sourceRevision: "abcdef1" });
     expect(() => parseFrameVideoEncoderBenchmarkArgs(["--browser", "chrome"])).toThrow();
+    expect(() => parseFrameVideoEncoderBenchmarkArgs(["--browser", "/tools/chrome", "--mediabunny-bundle", "/scratch/mediabunny.mjs", "--out-dir", "/scratch/run-1", "--source-revision", "abcdef1", "--ffmpeg", "ffmpeg", "--ffprobe", "ffprobe"])).toThrow(/absolute executable path/);
     expect(() => parseFrameVideoEncoderBenchmarkArgs(["--script", "return globalThis"])).toThrow();
     const rootManifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string>; dependencies?: Record<string, string>; devDependencies: Record<string, string> };
     expect(rootManifest.scripts["encoder:benchmark:isolated"]).toBe("node scripts/frame-video-encoder-benchmark.mjs");

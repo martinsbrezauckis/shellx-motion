@@ -14,6 +14,7 @@ import {
   timestampEvidence,
 } from "./frame-video-encoder-benchmark-contract.mjs";
 import { runIsolatedMediabunnyBenchmark } from "./frame-video-encoder-benchmark-browser.mjs";
+import { resolveTrustedScriptExecutable } from "./trusted-executable-resolution.mjs";
 
 const PROCESS_OUTPUT_LIMIT = 64 * 1024 * 1024;
 
@@ -266,8 +267,8 @@ export function parseFrameVideoEncoderBenchmarkArgs(argv) {
     mediabunnyBundle: values["--mediabunny-bundle"],
     outDir: values["--out-dir"],
     sourceRevision: values["--source-revision"],
-    ffmpeg: values["--ffmpeg"] ?? process.env.SHELLX_MOTION_FFMPEG ?? "ffmpeg",
-    ffprobe: values["--ffprobe"] ?? process.env.SHELLX_MOTION_FFPROBE ?? "ffprobe",
+    ffmpeg: resolveTrustedScriptExecutable("ffmpeg", { override: values["--ffmpeg"] ?? process.env.SHELLX_MOTION_FFMPEG }).executable,
+    ffprobe: resolveTrustedScriptExecutable("ffprobe", { override: values["--ffprobe"] ?? process.env.SHELLX_MOTION_FFPROBE }).executable,
   };
   validateOptions(options);
   return options;
@@ -278,7 +279,7 @@ function validateOptions(options) {
     if (typeof value !== "string" || !isAbsolute(value)) throw new Error(`Frame-video encoder benchmark ${key} must be an absolute path.`);
   }
   if (typeof options.sourceRevision !== "string" || !/^[a-f0-9]{7,40}$/u.test(options.sourceRevision)) throw new Error("Frame-video encoder benchmark source revision must be a 7-through-40-character lowercase Git commit id.");
-  for (const key of ["ffmpeg", "ffprobe"]) if (typeof options[key] !== "string" || options[key].length === 0) throw new Error(`Frame-video encoder benchmark requires ${key}.`);
+  for (const key of ["ffmpeg", "ffprobe"]) if (typeof options[key] !== "string" || !isAbsolute(options[key])) throw new Error(`Frame-video encoder benchmark requires an absolute ${key} executable.`);
 }
 
 function arraysEqual(left, right) {
@@ -290,7 +291,7 @@ function rounded(value, digits) {
 }
 
 function usage() {
-  return "usage: node scripts/frame-video-encoder-benchmark.mjs --browser <absolute Chrome path> --mediabunny-bundle <absolute mediabunny.mjs path> --out-dir <new absolute directory> --source-revision <git commit> [--ffmpeg <path-or-command>] [--ffprobe <path-or-command>]";
+  return "usage: node scripts/frame-video-encoder-benchmark.mjs --browser <absolute Chrome path> --mediabunny-bundle <absolute mediabunny.mjs path> --out-dir <new absolute directory> --source-revision <git commit> [--ffmpeg <absolute executable>] [--ffprobe <absolute executable>]";
 }
 
 const isMain = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;

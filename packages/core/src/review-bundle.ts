@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { canonicalJsonSha256, compareCodeUnits } from "./canonical-json";
 import { loadMotionPackage } from "./package";
@@ -54,16 +54,23 @@ const REVIEW_BUNDLE_RECEIPT_RELATIVE_PATH = "review-html-bundle.receipt.json";
 
 export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<ReviewBundleResult> {
   const outDir = resolve(input.outDir);
-  const selectedRootAuthorities = await Promise.all([
-    input.packageRoot,
-    input.receiptsRoot
-  ].filter((root): root is string => Boolean(root)).map(async (root) => await ExistingDirectoryAuthority.acquire(root)));
+  const selectedRoots = await Promise.all([
+    ...(input.packageRoot ? [{ root: input.packageRoot, authority: input.packageRootAuthority, label: "packageRoot" }] : []),
+    ...(input.receiptsRoot ? [{ root: input.receiptsRoot, authority: input.receiptsRootAuthority, label: "receiptsRoot" }] : [])
+  ].map(async (entry) => ({
+    root: entry.root,
+    label: entry.label,
+    authority: entry.authority ?? await ExistingDirectoryAuthority.acquire(await realpath(resolve(entry.root)))
+  })));
+  const selectedRootAuthorities = selectedRoots.map((entry) => entry.authority);
   const retainedRootAuthorities = [
     ...selectedRootAuthorities,
     ...(input.artifactRootAuthorities ?? [])
   ];
+  await assertSelectedReviewRoots(selectedRoots);
   await assertReviewRootAuthorities(retainedRootAuthorities);
   const pkg = input.packageRoot ? await loadMotionPackage(input.packageRoot) : undefined;
+  await assertSelectedReviewRoots(selectedRoots);
   await assertReviewRootAuthorities(retainedRootAuthorities);
   if (pkg && isPathInsideOrEqual(pkg.root, outDir)) {
     throw new Error("Review HTML bundle outDir must be outside packageRoot.");
@@ -75,6 +82,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     const receiptEntries = exactReviewBundleReceiptEntries(
       input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot) : [])
     );
+    await assertSelectedReviewRoots(selectedRoots);
     await assertReviewRootAuthorities(retainedRootAuthorities);
     // The cap applies to every receipt-controlled review path, including an HTML-only caller that
     // elected not to copy artifacts. It is a hard publication boundary, not an omission policy.
@@ -143,6 +151,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     if (!sameReviewInputHashes(inputHashes, currentInputHashes)) {
       throw new Error("Review bundle package or receipt input changed before publication.");
     }
+    await assertSelectedReviewRoots(selectedRoots);
     await assertReviewRootAuthorities(retainedRootAuthorities);
     await transaction.assertCurrent();
     await writeFile(join(transaction.stagingPath, "review-html-bundle.receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
@@ -165,6 +174,19 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
   } catch (error) {
     await transaction.abort();
     throw error;
+  }
+}
+
+async function assertSelectedReviewRoots(
+  selected: readonly { root: string; label: string; authority: { path: string; assertCurrent(): Promise<void> } }[]
+): Promise<void> {
+  for (const entry of selected) {
+    await entry.authority.assertCurrent();
+    const current = await realpath(resolve(entry.root));
+    if (resolve(current) !== resolve(entry.authority.path)) {
+      throw new Error(`Review bundle ${entry.label} changed after admission; Motion left the output unpublished.`);
+    }
+    await entry.authority.assertCurrent();
   }
 }
 

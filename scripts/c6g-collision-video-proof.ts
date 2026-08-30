@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
-import { delimiter, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -11,6 +11,7 @@ import {
   canonicalJsonSha256,
   comparePngFiles,
   inspectPngFile,
+  resolveTrustedExecutable,
   type LocalMotionJobEvidence,
   type OperationReceipt,
   type PngVisualDiffResult,
@@ -396,18 +397,12 @@ async function sourceEvidence(expectedCommit: string): Promise<Json> {
   return { commit: head, tree, expectedCommit, files: Object.fromEntries(await Promise.all(sourceFiles.map(async (path) => [relative(repoRoot, path), await sha256File(path)]))) };
 }
 
-async function executableEvidence(command: string): Promise<Json> {
-  const path = await resolveExecutable(command), result = await runTool(path, ["-version"]);
+async function executableEvidence(command: "ffmpeg" | "ffprobe"): Promise<Json> {
+  const path = trustedCodecPath(command), result = await runTool(path, ["-version"]);
   return { path, sha256: await sha256File(path), version: result.stdout.split("\n")[0] ?? "" };
 }
 
-async function resolveExecutable(command: string): Promise<string> {
-  for (const directory of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
-    const candidate = join(directory, command), facts = await lstat(candidate).catch(() => null); if (!facts || (!facts.isFile() && !facts.isSymbolicLink())) continue;
-    const resolved = await realpath(candidate), target = await lstat(resolved); if (target.isFile() && (target.mode & 0o111) !== 0) return resolved;
-  }
-  throw new Error(`${command} was not a regular executable on PATH.`);
-}
+function trustedCodecPath(command: "ffmpeg" | "ffprobe"): string { const override = process.env[command === "ffmpeg" ? "SHELLX_MOTION_FFMPEG" : "SHELLX_MOTION_FFPROBE"]; const result = resolveTrustedExecutable({ toolName: command, ...(override ? { override } : {}) }); if (!result.executable) throw new Error(result.problem); return result.executable; }
 
 async function runTool(executable: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   const result = await runFile(executable, args, { encoding: "utf8", timeout: toolTimeoutMs, maxBuffer: 4 * 1024 * 1024 });

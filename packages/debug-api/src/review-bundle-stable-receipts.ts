@@ -31,7 +31,7 @@ export async function writeReviewBundleFromStableReceipts(
       path: entry.path,
       receipt: entry.receipt,
       snapshot: currentStableReceiptSnapshot(entry.snapshot!)
-    })))
+    })), input.receiptsRootAuthority)
   });
 }
 
