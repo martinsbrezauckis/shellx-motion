@@ -264,10 +264,10 @@ configuration. Advanced direct server launches remain able to use an ephemeral p
 `SHELLX_MOTION_DEBUG_TOKEN`. Theft of a high-tier key by another local process would grant that
 process Motion's filesystem/render authority — treat the key like any other local secret.
 
-Workbench provider setup also treats the child boundary explicitly. On POSIX, the built-in Claude
-Code and Grok providers ignore empty and relative `PATH` entries during health, retain the canonical
-absolute executable's device/inode identity, and execute the prompt through a rechecked retained
-descriptor. Windows uses its documented canonical-target and fixed PowerShell-wrapper path.
+Workbench provider setup also treats the child boundary explicitly. On POSIX, built-in agent
+providers ignore empty and relative `PATH` entries during health, retain the canonical absolute
+executable's device/inode identity, and execute the prompt through a rechecked retained descriptor.
+Windows uses its documented canonical-target and fixed PowerShell-wrapper path.
 Motion passes a filtered environment without Motion's bearer or ambient credential capabilities; the
 provider CLI performs its own normal configuration in place, and Motion neither reads nor copies
 provider authentication material.
