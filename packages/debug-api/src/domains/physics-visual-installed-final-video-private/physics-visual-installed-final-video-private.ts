@@ -1,5 +1,5 @@
 /**
- * Private C7B5 installed-output final-video proof.
+ * Host-owned installed-output final-video proof.
  *
  * The only package read is C7B4D's output-only reopen. It recreates the process-minted C7B4C
  * authority, streams its fixed complete schedule through one retained WebGPU session, and uses
@@ -131,7 +131,7 @@ export interface PhysicsVisualInstalledFinalVideoDependencies {
 
 /**
  * Reopens only C7B4D output and exposes its compiler-minted full-frame schedule for C7B5.
- * C7B4D's existing preview value stays unchanged; this is a separate private C7B5 projection.
+ * C7B4D's existing preview value stays unchanged; this is a separate host-owned final-video projection.
  */
 export async function reopenPhysicsVisualPackageFinalVideoInput(host: PhysicsVisualPackageOutputHost): Promise<PhysicsVisualInstalledFinalVideoInput> {
   const installed = await reopenPhysicsVisualPackageMaterializationOutput(host);

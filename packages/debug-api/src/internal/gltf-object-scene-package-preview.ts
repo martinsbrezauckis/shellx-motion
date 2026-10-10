@@ -1,4 +1,4 @@
-/** Workspace-private C7A3f output-only package preview. Package mutation never imports this module. */
+/** Host-owned output-only package preview. Package mutation never imports this module. */
 import {
   compileGltfObjectRetainedRenderFramePlan,
   evaluateGltfObjectSceneAtUs,

@@ -1,4 +1,4 @@
-/** Private P2B package admission, producer-proof, and private-stage helpers. */
+/** Internal package admission, producer-proof, and private-stage helpers. */
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep, win32 } from "node:path";
 import {

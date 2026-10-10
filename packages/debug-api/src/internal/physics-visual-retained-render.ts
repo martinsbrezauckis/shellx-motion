@@ -1,4 +1,4 @@
-/** Packed private C7B4B plan/upload entry point. This is not a Debug, MCP, CLI or SDK command. */
+/** Host-owned plan/upload entry point. This is not a Debug, MCP, CLI or SDK command. */
 export {
   compilePhysicsVisualRetainedFramePlan,
   compilePhysicsVisualRetainedStaticPlan,

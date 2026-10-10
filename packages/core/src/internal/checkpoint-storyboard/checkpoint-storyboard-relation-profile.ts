@@ -1,4 +1,4 @@
-/** Private installed C6B3a compiler for one existing-root semantic follow relation. */
+/** Internal compiler for one existing-root semantic follow relation. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { compileGpuSceneRelationsStaticPlan } from "../../gpu-scene-relations-composition";

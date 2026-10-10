@@ -40,7 +40,7 @@ function descriptor(): any {
 }
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 
-describe("private C6D multi-checkpoint choreography recipe", () => {
+describe("internal multi-checkpoint choreography recipe", () => {
   it("detaches and deterministically lowers several objects and checkpoints into ordinary B1 data", () => {
     const input = descriptor(), before = canonicalJson(input);
     const read = readDataRecipeChoreographyDescriptor(input);

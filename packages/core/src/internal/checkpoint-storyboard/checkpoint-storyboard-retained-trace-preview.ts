@@ -1,4 +1,4 @@
-/** Shipping-private C6C-B7 retained-trace preview authority over an exact compiled B7a plan. */
+/** Internal retained-trace preview authority over an exact compiled retained-trace plan. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import {

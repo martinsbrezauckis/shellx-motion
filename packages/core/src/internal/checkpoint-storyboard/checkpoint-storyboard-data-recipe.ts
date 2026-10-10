@@ -1,4 +1,4 @@
-/** Private installed entrypoint for the closed C6D-A data-recipe/checkpoint compiler. */
+/** Internal entrypoint for the closed data-recipe/checkpoint compiler. */
 export {
   DATA_RECIPE_CHECKPOINT_ACTION_ID,
   DATA_RECIPE_CHECKPOINT_FORMULA_ID,

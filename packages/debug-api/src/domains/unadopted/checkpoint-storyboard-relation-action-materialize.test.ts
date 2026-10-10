@@ -109,7 +109,7 @@ function state(objectId: "guide" | "orb", x: number, y: number) { return { objec
 function invoke(value: Awaited<ReturnType<typeof fixture>>, request: unknown = value.request) { return materializeCheckpointStoryboardRelationAction(value.host, value.prepared.approval, request); }
 function outputHost(value: Awaited<ReturnType<typeof fixture>>) { return { outputPackageRoot: value.output, packageWorkspaceRoot: value.workspace, packageWorkspaceAuthority: value.authority }; }
 
-describe("private C6B4b relation-action exact-base COW materializer", () => {
+describe("host-owned relation-action exact-base COW materializer", () => {
   itLinux("installs only the sealed projected /relations store plus one receipt and preserves action/source bytes", async () => {
     const value = await fixture();
     try {
@@ -226,7 +226,7 @@ describe("private C6B4b relation-action exact-base COW materializer", () => {
     });
     const adapter = await readFile(new URL("../checkpoint-storyboard-relation-action-materialize-private/checkpoint-storyboard-relation-action-materialize-private.ts", import.meta.url), "utf8");
     expect(adapter).toContain("@shellx-motion/core/internal/checkpoint-storyboard-relation-action-profile");
-    expect(adapter).toContain("shipping-unreachable until C6C-B4a resolver integration");
+    expect(adapter).toContain("unreachable until relation-action resolver integration");
     expect(adapter).not.toMatch(/vite-ignore|core\/src\/unadopted|import\s*\(/);
   });
 });

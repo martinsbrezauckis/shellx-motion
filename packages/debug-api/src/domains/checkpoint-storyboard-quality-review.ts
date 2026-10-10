@@ -1,4 +1,4 @@
-/** C6C B1e private fixed-PNG quality receipt. It associates evidence; it never accepts final media. */
+/** Host-owned fixed-PNG quality receipt. It associates evidence; it never accepts final media. */
 import { createHash, createHmac } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson, inspectPngBuffer } from "@shellx-motion/core";

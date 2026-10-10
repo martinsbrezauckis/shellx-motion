@@ -1,10 +1,10 @@
-/** Shared private types and strict value helpers for the C6C host store. */
+/** Shared host-owned types and strict value helpers for the checkpoint-storyboard store. */
 import type { CheckpointStoryboard } from "@shellx-motion/core/internal/checkpoint-storyboard-scalar-spatial-materializer";
 import type { TrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 
 export const STORE_DIRECTORY = ".shellx-motion-c6c-record-store";
 /**
- * Every C6C-owned leaf lives under the same host-private store.  Preview evidence is
+ * Every checkpoint-storyboard leaf lives under the same host-private store. Preview evidence is
  * deliberately separate from records, bindings, and materialized packages: it is
  * renderer evidence, not new storyboard or C6B authority.
  */
@@ -97,26 +97,26 @@ export type AuthorityFacts = {
   readonly receipts: StableDirectory;
   readonly bindings: StableDirectory;
   readonly members: StableDirectory;
-  /** Host-private B1b receipts and PNG evidence, never a user-selected output root. */
+  /** Host-owned receipts and PNG evidence, never a user-selected output root. */
   readonly previews: StableDirectory;
   readonly creativeReviews: StableDirectory;
-  /** Private B1e signed quality-receipt journals; no path is command data or output. */
+  /** Host-owned signed quality-receipt journals; no path is command data or output. */
   readonly qualityReviews: StableDirectory;
-  /** Private C6C B2 durable behavior-resolution journals. */
+  /** Host-owned durable behavior-resolution journals. */
   readonly behaviorResolutions: StableDirectory;
-  /** Private C6C B3a durable relation-resolution journals. */
+  /** Host-owned durable relation-resolution journals. */
   readonly relationResolutions: StableDirectory;
-  /** Private C6C B4a durable relation-action-resolution journals. */
+  /** Host-owned durable relation-action-resolution journals. */
   readonly relationActionResolutions: StableDirectory;
-  /** Private C6C B5 durable lifecycle-resolution journals. */
+  /** Host-owned durable lifecycle-resolution journals. */
   readonly lifecycleResolutions: StableDirectory;
-  /** Private C6C B6 durable geometry-morph-resolution journals. */
+  /** Host-owned durable geometry-morph-resolution journals. */
   readonly geometryMorphResolutions: StableDirectory;
-  /** Private C6C B7 durable retained-trace-resolution journals. */
+  /** Host-owned durable retained-trace-resolution journals. */
   readonly retainedTraceResolutions: StableDirectory;
-  /** Private C6C B7 GPU-preview state, receipt, and PNG evidence; never B1 preview data. */
+  /** Host-owned GPU-preview state, receipt, and PNG evidence; never B1 preview data. */
   readonly retainedTracePreviews: StableDirectory;
-  /** Private C6C B7 arbitrary-time review associations; never B1 creative-review data. */
+  /** Host-owned arbitrary-time review associations; never B1 creative-review data. */
   readonly retainedTraceReviews: StableDirectory;
   /** Separately minted for Core no-clobber publication below `previews`, never B1a's package anchor. */
   readonly previewWorkspaceAuthority: TrustedWorkspaceAnchor;

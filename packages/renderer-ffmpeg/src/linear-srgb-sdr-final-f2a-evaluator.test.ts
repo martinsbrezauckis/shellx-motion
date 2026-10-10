@@ -38,7 +38,7 @@ import {
 
 const PREPARATION = "a".repeat(64);
 
-describe("candidate-local F2a evaluator", () => {
+describe("candidate-local strict-SDR evaluator", () => {
   it.skipIf(process.platform !== "linux")("retains only the exact consumed binding, uses Core FD4, and finalizes after the fresh inverse", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-f2a-evaluator-"));
     const route = f2aRoute(), frame = f2aFrame(route), caller = new AbortController();
@@ -64,7 +64,7 @@ describe("candidate-local F2a evaluator", () => {
               consumeCurrentStrictSdrCandidateHeldPairRendererBinding(binding);
               await withStrictSdrCandidateF2aEvaluation(PREPARATION, async () => {
                 const snapshot = captureCurrentStrictSdrCandidateF2aFrame(route, frame);
-                if (!snapshot) throw new Error("expected private F2a frame snapshot");
+                if (!snapshot) throw new Error("expected captured F2a frame snapshot");
                 expect(transferCurrentStrictSdrCandidateF2aLease(snapshot, owner(frame, () => { closeCalls += 1; }, (fd) => { sourceFd = fd; }, fresh.signal), {
                   binding: binding!, preparation: PREPARATION, governor: freshGovernor(fresh.signal, (value) => { request = value; }, (evidence) => containment.push(evidence)), scratchRoot: root, signal: caller.signal, callerId: "candidate-f2a",
                 })).toBe(true);

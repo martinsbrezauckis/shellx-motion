@@ -1,4 +1,4 @@
-/** Private V25-C1 local-effect registry vocabulary. No package or wire input carries these types. */
+/** Host-owned local-effect registry vocabulary. No package or wire input carries these types. */
 
 export const EFFECT_MODULE_MANIFEST_SCHEMA = "shellx-motion/effect-module-manifest@1" as const;
 export const EFFECT_MODULE_REGISTRY_SCHEMA = "shellx-motion/effect-module-registry@1" as const;

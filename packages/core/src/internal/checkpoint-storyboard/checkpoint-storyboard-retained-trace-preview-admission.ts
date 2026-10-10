@@ -1,4 +1,4 @@
-/** Closed B7 plan and Motion admission for the shipping-private retained-trace preview facade. */
+/** Closed B7 plan and Motion admission for the internal retained-trace preview facade. */
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { MAX_MOTION_PARAMETRIC_TRACE_COORDINATE, MAX_MOTION_PARAMETRIC_TRACE_SPEED, type MotionParametricTracePlan } from "../../motion-parametric-trace-types";
 import { readMotionDocument } from "../../package";

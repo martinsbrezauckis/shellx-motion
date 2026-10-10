@@ -1,4 +1,4 @@
-/** Private B1b reopen and historical audit used only by C6C B1c. */
+/** Host-owned reopen and historical audit used only by creative review. */
 import { opendir } from "node:fs/promises";
 import { canonicalJson, hashBuffer } from "@shellx-motion/core";
 import { findLineagePreviewsDirectory, lineagePreviewsDirectory } from "./checkpoint-storyboard-record-store-authority.js";

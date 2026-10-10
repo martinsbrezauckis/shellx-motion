@@ -1,4 +1,4 @@
-/** Private C6B1b receipt representation and exclusive staged publication. */
+/** Host-owned receipt representation and exclusive staged publication. */
 
 import { join } from "node:path";
 import {

@@ -6,7 +6,7 @@ import type { MotionDocument, PackageManifest } from "../../types";
 import type { CheckpointStoryboard } from "./checkpoint-storyboard-types";
 
 /**
- * Private C6B4a input and plan boundary for one sealed C4B relation-action lowering.  Package
+ * Internal input and plan boundary for one sealed relation-action lowering. Package
  * identities are caller-described facts only: this compiler does not acquire a workspace, open a
  * package, or create output.
  */

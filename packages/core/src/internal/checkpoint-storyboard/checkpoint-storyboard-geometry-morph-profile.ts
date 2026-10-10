@@ -1,4 +1,4 @@
-/** Private C6B6a admission and pure GPU-targeted triangle geometry-morph plan. */
+/** Internal admission and pure GPU-targeted triangle geometry-morph plan. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { evaluateMotionShapeGeometryKeyframes, MOTION_SHAPE_GEOMETRY_KEYFRAMES_SCHEMA } from "../../motion-shape-geometry-keyframes";

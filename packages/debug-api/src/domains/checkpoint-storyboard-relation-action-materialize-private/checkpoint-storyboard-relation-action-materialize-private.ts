@@ -1,4 +1,4 @@
-/** Private C6B4b closed-inventory COW adapter. It registers no Debug command or public surface and stays shipping-unreachable until C6C-B4a resolver integration. */
+/** Host-owned closed-inventory COW adapter. It registers no Debug command or public surface and stays unreachable until relation-action resolver integration. */
 import { join } from "node:path";
 import {
   canonicalJsonSha256,

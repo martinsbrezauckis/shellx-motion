@@ -46,7 +46,7 @@ async function fixture() {
 }
 function services(value: Awaited<ReturnType<typeof fixture>>) { return { tier: "write_local" as const, checkpointStoryboardRecordStore: value.store, checkpointStoryboardRelationActionResolutionAuthority: value.authority }; }
 
-describe("C6C B4a private relation-action resolution", () => {
+describe("host-owned relation-action resolution", () => {
   itLinux("resolves, replays, detaches, and replays through exact identity-only Debug/MCP commands", async () => {
     const value = await fixture(), identity = value.created.record.identity;
     expect(value.created.record.admission).toEqual({ staticProfileAdmitted: true, profile: "c6b4-relation-action@1" });

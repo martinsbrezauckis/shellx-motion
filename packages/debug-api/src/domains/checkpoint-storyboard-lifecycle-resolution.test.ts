@@ -57,7 +57,7 @@ async function fixture() {
 }
 function services(value: Awaited<ReturnType<typeof fixture>>) { return { tier: "write_local" as const, checkpointStoryboardRecordStore: value.store, checkpointStoryboardLifecycleResolutionAuthority: value.authority }; }
 
-describe("C6C B5 private lifecycle resolution", () => {
+describe("host-owned lifecycle resolution", () => {
   it("rejects B6 geometry-morph residue before output mutation", async () => {
     const value = await fixture();
     await initializeGeometryMorphStateHead(checkedAuthority(value.store), value.identity, value.identity);

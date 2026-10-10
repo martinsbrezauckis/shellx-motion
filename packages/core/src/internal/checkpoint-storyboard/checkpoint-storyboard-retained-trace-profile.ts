@@ -1,4 +1,4 @@
-/** Private C6B7a admission and pure retained-trace plan over one narrow C4C subset. */
+/** Internal admission and pure retained-trace plan over one narrow parametric-trace subset. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { compileMotionParametricTracePlan } from "../../motion-parametric-trace-plan";

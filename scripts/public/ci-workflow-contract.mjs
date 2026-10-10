@@ -85,7 +85,13 @@ const verify = contents.get("verify");
 requireText("verify", verify, "timeout-minutes: 60");
 requireText("verify", verify, "SHELLX_MOTION_BROWSER: /usr/bin/google-chrome");
 requireText("verify", verify, "run: pnpm test");
-forbidText("verify", verify, "pnpm run test:implementation");
+requireText("verify", verify, "name: Linux verification");
+const declaredScripts = new Set(Object.keys(JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).scripts));
+for (const [name, text] of contents) {
+  for (const match of text.matchAll(/\bpnpm\s+run\s+([A-Za-z0-9][A-Za-z0-9:_.-]*)/g)) {
+    if (!declaredScripts.has(match[1])) failures.push(`${name}: undeclared package script ${match[1]}`);
+  }
+}
 
 const dependencyReview = contents.get("dependency review");
 requireText("dependency review", dependencyReview, "contents: read");

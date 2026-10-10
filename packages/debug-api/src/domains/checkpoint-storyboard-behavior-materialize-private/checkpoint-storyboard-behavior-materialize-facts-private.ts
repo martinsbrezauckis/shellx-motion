@@ -1,4 +1,4 @@
-/** Private exact package facts for C6B2 COW and receipt verification. */
+/** Host-owned exact package facts for behavior COW and receipt verification. */
 import { canonicalJsonSha256, compareCodeUnits, hashBuffer, loadMotionPackage, readBoundedStableFile, requiredLoadedPackageDocumentHashes, resolvePackageAsset, type MotionPackage } from "@shellx-motion/core";
 import { captureTrustedWorkspaceCompleteDirectoryInventory } from "@shellx-motion/core/internal/closed-directory-inventory";
 import type { TrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";

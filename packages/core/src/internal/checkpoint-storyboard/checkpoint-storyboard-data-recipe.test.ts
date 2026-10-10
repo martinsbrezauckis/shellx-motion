@@ -108,7 +108,7 @@ function legacyParent(mutator?: (trace: any) => void) {
   });
 }
 
-describe("private C6D-A data-recipe checkpoint compiler", () => {
+describe("internal data-recipe checkpoint compiler", () => {
   it("detaches, seals, fingerprints, and revisions one deterministic descriptor", () => {
     const input = descriptor();
     const before = canonicalJson(input);

@@ -1,4 +1,4 @@
-/** Private C6B3b closed-inventory COW adapter. It registers no Debug command or public surface. */
+/** Host-owned closed-inventory COW adapter. It registers no Debug command or public surface. */
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {

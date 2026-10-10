@@ -3,7 +3,7 @@ import type { MotionBehaviorStore } from "../../motion-behavior-types";
 import type { MotionTransformBehaviorEvaluation } from "../../motion-transform-behavior";
 import type { CheckpointStoryboard } from "./checkpoint-storyboard-types";
 
-/** Private C6B2 input and plan boundary for one behaviors@1 transform binding. */
+/** Internal input and plan boundary for one behaviors@1 transform binding. */
 export const CHECKPOINT_STORYBOARD_BEHAVIOR_PROFILE_REQUEST_SCHEMA =
   "shellx-motion/private-checkpoint-storyboard-behavior-profile-request@1" as const;
 export const CHECKPOINT_STORYBOARD_BEHAVIOR_PROFILE_PLAN_SCHEMA =

@@ -53,7 +53,7 @@ export interface GpuPreviewSessionCleanupEvidence {
   closed: true;
   runtimeResources: GpuPageSessionResourceMetrics | null;
   provider: GpuPreviewVideoProviderCleanupEvidence | null;
-  /** Present only on the private retained C6G session; generic reusable sessions remain unchanged. */
+ /** Present only on the internal retained session; generic reusable sessions remain unchanged. */
   scene3dAnimation?: { staticWrapperCompilations: number; framePlanCompilations: number };
 }
 

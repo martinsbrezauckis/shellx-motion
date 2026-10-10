@@ -1,4 +1,4 @@
-/** Private C6B6b receipt constants and inert evidence shapes. */
+/** Host-owned receipt constants and inert evidence shapes. */
 export const C6B6B_RECEIPT_PATH = "receipts/checkpoint-storyboard-geometry-morph.materialize.receipt.json" as const;
 export const C6B6B_LOGICAL_MOTION_PATH = "/layers/0/geometryKeyframes" as const;
 export const C6B6B_RECEIPT_SCHEMA = "shellx-motion/private-checkpoint-storyboard-geometry-morph-materialization-receipt@1" as const;

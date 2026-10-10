@@ -55,7 +55,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
-describe.skipIf(process.platform !== "linux")("private C7B4D physics-visual package materializer", () => {
+describe.skipIf(process.platform !== "linux")("host-owned physics-visual package materializer", () => {
   it("embeds byte-identical C7B3 data plus canonical recipes and reopens after both original inputs are deleted", async () => {
     const value = await fixture();
     const sourceBefore = await snapshotPackageEditTree(value.source), artifactManifest = await readFile(join(value.physics.host.outputRoot, "manifest.json")), artifactReceipt = await readFile(join(value.physics.host.outputRoot, "receipt.json"));
@@ -167,7 +167,7 @@ describe.skipIf(process.platform !== "linux")("private C7B4D physics-visual pack
   });
 });
 
-describe("private C7B4D portable installed output", () => {
+describe("host-owned portable installed output", () => {
   it.skipIf(!portableReopenPath)("reopens a Linux-produced package without either original input", async () => {
     const outputPackageRoot = resolve(portableReopenPath!);
     const packageWorkspaceRoot = resolve(outputPackageRoot, "..");
@@ -185,7 +185,7 @@ describe("private C7B4D portable installed output", () => {
   });
 });
 
-describe("private C7B4D static boundary", () => {
+describe("host-owned static boundary", () => {
   it("uses only the existing private host export and keeps mutation/reopen out of provider, renderer and public surfaces", async () => {
     const [writer, output, privateExport, publicIndex, packageJson, ...publicSurfaces] = await Promise.all([
       readFile(new URL("./physics-visual-package-materialize-private.ts", import.meta.url), "utf8"),

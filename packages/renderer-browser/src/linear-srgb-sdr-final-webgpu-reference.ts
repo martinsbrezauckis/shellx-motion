@@ -17,7 +17,7 @@ const F2A_MASK_PIXEL_COUNT = F2A_MASK_WIDTH * F2A_MASK_HEIGHT;
 export const LINEAR_SRGB_SDR_FINAL_F2A_REFERENCE_DITHER_MASK_BYTES = F2A_MASK_PIXEL_COUNT / 8;
 
 /**
- * Slot-local F2a eligibility facts. The packed bitmap is an internal plan input:
+ * Slot-local strict-SDR eligibility facts. The packed bitmap is an internal plan input:
  * only its SHA-256 belongs in the bounded M1 record. Source colours remain the
  * descriptor-sealed GPU RGBA8 bytes, never this analytic reference working frame.
  */

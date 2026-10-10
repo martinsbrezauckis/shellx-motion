@@ -107,7 +107,7 @@ async function fixture(options: { fixedReceipt?: boolean; source?: "uncompiled-c
   return { root, workspace, source, output, approval, request: { schema: "shellx-motion/private-checkpoint-storyboard-scalar-spatial-materialization-request@1", expected }, authority };
 }
 
-describe("private C6B1b scalar/spatial COW materializer", () => {
+describe("host-owned scalar/spatial COW materializer", () => {
   itLinux("reopens the approved exact base when the host output is absent", async () => {
     const value = await fixture();
     try {
@@ -254,7 +254,7 @@ describe("private C6B1b scalar/spatial COW materializer", () => {
     } finally { await dispose(nonempty.root, overlap.root, linked.root); }
   });
 
-  it("does not adopt the private vertical through public Core, Debug, CLI, SDK, or renderer entrances", async () => {
+  it("keeps scalar/spatial materialization outside public Core, Debug, CLI, SDK, and renderer entrances", async () => {
     const files = ["../../index.ts", "../../command-registry.ts", "../../command-registry-timeline-extensions.ts", "../../command-metadata.ts", "../../../../core/src/index.ts", "../../../../cli/src/main.ts", "../../../../sdk/src/index.ts", "../../../../renderer-native/src/index.ts"];
     const contents = await Promise.all(files.map(async (file) => await readFile(new URL(file, import.meta.url), "utf8")));
     const [debugIndex, debugRegistry, debugTimelineExtensions, debugMetadata, publicCore, cli, sdk, renderer] = contents;

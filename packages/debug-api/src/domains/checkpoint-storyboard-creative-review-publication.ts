@@ -1,4 +1,4 @@
-/** Private B1c forward-only publication from a preflighted signed intent. */
+/** Host-owned forward-only publication from a preflighted signed intent. */
 import { join } from "node:path";
 import { canonicalJson } from "@shellx-motion/core";
 import { readCreativeReviewJournal } from "./checkpoint-storyboard-creative-review-journal.js";

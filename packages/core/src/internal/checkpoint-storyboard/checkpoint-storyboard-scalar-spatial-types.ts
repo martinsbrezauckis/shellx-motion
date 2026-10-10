@@ -2,7 +2,7 @@ import type { PackageManifest, MotionDocument } from "../../types";
 import type { CheckpointProperty, CheckpointStoryboard } from "./checkpoint-storyboard-types";
 
 /**
- * Private C6B1a input and plan boundary. This is deliberately direct-import-only: it receives
+ * Internal input and plan boundary. This is deliberately direct-import-only: it receives
  * already-observed package facts and never opens, changes, or claims a Motion package.
  */
 export const CHECKPOINT_STORYBOARD_SCALAR_SPATIAL_REQUEST_SCHEMA = "shellx-motion/private-checkpoint-storyboard-scalar-spatial-request@1" as const;

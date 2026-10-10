@@ -1,4 +1,4 @@
-/** Private C6B5b closed-inventory COW adapter. It registers no Debug command or public surface. */
+/** Host-owned closed-inventory COW adapter. It registers no Debug command or public surface. */
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { canonicalJsonSha256, compareCodeUnits, compileMotionDocumentCompositing, hashBuffer, loadSchema, validateDocument, validateMotionProceduralGraph, validateMotionRelationActions, validateMotionRelations, type MotionDocument } from "@shellx-motion/core";

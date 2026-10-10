@@ -122,23 +122,14 @@ the selected render count, and still performs the real MP4 plus browser-preview
 comparison for every selected family. The moving-proof profile is fixed at 8
 fps.
 
-For a zero-render integration check across the promoted Motion catalog and the
-bundled host agent contracts, pass the explicit local host worktrees. This gate
-needs checkouts of the host repositories, so it is only runnable where those
-exist; without them the check is unavailable rather than failing, in the same way
-`PLATFORM_VERIFICATION.md` records an absent capability as absent:
-
-```bash
-pnpm run template-pack:host-parity -- \
-  --canvas-root /path/to/shellx-canvas \
-  --cut-root /path/to/shellx-cut
-```
-
-This gate validates all 12 published packages, all five `shellx-cut` manifest
-advertisements, the four rich Cut Generate mappings, rain's rendered-media-only
-static handoff, decimal-control exposure, and the Design Studio
-Edit-in-Motion/Refresh workflow. It records that it launched zero browsers and
-created zero rendered media.
+Moving-template proof verifies Motion output. Verify the host catalog, parameter
+controls, and Design Studio Edit-in-Motion/Refresh workflow separately against
+the installed host versions. All five `shellx-cut` manifest advertisements
+describe compatibility intent; four templates have Cut Generate mappings, while
+rain uses a rendered-media-only handoff. These advertisements do not establish
+installed-host behavior. See
+[`docs/public/PLATFORM_VERIFICATION.md`](../../docs/public/PLATFORM_VERIFICATION.md)
+for the distinction between available capabilities and observed verification.
 
 Each template directory should contain:
 

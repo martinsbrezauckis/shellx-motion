@@ -1,4 +1,4 @@
-/** Private C6B7b exact-base COW sidecar installer. It registers no Debug command or public surface. */
+/** Host-owned exact-base COW sidecar installer. It registers no Debug command or public surface. */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { compareCodeUnits } from "@shellx-motion/core";

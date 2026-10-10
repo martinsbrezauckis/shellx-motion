@@ -1,4 +1,4 @@
-/** Private C7B4A strict-artifact visual binding and rational-frame evaluator. */
+/** Host-owned strict-artifact visual binding and rational-frame evaluator. */
 import { canonicalJson, canonicalJsonSha256 } from "@shellx-motion/core";
 import {
   readPhysicsBakeAdmissionPlan,

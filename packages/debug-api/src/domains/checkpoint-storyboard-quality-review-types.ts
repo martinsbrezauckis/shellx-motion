@@ -1,4 +1,4 @@
-/** Private C6C B1e signed receipt and journal shapes. No handle, path, record body, or pixel escapes. */
+/** Host-owned signed receipt and journal shapes. No handle, path, record body, or pixel escapes. */
 import type { CheckpointStoryboardRecordIdentity } from "./checkpoint-storyboard-record-store-types.js";
 
 export const QUALITY_RECEIPT_FILE = /^(checkpoint_storyboard_[a-f0-9]{32})\.quality-review\.json$/u;

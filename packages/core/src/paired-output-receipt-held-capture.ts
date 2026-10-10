@@ -21,7 +21,7 @@ export type RetainedPairedPublishedPairReadCapability = Readonly<{
     output: Readonly<{ sha256: string; byteLength: number }>;
     receipt: Readonly<{ bytes: Buffer; sha256: string; byteLength: number }>;
   }>) => Promise<T> | T): Promise<T>;
-  /** One inherited-output-descriptor callback for the private F2a inverse only. */
+  /** One inherited-output-descriptor callback for the strict-SDR inverse only. */
   withF2aCommittedOutputDescriptor<T>(operation: (fd: number) => Promise<T> | T): Promise<T>;
   /** Literal three-slot F2a callback; all named callbacks share one retained output descriptor. */
   withThreeSlotF2aCommittedOutputDescriptor<T>(operation: (fd: number) => Promise<T> | T): Promise<T>;

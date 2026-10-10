@@ -184,4 +184,4 @@ function sameMask(actual: readonly CheckpointProperty[], expected: readonly Chec
   return actual.length === expected.length && actual.every((property, index) => property === expected[index]);
 }
 
-/** Private C6B2 compiler only: no COW, receipt, Debug command, or renderer invocation occurs here. */
+/** Internal compiler only: no COW, receipt, Debug command, or renderer invocation occurs here. */

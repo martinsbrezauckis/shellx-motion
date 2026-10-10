@@ -138,7 +138,7 @@ describe("Core packed package exports", () => {
       });
   });
 
-  it("ships the C6D-A data-recipe compiler only through its closed internal subpath", () => {
+  it("ships the data-recipe compiler only through its closed internal subpath", () => {
     const manifest = coreManifest();
     expect(manifest.exports["./internal/checkpoint-storyboard-data-recipe"])
       .toBe("./src/internal/checkpoint-storyboard/checkpoint-storyboard-data-recipe.ts");

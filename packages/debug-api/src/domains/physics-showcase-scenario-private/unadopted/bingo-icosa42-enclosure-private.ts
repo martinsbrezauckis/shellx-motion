@@ -1,4 +1,4 @@
-/** Private C7B6C deterministic icosa42 enclosure math. No host, provider, or renderer authority. */
+/** Internal deterministic icosa42 enclosure math. No host, provider, or renderer authority. */
 export type BingoIco42Vec3 = readonly [number, number, number];
 export type BingoIco42Quaternion = readonly [number, number, number, number];
 export type BingoIco42Record = Readonly<{ center: BingoIco42Vec3; visibleRadius: number; panelThickness: number; surfaceMargin: number; proxy: "icosa42-slabs" }>;

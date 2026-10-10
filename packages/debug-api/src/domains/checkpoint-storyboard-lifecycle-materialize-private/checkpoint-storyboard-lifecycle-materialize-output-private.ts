@@ -1,4 +1,4 @@
-/** Shipping-private output-only C6B5b diagnostic reopen. It accepts no source, approval, plan, or writer authority. */
+/** Host-owned output-only lifecycle diagnostic reopen. It accepts no source, approval, plan, or writer authority. */
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { canonicalJsonSha256, compileMotionDocumentCompositing, loadSchema, validateDocument, validateMotionProceduralGraph, validateMotionRelationActions, validateMotionRelations, type MotionDocument } from "@shellx-motion/core";

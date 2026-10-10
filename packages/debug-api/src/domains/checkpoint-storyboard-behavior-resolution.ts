@@ -1,4 +1,4 @@
-/** C6C B2 private resolver.  It deliberately has no Core, SDK, Actions, CLI, connector, or
+/** Host-owned behavior resolver. It deliberately has no Core, SDK, Actions, CLI, connector, or
  * renderer export: Debug owns the host authority and this durable link only. */
 import { lstat } from "node:fs/promises";
 import { canonicalJson, isPublicationCommitUncertain } from "@shellx-motion/core";

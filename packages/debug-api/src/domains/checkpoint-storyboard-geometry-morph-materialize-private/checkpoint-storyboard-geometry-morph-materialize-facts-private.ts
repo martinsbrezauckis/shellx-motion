@@ -1,4 +1,4 @@
-/** Shipping-private exact package facts for the C6B6b geometry-morph COW seam. */
+/** Host-owned exact package facts for the geometry-morph COW seam. */
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import {

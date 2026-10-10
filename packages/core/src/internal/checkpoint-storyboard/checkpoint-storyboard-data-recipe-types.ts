@@ -2,7 +2,7 @@ import type { MotionParametricTracePlan } from "../../motion-parametric-trace-ty
 import { CHECKPOINT_STORYBOARD_RETAINED_TRACE_PROFILE_CAPS } from "./checkpoint-storyboard-retained-trace-profile-types";
 import type { CheckpointStoryboard, CheckpointStoryboardPlan } from "./checkpoint-storyboard-types";
 
-/** Closed descriptor accepted by the private C6D-A data-recipe compiler. */
+/** Closed descriptor accepted by the internal data-recipe compiler. */
 export const DATA_RECIPE_CHECKPOINT_SCHEMA = "shellx-motion/data-recipe-checkpoint@1" as const;
 export const DATA_RECIPE_CHECKPOINT_REPORT_SCHEMA = "shellx-motion/private-data-recipe-checkpoint-report@1" as const;
 export const DATA_RECIPE_CHECKPOINT_FORMULA_ID = "formula.lissajous-2d@1" as const;

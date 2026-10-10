@@ -1,4 +1,4 @@
-/** Fixed private receipt for the C6B2 behaviors@1 COW installation; no public route imports it. */
+/** Fixed host-owned receipt for the behaviors@1 COW installation; no public route imports it. */
 import { canonicalJson, canonicalJsonSha256, compareCodeUnits, readBoundedStableFile, writeVerifiedBoundedFile } from "@shellx-motion/core";
 import type { CheckpointStoryboardBehaviorProfilePlan } from "@shellx-motion/core/internal/checkpoint-storyboard-behavior-profile";
 import { join } from "node:path";

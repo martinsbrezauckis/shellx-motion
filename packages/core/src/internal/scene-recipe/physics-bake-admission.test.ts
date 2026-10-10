@@ -78,7 +78,7 @@ describe("C7B1 provider-neutral deterministic simulation admission", () => {
     const bodySamples = bingoFixture(); bodySamples.endUs = 40_000_000; bodySamples.bodies = Array.from({ length: 256 }, (_entry, index) => dynamicBody(`ball-${String(index).padStart(3, "0")}`, [0, 0, 0])); bodySamples.actions = []; bodySamples.events = []; bodySamples.observations = [{ id: "body-states", kind: "body-state", bodyIds: bodySamples.bodies.map((entry: any) => entry.id), sampleEverySteps: 1 }]; expect(() => compilePhysicsBakeAdmissionPlan(bodySamples)).toThrow(/body-state-sample cap/i);
   });
 
-  it("keeps the packed-private compiler outside package, process, renderer and provider execution authority", () => {
+  it("keeps the internal compiler outside package, process, renderer and provider execution authority", () => {
     const manifest = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { exports: Record<string, unknown>; publishConfig: { exports: Record<string, unknown> } };
     const sources = ["physics-bake-admission-types.ts", "physics-bake-admission-read.ts", "physics-bake-admission.ts"].map((name) => readFileSync(new URL(name, import.meta.url), "utf8")).join("\n");
     expect(manifest.exports["./internal/scene-recipe"]).toBe("./src/internal/scene-recipe/scene-recipe.ts");

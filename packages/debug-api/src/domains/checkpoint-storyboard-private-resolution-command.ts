@@ -1,4 +1,4 @@
-/** Aggregate dispatcher for the distinct private B5, B6, and B7 identity-only command partitions. */
+/** Aggregate dispatcher for the distinct lifecycle, geometry-morph, and retained-trace identity-only command partitions. */
 import type { MotionDebugResult } from "../command-registry.js";
 import { CHECKPOINT_STORYBOARD_GEOMETRY_MORPH_RESOLUTION_COMMANDS, dispatchCheckpointStoryboardGeometryMorphResolutionCommand, type CheckpointStoryboardGeometryMorphResolutionCommandServices } from "./checkpoint-storyboard-geometry-morph-resolution-command.js";
 import { CHECKPOINT_STORYBOARD_LIFECYCLE_RESOLUTION_COMMANDS, dispatchCheckpointStoryboardLifecycleResolutionCommand, type CheckpointStoryboardLifecycleResolutionCommandServices } from "./checkpoint-storyboard-lifecycle-resolution-command.js";

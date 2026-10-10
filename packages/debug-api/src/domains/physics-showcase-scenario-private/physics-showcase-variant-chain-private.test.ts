@@ -66,7 +66,7 @@ const VARIANTS = [
   },
 ] as const;
 
-describe.skipIf(process.platform !== "linux")("C7B6B private variable-scenario chain", () => {
+describe.skipIf(process.platform !== "linux")("internal variable-scenario chain", () => {
   for (const expected of VARIANTS) {
     it(`drives ${expected.scenarioName} through C7B2/C7B3/C7B4A-D and reopens only installed output`, async () => {
       const root = await mkdtemp(join(tmpdir(), `shellx-motion-c7b6b-${expected.scenarioName}-`));

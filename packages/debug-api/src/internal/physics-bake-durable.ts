@@ -1,4 +1,4 @@
-/** Packed private C7B3 host entry point. This is not a Debug, MCP, CLI or SDK command. */
+/** Host-owned entry point. This is not a Debug, MCP, CLI or SDK command. */
 export {
   bakePhysicsToDurableArtifact,
   reopenPhysicsBakeDurableArtifact,

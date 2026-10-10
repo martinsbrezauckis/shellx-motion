@@ -151,10 +151,10 @@ Cut exposes four rich cinematic families as `builtin.motion.*` Generate entries 
 `cinematic-fog-title`, `editorial-liquid-surface`, `keyed-subject-promo`, and
 `tracked-callout-overlay`. `cinematic-rain-launch` is **not** among them: it
 declares `shellx-cut` compatibility in its manifest but has no Cut Generate entry
-and uses a rendered-media-only static handoff contract. `template-pack:host-parity`
-accounts for all five Cut-advertised templates, but only the four catalog entries
-are Generate contracts. Route rain into Cut as rendered media instead; do not
-interpret that proof as a Cut Generate/runtime claim.
+and uses a rendered-media-only static handoff contract. Verify the catalog and
+linked-package workflow against your installed host version separately; only
+the four catalog entries are Generate contracts. Route rain into Cut as rendered
+media instead; this does not establish a Cut Generate/runtime claim.
 
 For the four that are exposed: preview before insert, then open the linked
 package in Design Studio for projected-control edits and one verified re-render.

@@ -8,7 +8,7 @@ type Identity = { readonly dev: number; readonly ino: number; readonly byteLengt
 export interface Hdr10PqPinnedStagedFile { readonly path: string; readonly byteLength: number; readonly handle: FileHandle; readonly identity: Identity; }
 export function assertHdr10PqNoFollowStagedFileSupport(): void { noFollowFlags(); }
 
-/** A held no-follow regular file inside the private C2 staging directory. */
+/** A held no-follow regular file inside the host-controlled HDR10 staging directory. */
 export async function openHdr10PqPinnedStagedFile(path: string, maximumBytes: number): Promise<Hdr10PqPinnedStagedFile> {
   const before = await lstatRegular(path, maximumBytes), flags = noFollowFlags(); let handle: FileHandle | undefined;
   try {

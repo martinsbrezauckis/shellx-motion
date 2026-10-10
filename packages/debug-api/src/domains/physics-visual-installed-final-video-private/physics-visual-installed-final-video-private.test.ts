@@ -15,7 +15,7 @@ import { reopenPhysicsVisualPackageFinalVideoInput, renderPhysicsVisualInstalled
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
 
-describe.skipIf(process.platform !== "linux")("private C7B5 installed-output physics final video", () => {
+describe.skipIf(process.platform !== "linux")("host-owned installed-output physics final video", () => {
   it("rederives the authoritative full schedule from only deleted-source C7B4D Bingo and wall outputs", async () => {
     for (const kind of ["bingo", "wall"] as const) {
       const value = await fixture(kind);
@@ -152,7 +152,7 @@ describe.skipIf(process.platform !== "linux")("private C7B5 installed-output phy
   });
 });
 
-describe("private C7B5 surface hygiene", () => {
+describe("host-owned surface hygiene", () => {
   it("admits only packed host-internal entries and no public physics route", async () => {
     const [publicIndex, packageJson, internal, ffmpegPublic, ...surfaces] = await Promise.all([
       readFile(new URL("../../index.ts", import.meta.url), "utf8"),

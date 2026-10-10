@@ -68,7 +68,7 @@ export interface AtomicTimelineMutation<T extends { motion: MotionDocument }> ex
   hostReceiptCommit?: (input: { pkg: MotionPackage; mutation: T; receipt: OperationReceipt }) => (commit: MotionDocumentHostReceiptCommit) => Promise<string>;
   /** Static layout and C2 prepare durable authority before COW installation, then journal-finalize it. */
   hostAuthorityPair?: (input: { pkg: MotionPackage; mutation: T; receipt: OperationReceipt }) => MotionDocumentHostAuthorityPair;
-  /** Internal marker: only C2’s typed lifecycle may continue a package with an active gap root. */
+  /** Internal marker: only the typed layout-gap lifecycle may continue a package with an active gap root. */
   layoutGapAnimationContinuation?: LayoutGapAnimationContinuationAdmission;
 }
 

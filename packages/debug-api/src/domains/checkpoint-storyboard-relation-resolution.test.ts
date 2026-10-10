@@ -46,7 +46,7 @@ async function fixture() {
 }
 function services(value: Awaited<ReturnType<typeof fixture>>) { return { tier: "write_local" as const, checkpointStoryboardRecordStore: value.store, checkpointStoryboardRelationResolutionAuthority: value.authority }; }
 
-describe("C6C B3a private relation resolution", () => {
+describe("host-owned relation resolution", () => {
   itLinux("resolves, replays, detaches, and replays identity-only without renderer work or output deletion", async () => {
     const value = await fixture(), identity = value.created.record.identity;
     expect(value.created.record.admission).toEqual({ staticProfileAdmitted: true, profile: "c6b3-relation@1" });

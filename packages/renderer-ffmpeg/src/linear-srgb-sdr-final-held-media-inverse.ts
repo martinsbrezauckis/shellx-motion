@@ -1,5 +1,5 @@
 /**
- * Private descriptor-backed inverse primitive shared by the existing F2a lease and three-slot lease.
+ * Descriptor-backed inverse primitive shared by the existing strict-SDR lease and three-slot lease.
  * It owns the decoded leaf through callback completion and removes it before returning or rejecting.
  */
 import { canonicalJsonSha256 } from "@shellx-motion/core";

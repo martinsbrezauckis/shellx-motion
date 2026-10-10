@@ -1,4 +1,4 @@
-/** Private candidate inverse bridge; HeldMediaOperation retains root/leaf ownership. */
+/** Internal strict-SDR inverse bridge; HeldMediaOperation retains root/leaf ownership. */
 import type { FileHandle } from "node:fs/promises";
 import type { LinearSrgbSdrFinalRoute } from "@shellx-motion/core/internal/linear-srgb-sdr-final";
 import { runLinearSrgbSdrHeldMediaAllDeliveredFramesInverse, type StrictSdrCandidateAllDeliveredFramesInverseResult } from "./linear-srgb-sdr-final-held-media-all-frames-inverse.js";

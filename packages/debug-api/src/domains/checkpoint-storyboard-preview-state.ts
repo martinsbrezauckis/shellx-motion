@@ -1,4 +1,4 @@
-/** Private B1b preview state. A receipt, PNG, or Core lock is never success without this state. */
+/** Host-owned preview state. A receipt, PNG, or Core lock is never success without this state. */
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
 import { createHmac } from "node:crypto";

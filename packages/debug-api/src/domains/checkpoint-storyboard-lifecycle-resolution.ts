@@ -1,4 +1,4 @@
-/** C6C B5a private resolver. Debug/MCP owns host authority and the signed durable link. */
+/** Host-owned lifecycle resolver. Debug/MCP owns host authority and the signed durable link. */
 import { lstat } from "node:fs/promises";
 import { canonicalJson, isPublicationCommitUncertain } from "@shellx-motion/core";
 import { materializeCheckpointStoryboardLifecycle, prepareCheckpointStoryboardLifecycleMaterialization, reopenCheckpointStoryboardLifecycleMaterializationOutput } from "./checkpoint-storyboard-lifecycle-materialize-private/checkpoint-storyboard-lifecycle-materialize-private.js";

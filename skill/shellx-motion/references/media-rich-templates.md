@@ -40,8 +40,8 @@ All keep copy auto-fit against declared safe areas and use moving scene effects 
 transitions. Cut agents discover **four** of them as `builtin.motion.*` Generate families —
 `cinematic-fog-title`, `editorial-liquid-surface`, `keyed-subject-promo`, and
 `tracked-callout-overlay`. `cinematic-rain-launch` is **not** in Cut's Generate catalog and is not
-covered by the parity gate, despite advertising `shellx-cut` in its manifest; hand rain to Cut as
-rendered media. For the four that are exposed: preview before insert, then open the linked package
-in Design Studio for projected-control edits and one verified rerender. Run `template-pack:host-parity` to
-check the 12-family Motion catalog plus both bundled host-agent workflows without rendering media or
-starting a browser.
+available as a Generate family, despite advertising `shellx-cut` in its manifest; hand rain to Cut
+as rendered media. For the four that are exposed: preview before insert, then open the linked
+package in Design Studio for projected-control edits and one verified rerender. Verify those
+host workflows separately against the installed host versions; a template manifest or Motion
+render receipt does not establish installed-host behavior.

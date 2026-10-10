@@ -1,4 +1,4 @@
-/** Private C6C B2 durable behavior-resolution journal.  This is deliberately separate from
+/** Host-owned durable behavior-resolution journal.  This is deliberately separate from
  * B1 materialization bindings: a B2 record never acquires a synthetic B1 state head. */
 import { createHash } from "node:crypto";
 import { opendir } from "node:fs/promises";

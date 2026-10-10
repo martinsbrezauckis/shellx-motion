@@ -1,4 +1,4 @@
-/** Fixed private receipt for C6B3b relations@1 COW installation; no Debug route imports it. */
+/** Fixed host-owned receipt for relations@1 COW installation; no Debug route imports it. */
 import { canonicalJson, canonicalJsonSha256, compareCodeUnits, readBoundedStableFile, writeVerifiedBoundedFile } from "@shellx-motion/core";
 import type { CheckpointStoryboardRelationProfilePlan } from "@shellx-motion/core/internal/checkpoint-storyboard-relation-profile";
 import { join } from "node:path";

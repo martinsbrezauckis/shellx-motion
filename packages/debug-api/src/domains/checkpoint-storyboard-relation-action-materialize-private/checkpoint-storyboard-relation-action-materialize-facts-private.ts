@@ -1,4 +1,4 @@
-/** Private exact package facts for the C6B4b relation-action COW seam. */
+/** Host-owned exact package facts for the relation-action COW seam. */
 import {
   canonicalJsonSha256,
   compareCodeUnits,

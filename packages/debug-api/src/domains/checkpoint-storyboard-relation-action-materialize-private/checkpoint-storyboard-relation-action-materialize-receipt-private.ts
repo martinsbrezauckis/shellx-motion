@@ -1,4 +1,4 @@
-/** Fixed private receipt for C6B4b relation-action COW installation; no Debug route imports it. */
+/** Fixed host-owned receipt for relation-action COW installation; no Debug route imports it. */
 import { canonicalJson, canonicalJsonSha256, compareCodeUnits, readBoundedStableFile, writeVerifiedBoundedFile } from "@shellx-motion/core";
 import type { MotionRelationStore } from "@shellx-motion/core";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ export interface C6B4bExactBase {
   readonly endFramePlanFingerprint: string;
 }
 
-/** The C6B4a facts B4b consumes through its private Core internal handoff. */
+/** The relation-action facts consumed through the internal Core handoff. */
 export interface C6B4bPlanEvidence {
   readonly fingerprint: string;
   readonly storyboard: { readonly id: string; readonly sha256: string; readonly revision: number };

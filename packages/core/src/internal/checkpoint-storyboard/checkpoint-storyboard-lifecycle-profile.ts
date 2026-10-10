@@ -1,4 +1,4 @@
-/** Private C6B5a lifecycle admission and pure ordinary-shape append plan. */
+/** Internal lifecycle admission and pure ordinary-shape append plan. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { readMotionDocument, readPackageManifest } from "../../package";

@@ -1,4 +1,4 @@
-/** Private implementation retained only for the pre-P2B Cut Generate compatibility façade. */
+/** Internal implementation retained for the older Cut Generate compatibility façade. */
 import { dirname, join } from "node:path";
 import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "@shellx-motion/adapters-script";
 import { attachRenderedMediaToCutPlan, placeRenderedMediaInCutPlan, planCutImport } from "@shellx-motion/adapters-cut";

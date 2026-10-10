@@ -5,7 +5,7 @@ import { compileSceneRecipe } from "./scene-recipe-compile";
 import { readSceneRecipe } from "./scene-recipe-read";
 import { DIRECTED_SHOT_SCHEMA, SCENE_RECIPE_SCHEMA, WALL_GENERATOR_SCHEMA } from "./scene-recipe-types";
 
-describe("C7A private scene resource and directed-shot recipe", () => {
+describe("Scene resource and directed-shot recipe", () => {
   it("compiles shared analytic geometry and materials once for repeated directed instances", () => {
     const recipe = fixture(10);
     const first = compileSceneRecipe(recipe), second = compileSceneRecipe(structuredClone(recipe));
@@ -130,7 +130,7 @@ describe("C7A private scene resource and directed-shot recipe", () => {
     expect(() => compileSceneRecipe(spatial)).toThrow("position exceeds the -1000..1000 scene bound");
   });
 
-  it("keeps the packed-private C7A compiler outside renderer, provider, process, path, and I/O authority", () => {
+  it("keeps the scene-recipe compiler outside renderer, provider, process, path, and I/O authority", () => {
     const publicRoot = readFileSync(new URL("../../index.ts", import.meta.url), "utf8");
     const manifest = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { exports: Record<string, unknown>; publishConfig: { exports: Record<string, unknown> } };
     const sources = ["scene-recipe-types.ts", "scene-recipe-data.ts", "scene-recipe-read.ts", "scene-recipe-wall.ts", "scene-recipe-compile.ts", "gltf-object-plan-types.ts", "gltf-object-plan.ts", "gltf-object-story-types.ts", "gltf-object-story.ts", "gltf-object-retained-render-authority.ts", "gltf-object-retained-render-types.ts", "gltf-object-retained-render.ts", "physics-bake-admission-types.ts", "physics-bake-admission-read.ts", "physics-bake-admission.ts", "scene-recipe.ts"]

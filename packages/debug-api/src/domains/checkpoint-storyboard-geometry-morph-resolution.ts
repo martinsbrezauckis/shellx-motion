@@ -1,4 +1,4 @@
-/** C6C B6a private resolver. Debug/MCP owns host authority and the signed durable geometry-morph link. */
+/** Host-owned geometry-morph resolver. Debug/MCP owns host authority and the signed durable geometry-morph link. */
 import { lstat } from "node:fs/promises";
 import { canonicalJson, canonicalJsonSha256, isPublicationCommitUncertain } from "@shellx-motion/core";
 import { materializeCheckpointStoryboardGeometryMorph, prepareCheckpointStoryboardGeometryMorphMaterialization, reopenCheckpointStoryboardGeometryMorphMaterializationOutput } from "./checkpoint-storyboard-geometry-morph-materialize-private/checkpoint-storyboard-geometry-morph-materialize-private.js";

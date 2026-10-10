@@ -1,4 +1,4 @@
-/** Private C7B2 bounded author-time adapter. It registers no public or Debug command. */
+/** Host-owned bounded author-time adapter. It registers no public or Debug command. */
 import RAPIER, { type EventQueue, type RigidBody, type World } from "@dimforge/rapier3d-deterministic-compat";
 import { canonicalJsonSha256, compareCodeUnits, hashBuffer } from "@shellx-motion/core";
 import {

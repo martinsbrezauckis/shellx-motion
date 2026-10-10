@@ -1,4 +1,4 @@
-/** Fixed shipping-private receipt for C6B5b lifecycle COW installation; no Debug route imports it. */
+/** Fixed host-owned receipt for lifecycle COW installation; no Debug route imports it. */
 import { canonicalJson, canonicalJsonSha256, compareCodeUnits, readBoundedStableFile, writeVerifiedBoundedFile } from "@shellx-motion/core";
 import { join } from "node:path";
 import { PackageEditTransactionError } from "../package-edit-transaction.js";

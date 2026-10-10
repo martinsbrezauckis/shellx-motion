@@ -26,7 +26,7 @@ export interface MotionUserAccessPaths {
    * caller's root was not merely preferred over the host's -- it was the only one there was.
    */
   receiptsRoot: string;
-  /** Host-only private registry root for locally installed C1 effect modules. */
+ /** Host-only registry root for locally installed effect modules. */
   effectModulesRoot: string;
 }
 
@@ -55,7 +55,7 @@ export async function ensureMotionReceiptsRoot(
   return paths.receiptsRoot;
 }
 
-/** Create and return the private C1 effect-module registry root chosen by the installed host. */
+/** Create and return the host-owned effect-module registry root chosen by the installed host. */
 export async function ensureMotionEffectModulesRoot(
   paths: MotionUserAccessPaths = motionUserAccessPaths()
 ): Promise<string> {

@@ -13,7 +13,8 @@ import { runLinearSrgbSdrHeldInverseChild, runLinearSrgbSdrHeldProbeChild } from
 import { copyHeldMediaToPublication } from "./linear-srgb-sdr-final-held-media-publication.js";
 import { runHeldMediaF2aInverse, runHeldMediaThreeSlotAllDeliveredFrames, runHeldMediaThreeSlotInverse, type StrictSdrCandidateAllDeliveredFramesInverseResult } from "./linear-srgb-sdr-final-held-media-candidate-inverse.js";
 import { captureCurrentStrictSdrCandidateF2aFrame, discardStrictSdrCandidateF2aFrameSnapshot, transferCurrentStrictSdrCandidateF2aLease, type StrictSdrCandidateF2aFrameSnapshot, type StrictSdrCandidateF2aLeaseOwner, type StrictSdrCandidateF2aLeaseTransfer } from "./linear-srgb-sdr-final-f2a-evaluator.js";
-import { captureCurrentStrictSdrCandidateThreeSlotFrame, currentStrictSdrCandidateThreeSlotHeldTools, discardCurrentStrictSdrCandidateThreeSlotFrame, transferCurrentStrictSdrCandidateThreeSlotLease, type StrictSdrCandidateThreeSlotLeaseOwner, type StrictSdrCandidateThreeSlotLeaseTransfer } from "./linear-srgb-sdr-final-three-slot-diagnostic.js";
+import { captureHeldMediaFrameForActiveHook, currentHeldMediaToolsForActiveHook, discardHeldMediaFrameForActiveHook, transferHeldMediaLeaseForActiveHook } from "./linear-srgb-sdr-final-held-media-hooks.js";
+import type { HeldMediaExtensionOwner, HeldMediaExtensionTransfer } from "./linear-srgb-sdr-final-held-media-extension-types.js";
 import { startLinearSrgbSdrHeldStreamingFfmpegProcess } from "./streaming-process.js";
 import { revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 import { resolveFfmpegExecutable, resolveFfprobeExecutable, type FfmpegCommand } from "./index.js";
@@ -47,7 +48,7 @@ export interface LinearSrgbSdrHeldMediaSuccess {
   readonly encodeCommand: FfmpegCommand;
   copyToPublication(publication: DerivedOutputPublication, binding?: StrictSdrCandidateHeldPairRendererBinding): Promise<{ readonly sha256: string; readonly byteLength: number }>;
   transferF2aLease(transfer: StrictSdrCandidateF2aLeaseTransfer): boolean;
-  transferThreeSlotLease(transfer: StrictSdrCandidateThreeSlotLeaseTransfer): boolean;
+  transferThreeSlotLease(transfer: HeldMediaExtensionTransfer): boolean;
   close(): Promise<void>;
 }
 
@@ -64,7 +65,6 @@ type HeldMediaOperationInput = Readonly<{
   outputPath: string;
   decodedPath: string;
 }>;
-
 /** Relative-source operation opener; root identity is held before the normal producer is invoked. */
 export async function openLinearSrgbSdrHeldMedia(input: HeldMediaOperationInput): Promise<LinearSrgbSdrHeldMediaOperation> {
   if (process.platform !== "linux" || !fsConstants.O_NOFOLLOW) {
@@ -113,7 +113,7 @@ class HeldMediaOperation {
 
   async execute(frame: LinearSrgbSdrFinalWebGpuFrame): Promise<LinearSrgbSdrHeldMediaSuccess> {
     if (this.#closed || this.#source || this.#evidence) throw new Error("Strict SDR held-media operation cannot execute twice.");
-    const sharedTools = await currentStrictSdrCandidateThreeSlotHeldTools();
+    const sharedTools = await currentHeldMediaToolsForActiveHook();
     if (sharedTools) {
       this.#ffmpeg = sharedTools.ffmpeg;
       this.#ffprobe = sharedTools.ffprobe;
@@ -126,7 +126,7 @@ class HeldMediaOperation {
     await this.encode(frame);
     await this.validate(frame);
     this.#f2aSnapshot = captureCurrentStrictSdrCandidateF2aFrame(this.#input.route, frame);
-    captureCurrentStrictSdrCandidateThreeSlotFrame(this.#input.route, frame);
+    captureHeldMediaFrameForActiveHook(this.#input.route, frame);
     return this.success();
   }
 
@@ -232,7 +232,7 @@ class HeldMediaOperation {
       encodeCommand: this.#encode,
       copyToPublication: async (publication: DerivedOutputPublication, binding?: StrictSdrCandidateHeldPairRendererBinding) => await this.copyToPublication(publication, binding),
       transferF2aLease: (transfer: StrictSdrCandidateF2aLeaseTransfer) => this.transferF2aLease(transfer),
-      transferThreeSlotLease: (transfer: StrictSdrCandidateThreeSlotLeaseTransfer) => this.transferThreeSlotLease(transfer),
+      transferThreeSlotLease: (transfer: HeldMediaExtensionTransfer) => this.transferThreeSlotLease(transfer),
       close: async () => await this.close(),
     });
     return this.#success;
@@ -248,8 +248,8 @@ class HeldMediaOperation {
     return transferred;
   }
 
-  transferThreeSlotLease(transfer: StrictSdrCandidateThreeSlotLeaseTransfer): boolean {
-    return transferCurrentStrictSdrCandidateThreeSlotLease(Object.freeze({
+  transferThreeSlotLease(transfer: HeldMediaExtensionTransfer): boolean {
+    return transferHeldMediaLeaseForActiveHook(Object.freeze({
       runThreeSlotInverse: async (input) => await this.runThreeSlotInverse(input),
       runThreeSlotAllDeliveredFrames: async (input) => await this.runThreeSlotAllDeliveredFrames(input),
       close: async () => await this.close(),
@@ -265,7 +265,7 @@ class HeldMediaOperation {
       recordDecodedCleanupError: (error) => { this.#f2aDecodedCleanupError = error; },
     });
   }
-  async runThreeSlotInverse(input: Parameters<StrictSdrCandidateThreeSlotLeaseOwner["runThreeSlotInverse"]>[0]): Promise<Awaited<ReturnType<StrictSdrCandidateThreeSlotLeaseOwner["runThreeSlotInverse"]>>> {
+  async runThreeSlotInverse(input: Parameters<HeldMediaExtensionOwner["runThreeSlotInverse"]>[0]): Promise<Awaited<ReturnType<HeldMediaExtensionOwner["runThreeSlotInverse"]>>> {
     if (this.#closed || this.#decoded) throw new Error("Strict SDR held-media three-slot inverse is unavailable after closure or duplicate decode.");
     return await runHeldMediaThreeSlotInverse({
       root: this.root, rootIdentity: this.#rootIdentity!, decodedPath: this.#input.decodedPath, route: this.#input.route,
@@ -313,7 +313,7 @@ class HeldMediaOperation {
     const errors: unknown[] = [];
     if (this.#f2aSnapshot) discardStrictSdrCandidateF2aFrameSnapshot(this.#f2aSnapshot);
     this.#f2aSnapshot = undefined;
-    discardCurrentStrictSdrCandidateThreeSlotFrame();
+    discardHeldMediaFrameForActiveHook();
     if (this.#f2aDecodedCleanupError) errors.push(this.#f2aDecodedCleanupError);
     if (this.#threeSlotDecodedCleanupError) errors.push(this.#threeSlotDecodedCleanupError);
     if (this.#decoded) await removeHeldLeaf(this.root, this.#rootIdentity!, this.#decoded, "Strict SDR held-media decoded cleanup").catch((error) => errors.push(error));

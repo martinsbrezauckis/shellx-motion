@@ -2,7 +2,7 @@ import type { MotionParametricTraceDescriptor } from "../../motion-parametric-tr
 import type { MotionShapeGeometry } from "../../motion-shape-geometry-types";
 
 /**
- * Private direct-import-only C6A contract. It deliberately has no MotionDocument root, command,
+ * Internal direct-import-only checkpoint-storyboard contract. It deliberately has no MotionDocument root, command,
  * renderer, package, provider, or model-execution authority.
  */
 export const CHECKPOINT_STORYBOARD_SCHEMA = "shellx-motion/checkpoint-storyboard@1" as const;

@@ -553,7 +553,6 @@ function assertPublicOperationalBoundary() {
     /qualified Linux RTX \d+ rig/i,
     /Native Linux RTX \d+ rig/i,
     /templates\/generators\//i,
-    /test:implementation/i,
     /private (?:source|release) receipt/i,
     /(?:evidence SHA-256|exact MP4 SHA-256)\s*[`]?\b[0-9a-f]{64}\b/i
   ];

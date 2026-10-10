@@ -1,4 +1,4 @@
-/** Private C7A3f exact-source COW recipe installer. It registers no Debug command. */
+/** Host-owned exact-source COW recipe installer. It registers no Debug command. */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { compareCodeUnits } from "@shellx-motion/core";

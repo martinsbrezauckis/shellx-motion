@@ -1,4 +1,4 @@
-/** Private C6C B1a append-only binding journal: sealed identities and opaque handles only; host
+/** Host-owned append-only binding journal: sealed identities and opaque handles only; host
  * paths, approvals, caller bindings, and renderer settings never cross this boundary. */
 import { createHash } from "node:crypto";
 import { opendir } from "node:fs/promises";

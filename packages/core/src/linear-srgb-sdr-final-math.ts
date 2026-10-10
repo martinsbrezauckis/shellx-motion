@@ -140,7 +140,7 @@ export function composeGammaWrongEncodedLayers(layers: readonly LinearSrgbSdrCom
 
 /**
  * Samples the F2a rectangular-gradient geometry in the same local 0..1 space
- * as the route-private WebGPU shader. Stop colours are decoded before the
+ * as the route-scoped WebGPU shader. Stop colours are decoded before the
  * segment interpolation and encoded only at the straight-sRGB frame boundary.
  */
 export function sampleLinearSrgbGradient(gradient: LinearSrgbSdrGradient, localX: number, localY: number): LinearSrgbSdrStraightRgba {

@@ -1,4 +1,4 @@
-/** Private renderer lease types shared by held-media and the literal diagnostic lifecycle. */
+/** Optional held-media extension types; normal rendering does not install an extension. */
 import type { LocalMotionJobGovernor } from "@shellx-motion/core";
 import type { StrictSdrCandidateHeldPairRendererBinding } from "@shellx-motion/core/internal/strict-sdr-candidate-held-pair";
 import type { LinearSrgbSdrFinalJob } from "./linear-srgb-sdr-final-adapter.js";
@@ -12,7 +12,7 @@ import type {
   StrictSdrCandidateThreeSlotInverseResult,
 } from "./linear-srgb-sdr-final-three-slot-measurement.js";
 
-export type StrictSdrCandidateThreeSlotLeaseOwner = Readonly<{
+export type HeldMediaExtensionOwner = Readonly<{
   runThreeSlotInverse(input: Readonly<{
     sourceFd: number;
     job: LinearSrgbSdrFinalJob;
@@ -30,7 +30,7 @@ export type StrictSdrCandidateThreeSlotLeaseOwner = Readonly<{
   close(): Promise<void>;
 }>;
 
-export type StrictSdrCandidateThreeSlotLeaseTransfer = Readonly<{
+export type HeldMediaExtensionTransfer = Readonly<{
   binding: StrictSdrCandidateHeldPairRendererBinding;
   preparation: string;
   governor: LocalMotionJobGovernor;

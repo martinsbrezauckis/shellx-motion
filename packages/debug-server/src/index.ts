@@ -164,7 +164,7 @@ export interface MotionDebugServerOptions {
   pathPicker?: WorkbenchPathPicker;
   /** Injected one-click MCP client configurator; defaults to the installed provider CLIs. */
   connectionConfigurator?: MotionAgentConfigurator;
-  /** Host-selected private C1 registry root. Omitted servers expose no effect-module manager. */
+  /** Host-selected effect-module registry root. Omitted servers expose no effect-module manager. */
   effectModulesRoot?: string;
   /** Host-only test/integration seam; no HTTP request, command, or package can provide an authority. */
   effectModuleRegistryFactory?: (stateRoot: string) => EffectModuleRegistryAuthority;

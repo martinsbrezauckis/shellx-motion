@@ -1,4 +1,4 @@
-/** Private C6B7b package observations and complete-inventory projections. */
+/** Host-owned package observations and complete-inventory projections. */
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { canonicalJsonSha256, compareCodeUnits, hashBuffer, loadMotionPackage, readBoundedStableFile, requiredLoadedPackageDocumentHashes, resolvePackageAsset, type MotionPackage } from "@shellx-motion/core";

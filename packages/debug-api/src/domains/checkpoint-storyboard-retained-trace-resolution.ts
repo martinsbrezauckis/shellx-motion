@@ -1,4 +1,4 @@
-/** C6C B7 private resolver. Debug/MCP owns host authority and the signed durable retained-trace link. */
+/** Host-owned retained-trace resolver. Debug/MCP owns host authority and the signed durable retained-trace link. */
 import { lstat } from "node:fs/promises";
 import { canonicalJson, canonicalJsonSha256, isPublicationCommitUncertain } from "@shellx-motion/core";
 import { withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";

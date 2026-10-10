@@ -1,4 +1,4 @@
-/** Fixed B7 raster evidence and opaque wrapper types for the shipping-private preview facade. */
+/** Fixed B7 raster evidence and opaque wrapper types for the internal preview facade. */
 import { canonicalJsonSha256 } from "../../canonical-json";
 import {
   GPU_PARAMETRIC_TRACE_COLOUR_MAPPING,

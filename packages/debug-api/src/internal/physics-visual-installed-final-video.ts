@@ -1,4 +1,4 @@
-/** Packed private C7B5 installed-output final-video entry. No Debug, MCP, CLI, SDK, Action or connector route exists. */
+/** Host-owned installed-output final-video entry. No Debug, MCP, CLI, SDK, Action or connector route exists. */
 export {
   reopenPhysicsVisualPackageFinalVideoInput,
   renderPhysicsVisualInstalledFinalVideo,

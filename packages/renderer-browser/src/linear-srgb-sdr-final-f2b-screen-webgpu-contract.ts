@@ -1,7 +1,7 @@
 import { canonicalJsonSha256 } from "@shellx-motion/core";
 
 /**
- * Route-private F2b blend contract. The submitted fragment remains premultiplied
+ * Screen-blend contract for this route. The submitted fragment remains premultiplied
  * linear RGB; WebGPU's component-wise `one-minus-src` destination factor yields
  * `Sp + Dp - Sp*Dp`, the premultiplied screen result.
  */

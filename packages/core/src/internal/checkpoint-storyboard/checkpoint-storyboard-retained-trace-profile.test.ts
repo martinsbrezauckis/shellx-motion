@@ -89,7 +89,7 @@ function request(options: {
       manifest: {
         schema: "shellx-motion/package-manifest@1",
         id: "package-1",
-        name: "Private C6B7a retained trace fixture",
+        name: "Retained-trace profile fixture",
         motion: "motion.json",
         assets: [],
         sourceApp: "test",
@@ -98,7 +98,7 @@ function request(options: {
       motion: {
         schema: "shellx-motion/motion@1",
         id: "motion-1",
-        name: "Private C6B7a retained trace fixture",
+        name: "Retained-trace profile fixture",
         durationMs,
         fps: 30,
         width: 1280,
@@ -115,7 +115,7 @@ function request(options: {
 
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 
-describe("private C6B7a checkpoint retained-trace profile compiler", () => {
+describe("internal checkpoint retained-trace profile compiler", () => {
   it("binds one sealed C6 record to one frozen C4C retained line plan without a package write", () => {
     const input = request();
     const plan = compileCheckpointStoryboardRetainedTraceProfilePlan(input);

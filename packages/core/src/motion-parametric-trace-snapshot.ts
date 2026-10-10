@@ -8,7 +8,7 @@ interface State { active: WeakSet<object>; nodes: number; keys: number; bytes: n
 interface RecordScan { value: object; keys: readonly PropertyKey[]; label: string }
 
 /**
- * Shape-aware snapshot for the private C4C descriptor. Every collection cap is checked before
+ * Shape-aware snapshot for the parametric-trace descriptor. Every collection cap is checked before
  * its ownKeys/element reflection, and every branch checks exact keys before reading non-kind data.
  */
 export function snapshotMotionParametricTraceData(value: unknown): unknown {

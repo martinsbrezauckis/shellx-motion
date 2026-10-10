@@ -1,4 +1,4 @@
-/** Private C7B4C data-only static-collision, constraint-display and fixed-presentation lowering. */
+/** Host-owned data-only static-collision, constraint-display and fixed-presentation lowering. */
 import { canonicalJson, canonicalJsonSha256 } from "@shellx-motion/core";
 import {
   compileRetainedMeshGeometry,

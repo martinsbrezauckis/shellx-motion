@@ -51,7 +51,7 @@ export interface TemplateToCutConnectorInput {
   values: Record<string, TemplateValue>;
   outDir: string;
   cutPlacement?: CutRenderedMediaPlacement;
-  /** Coordinator-owned cancellation for this private P2A delivery. */
+  /** Coordinator-owned cancellation for this connector delivery. */
   signal?: AbortSignal;
 }
 

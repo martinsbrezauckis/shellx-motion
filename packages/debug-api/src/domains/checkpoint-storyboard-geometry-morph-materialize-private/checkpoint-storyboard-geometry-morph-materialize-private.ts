@@ -1,4 +1,4 @@
-/** Private C6B6b exact-base COW adapter. It registers no Debug command or public surface. */
+/** Host-owned exact-base COW adapter. It registers no Debug command or public surface. */
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import {

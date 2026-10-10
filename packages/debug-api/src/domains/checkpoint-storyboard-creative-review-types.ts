@@ -1,4 +1,4 @@
-/** Private C6C B1c signed-record shapes shared by the binding, journal, and publication seams. */
+/** Host-owned signed-record shapes shared by the binding, journal, and publication seams. */
 import type { CheckpointStoryboardRecordIdentity } from "./checkpoint-storyboard-record-store-types.js";
 
 export const BINDING_FILE = /^(checkpoint_storyboard_[a-f0-9]{32})\.creative-review\.json$/u;

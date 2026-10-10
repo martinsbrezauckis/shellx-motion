@@ -1,4 +1,4 @@
-/** Private C7B4B retained analytic-mesh lowering over exact C7B4A frames. */
+/** Host-owned retained analytic-mesh lowering over exact C7B4A frames. */
 import { canonicalJson, canonicalJsonSha256 } from "@shellx-motion/core";
 import {
   compileRetainedMeshGeometry,

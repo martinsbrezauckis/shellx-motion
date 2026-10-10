@@ -1,4 +1,4 @@
-/** Private output-only C6B4b diagnostic reopen. It accepts no source, approval, plan, or writer authority. */
+/** Host-owned output-only relation-action diagnostic reopen. It accepts no source, approval, plan, or writer authority. */
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {

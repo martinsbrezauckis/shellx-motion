@@ -1,4 +1,4 @@
-/** C6C B1c facade: bind, inspect, and lifecycle audit one private root-scoped review journal. */
+/** Creative-review facade: bind, inspect, and lifecycle audit one host-private root-scoped review journal. */
 import { canonicalJson } from "@shellx-motion/core";
 import { join } from "node:path";
 import {

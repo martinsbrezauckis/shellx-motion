@@ -84,7 +84,7 @@ function state(objectId: "guide" | "orb", x: number, y: number) {
   return { objectId, state: "present" as const, properties: [{ property: "transform.x" as const, value: x }, { property: "transform.y" as const, value: y }] };
 }
 
-describe("private C6B3b relation exact-base COW materializer", () => {
+describe("host-owned relation exact-base COW materializer", () => {
   itLinux("installs exactly /relations plus the fixed non-render receipt and leaves source bytes untouched", async () => {
     const value = await fixture();
     try {

@@ -1,7 +1,7 @@
 import type { MotionShapeGeometry } from "./motion-shape-geometry-types";
 import type { MotionEasing } from "./types";
 
-/** Private, direct-import-only C4C descriptor. It never becomes a MotionDocument root. */
+/** Internal, direct-import-only parametric-trace descriptor. It never becomes a MotionDocument root. */
 export const MOTION_PARAMETRIC_TRACE_SCHEMA = "shellx-motion/private-parametric-trace@1" as const;
 export const MOTION_PARAMETRIC_TRACE_PLAN_SCHEMA = "shellx-motion/private-parametric-trace-plan@1" as const;
 

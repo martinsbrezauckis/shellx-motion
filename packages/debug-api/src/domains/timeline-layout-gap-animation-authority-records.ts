@@ -1,4 +1,4 @@
-/** Exact private C2 continuation authority-record reader and parser. */
+/** Exact host-owned continuation authority-record reader and parser. */
 import { canonicalJson, canonicalJsonSha256, type OperationReceipt } from "@shellx-motion/core";
 import {
   readImmutableJsonPair,

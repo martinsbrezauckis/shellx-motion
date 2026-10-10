@@ -1,4 +1,4 @@
-/** C6C B7: one exact-schedule private GPU PNG from one active resolved retained trace. */
+/** One exact-schedule host-owned GPU PNG from one active resolved retained trace. */
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { acquireDerivedOutputPublication, canonicalJson, canonicalJsonSha256, isPublicationCommitUncertain } from "@shellx-motion/core";

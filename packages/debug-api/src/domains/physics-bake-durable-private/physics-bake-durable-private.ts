@@ -1,4 +1,4 @@
-/** Private C7B3 provider-to-durable-artifact host. It registers no public or Debug command. */
+/** Host-owned provider-to-durable-artifact host. It registers no public or Debug command. */
 import { lstat, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { canonicalJson, hashBuffer, isPublicationCommitUncertain, readBoundedStableFile, writeVerifiedBoundedFile } from "@shellx-motion/core";
@@ -27,7 +27,7 @@ import {
   type PhysicsBakeDurableResult,
 } from "./physics-bake-durable-types-private.js";
 
-/** Runs C7B2 internally and atomically installs one closed, lossless artifact directory. */
+/** Runs the bounded physics bake internally and atomically installs one closed, lossless artifact directory. */
 export async function bakePhysicsToDurableArtifact(planValue: unknown, host: PhysicsBakeDurableHost, options: PhysicsBakeDurableOptions = {}): Promise<PhysicsBakeDurableResult> {
   if (process.platform !== "linux") throw new PackageEditTransactionError("unsafe_output", "C7B3 closed-inventory publication currently requires the Linux descriptor-relative primitive.");
   throwIfAborted(options.signal); const plan = readPhysicsBakeAdmissionPlan(planValue);
@@ -48,7 +48,7 @@ export async function reopenPhysicsBakeDurableArtifactWithSingleLinkedLeaves(hos
 }
 
 /**
- * Copies one strictly reopened C7B3 artifact into an already-private, empty package stage.
+ * Copies one strictly reopened physics-bake artifact into an already-private, empty package stage.
  *
  * This intentionally exposes neither a recursive-copy primitive nor a caller-defined leaf
  * inventory: the source manifest is reopened by C7B3, each fixed leaf is no-follow read, every

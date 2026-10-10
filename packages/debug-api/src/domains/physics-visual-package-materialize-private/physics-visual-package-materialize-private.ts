@@ -1,4 +1,4 @@
-/** Private C7B4D renderer-neutral physics-visual package COW. It registers no command. */
+/** Host-owned renderer-neutral physics-visual package COW. It registers no command. */
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { compilePhysicsBakeAdmissionPlan, snapshotSceneRecipeData } from "@shellx-motion/core/internal/scene-recipe";

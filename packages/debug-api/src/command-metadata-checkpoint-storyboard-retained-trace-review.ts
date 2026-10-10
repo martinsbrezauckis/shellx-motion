@@ -4,7 +4,7 @@ import type { MotionDebugArgPropertySchema, MotionDebugCommandMetadata } from ".
 const IDENTITY: MotionDebugArgPropertySchema = { type: "object", required: ["id", "sha256", "revision"], additionalProperties: false, properties: { id: { type: "string", pattern: "^checkpoint_storyboard_[a-f0-9]{32}$" }, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, revision: { type: "number", minimum: 1, maximum: 1_000_000, multipleOf: 1 } } };
 const PREVIEW: MotionDebugArgPropertySchema = { type: "object", required: ["previewHandle", "receiptHandle"], additionalProperties: false, properties: {
   previewHandle: { type: "string", pattern: "^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$", description: "Opaque handle for one complete B7 exact-time PNG." },
-  receiptHandle: { type: "string", pattern: "^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$", description: "Opaque handle for the matching private B7 preview receipt." },
+  receiptHandle: { type: "string", pattern: "^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$", description: "Opaque handle for the matching host-owned retained-trace preview receipt." },
 } };
 
 export const CHECKPOINT_STORYBOARD_RETAINED_TRACE_REVIEW_COMMAND_METADATA = {

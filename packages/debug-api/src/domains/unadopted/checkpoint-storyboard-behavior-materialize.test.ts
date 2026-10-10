@@ -60,7 +60,7 @@ async function fixture(options: { readonly fixedReceipt?: boolean } = {}) {
   return { root, workspace, source, output, authority, host, prepared, request: { schema: "shellx-motion/private-checkpoint-storyboard-behavior-materialization-request@1", expected: prepared.expected } };
 }
 
-describe("private C6B2 behavior exact-base COW materializer", () => {
+describe("host-owned behavior exact-base COW materializer", () => {
   itLinux("installs exactly /behaviors with a fixed non-render receipt and preserves every unrelated leaf", async () => {
     const value = await fixture();
     try {

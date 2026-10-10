@@ -1,4 +1,4 @@
-/** Private Debug-host C6B1b COW materialization. No command, registry, or public SDK imports it. */
+/** Host-owned scalar/spatial COW materialization. No command, registry, or public SDK imports it. */
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {

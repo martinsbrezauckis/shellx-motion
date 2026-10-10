@@ -1,4 +1,4 @@
-/** Shipping-private exact package facts for the C6B5b lifecycle append COW seam. */
+/** Host-owned exact package facts for the lifecycle append COW seam. */
 import {
   canonicalJsonSha256,
   compareCodeUnits,

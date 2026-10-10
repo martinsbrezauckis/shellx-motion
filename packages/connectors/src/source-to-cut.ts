@@ -36,7 +36,7 @@ export interface SourceToCutConnectorInput {
   width?: number;
   height?: number;
   fps?: number;
-  /** Coordinator-owned cancellation for this private P2B delivery. */
+  /** Coordinator-owned cancellation for this connector delivery. */
   signal?: AbortSignal;
   /** Explicit compatibility spelling; only real rendered media is accepted. */
   cutImportMode?: "rendered_media";
@@ -101,7 +101,7 @@ export async function runSourceToCutConnector(input: SourceToCutConnectorInput):
     throwIfConnectorAborted(input.signal, "after Source-to-Cut child materialization");
     const childHandleArtifact = child.result.artifacts.find((artifact) => artifact.role === "artifact_handle" && artifact.status === "available");
     if (!childHandleArtifact) throw new Error("Source-to-Cut P2B child is missing its exact artifact-handle evidence.");
-    // Re-capture exact F/H/C only after the private child has completed its independent P2B
+    // Re-capture exact delivery facts only after the contained producer has completed its independent connector
     // validation.  The parent F below binds these three byte identities before the sole commit.
     const childF = await captureP2BDeliveryLeaf({ delivery, publicPath: child.result.receiptPath, label: "Source-to-Cut child connector receipt" });
     const childH = await captureP2BDeliveryLeaf({ delivery, publicPath: childHandleArtifact.path, label: "Source-to-Cut child artifact handle", maxBytes: 4 * 1024 * 1024 });

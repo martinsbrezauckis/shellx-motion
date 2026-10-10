@@ -5,7 +5,7 @@ import { compileMotionParametricTracePlan } from "./motion-parametric-trace-plan
 import { readMotionParametricTraceDescriptor } from "./motion-parametric-trace-read";
 import type { MotionDocument } from "./types";
 
-describe("private C4C parametric trace plans", () => {
+describe("parametric trace plans", () => {
   it("is exact-time deterministic, immutable, source-preserving, and trig-config-bound", () => {
     const source = descriptor([graphDrawer("orbit", lissajousGraph(), "ribbon", { kind: "full-clip", maxSamples: 8 })]);
     const before = canonicalJson(source), first = compileMotionParametricTracePlan(source), cold = compileMotionParametricTracePlan(structuredClone(source));

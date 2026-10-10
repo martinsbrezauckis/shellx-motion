@@ -9,7 +9,7 @@ import { renderHdr10PqDirectFinalForTest, renderHdr10PqDirectFinalInternal } fro
 
 const HASH = "a".repeat(64);
 
-describe("private HDR10 C2 durable boundary", () => {
+describe("host-owned HDR10 durable boundary", () => {
   it("pins a path-free direct-final receipt to all source, conversion, command, probe, output, and ceiling facts", () => {
     const receipt = createHdr10PqDirectFinalReceipt(facts());
     expect(verifyHdr10PqDirectFinalReceiptStructure(receipt)).toEqual(receipt);

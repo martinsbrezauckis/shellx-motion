@@ -1,4 +1,4 @@
-/** Private C6B1b coalescing/revalidation over the accepted C6B1a scalar/spatial plan. */
+/** Internal coalescing/revalidation over the accepted scalar/spatial plan. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import { freeze, snapshotCheckpointStoryboardData } from "./checkpoint-storyboard-data";

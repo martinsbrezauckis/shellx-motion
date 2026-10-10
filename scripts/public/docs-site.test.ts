@@ -56,11 +56,10 @@ describe("ShellX Motion online manual", () => {
   });
 
   it("keeps current capability and terminal-error language free of stale revision claims", async () => {
-    const [manual, features, jobStatusSource, strategy] = await Promise.all([
+    const [manual, features, jobStatusSource] = await Promise.all([
       readFile(new URL("index.html", manualRoot), "utf8"),
       readFile(new URL("docs/public/FEATURES.md", root), "utf8"),
-      readFile(new URL("schemas/job-status.json", root), "utf8"),
-      readFile(new URL("STRATEGY.md", root), "utf8")
+      readFile(new URL("schemas/job-status.json", root), "utf8")
     ]);
     const jobStatus = JSON.parse(jobStatusSource) as {
       optionalFields: Array<{ name: string; lifecycle: string[]; outcomes?: string[]; meaning: string }>;
@@ -76,11 +75,6 @@ describe("ShellX Motion online manual", () => {
     expect(manual).not.toContain("failed always does");
     expect(features).toContain("Lottie/dotLottie import are bounded to the");
     expect(features).not.toContain("An earlier revision of this file called Lottie unreachable");
-    expect(strategy).toContain("This strategy intentionally records durable product direction rather than mutable phase, feature,");
-    expect(strategy).toContain("[`ROADMAP.md`](ROADMAP.md) is the canonical authority for current execution");
-    expect(strategy).toContain("[post-v0.2.66 implementation program]");
-    expect(strategy).not.toContain("## Roadmap Placement");
-    expect(strategy).not.toContain("### V1: Compatibility Foundation");
   });
 
   it("keeps public human-facing content free of model attribution and the manual free of unsafe DOM sinks", async () => {

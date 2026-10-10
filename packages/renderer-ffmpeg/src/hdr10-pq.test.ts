@@ -8,7 +8,7 @@ import { HDR10_PQ_FFPROBE_QUERY, verifyHdr10PqFfprobeReadback } from "./hdr10-pq
 
 const HASH = "a".repeat(64);
 
-describe("private HDR10 PQ FFmpeg C1 leaves", () => {
+describe("internal HDR10 PQ FFmpeg components", () => {
   it("verifies an opaque binary16 Rec.2020-nits frame and emits bounded deterministic yuv420p10le", () => {
     const output: Buffer[] = [], receipt = convertHdr10PqReadback(readback(0x63d0), (chunk) => { output.push(Buffer.from(chunk)); }), yuv = Buffer.concat(output);
     expect(receipt).toMatchObject({ generatedFrame: { pixelFormat: "yuv420p10le", width: 1280, height: 720, byteLength: 2_764_800, persistence: "not-established-in-c1" }, processing: { verifiedInputPixels: 921_600, conversionWorkUnits: 3_686_400, generatedChunks: 43, maxChunkBytes: 65_536, transientSnapshotBytes: 7_372_800, maxTransientBridgeBytes: 7_503_872, retainedRawBytes: 0, retainedYuvBytes: 0 } });

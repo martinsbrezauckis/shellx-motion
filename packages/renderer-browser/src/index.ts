@@ -290,7 +290,7 @@ export interface BrowserFrameResult {
     webglResources?: BrowserWebGLResourceEvidence;
     artifacts?: ReceiptArtifact[];
     resources?: LocalMotionJobEvidence;
-    /** Exact-D C6C private terminal frame evidence; absent from ordinary Browser renders. */
+ /** Exact-duration internal terminal frame evidence; absent from ordinary Browser renders. */
     terminalBoundary?: CheckpointStoryboardTerminalBoundaryEvidence;
   };
   receipt: OperationReceipt;

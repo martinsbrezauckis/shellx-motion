@@ -93,7 +93,7 @@ function outputHost(value: Awaited<ReturnType<typeof fixture>>) {
   return { outputPackageRoot: value.output, packageWorkspaceRoot: value.workspace, packageWorkspaceAuthority: value.authority };
 }
 
-describe("private C6B6b geometry-morph exact-base COW materializer", () => {
+describe("host-owned geometry-morph exact-base COW materializer", () => {
   itLinux("installs one exact two-snapshot geometryKeyframes leaf, preserves source/leaves/empty directories, and reopens without source", async () => {
     const value = await fixture();
     try {

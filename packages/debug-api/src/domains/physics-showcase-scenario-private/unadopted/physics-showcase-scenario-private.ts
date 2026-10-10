@@ -21,7 +21,7 @@ import {
 
 export { BINGO_ICO42_HULL_K, BINGO_ICO42_SAFETY_POLICY, quaternionFromPositiveZ } from "./bingo-icosa42-enclosure-private.js";
 
-/** Private C7B6A data-only authoring boundary. It is intentionally not registered as a Motion surface. */
+/** Host-owned data-only authoring boundary. It is intentionally not registered as a Motion surface. */
 export const PHYSICS_SHOWCASE_SCENARIO_SCHEMA = "shellx-motion/private-physics-showcase-scenario@1" as const;
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

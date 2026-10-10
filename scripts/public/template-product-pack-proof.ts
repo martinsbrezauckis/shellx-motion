@@ -238,8 +238,8 @@ const evidence = {
   },
   cutStaticParity: {
     requiredFamilies: proofs.filter((proof) => proof.cutHandoff !== undefined).map((proof) => proof.packageDirName),
-    command: "pnpm run template-pack:host-parity -- --canvas-root <path> --cut-root <path>",
-    scope: "required separately because it inspects host contracts and starts no renderer"
+    status: "not_verified_by_this_proof",
+    scope: "verify host catalog and linked-package workflows separately against the installed host versions"
   },
   retention: retained
     ? {

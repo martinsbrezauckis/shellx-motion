@@ -306,9 +306,9 @@ source-admission results, not hardware, performance, or rendered-film proof on a
 Cut's Generate catalog exposes **four** of them as `builtin.motion.*` families:
 `cinematic-fog-title`, `editorial-liquid-surface`, `keyed-subject-promo`, and
 `tracked-callout-overlay`. `cinematic-rain-launch` declares `shellx-cut` host compatibility in its
-manifest but has **no** Cut Generate entry. The `template-pack:host-parity` gate covers every
-Cut-advertised template: the four catalog entries are Generate contracts, while rain has a separate
-rendered-media-only static handoff contract. Reach rain through the Motion CLI or Debug/MCP
+manifest but has **no** Cut Generate entry. Template host advertisements do not establish installed
+Cut behavior; verify the catalog and linked-package workflow against your host version separately.
+Reach rain through the Motion CLI or Debug/MCP
 template workflow, then hand Cut rendered media instead; this is not a Generate/runtime-parity
 claim. A local SDK host can render a caller-selected rain package, but cannot discover, plan, apply,
 or replace template media through a dedicated template API.

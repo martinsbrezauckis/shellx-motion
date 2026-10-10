@@ -1,5 +1,5 @@
 /**
- * Private C6C B7 retained-trace preview evidence state.
+ * Host-owned retained-trace preview evidence state.
  *
  * This deliberately owns only receipt-first PNG-pair publication state. It does not reopen the
  * resolved package, invoke a renderer, or parse a renderer receipt: the renderer/orchestrator

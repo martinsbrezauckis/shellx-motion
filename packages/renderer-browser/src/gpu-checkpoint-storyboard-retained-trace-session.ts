@@ -25,7 +25,7 @@ export interface GpuCheckpointStoryboardRetainedTraceSession extends GpuFrameRen
 
 type OpenGpuFrameRenderSession = () => Promise<GpuFrameRenderSessionOpenResult>;
 
-/** Shipping-private B7 allocation seam; callers only reach it through the retained-trace preview executor. */
+/** Internal allocation seam; callers only reach it through the retained-trace preview executor. */
 export function createCheckpointStoryboardRetainedTraceRenderSessionFactory(openGpuFrameRenderSession: OpenGpuFrameRenderSession) {
   return async (): Promise<
     | { ok: true; session: GpuCheckpointStoryboardRetainedTraceSession }

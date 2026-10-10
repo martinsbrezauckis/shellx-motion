@@ -1,5 +1,5 @@
 /**
- * Compatibility façade for the pre-P2B Cut Generate route.
+ * Compatibility façade for the older Cut Generate route.
  * It hardcodes its distinct receipt operation and deliberately exposes no generic operation selector.
  */
 import type { CutRenderedMediaPlacement } from "@shellx-motion/adapters-cut";

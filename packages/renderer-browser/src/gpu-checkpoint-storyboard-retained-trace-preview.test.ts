@@ -16,7 +16,7 @@ vi.mock("./gpu-frame-renderer", async (importOriginal) => {
 import { renderCheckpointStoryboardRetainedTracePreview, verifyCheckpointStoryboardRetainedTracePreviewEvidence } from "./gpu-checkpoint-storyboard-retained-trace-preview";
 import { withRendererPrivateOutputPublication } from "./private-output-publication";
 
-describe("private Browser C6C-B7 retained-trace preview executor", () => {
+describe("host-owned Browser retained-trace preview executor", () => {
   it("draws only sealed Core samples through the bounded raster contract, closes before using its Core-bound private stage, and returns bindable evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-b7-trace-preview-"));
     const pkg = packageAt(root), plan = retainedTracePlan();

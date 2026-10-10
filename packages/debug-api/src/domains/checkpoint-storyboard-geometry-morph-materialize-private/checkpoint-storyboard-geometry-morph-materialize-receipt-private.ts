@@ -1,4 +1,4 @@
-/** Fixed private receipt for C6B6b triangle geometry-keyframe COW installation; no Debug route imports it. */
+/** Fixed host-owned receipt for triangle geometry-keyframe COW installation; no Debug route imports it. */
 import {
   canonicalJson,
   canonicalJsonSha256,

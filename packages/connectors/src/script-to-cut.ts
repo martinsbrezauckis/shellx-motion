@@ -16,7 +16,7 @@ export interface ScriptToCutConnectorInput {
   script?: unknown;
   outDir: string;
   cutPlacement?: CutRenderedMediaPlacement;
-  /** Coordinator-owned cancellation for this private P2B delivery. */
+  /** Coordinator-owned cancellation for this connector delivery. */
   signal?: AbortSignal;
   /** Explicit compatibility spelling; only real rendered media is accepted. */
   cutImportMode?: "rendered_media";

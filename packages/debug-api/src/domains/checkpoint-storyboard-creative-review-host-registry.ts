@@ -1,4 +1,4 @@
-/** Private host-registry parser for C6C B1c creative-review authority. */
+/** Host-owned registry parser for creative-review authority. */
 import { createHmac } from "node:crypto";
 import { canonicalJson } from "@shellx-motion/core";
 import {

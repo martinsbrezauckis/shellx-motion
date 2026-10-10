@@ -1,4 +1,4 @@
-/** Private C6B1a pure scalar/spatial lowering plan. It must stay outside every public barrel. */
+/** Internal pure scalar/spatial lowering plan. It must stay outside every public barrel. */
 
 import { canonicalJsonSha256 } from "../../canonical-json";
 import {

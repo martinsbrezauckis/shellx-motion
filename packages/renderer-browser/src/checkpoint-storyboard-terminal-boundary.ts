@@ -1,5 +1,5 @@
 /**
- * Private C6C terminal-boundary Browser session.
+ * Internal terminal-boundary Browser session.
  *
  * Ordinary Browser rendering is end-exclusive because it admits and draws layers. This module is
  * deliberately narrower: an opaque host capability selects one exact-duration D frame whose

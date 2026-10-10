@@ -1,4 +1,4 @@
-/** One-shot implementation behind the private C6C terminal-boundary capability. */
+/** One-shot implementation behind the internal terminal-boundary capability. */
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
   defaultLocalMotionJobGovernor,

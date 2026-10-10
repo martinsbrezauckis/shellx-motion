@@ -46,7 +46,7 @@ export interface LinearSrgbSdrFinalWebGpuPageReadbackInput {
 type Failure = { readonly ok: false; readonly failure: GpuRuntimeFailure };
 type Success = { readonly ok: true };
 
-/** Opens an isolated page-global device for the route-private final producer. */
+/** Opens an isolated page-global device for the route-scoped final producer. */
 export async function openLinearSrgbSdrFinalWebGpuPage(options: { powerPreference: "high-performance" }): Promise<GpuPageSessionOpenOutput> {
   type Device = { destroy?(): void; limits?: { maxTextureDimension2D?: number; maxBufferSize?: number; maxStorageBufferBindingSize?: number }; lost?: Promise<unknown> };
   const browser = globalThis as unknown as {
@@ -286,7 +286,7 @@ export async function readLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFinal
   function fail(code: GpuRuntimeFailure["code"], message: string): Failure { return { ok: false, failure: { code, message } }; }
 }
 
-/** Releases the route-private textures and uniform buffer before closing the device. */
+/** Releases the route-scoped textures and uniform buffer before closing the device. */
 export function releaseLinearSrgbSdrFinalWebGpuPage(): { readonly hadResources: boolean; readonly releasedGpuBytes: number; readonly remainingGpuBytes: 0; readonly releaseFailed: boolean } {
   type Resources = { working: { destroy?(): void }; publication: { destroy?(): void }; ditherMask: { destroy?(): void }; uniform: { destroy?(): void }; gradientUniform?: { destroy?(): void }; gpuBytes: number };
   const state = (globalThis as unknown as { __shellxMotionLinearSrgbSdrFinalWebGpuV1?: { resources?: Resources } }).__shellxMotionLinearSrgbSdrFinalWebGpuV1, resources = state?.resources;

@@ -1,7 +1,7 @@
 import { canonicalJsonSha256 } from "@shellx-motion/core";
 
 /**
- * Fixed, route-private GPU contract for the static linear-sRGB SDR final
+ * Fixed, route-scoped GPU contract for the static linear-sRGB SDR final
  * producer. It intentionally has no relationship to the generic GPU catalog.
  */
 export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA = "shellx-motion/linear-srgb-sdr-final-webgpu-pipeline@1" as const;

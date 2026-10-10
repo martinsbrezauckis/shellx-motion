@@ -16,7 +16,7 @@ import { compilePhysicsVisualPresentationFramePlan, compilePhysicsVisualPresenta
 import { compilePhysicsVisualRetainedStaticPlan } from "../physics-visual-retained-private/physics-visual-retained-private.js";
 import { physicsVisualFixture } from "../physics-visual-retained-private/physics-visual-retained.test-support.js";
 
-describe("C7B6A private variable physics-showcase scenario compiler", () => {
+describe("internal variable physics-showcase scenario compiler", () => {
   it("replaces Bingo's six-box enclosure globally while preserving all wall identities", () => {
     const bingo = compilePhysicsShowcaseScenario(createPhysicsShowcaseScenario("bingo"));
     const wall = compilePhysicsShowcaseScenario(createPhysicsShowcaseScenario("wrecking-wall"));

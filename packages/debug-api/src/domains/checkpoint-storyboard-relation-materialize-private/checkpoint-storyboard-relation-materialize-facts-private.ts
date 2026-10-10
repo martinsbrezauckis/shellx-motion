@@ -1,4 +1,4 @@
-/** Private exact package facts for C6B3b relation COW and diagnostic receipt verification. */
+/** Host-owned exact package facts for relation COW and diagnostic receipt verification. */
 import {
   canonicalJsonSha256,
   compareCodeUnits,

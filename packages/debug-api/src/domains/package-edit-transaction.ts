@@ -43,7 +43,7 @@ export interface PackageEditTransactionOptions<T, U = undefined> {
   /** Private transaction outcome hook for host authority that survives an unsafe rollback. */
   onRollbackResult?: (result: "restored" | "unproven") => void;
   /**
-   * Private admission token for the six C2 layout-gap lifecycle commands.  It is never derived
+ * Host-owned admission token for the six layout-gap lifecycle commands. It is never derived
    * from a command argument: C2 carries its continuation proof separately in its host callback.
    */
   layoutGapAnimationContinuation?: LayoutGapAnimationContinuationAdmission;
@@ -55,7 +55,7 @@ export interface LayoutGapAnimationContinuationAdmission {
   readonly [layoutGapAnimationContinuationAdmission]: "c2-host-authorized";
 }
 
-/** Internal-only transaction admission, imported only by the typed C2 authoring vertical. */
+  /** Internal-only transaction admission, imported only by the typed layout-gap authoring route. */
 export const C2_LAYOUT_GAP_ANIMATION_CONTINUATION: LayoutGapAnimationContinuationAdmission = Object.freeze({
   [layoutGapAnimationContinuationAdmission]: "c2-host-authorized" as const,
 });
@@ -148,7 +148,7 @@ export interface MotionDocumentEditOptions {
    * finalization links the journal only after the installed output re-proves its expected lineage.
    */
   hostAuthorityPair?: MotionDocumentHostAuthorityPair;
-  /** Internal C2-only admission passed through to the sole package COW boundary. */
+  /** Internal layout-gap admission passed through to the sole package COW boundary. */
   layoutGapAnimationContinuation?: LayoutGapAnimationContinuationAdmission;
 }
 

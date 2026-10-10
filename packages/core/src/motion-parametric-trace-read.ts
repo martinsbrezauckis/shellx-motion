@@ -30,7 +30,7 @@ import {
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export { snapshotMotionParametricTraceData } from "./motion-parametric-trace-snapshot";
 
-/** Reads only the private C4C descriptor; it neither owns nor mutates a Motion document. */
+/** Reads only the parametric-trace descriptor; it neither owns nor mutates a Motion document. */
 export function readMotionParametricTraceDescriptor(value: unknown): MotionParametricTraceDescriptor {
   const record = exactRecord(snapshotMotionParametricTraceData(value), ["schema", "clip", "drawers", "caps"], [], "Parametric trace");
   if (record.schema !== MOTION_PARAMETRIC_TRACE_SCHEMA) throw new Error(`Parametric trace schema must equal ${MOTION_PARAMETRIC_TRACE_SCHEMA}.`);

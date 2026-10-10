@@ -1,4 +1,4 @@
-/** Private workspace-source entrypoint for the bounded deterministic frame/checkpoint manifest. */
+/** Internal entrypoint for the bounded deterministic frame/checkpoint manifest. */
 export {
   FRAME_CHECKPOINT_EVALUATOR_VERSION,
   FRAME_CHECKPOINT_MANIFEST_LIMITS,

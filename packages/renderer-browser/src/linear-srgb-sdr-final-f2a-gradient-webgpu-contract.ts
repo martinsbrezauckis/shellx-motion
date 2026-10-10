@@ -1,6 +1,6 @@
 import { canonicalJsonSha256 } from "@shellx-motion/core";
 
-/** Route-private gradient draw contract. It is deliberately separate from the flat-only pipeline. */
+/** Route-scoped gradient draw contract. It is deliberately separate from the flat-only pipeline. */
 export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE_SCHEMA = "shellx-motion/linear-srgb-sdr-final-f2a-gradient-webgpu-pipeline@1" as const;
 
 export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_LIMITS = Object.freeze({

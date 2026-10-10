@@ -1,4 +1,4 @@
-/** Private C6B7b host-root authority. Caller data never supplies filesystem paths. */
+/** Host-owned root authority. Caller data never supplies filesystem paths. */
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { assertTrustedWorkspaceAnchorPath, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";

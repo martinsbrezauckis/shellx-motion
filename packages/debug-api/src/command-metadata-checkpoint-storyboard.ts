@@ -271,7 +271,7 @@ export const CHECKPOINT_STORYBOARD_RECORD_COMMAND_METADATA = {
     expectedReceipts: mutationEvidence("timeline.checkpoint-storyboard.archive"),
   },
   "motion.timeline.checkpoint-storyboard.materialize": {
-    argsSchema: argsSchema(["identity"], { identity: { ...IDENTITY, description: "Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and private C6B bindings." } }),
+    argsSchema: argsSchema(["identity"], { identity: { ...IDENTITY, description: "Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and materialization bindings." } }),
     expectedReceipts: [{ operation: "timeline.checkpoint-storyboard.materialize", mode: "emits", required: true, artifactRoles: ["checkpoint_storyboard_materialization_binding", "checkpoint_storyboard_c6b_receipt", "checkpoint_storyboard_materialized_package_identity"] }],
   },
   "motion.timeline.checkpoint-storyboard.detach": {

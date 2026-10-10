@@ -1,4 +1,4 @@
-/** Private installed C6B4a compiler for one existing-root C4B follow action. */
+/** Internal compiler for one existing-root follow action. */
 
 import { canonicalJson, canonicalJsonSha256, compareCodeUnits } from "../../canonical-json";
 import { compileGpuSceneRelationsStaticPlan } from "../../gpu-scene-relations-composition";

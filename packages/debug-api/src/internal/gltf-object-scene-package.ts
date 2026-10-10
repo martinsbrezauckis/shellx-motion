@@ -1,4 +1,4 @@
-/** Workspace-private C7A3f package lifecycle and separate output-only preview seam. */
+/** Host-owned package lifecycle and separate output-only preview seam. */
 export {
   materializeGltfObjectScenePackage,
   prepareGltfObjectScenePackageMaterialization,

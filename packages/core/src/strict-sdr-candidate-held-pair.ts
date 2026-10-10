@@ -69,7 +69,7 @@ export type StrictSdrCandidateTerminalBinding = Readonly<{ outputPath: string; r
 export type StrictSdrCandidateHeldPairObservation = Readonly<{
   media: Readonly<{ sha256: string; byteLength: number }>;
   receipt: Readonly<{ sha256: string; byteLength: number }>;
-  /** One callback-scoped inherited descriptor for the private F2a inverse only. */
+  /** One callback-scoped inherited descriptor for the strict-SDR inverse only. */
   withF2aCommittedMediaDescriptor<T>(operation: (input: Readonly<{ fd: number; media: Readonly<{ sha256: string; byteLength: number }> }>) => Promise<T> | T): Promise<T>;
   withThreeSlotF2aCommittedMediaDescriptor<T>(operation: (input: Readonly<{ fd: number; media: Readonly<{ sha256: string; byteLength: number }> }>) => Promise<T> | T): Promise<T>;
   withF2bScreenCommittedMediaDescriptor<T>(operation: (input: Readonly<{ fd: number; media: Readonly<{ sha256: string; byteLength: number }> }>) => Promise<T> | T): Promise<T>;

@@ -116,7 +116,7 @@ describe("C7B4C static collision and presentation visuals", () => {
     expect(() => compilePhysicsVisualPresentationStaticPlan(retained, fixture.physicsPlan, recipe)).toThrow(/instance-slot identities collide/i);
   });
 
-  it("keeps C7B4C on the existing private host export with no public command or package/video route", async () => {
+ it("keeps physics presentation on the existing host-only export with no public command or package/video route", async () => {
     const source = await readFile(new URL("./physics-visual-presentation-private.ts", import.meta.url), "utf8"), publicIndex = await readFile(new URL("../../index.ts", import.meta.url), "utf8"), hostInternal = await readFile(new URL("../../internal/physics-visual-retained-render.ts", import.meta.url), "utf8"), publicSurfaces = await Promise.all([
       "../../../../actions/src/catalog.ts", "../../../../cli/src/main.ts", "../../../../connectors/src/index.ts", "../../../../renderer-browser/src/index.ts", "../../../../renderer-ffmpeg/src/index.ts", "../../../../renderer-native/src/index.ts", "../../../../sdk/src/index.ts",
     ].map(async (path) => await readFile(new URL(path, import.meta.url), "utf8")));

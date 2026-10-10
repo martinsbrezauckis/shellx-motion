@@ -30,7 +30,7 @@ async function fixture({ receipts = false }: { readonly receipts?: boolean } = {
 function invoke(value: Awaited<ReturnType<typeof fixture>>, request: unknown = value.request) { return materializeCheckpointStoryboardRetainedTrace(value.host, value.prepared.approval, request); }
 function outputHost(value: Awaited<ReturnType<typeof fixture>>) { return { outputPackageRoot: value.output, packageWorkspaceRoot: value.workspace, packageWorkspaceAuthority: value.authority }; }
 
-describe.skipIf(process.platform !== "linux")("private C6B7b retained-trace sidecar materializer (Linux closed-inventory COW)", () => {
+describe.skipIf(process.platform !== "linux")("host-owned retained-trace sidecar materializer (Linux closed-inventory COW)", () => {
   it("COW-installs only canonical C6B7a plan/receipt bytes, preserves documents/leaves/empty dirs, and reopens after source deletion", async () => {
     const value = await fixture(); try {
       const before = await snapshotPackageEditTree(value.source), manifest = await readFile(join(value.source, "manifest.json")), motion = await readFile(join(value.source, "motion.json")); const result = await invoke(value), output = await snapshotPackageEditTree(value.output);
@@ -80,7 +80,7 @@ describe.skipIf(process.platform !== "linux")("private C6B7b retained-trace side
   });
 });
 
-describe("private C6B7b retained-trace materializer static contract", () => {
+describe("host-owned retained-trace materializer static contract", () => {
   it("has no renderer/GPU wrapper while its adopted compiler is a private installed Core route", async () => {
     const [writer, output, manifest] = await Promise.all([readFile(new URL("./checkpoint-storyboard-retained-trace-materialize-private.ts", import.meta.url), "utf8"), readFile(new URL("./checkpoint-storyboard-retained-trace-materialize-output-private.ts", import.meta.url), "utf8"), readFile(new URL("../../../../core/package.json", import.meta.url), "utf8")]);
     expect(`${writer}\n${output}`).not.toMatch(/gpu-parametric-trace-preview|renderGpu|vertexAbi/i); const parsed = JSON.parse(manifest) as { publishConfig: { exports: Record<string, unknown> } }; expect(parsed.publishConfig.exports).toHaveProperty("./internal/checkpoint-storyboard-retained-trace-profile");

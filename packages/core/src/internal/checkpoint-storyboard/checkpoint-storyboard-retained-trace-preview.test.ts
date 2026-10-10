@@ -16,7 +16,7 @@ import type { MotionDocument } from "../../types";
 
 const HASH = "a".repeat(64);
 
-describe("shipping-private C6C-B7 retained-trace preview authority", () => {
+describe("internal retained-trace preview authority", () => {
   it("issues fixed 20-byte samples with exact pixel-to-NDC raster evidence and bounded triangle-list work", () => {
     const { motion, plan } = fixture();
     const staticResult = compileCheckpointStoryboardRetainedTracePreviewStaticPlan(motion, plan);
@@ -112,7 +112,7 @@ function fixture(trigonometry: "none" | "modular-turns" = "none") {
     recipes: [recipe],
   });
   const motion: MotionDocument = {
-    schema: "shellx-motion/motion@1", id: "motion-1", name: "Private B7 preview fixture", durationMs: 4, fps: 30, width: 1280, height: 720, assets: [], provenance: { sourceApp: "test", createdBy: "test" },
+    schema: "shellx-motion/motion@1", id: "motion-1", name: "Retained-trace preview fixture", durationMs: 4, fps: 30, width: 1280, height: 720, assets: [], provenance: { sourceApp: "test", createdBy: "test" },
     layers: [{ id: "trace-anchor", type: "shape", shape: "rect", fill: "#4e8cff", startMs: 0, durationMs: 4, opacity: 0.75, transform: { x: 0, y: 0, width: 100, height: 100 } }],
   };
   const plan = compileCheckpointStoryboardRetainedTraceProfilePlan({
@@ -120,7 +120,7 @@ function fixture(trigonometry: "none" | "modular-turns" = "none") {
     storyboard,
     base: {
       packageId: "package-1",
-      manifest: { schema: "shellx-motion/package-manifest@1", id: "package-1", name: "Private B7 preview fixture", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: [] } },
+      manifest: { schema: "shellx-motion/package-manifest@1", id: "package-1", name: "Retained-trace preview fixture", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: [] } },
       motion,
       persistedMotionSha256: HASH,
     },

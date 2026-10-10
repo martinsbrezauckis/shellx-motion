@@ -1,5 +1,5 @@
 /**
- * Candidate-local F2a measurement only. This source-relative module has no barrel, request, or
+ * Candidate-local strict-SDR measurement only. This source-relative module has no barrel, request, or
  * receipt surface: the private child imports it only through the sealed one-slot topology.
  */
 import { AsyncLocalStorage } from "node:async_hooks";

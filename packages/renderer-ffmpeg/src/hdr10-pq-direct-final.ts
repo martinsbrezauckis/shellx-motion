@@ -37,7 +37,7 @@ type DirectFinalServices = { readonly resolveRoute: typeof resolveGpuScene3dGltf
 const PRODUCTION_SERVICES: DirectFinalServices = Object.freeze({ resolveRoute: resolveGpuScene3dGltfPbrHdr10Route, createProducer: createGpuScene3dGltfPbrHdr10StreamingProducer, startProcess: startStreamingFfmpegProcess, createTransaction: OutputDirectoryTransaction.create });
 
 /**
- * Private C2 vertical: it is not a generic final route and only accepts an
+ * The HDR10 final route accepts only an
  * authenticated HDR marker route, one contained Browser session, and one
  * software FFmpeg pipe. C1 results are computation evidence, never authority.
  */

@@ -1,4 +1,4 @@
-/** Packed private C7B2 host entry point. This is not a Debug, MCP, CLI or SDK command. */
+/** Host-owned entry point. This is not a Debug, MCP, CLI or SDK command. */
 export {
   bakePhysicsWithPinnedRapier,
   readPhysicsBakeRapierResourceState,

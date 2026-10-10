@@ -67,11 +67,11 @@ Cut's Generate catalog exposes **four** of them — `builtin.motion.cinematic-fo
 `builtin.motion.editorial-liquid-surface`, `builtin.motion.keyed-subject-promo`,
 and `builtin.motion.tracked-callout-overlay`. `cinematic-rain-launch` is **not**
 one of them: it declares `shellx-cut` host compatibility in its manifest, but it
-has no Cut Generate entry. `template-pack:host-parity` accounts for all five
-Cut-advertised templates: it checks the four Generate entries and records rain's
-separate rendered-media-only static handoff. To get rain into Cut, render it
-through Motion and hand Cut linked rendered media; that is not a Generate or
-Cut-runtime parity claim.
+has no Cut Generate entry. Host compatibility in a template manifest does not
+establish installed Cut behavior; verify the catalog and linked-package workflow
+against your host version separately. To get rain into Cut, render it through
+Motion and hand Cut linked rendered media; that is not a Generate or Cut-runtime
+parity claim.
 
 ## Typed controls: TemplateIR
 

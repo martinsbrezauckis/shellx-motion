@@ -48,7 +48,7 @@ async function fixture(kind: "gravity" | "bounce" = "gravity") {
   return { root, workspace, source, output, store, authority, created };
 }
 
-describe("C6C B2 private behavior resolution", () => {
+describe("host-owned behavior resolution", () => {
   itLinux.each(["gravity", "bounce"] as const)("resolves %s exactly once, replays a sealed link, and detaches without output deletion", async (kind) => {
     const value = await fixture(kind), identity = value.created.record.identity;
     expect(value.created.record.admission).toEqual({ staticProfileAdmitted: true, profile: "c6b2-behavior@1" });

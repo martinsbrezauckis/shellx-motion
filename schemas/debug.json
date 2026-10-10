@@ -16857,7 +16857,7 @@
               "revision"
             ],
             "additionalProperties": false,
-            "description": "Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and private C6B bindings.",
+            "description": "Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and materialization bindings.",
             "properties": {
               "id": {
                 "type": "string",
@@ -17810,7 +17810,7 @@
               "receiptHandle": {
                 "type": "string",
                 "pattern": "^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$",
-                "description": "Opaque handle for the matching private B7 preview receipt."
+                "description": "Opaque handle for the matching host-owned retained-trace preview receipt."
               }
             },
             "description": "Exact paired opaque handles for one complete arbitrary-time B7 preview."

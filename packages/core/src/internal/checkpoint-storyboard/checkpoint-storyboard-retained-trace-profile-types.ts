@@ -2,7 +2,7 @@ import type { MotionParametricTracePlan } from "../../motion-parametric-trace-ty
 import type { MotionDocument, PackageManifest } from "../../types";
 import type { CheckpointStoryboard } from "../../internal/checkpoint-storyboard/checkpoint-storyboard-types";
 
-/** Shipping-private C6B7 compiler contract. It persists no pixels and issues no renderer authority. */
+/** Internal compiler contract. It persists no pixels and issues no renderer authority. */
 export const CHECKPOINT_STORYBOARD_RETAINED_TRACE_PROFILE_REQUEST_SCHEMA =
   "shellx-motion/private-checkpoint-storyboard-retained-trace-profile-request@1" as const;
 export const CHECKPOINT_STORYBOARD_RETAINED_TRACE_PROFILE_PLAN_SCHEMA =

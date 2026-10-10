@@ -1,4 +1,4 @@
-/** Private B1c append-only journal entry constructors and strict parsers. */
+/** Host-owned append-only journal entry constructors and strict parsers. */
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@shellx-motion/core";
 import { COMPLETE_PREFIX, INTENT_PREFIX, MAX_BINDINGS_PER_LINEAGE, MEMBER_PREFIX, SHA256, type CreativeReviewCompletion, type CreativeReviewIntent, type CreativeReviewMember, type CreativeReviewMemberHead, type StoredBinding } from "./checkpoint-storyboard-creative-review-types.js";

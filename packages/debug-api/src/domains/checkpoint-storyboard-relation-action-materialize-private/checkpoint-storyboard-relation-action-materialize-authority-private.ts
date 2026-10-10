@@ -1,4 +1,4 @@
-/** Private C6B4b workspace authority and canonical-path checks. */
+/** Host-owned workspace authority and canonical-path checks. */
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { assertTrustedWorkspaceAnchorPath, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";

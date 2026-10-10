@@ -1,4 +1,4 @@
-/** Private, fsync-backed filesystem primitives for the V25-C1 module registry. */
+/** Host-owned, fsync-backed filesystem primitives for the effect-module registry. */
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readdir, realpath, rm, type FileHandle } from "node:fs/promises";

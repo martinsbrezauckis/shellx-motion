@@ -1,4 +1,4 @@
-/** Repeatable real P2B fixture smoke; removes only its exact private output. */
+/** Repeatable real connector fixture smoke; removes only its exact private output. */
 import assert from "node:assert/strict";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";

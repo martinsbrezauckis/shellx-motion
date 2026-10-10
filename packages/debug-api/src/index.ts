@@ -265,9 +265,9 @@ export interface MotionDebugContext extends DebugAgentScriptHostContext, DebugHo
   /** Host-only C6C B2 authority; only Debug/MCP identity commands can invoke it. */
   checkpointStoryboardBehaviorResolutionAuthority?: CheckpointStoryboardBehaviorResolutionAuthority;
   /** Host-only C6C B3a/B4a/B5/B6/B7 authorities; only Debug/MCP identity commands can invoke them. */ checkpointStoryboardRelationResolutionAuthority?: CheckpointStoryboardRelationResolutionAuthority; checkpointStoryboardRelationActionResolutionAuthority?: CheckpointStoryboardRelationActionResolutionAuthority; checkpointStoryboardLifecycleResolutionAuthority?: CheckpointStoryboardLifecycleResolutionAuthority; checkpointStoryboardGeometryMorphResolutionAuthority?: CheckpointStoryboardGeometryMorphResolutionAuthority; checkpointStoryboardRetainedTraceResolutionAuthority?: CheckpointStoryboardRetainedTraceResolutionAuthority;
-  /** Host-only C6C B7 preview authority for one exact-schedule private GPU PNG. */ checkpointStoryboardRetainedTracePreviewAuthority?: CheckpointStoryboardRetainedTracePreviewAuthority;
+ /** Host-only retained-trace preview authority for one exact-schedule GPU PNG. */ checkpointStoryboardRetainedTracePreviewAuthority?: CheckpointStoryboardRetainedTracePreviewAuthority;
   /** Host-only C6C B7 authority for exact arbitrary-time review associations. */ checkpointStoryboardRetainedTraceReviewAuthority?: CheckpointStoryboardRetainedTraceReviewAuthority;
-  /** Host-only C6C B1b authority for private Browser preview evidence. */
+ /** Host-only authority for contained Browser preview evidence. */
   checkpointStoryboardPreviewAuthority?: CheckpointStoryboardPreviewAuthority;
   checkpointStoryboardCreativeReviewAuthority?: CheckpointStoryboardCreativeReviewAuthority;
   /** Host-only C6C B1e authority: bounded endpoint-witness registry and matching B1a/B1b/B1c authorities. */ checkpointStoryboardQualityReviewAuthority?: CheckpointStoryboardQualityReviewAuthority;

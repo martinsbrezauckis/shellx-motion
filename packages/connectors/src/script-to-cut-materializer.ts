@@ -1,4 +1,4 @@
-/** Private P2B Script-to-Cut stage materializer; not exported by the connector barrel. */
+/** Internal Script-to-Cut stage materializer; not exported by the connector barrel. */
 import { writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "@shellx-motion/adapters-script";

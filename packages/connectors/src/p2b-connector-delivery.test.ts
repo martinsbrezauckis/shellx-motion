@@ -77,7 +77,7 @@ afterEach(async () => {
   await roots.cleanup();
 });
 
-// These mock only fixed internal producers. They prove private P2B assembly and publication
+// These mock only fixed internal producers. They prove atomic connector assembly and publication
 // semantics; the Linux Browser-to-FFmpeg smoke remains a separate missing host proof.
 describe.runIf(process.platform === "linux")("Canvas/Script/Source P2B atomic connector delivery", () => {
   it("publishes Canvas as one exact Browser preview/Browser-to-FFmpeg MP4 F/H/C tree without input artifacts", async () => {

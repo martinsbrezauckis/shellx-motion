@@ -1,4 +1,4 @@
-/** Private P2A delivery mechanics; not a connector package export. */
+/** Internal delivery mechanics; not a connector package export. */
 import { lstat, mkdir, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import {

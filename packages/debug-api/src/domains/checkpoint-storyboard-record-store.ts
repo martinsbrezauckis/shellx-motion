@@ -1,4 +1,4 @@
-/** Public private-Debug facade for immutable C6C record lifecycle operations. */
+/** Debug facade for immutable checkpoint-storyboard record lifecycle operations. */
 import { opendir } from "node:fs/promises";
 import { canonicalJson } from "@shellx-motion/core";
 import { admitCheckpointStoryboardC6CRecordProfile, type CheckpointStoryboard } from "@shellx-motion/core/internal/checkpoint-storyboard-scalar-spatial-materializer";

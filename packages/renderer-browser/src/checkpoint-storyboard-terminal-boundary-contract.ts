@@ -1,4 +1,4 @@
-/** Shared private contract for the C6C exact-duration terminal Browser boundary. */
+/** Internal contract for the exact-duration terminal Browser boundary. */
 import type { AgentScriptExecutionEvidence } from "@shellx-motion/core";
 
 export const CHECKPOINT_STORYBOARD_TERMINAL_SCHEMA = "shellx-motion/checkpoint-storyboard-terminal-boundary@1" as const;

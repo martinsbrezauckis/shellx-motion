@@ -3472,7 +3472,7 @@ Tier `write_local` · mutates: yes
 
 | Argument | Type | Required | Aliases | Allowed values | Description |
 |---|---|---|---|---|---|
-| `identity` | `object` | yes |  |  | Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and private C6B bindings. |
+| `identity` | `object` | yes |  |  | Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and materialization bindings. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 

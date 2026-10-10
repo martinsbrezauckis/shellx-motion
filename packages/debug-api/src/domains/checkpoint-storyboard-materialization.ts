@@ -1,4 +1,4 @@
-/** Durable B1a binding around the already accepted private C6B scalar/spatial COW. */
+/** Durable binding around the accepted host-owned scalar/spatial COW. */
 import { lstat } from "node:fs/promises";
 import { canonicalJson, isPublicationCommitUncertain } from "@shellx-motion/core";
 import { readC6B1bReceipt, type C6B1bExactBase, type CheckpointStoryboardScalarSpatialMaterializationReceipt } from "./checkpoint-storyboard-scalar-spatial-materialize-receipt-private.js";

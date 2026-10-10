@@ -5,7 +5,7 @@ import type { MotionRelationStore } from "../../motion-relation-types";
 import type { CheckpointStoryboard } from "../../internal/checkpoint-storyboard/checkpoint-storyboard-types.js";
 
 /**
- * Private C6B3a input and plan boundary for one semantic T3 `follow` relation. Base identities
+ * Internal input and plan boundary for one semantic T3 `follow` relation. Base identities
  * are caller-described plan facts only; this module accepts no workspace, package, or host authority.
  */
 export const CHECKPOINT_STORYBOARD_RELATION_PROFILE_REQUEST_SCHEMA =

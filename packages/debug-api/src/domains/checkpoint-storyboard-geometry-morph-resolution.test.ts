@@ -71,7 +71,7 @@ async function fixture() {
 
 function services(value: Awaited<ReturnType<typeof fixture>>) { return { tier: "write_local" as const, checkpointStoryboardRecordStore: value.store, checkpointStoryboardGeometryMorphResolutionAuthority: value.authority }; }
 
-describe("C6C B6 private geometry-morph resolution", () => {
+describe("host-owned geometry-morph resolution", () => {
   itLinux("resolves one exact two-keyframe output through the identity-only command, replays once, survives source loss, and detaches without deletion", async () => {
     const value = await fixture(), identity = value.created.record.identity; let cows = 0;
     expect(value.created.record.admission).toEqual({ staticProfileAdmitted: true, profile: "c6b6-geometry-morph@1" });

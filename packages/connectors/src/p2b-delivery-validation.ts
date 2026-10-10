@@ -1,4 +1,4 @@
-/** Private P2B F/H/C and exact-inventory validation. */
+/** Internal delivery safety and exact-inventory validation. */
 import { lstat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { BoundedResourceBudget, canonicalJsonSha256, compareCodeUnits, DEFAULT_PACKAGE_ARCHIVE_WRITE_LIMITS, hashBuffer, verifyAttestedArtifactHandleReference, type OutputDirectoryTransactionExpectedInventory } from "@shellx-motion/core";

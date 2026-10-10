@@ -55,7 +55,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
-describe("C1 private effect-module registry", () => {
+describe("host-owned effect-module registry", () => {
   it("shares Core's bounded canonical SemVer parser across manifest and registry entry routes", async () => {
     const accepted = ["1.2.3", "1.2.3-rc.1", "1.2.3-0"];
     const rejected = ["v1.2.3", "1.2.3+build", "latest", "^1.2.3", "1.2.3-01", "1.2.3-rc.01", `1.2.3-${"a".repeat(128)}`];

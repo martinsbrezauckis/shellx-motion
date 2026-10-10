@@ -1,4 +1,4 @@
-/** Private B1c final-binding construction and intentionally limited public projection. */
+/** Host-owned final-binding construction and intentionally limited public projection. */
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@shellx-motion/core";
 import { type ResolvedHostCreativeReview } from "./checkpoint-storyboard-creative-review-authority.js";

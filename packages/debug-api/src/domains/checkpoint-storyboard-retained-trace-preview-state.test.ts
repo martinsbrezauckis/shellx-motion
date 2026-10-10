@@ -84,7 +84,7 @@ async function writeState(facts: Awaited<ReturnType<typeof fixture>>["facts"], s
   return directory;
 }
 
-describe("C6C B7 retained-trace preview private state", () => {
+describe("host-owned retained-trace preview state", () => {
   it("requires a currently active exact B7 binding before a renderer may publish preparing state", async () => {
     const { facts, created } = await fixture();
     await expect(publishCheckpointStoryboardRetainedTracePreviewPreparing(facts, stateFor(created, "a"))).rejects.toMatchObject({ code: "preview_binding_not_active" });
