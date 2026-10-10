@@ -125,7 +125,7 @@ describe("review bundle", () => {
         role: "rendered_media",
         mediaType: "video/mp4",
         path: join(outDir, copied.relativePath),
-        relativePath: expect.stringMatching(/^artifacts\/rendered_media-[a-f0-9]{12}-final\.mp4$/)
+        relativePath: expect.stringMatching(/^artifacts\/rendered_media-[a-f0-9]{64}-final\.mp4$/)
       });
       expect(await readFile(join(outDir, copied.relativePath), "utf8")).toBe("fake mp4 bytes");
       expect(html).toContain("Client Review");

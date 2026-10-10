@@ -230,6 +230,10 @@ image/video interpretation is not a portable Motion feature. Native PNG decode r
 raw 8-bit RGB(A) samples without ICC/gamma conversion. Browser image decoding,
 filtering, blending, and internal alpha behaviour remain Chromium-managed.
 
+PNG quality analysis accepts at most 64 MiB of encoded input per frame. The shared
+decoder also limits each frame to 8,294,400 pixels, with neither dimension above
+3,840 pixels. Oversized inputs fail before frame decoding.
+
 The closed, source-generated [color pipeline contract](COLOR_PIPELINE.md) records the
 explicit legacy compatibility intent and one exact `linear-srgb-sdr@1` final route. That
 route is limited to a static opaque background plus bounded rectangles with document-ordered

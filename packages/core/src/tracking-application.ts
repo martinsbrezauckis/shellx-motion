@@ -1,5 +1,6 @@
 import type { MotionDocument, MotionKeyframe, MotionKeyframeTarget, MotionLayer } from "./types";
 import { STABILIZATION_PLAN_SCHEMA, type TrackingStabilizationPlan } from "./tracking-analysis";
+import { timelineLayerLockedTrackId } from "./timeline";
 
 export const TRACKING_STABILIZATION_ATTACHMENT_SCHEMA = "shellx-motion/tracking-stabilization-attachment@1" as const;
 const ATTACHMENT_KEY = "x-tracking-stabilization" as const;
@@ -38,6 +39,8 @@ export function applyTrackingStabilization(input: {
   const layer = motion.layers.find((candidate) => candidate.id === input.plan.targetLayerId);
   if (!layer) throw new Error(`Tracking stabilization target layer does not exist: ${input.plan.targetLayerId}.`);
   if (layer.locked === true) throw new Error(`Tracking stabilization target layer is locked: ${layer.id}.`);
+  const lockedTrackId = timelineLayerLockedTrackId(motion, layer);
+  if (lockedTrackId) throw new Error(`Cannot edit layer on locked track: ${lockedTrackId}.`);
   if (readAttachment(layer)) throw new Error(`Tracking stabilization is already attached to layer: ${layer.id}.`);
   if (input.plan.status === "partial" && input.segmentIndex === undefined) {
     throw new Error("Partial tracking stabilization requires an explicit confidence-qualified segmentIndex.");
@@ -87,6 +90,8 @@ export function detachTrackingStabilization(input: {
   const layer = motion.layers.find((candidate) => candidate.id === input.layerId);
   if (!layer) throw new Error(`Tracking stabilization target layer does not exist: ${input.layerId}.`);
   if (layer.locked === true) throw new Error(`Tracking stabilization target layer is locked: ${layer.id}.`);
+  const lockedTrackId = timelineLayerLockedTrackId(motion, layer);
+  if (lockedTrackId) throw new Error(`Cannot edit layer on locked track: ${lockedTrackId}.`);
   const attachment = readAttachment(layer);
   if (!attachment) throw new Error(`Tracking stabilization is not attached to layer: ${layer.id}.`);
   layer.keyframes ??= {};

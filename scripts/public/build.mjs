@@ -48,11 +48,12 @@
  *   node scripts/public/build.mjs --package NAME   # build one package (dependencies must be built)
  *   node scripts/public/build.mjs --clean          # remove every packages/<pkg>/dist first
  */
-import { chmodSync, cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { collectModuleSpecifiers, isNonShippingSource } from "./source-modules.mjs";
+import { assertSourceInventory, copyClosedFiles, sourceInventory } from "./packed-source-inventory.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PACKAGES_DIR = join(ROOT, "packages");
@@ -303,8 +304,10 @@ function prepareBinEntry(file) {
 function copyPackageRuntimeAssets(pkg, distDir) {
   if (pkg.name !== "@shellx-motion/debug-server") return;
   const target = join(distDir, "docs", "public");
+  const { docs, problems } = sourceInventory(pkg);
+  if (problems.length) throw new Error(`build: source inventory failed:\n${problems.join("\n")}`);
   rmSync(target, { recursive: true, force: true });
-  cpSync(join(ROOT, "docs", "public"), target, { recursive: true });
+  copyClosedFiles(ROOT, distDir, ["docs/public"], docs);
 }
 
 /**
@@ -358,6 +361,8 @@ function main() {
     console.error(`build: unknown package "${only}"`);
     process.exit(1);
   }
+
+  assertSourceInventory(selected);
 
   const started = Date.now();
   for (const pkg of selected) {

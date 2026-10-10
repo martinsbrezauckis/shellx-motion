@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { deflateSync } from "node:zlib";
 import {
   createMotionDensityAccumulator,
@@ -8,7 +8,7 @@ import {
   type MotionDensityReport
 } from "./motion-density";
 import { motionDensityWarnings } from "./motion-density-warnings";
-import { crc32, decodePngRgba } from "./png-rgba-decode";
+import { crc32, decodePngRgba, MAX_MOTION_PNG_ENCODED_BYTES } from "./png-rgba-decode";
 import { inspectRgba } from "./png-quality-stats";
 
 export interface PngQuality {
@@ -122,7 +122,7 @@ export interface FrameSequenceQualityPolicy {
 
 export async function inspectPngFile(path: string): Promise<PngQualityResult> {
   try {
-    return inspectPngBuffer(await readFile(path));
+    return inspectPngBuffer(await readBoundedPngFile(path));
   } catch (error) {
     return {
       ok: false,
@@ -133,12 +133,38 @@ export async function inspectPngFile(path: string): Promise<PngQualityResult> {
 }
 
 export async function inspectPngFileRegion(path: string, region: PngRegion): Promise<PngQualityResult> {
-  return inspectPngRegionBuffer(await readFile(path), region);
+  return inspectPngRegionBuffer(await readBoundedPngFile(path), region);
 }
 
 export async function comparePngFiles(actualPath: string, expectedPath: string, options: PngCompareOptions = {}): Promise<PngVisualDiffResult> {
-  const [actual, expected] = await Promise.all([readFile(actualPath), readFile(expectedPath)]);
+  const [actual, expected] = await Promise.all([readBoundedPngFile(actualPath), readBoundedPngFile(expectedPath)]);
   return comparePngBuffers(actual, expected, options);
+}
+
+/** A descriptor-bound read whose allocation and every read stay inside the encoded PNG ceiling. */
+async function readBoundedPngFile(path: string): Promise<Buffer> {
+  const handle = await open(path, "r");
+  try {
+    const initial = await handle.stat();
+    if (!initial.isFile()) throw new Error("PNG frame must be a regular file.");
+    if (!Number.isSafeInteger(initial.size) || initial.size > MAX_MOTION_PNG_ENCODED_BYTES) {
+      throw new Error(`PNG encoded bytes exceed the ${MAX_MOTION_PNG_ENCODED_BYTES}-byte frame budget.`);
+    }
+    const bytes = Buffer.allocUnsafe(initial.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (result.bytesRead === 0) throw new Error("PNG frame changed while it was read.");
+      offset += result.bytesRead;
+    }
+    const probe = Buffer.alloc(1);
+    if ((await handle.read(probe, 0, 1, offset)).bytesRead !== 0 || (await handle.stat()).size !== initial.size) {
+      throw new Error("PNG frame changed while it was read.");
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
 }
 
 export function comparePngBuffers(actualPng: Buffer, expectedPng: Buffer, options: PngCompareOptions = {}): PngVisualDiffResult {
@@ -541,7 +567,7 @@ async function inspectAndMeasure(
   const results: PngQualityResult[] = [];
   const readAhead = (index: number): Promise<Buffer> | null => {
     if (index >= framePaths.length) return null;
-    const pending = readFile(framePaths[index]);
+    const pending = readBoundedPngFile(framePaths[index]);
     // Mark the lookahead handled so a read failure can never surface as an unhandled rejection
     // before the loop reaches (and reports) it.
     pending.catch(() => undefined);

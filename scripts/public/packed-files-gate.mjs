@@ -5,25 +5,21 @@
  * ROLE
  * ----
  * `files: ["dist"]` selects a directory, so every emitted file could enter a tarball. This gate
- * derives the expected file list from shipped source and fails on missing or unexpected files.
+ * derives dist emissions from shipped TypeScript and uses a committed inventory for source assets.
  *
- * WHY DERIVED, NOT SNAPSHOTTED
- * ----------------------------
- * The expectation is computed from the source tree, not recorded from a previous pack:
+ * EXPECTATION
+ * -----------
+ * The expectation has two separately bounded sources:
  *
  *   dist/    every shipping module in the package's tsconfig emit set, as the exact trio the
  *            build produces — `<name>.js`, `<name>.d.ts`, `<name>.js.map`
- *   other    every other `files` entry (e.g. core's `assets`, debug-server's `workbench`) is a
- *            hand-maintained shipped directory: its contents are listed from disk, but each
- *            entry must still pass the non-shipping source convention
- *   always   `package.json`, plus `README*` / `LICENSE*` / `CHANGELOG*` when present, which npm
- *            includes regardless of `files`
+ *   other    committed packed-source-inventory.json lists every approved non-dist source leaf
+ *            and docs/public leaf. The filesystem must match it before packing.
+ *   metadata `package.json`, inventoried package metadata and the workspace LICENSE that pnpm
+ *            may copy into a package; undeclared root metadata fails before packing
  *
- * A snapshot would have to be re-recorded whenever a module is added, and "just re-run the sync
- * command" would happily re-bless a reintroduced fixture. A derived expectation cannot be
- * silenced that way: a fixture in `dist/` is unexpected no matter how many times it is packed.
- * The cost is that this gate needs a current `dist/`, so it runs after a build rather than in
- * the source-only `pnpm test` chain.
+ * TypeScript modules remain derived so a new module does not require an inventory edit. Assets
+ * require deliberate review of this committed list. The gate needs a current `dist/` after build.
  *
  * CALLERS
  *   pnpm run pack:check          this file as a CLI — `npm pack --dry-run` per package
@@ -43,17 +39,10 @@ import { dirname, join, relative, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { isNonShippingSource, NON_SHIPPING_SOURCE_CONVENTION } from "./source-modules.mjs";
+import { sourceInventory } from "./packed-source-inventory.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PACKAGES_DIR = join(ROOT, "packages");
-
-/**
- * Metadata files a package manager may add to a tarball on its own: npm always packs a package's
- * own README/LICENSE/CHANGELOG, and pnpm additionally copies the *workspace root* LICENSE into
- * every package that lacks one. They are allowed but never required, because which of them
- * appears depends on the packer rather than on this repository.
- */
-const OPTIONAL_METADATA = ["README.md", "README", "LICENSE", "LICENCE", "CHANGELOG.md"];
 
 /** Extensions the build emits for one TypeScript module, in `dist/`. */
 const EMITTED_SUFFIXES = [".js", ".d.ts", ".js.map"];
@@ -73,17 +62,6 @@ export function discoverPackages() {
     if (!statSync(dir).isDirectory() || !existsSync(manifestPath)) continue;
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     found.push({ name: manifest.name, dir, manifest });
-  }
-  return found;
-}
-
-/** Recursively list files under `dir`, as paths relative to `base`, posix-separated. */
-function listRelativeFiles(dir, base) {
-  const found = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...listRelativeFiles(full, base));
-    else found.push(relative(base, full).replaceAll("\\", "/"));
   }
   return found;
 }
@@ -117,46 +95,21 @@ function shippingModules(packageDir) {
  */
 export function expectedPackedFiles(pkg) {
   const expected = new Set(["package.json"]);
-  const optional = new Set(OPTIONAL_METADATA);
-  const problems = [];
+  const { entries, metadata, optionalMetadata, docs, problems } = sourceInventory(pkg);
+  const optional = new Set(optionalMetadata);
 
-  const files = pkg.manifest.files;
-  if (!Array.isArray(files) || files.length === 0) {
-    problems.push(`${pkg.name}: manifest declares no "files" allowlist, so the tarball contents are unbounded.`);
-    return { expected, optional, problems };
-  }
-
-  for (const entry of files) {
-    const target = join(pkg.dir, entry);
+  for (const entry of Array.isArray(pkg.manifest.files) ? pkg.manifest.files : []) {
     if (entry === "dist") {
       for (const module of shippingModules(pkg.dir)) {
         const stem = module.replace(/\.tsx?$/, "");
         for (const suffix of EMITTED_SUFFIXES) expected.add(`dist/${stem}${suffix}`);
       }
-      if (pkg.name === "@shellx-motion/debug-server") {
-        const docsRoot = join(ROOT, "docs", "public");
-        for (const file of listRelativeFiles(docsRoot, docsRoot)) {
-          expected.add(`dist/docs/public/${file}`);
-        }
-      }
+      if (pkg.name === "@shellx-motion/debug-server") for (const file of docs) expected.add(`dist/${file}`);
       continue;
     }
-    if (!existsSync(target)) {
-      problems.push(`${pkg.name}: manifest "files" lists ${entry}, which does not exist.`);
-      continue;
-    }
-    if (statSync(target).isDirectory()) {
-      for (const file of listRelativeFiles(target, pkg.dir)) {
-        if (isNonShippingSource(file)) {
-          problems.push(`${pkg.name}: nonshipping source inside shipped directory ${entry}: ${file}`);
-          continue;
-        }
-        expected.add(file);
-      }
-      continue;
-    }
-    expected.add(entry.replaceAll("\\", "/"));
   }
+
+  for (const file of [...entries, ...metadata]) expected.add(file);
 
   return { expected, optional, problems };
 }
@@ -247,6 +200,7 @@ function main() {
     }
     const { expected, optional, problems: expectationProblems } = expectedPackedFiles(pkg);
     problems.push(...expectationProblems);
+    if (expectationProblems.length) continue;
     const actual = npmPackDryRun(pkg.dir);
     total += actual.length;
     problems.push(...comparePackedFiles(pkg.name, expected, actual, optional));

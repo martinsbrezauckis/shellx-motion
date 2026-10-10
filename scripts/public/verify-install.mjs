@@ -56,6 +56,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installedWorkbenchProbeSource } from "./installed-workbench-probe.mjs";
 import { comparePackedFiles, discoverPackages, expectedPackedFiles } from "./packed-files-gate.mjs";
+import { assertSourceInventory } from "./packed-source-inventory.mjs";
 import { collectPackedRuntimeExportContract } from "./packed-runtime-exports.mjs";
 import { assertPrivateRepoScratchPath, preparePrivateRepoScratch } from "./repo-scratch.mjs";
 
@@ -299,9 +300,8 @@ function packAll() {
  * packed-files: assert the complete file manifest of every tarball that was just packed.
  *
  * This reads the real archives — not a `--dry-run` prediction — so what is asserted is exactly
- * the bytes a user would download. The expectation is derived from the source tree by
- * `scripts/public/packed-files-gate.mjs`: every shipping module's emitted trio, the hand-maintained
- * shipped directories, and nothing else. Both directions matter: an unexpected file means
+ * the bytes a user would download. The expectation combines TypeScript emit derivation with a
+ * committed inventory for non-dist assets and docs. Both directions matter: an unexpected file means
  * nonshipping implementation (or junk) is shipping, a missing file means the tarball is short an
  * emit and will fail at import time.
  *
@@ -461,6 +461,8 @@ function expectPackedRuntimeImports(label, appRoot, contract) {
 }
 
 function main() {
+  // Refuse source-tree additions before build, scratch cleanup, or any real archive is written.
+  assertSourceInventory(discoverPackages());
   if (!process.argv.includes("--skip-build")) {
     run("node", [join(ROOT, "scripts", "public", "build.mjs")], { cwd: ROOT, stdio: "inherit" });
   }

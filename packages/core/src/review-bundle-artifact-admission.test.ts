@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertCopiedReviewArtifactIdentities,
+  copyReviewArtifacts,
   MAX_REVIEW_BUNDLE_AGGREGATE_SOURCE_BYTES,
   MAX_REVIEW_BUNDLE_CANDIDATE_ATTRIBUTIONS,
   MAX_REVIEW_BUNDLE_DISTINCT_SOURCES,
@@ -31,6 +34,142 @@ function reviewReceiptEntry(id: string, artifacts: ReceiptArtifact[]): ReviewBun
 }
 
 describe("review bundle artifact admission", () => {
+  it("keeps distinct approved sources with the same role and leaf bound to their full digests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-distinct-"));
+    const outDir = join(root, "bundle");
+    const mediaRoot = join(root, "media");
+    try {
+      const paths = [join(mediaRoot, "a", "final.mp4"), join(mediaRoot, "b", "final.mp4")];
+      const contents = ["first approved render", "second approved render"];
+      for (let index = 0; index < paths.length; index++) {
+        await mkdir(join(mediaRoot, index === 0 ? "a" : "b"), { recursive: true });
+        await writeFile(paths[index], contents[index]);
+      }
+      const hashes = contents.map((bytes) => createHash("sha256").update(bytes).digest("hex"));
+      const receipts = paths.map((path, index) => {
+        const entry = reviewReceiptEntry(`render-${index}`, [
+          { role: "rendered_media", path, status: "available" }
+        ]);
+        entry.receipt.output = { path, sha256: hashes[index], byteLength: Buffer.byteLength(contents[index]) };
+        return entry;
+      });
+      const result = await writeReviewBundle({
+        outDir,
+        artifactRoots: [mediaRoot],
+        receipts
+      });
+      expect(new Set(result.copiedArtifacts.map((artifact) => artifact.relativePath)).size).toBe(2);
+      for (let index = 0; index < paths.length; index++) {
+        const artifact = result.copiedArtifacts[index];
+        expect(artifact.relativePath).toBe(`artifacts/rendered_media-${hashes[index]}-final.mp4`);
+        expect(artifact.expectedProducerSha256).toBe(hashes[index]);
+        expect(artifact.producerIdentity).toBe("producer_verified");
+        expect(createHash("sha256").update(await readFile(artifact.path)).digest("hex")).toBe(artifact.observedSha256);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a valid long source leaf copyable with a full artifact digest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-long-leaf-"));
+    const outDir = join(root, "bundle");
+    const mediaRoot = join(root, "media");
+    try {
+      await mkdir(mediaRoot);
+      const source = join(mediaRoot, `${"a".repeat(180)}.mp4`);
+      await writeFile(source, "long leaf approved media");
+      const result = await writeReviewBundle({
+        outDir,
+        artifactRoots: [mediaRoot],
+        receipts: [reviewReceiptEntry("render-long-leaf", [{ role: "rendered_media", path: source, status: "available" }])]
+      });
+      expect(result.copiedArtifacts).toHaveLength(1);
+      expect(result.copiedArtifacts[0].relativePath.split("/").pop()!.length).toBeLessThanOrEqual(255);
+      expect(await readFile(result.copiedArtifacts[0].path, "utf8")).toBe("long leaf approved media");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shares a target only when distinct approved sources have the same complete identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-key-collision-"));
+    const outDir = join(root, "bundle");
+    const mediaRoot = join(root, "media");
+    try {
+      const paths = [join(mediaRoot, "a", "final.mp4"), join(mediaRoot, "b", "final.mp4")];
+      for (const path of paths) {
+        await mkdir(join(path, ".."), { recursive: true });
+        await writeFile(path, "identical bytes from distinct files");
+      }
+      const expectedHash = createHash("sha256").update("identical bytes from distinct files").digest("hex");
+      const receipts = paths.map((path, index) => {
+        const entry = reviewReceiptEntry(`render-${index}`, [{ role: "rendered_media", path, status: "available" }]);
+        entry.receipt.output = { path, sha256: expectedHash, byteLength: Buffer.byteLength("identical bytes from distinct files") };
+        return entry;
+      });
+      const result = await writeReviewBundle({
+        outDir,
+        artifactRoots: [mediaRoot],
+        receipts
+      });
+      expect(result.copiedArtifacts).toHaveLength(2);
+      expect(new Set(result.copiedArtifacts.map((artifact) => artifact.relativePath)).size).toBe(1);
+      expect(result.copiedArtifacts.map((artifact) => artifact.observedSha256)).toEqual([expectedHash, expectedHash]);
+      expect(result.copiedArtifacts.map((artifact) => artifact.expectedProducerSha256)).toEqual([expectedHash, expectedHash]);
+      expect(result.copiedArtifacts.map((artifact) => artifact.producerIdentity)).toEqual(["producer_verified", "producer_verified"]);
+      expect(result.copiedArtifacts.map((artifact) => artifact.receiptId)).toEqual(["render-0", "render-1"]);
+      expect(createHash("sha256").update(await readFile(result.copiedArtifacts[0].path)).digest("hex")).toBe(expectedHash);
+      const portableReceipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
+      expect(portableReceipt.output.copiedArtifactIdentities).toHaveLength(2);
+      expect(portableReceipt.output.copiedArtifactIdentities.map((artifact: { receiptId: string }) => artifact.receiptId))
+        .toEqual(["render-0", "render-1"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never replaces an occupied target leaf", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-occupied-"));
+    const outDir = join(root, "stage");
+    const mediaRoot = join(root, "media");
+    try {
+      await mkdir(mediaRoot);
+      await mkdir(join(outDir, "artifacts"), { recursive: true });
+      const source = join(mediaRoot, "final.mp4");
+      const bytes = "approved media";
+      await writeFile(source, bytes);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      const target = join(outDir, "artifacts", `rendered_media-${digest}-final.mp4`);
+      await writeFile(target, "existing staged evidence");
+      await expect(copyReviewArtifacts([
+        reviewReceiptEntry("render-occupied", [{ role: "rendered_media", path: source, status: "available" }])
+      ], outDir, [mediaRoot])).rejects.toThrow(/target already exists/i);
+      expect(await readFile(target, "utf8")).toBe("existing staged evidence");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a staged leaf changed after streaming before review claims are written", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-rehash-"));
+    const outDir = join(root, "stage");
+    const mediaRoot = join(root, "media");
+    try {
+      await mkdir(mediaRoot);
+      const source = join(mediaRoot, "final.mp4");
+      await writeFile(source, "approved media");
+      const copied = await copyReviewArtifacts([
+        reviewReceiptEntry("render-rehash", [{ role: "rendered_media", path: source, status: "available" }])
+      ], outDir, [mediaRoot]);
+      await expect(assertCopiedReviewArtifactIdentities(copied.copiedArtifacts)).resolves.toBeUndefined();
+      await writeFile(copied.copiedArtifacts[0].path, "substituted media");
+      await expect(assertCopiedReviewArtifactIdentities(copied.copiedArtifacts)).rejects.toThrow(/changed before publication/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("deduplicates canonical source bytes while retaining role and symlink-alias attributions", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-review-bundle-dedupe-"));
     const mediaRoot = join(tempRoot, "media");

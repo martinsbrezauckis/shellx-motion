@@ -8,6 +8,11 @@ next source candidate until publication.
 - Keep SDK tracking temporary work directories within an admitted work root instead of deriving
   them from a caller's output sibling.
 - Admit quality-panel baseline paths before reporting whether they exist.
+- Restrict README example execution to approved read-only commands.
+- Verify packed runtime assets against an explicit file allowlist.
+- Prevent review-bundle artifact copies from replacing each other.
+- Bound encoded PNG inputs before quality analysis.
+- Honor locked timeline tracks when applying or detaching tracking stabilization.
 - Refresh the resolved `tsx` patch version and the SHA-pinned CodeQL action.
 
 ## 0.2.67 — 2026-10-10

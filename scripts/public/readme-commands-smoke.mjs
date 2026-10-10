@@ -34,12 +34,11 @@
  *
  *   1. The line must parse into an argv of inert tokens — see `scripts/public/readme-command-tokenize.mjs`
  *      for the policy and for why refusing shell composition costs the documentation nothing.
- *   2. The PROGRAM is never taken from the README. Only `pnpm`, running a script this repository
- *      declares, is ever executed; a fence naming any other program is resolved (proved to exist)
- *      and deliberately not run.
+ *   2. Only complete read-only argv examples in the execution policy may run. Manifest membership
+ *      proves existence without granting execution. Other programs are resolved and not run.
  *
  * DEPENDENCIES: node built-ins only. No build step, no network. Executes only read-only CLI
- * commands (`doctor`, `validate`, `actions …`) which write nothing outside their own process.
+ * commands (`doctor`, `validate`) which write nothing outside their own process.
  * CALLERS: `pnpm run docs:commands`, and `pnpm run docs:check` -> `pnpm test`.
  *
  * USAGE
@@ -54,6 +53,7 @@ import { fileURLToPath } from "node:url";
 
 import { describeRefusal, tokenizeCommand } from "./readme-command-tokenize.mjs";
 import { platformInapplicableReason } from "./readme-command-platform.mjs";
+import { readOnlyReadmeExecution } from "./readme-command-execution-policy.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const README = join(ROOT, "README.md");
@@ -202,11 +202,15 @@ export function resolveCommand(command) {
     if (!found.manifest.scripts?.[script]) {
       return { ok: false, detail: `${packageName} declares no "${script}" script` };
     }
+    const exec = readOnlyReadmeExecution(argv);
+    if (!exec && !NOT_EXECUTED.has(command)) {
+      return { ok: false, detail: "command is not an approved read-only README example" };
+    }
     return {
       ok: true,
       kind: "workspace-script",
       detail: `${packageName} -> "${script}": ${found.manifest.scripts[script]}`,
-      exec: { file: "pnpm", args: argv.slice(1) }
+      exec
     };
   }
 
@@ -214,11 +218,15 @@ export function resolveCommand(command) {
     const script = argv[1] === "run" ? argv[2] : argv[1];
     const manifest = readManifest(join(ROOT, "package.json"));
     if (script !== undefined && manifest?.scripts?.[script]) {
+      const exec = readOnlyReadmeExecution(argv);
+      if (!exec && !NOT_EXECUTED.has(command)) {
+        return { ok: false, detail: "command is not an approved read-only README example" };
+      }
       return {
         ok: true,
         kind: "root-script",
         detail: `root "${script}": ${manifest.scripts[script]}`,
-        exec: { file: "pnpm", args: argv.slice(1) }
+        exec
       };
     }
     if (NOT_EXECUTED.has(command)) {
@@ -264,20 +272,18 @@ function programOnPath(program) {
  * Run one documented command from the repository root.
  *
  * NO SHELL ON POSIX, WHICH IS WHERE CI RUNS: the argv comes from `resolveCommand`, whose `file` is
- * always the literal string "pnpm" and whose args are the tokens the README line parsed into, so
+ * always the literal string "pnpm" and whose args come from the complete approved example, so
  * there is no string for a shell to re-interpret.
  *
  * WINDOWS KEEPS A SHELL, AND HAS TO. `pnpm` on Windows is `pnpm.CMD`, and since the fix for
  * CVE-2024-27980 Node refuses to spawn a `.cmd`/`.bat` without `shell: true` (EINVAL). The string
- * handed to cmd.exe there is the original fence line, which by that point `tokenizeCommand` has
- * proved contains no character cmd.exe acts on — no `%`, `^`, `!`, `&`, `|`, `<`, `>`, `(`, `)` and
- * no backtick or `$`. The shell is therefore given a line it cannot do anything with except run it.
+ * handed to cmd.exe is built only from the literal argv in the read-only policy. Those examples
+ * contain no shell metacharacters or spaces inside a token; README text never becomes shell code.
  *
- * @param {string} command The fence line as written, used only on the Windows shell path.
  * @param {{ file: string, args: string[] }} exec The argv this command resolved to.
  * @returns {{ ok: boolean, detail: string }}
  */
-function runCommand(command, exec) {
+function runCommand(exec) {
   const options = {
     cwd: ROOT,
     encoding: "utf8",
@@ -285,7 +291,7 @@ function runCommand(command, exec) {
     env: { ...process.env, CI: "1" }
   };
   const result = process.platform === "win32"
-    ? spawnSync(command, { ...options, shell: true })
+    ? spawnSync([exec.file, ...exec.args].join(" "), { ...options, shell: true })
     : spawnSync(exec.file, exec.args, { ...options, shell: false });
   if (result.error) return { ok: false, detail: `${result.error.message}` };
   if (result.status !== 0) {
@@ -372,7 +378,7 @@ for (const { command, line } of commands) {
     // Resolved, deliberately not executed: the program is one the README names rather than one this
     // repository declares; the README must not choose an arbitrary executable for this gate.
     console.log(`  [RESOLVED] README.md:${line} ${command}\n         ${resolved.detail}\n` +
-      "         not executed: only `pnpm` running a script this repository declares is run here");
+      "         not executed: only approved read-only examples are run here");
     notes.push(command);
     continue;
   }
@@ -380,7 +386,7 @@ for (const { command, line } of commands) {
     console.log(`  [PLAN] README.md:${line} ${command}\n         ${resolved.detail}`);
     continue;
   }
-  const run = runCommand(command, resolved.exec);
+  const run = runCommand(resolved.exec);
   console.log(`  [${run.ok ? "PASS" : "FAIL"}] README.md:${line} ${command}\n         ${run.detail}`);
   if (!run.ok) failures.push(`README.md:${line}  ${command}\n      ${run.detail}`);
 }

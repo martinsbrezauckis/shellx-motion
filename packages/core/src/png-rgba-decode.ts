@@ -14,6 +14,8 @@ export interface DecodePngRgbaOptions {
 /** Internal decoder ceiling shared with streaming preflight before a child process is spawned. */
 export const MAX_MOTION_PNG_FRAME_DIMENSION = 3_840;
 export const MAX_MOTION_PNG_FRAME_PIXELS = MAX_MOTION_PNG_FRAME_DIMENSION * 2_160;
+/** Allows a near-uncompressed 4K RGBA frame plus PNG metadata without unbounded encoded input. */
+export const MAX_MOTION_PNG_ENCODED_BYTES = 64 * 1024 * 1024;
 
 const CRC_TABLE = createCrcTable();
 
@@ -25,6 +27,9 @@ export function crc32(buffer: Buffer): number {
 
 /** Internal bounded PNG decoder shared by quality-manifest and streaming quality paths. */
 export function decodePngRgba(png: Buffer, options: DecodePngRgbaOptions = {}): DecodedPngRgba {
+  if (png.byteLength > MAX_MOTION_PNG_ENCODED_BYTES) {
+    throw new Error(`PNG encoded bytes exceed the ${MAX_MOTION_PNG_ENCODED_BYTES}-byte frame budget.`);
+  }
   assertPngSignature(png);
   let offset = 8;
   let width = 0;

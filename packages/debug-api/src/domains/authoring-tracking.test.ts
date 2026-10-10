@@ -83,6 +83,24 @@ describe("persisted tracking authoring commands", () => {
     const inspected = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.inspect", { packageRoot: trackedRoot, analysisId: "plate_track" }, services);
     expect(inspected).toMatchObject({ ok: true, result: { current: true, source: { current: true } } });
 
+    const trackedMotionPath = join(trackedRoot, "motion.json");
+    const trackedMotionBytes = await readFile(trackedMotionPath, "utf8");
+    for (const membership of ["direct", "reverse"] as const) {
+      const lockedMotion = JSON.parse(trackedMotionBytes);
+      lockedMotion.tracks = [{ id: "locked", type: "video", locked: true, layerIds: membership === "reverse" ? ["footage"] : [] }];
+      if (membership === "direct") lockedMotion.layers[0].trackId = "locked";
+      await writeJson(trackedMotionPath, lockedMotion);
+      const lockedBytes = await readFile(trackedMotionPath, "utf8");
+      const blockedRoot = join(root, `blocked-apply-${membership}`);
+      const blocked = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.apply", {
+        packageRoot: trackedRoot, outDir: blockedRoot, analysisId: "plate_track", layerId: "footage",
+      }, services);
+      expect(blocked).toMatchObject({ ok: false, error: { code: "tracking_apply_failed", message: expect.stringContaining("locked track: locked") } });
+      expect(await readFile(trackedMotionPath, "utf8")).toBe(lockedBytes);
+      expect(await stat(blockedRoot).catch(() => null)).toBeNull();
+    }
+    await writeFile(trackedMotionPath, trackedMotionBytes);
+
     const applied = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.apply", {
       packageRoot: trackedRoot,
       outDir: appliedRoot,
@@ -100,6 +118,24 @@ describe("persisted tracking authoring commands", () => {
 
     const verified = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.verify", { packageRoot: appliedRoot, layerId: "footage" }, services);
     expect(verified).toMatchObject({ ok: true, result: { verification: { attached: true, current: true, reasons: [] }, source: { current: true } } });
+
+    const appliedMotionPath = join(appliedRoot, "motion.json");
+    const appliedMotionBytes = await readFile(appliedMotionPath, "utf8");
+    for (const membership of ["direct", "reverse"] as const) {
+      const lockedMotion = JSON.parse(appliedMotionBytes);
+      lockedMotion.tracks = [{ id: "locked", type: "video", locked: true, layerIds: membership === "reverse" ? ["footage"] : [] }];
+      if (membership === "direct") lockedMotion.layers[0].trackId = "locked";
+      await writeJson(appliedMotionPath, lockedMotion);
+      const lockedBytes = await readFile(appliedMotionPath, "utf8");
+      const blockedRoot = join(root, `blocked-detach-${membership}`);
+      const blocked = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.detach", {
+        packageRoot: appliedRoot, outDir: blockedRoot, layerId: "footage",
+      }, services);
+      expect(blocked).toMatchObject({ ok: false, error: { code: "tracking_detach_failed", message: expect.stringContaining("locked track: locked") } });
+      expect(await readFile(appliedMotionPath, "utf8")).toBe(lockedBytes);
+      expect(await stat(blockedRoot).catch(() => null)).toBeNull();
+    }
+    await writeFile(appliedMotionPath, appliedMotionBytes);
 
     const detached = await dispatchTrackingAuthoringCommand("motion.analysis.tracking.detach", {
       packageRoot: appliedRoot,

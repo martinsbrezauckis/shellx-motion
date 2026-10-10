@@ -87,6 +87,27 @@ describe("reversible tracking stabilization application", () => {
     const applied = applyTrackingStabilization({ motion: document(), plan });
     expect(() => applyTrackingStabilization({ motion: applied.motion, plan })).toThrow("already attached");
   });
+
+  it("refuses apply and detach on direct or stale reverse locked-track membership without changing inputs", async () => {
+    const analysis = JSON.parse(await readFile(resolve("../../fixtures/tracking/homography-known.tracking.json"), "utf8")) as TrackingAnalysis;
+    const plan = compileTrackingStabilization({ analysis, targetLayerId: "plate" });
+    for (const membership of ["direct", "reverse"] as const) {
+      const locked = document();
+      locked.tracks = [{ id: "locked", type: "video", locked: true, layerIds: membership === "reverse" ? ["plate"] : [] }];
+      if (membership === "direct") locked.layers[0].trackId = "locked";
+      const beforeApply = structuredClone(locked);
+      expect(() => applyTrackingStabilization({ motion: locked, plan })).toThrow("locked track: locked");
+      expect(locked).toEqual(beforeApply);
+
+      const applied = applyTrackingStabilization({ motion: document(), plan });
+      applied.motion.tracks = structuredClone(locked.tracks);
+      if (membership === "direct") applied.motion.layers[0].trackId = "locked";
+      const beforeDetach = structuredClone(applied.motion);
+      expect(() => detachTrackingStabilization({ motion: applied.motion, layerId: "plate" })).toThrow("locked track: locked");
+      expect(applied.motion).toEqual(beforeDetach);
+      expect(readTrackingStabilizationAttachment(applied.motion.layers[0])).not.toBeNull();
+    }
+  });
 });
 
 function document(): MotionDocument {

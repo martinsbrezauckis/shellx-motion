@@ -13,6 +13,7 @@ import {
 import { inspectMotionTimeline } from "./timeline-inspect";
 import type { MotionPackage, OperationReceipt, ReceiptArtifact } from "./types";
 import {
+  assertCopiedReviewArtifactIdentities,
   boundedReviewArtifactAttributions,
   canonicalApprovedArtifactRoots,
   copyReviewArtifacts
@@ -101,6 +102,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     const stagedArtifacts = input.copyArtifacts === false
       ? { copiedArtifacts: [], omittedArtifacts: [] }
       : await copyReviewArtifacts(receiptEntries, transaction.stagingPath, approvedArtifactRoots, retainedRootAuthorities);
+    await assertCopiedReviewArtifactIdentities(stagedArtifacts.copiedArtifacts);
     const copiedArtifacts = stagedArtifacts.copiedArtifacts.map((artifact) => ({
       ...artifact,
       path: publishedReviewPath(transaction.stagingPath, outDir, artifact.path)
@@ -156,6 +158,9 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     await assertReviewRootAuthorities(retainedRootAuthorities);
     await transaction.assertCurrent();
     await writeFile(join(transaction.stagingPath, "review-html-bundle.receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    // Receipt/HTML writing can take time; bind their claims to the final staged leaves again
+    // immediately before the transaction makes the directory visible.
+    await assertCopiedReviewArtifactIdentities(stagedArtifacts.copiedArtifacts);
     await transaction.commit();
 
     return {

@@ -1,4 +1,6 @@
-import { mkdir, realpath, rename, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { copyFile, link, mkdir, realpath, stat, unlink } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   artifactCandidates,
@@ -12,6 +14,7 @@ import {
   type OpenApprovedArtifact,
   type ReviewBundleArtifactAdmissionHooks
 } from "./review-bundle-artifact-integrity";
+import { hashFile } from "./receipts";
 import type {
   ReviewBundleCopiedArtifact,
   ReviewBundleOmittedArtifact,
@@ -80,6 +83,7 @@ export async function copyReviewArtifacts(
   const copied: ReviewBundleCopiedArtifact[] = [];
   const omitted: ReviewBundleOmittedArtifact[] = [];
   const pendingSources = new Map<string, PendingSource>();
+  const assignedTargets = new Map<string, { sha256: string; byteLength: number }>();
   let aggregateSourceBytes = 0;
   try {
     // Do this before opening, hashing, or copying any source. A receipt is control-plane input,
@@ -191,9 +195,41 @@ export async function copyReviewArtifacts(
         // Display names stay receipt-declared so reviewers see familiar names. Every attribution
         // of this canonical source uses this one relative bundle file.
         const fileName = safeFileName(reviewArtifactSourceName(sourcePath) || `${artifact.role}${extname(sourcePath)}`);
-        const relativePath = `artifacts/${safeToken(artifact.role)}-${observed.sha256.slice(0, 12)}-${fileName}`;
+        const relativePath = `artifacts/${reviewArtifactTargetName(artifact.role, observed.sha256, fileName)}`;
         const targetPath = join(outDir, ...relativePath.split("/"));
-        await rename(temporaryPath, targetPath);
+        const assigned = assignedTargets.get(relativePath);
+        if (assigned) {
+          // Distinct approved sources with identical bytes may legitimately share one portable
+          // target. Verify its full identity before reusing it for another receipt attribution.
+          if (assigned.sha256 !== observed.sha256 || assigned.byteLength !== observed.byteLength
+            || await hashFile(targetPath) !== observed.sha256) {
+            throw new Error("Review bundle artifact target collision between distinct source identities.");
+          }
+        } else {
+          // The staged tree is private, but a destination must still never replace an earlier copy.
+          // link is exclusive at the target; both files are on the same staging filesystem.
+          try {
+            await link(temporaryPath, targetPath);
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "EEXIST") {
+              throw new Error("Review bundle artifact target already exists; refusing to replace it.");
+            }
+            // Some approved output filesystems do not support hard links. An exclusive copy keeps
+            // their existing bundle behavior without opening an overwrite path.
+            if (code !== "ENOSYS" && code !== "EOPNOTSUPP" && code !== "ENOTSUP" && code !== "EPERM") throw error;
+            try {
+              await copyFile(temporaryPath, targetPath, fsConstants.COPYFILE_EXCL);
+            } catch (copyError) {
+              if ((copyError as NodeJS.ErrnoException).code === "EEXIST") {
+                throw new Error("Review bundle artifact target already exists; refusing to replace it.");
+              }
+              throw copyError;
+            }
+          }
+          assignedTargets.set(relativePath, { sha256: observed.sha256, byteLength: observed.byteLength });
+        }
+        await unlink(temporaryPath);
         for (const attribution of source.attributions) {
           const expectedAttributionIdentity = expectedProducerIdentityFor([attribution]);
           copied.push({
@@ -220,6 +256,22 @@ export async function copyReviewArtifacts(
     return { copiedArtifacts: copied, omittedArtifacts: omitted };
   } finally {
     await Promise.all([...pendingSources.values()].map(async (source) => await source.opened.close()));
+  }
+}
+
+/** Reconcile each published claim against the final staged leaf before writing review claims. */
+export async function assertCopiedReviewArtifactIdentities(copied: readonly ReviewBundleCopiedArtifact[]): Promise<void> {
+  const checked = new Map<string, string>();
+  for (const artifact of copied) {
+    const previous = checked.get(artifact.path);
+    if (previous !== undefined) {
+      if (previous !== artifact.observedSha256) throw new Error("Review bundle artifact target has conflicting claimed identities.");
+      continue;
+    }
+    if (await hashFile(artifact.path) !== artifact.observedSha256) {
+      throw new Error("Review bundle artifact target changed before publication.");
+    }
+    checked.set(artifact.path, artifact.observedSha256);
   }
 }
 
@@ -255,6 +307,25 @@ function safeToken(value: string): string {
 
 function safeFileName(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "-") || "artifact";
+}
+
+function reviewArtifactTargetName(role: string, sha256: string, fileName: string): string {
+  const roleName = safeToken(role);
+  const unbounded = `${roleName}-${sha256}-${fileName}`;
+  if (unbounded.length <= 255) return unbounded;
+  // A full digest must not make a previously valid long source leaf fail on 255-byte filesystems.
+  // Fingerprint truncated display parts so different names do not silently converge on one key.
+  const boundedRole = roleName.length <= 48 ? roleName : `${roleName.slice(0, 16)}-${nameDigest(roleName)}`;
+  const availableLeaf = 255 - boundedRole.length - sha256.length - 2;
+  if (fileName.length <= availableLeaf) return `${boundedRole}-${sha256}-${fileName}`;
+  const extension = extname(fileName);
+  const suffix = extension.length <= 16 ? extension : "";
+  const shortenedLeaf = `${fileName.slice(0, availableLeaf - 65 - suffix.length)}-${nameDigest(fileName)}${suffix}`;
+  return `${boundedRole}-${sha256}-${shortenedLeaf}`;
+}
+
+function nameDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function reviewArtifactSourceName(path: string): string {
