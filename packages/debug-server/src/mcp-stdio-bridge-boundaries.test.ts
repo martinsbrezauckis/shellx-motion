@@ -33,19 +33,23 @@ describe("installed MCP stdio bridge transport boundaries", () => {
     const credential = newCredential();
     let chunksSent = 0;
     let sawPrivilegedRequest = false;
+    let responseClosed: Promise<void> | undefined;
     const server = createServer((request, response) => {
       if (request.url?.startsWith("/mcp-bridge/proof")) {
         response.writeHead(200, { "content-type": "application/json" });
         let stopped = false;
+        let pumpTimer: ReturnType<typeof setTimeout>;
+        responseClosed = new Promise((resolve) => {
+          response.once("close", () => { stopped = true; clearTimeout(pumpTimer); resolve(); });
+        });
         const pump = () => {
           if (stopped) return;
           chunksSent += 1;
           response.write("x".repeat(1024));
           if (chunksSent >= 100) response.end();
-          else setImmediate(pump);
+          else pumpTimer = setTimeout(pump, 5);
         };
-        response.once("close", () => { stopped = true; });
-        setImmediate(pump);
+        pumpTimer = setTimeout(pump, 5);
         return;
       }
       sawPrivilegedRequest = true;
@@ -61,7 +65,8 @@ describe("installed MCP stdio bridge transport boundaries", () => {
     try {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "oversized-proof", method: "tools/list", params: {} })}\n`);
       expect(await responses.next()).toMatchObject({ id: "oversized-proof", error: { code: -32000 } });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(responseClosed).toBeDefined();
+      await waitForClose(responseClosed!);
       expect(chunksSent).toBeLessThan(100);
       expect(sawPrivilegedRequest).toBe(false);
     } finally {
@@ -150,6 +155,20 @@ function responseReader(child: ChildProcessWithoutNullStreams): { next: () => Pr
 
 function newCredential(): string {
   return randomBytes(32).toString("base64url");
+}
+
+async function waitForClose(closed: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Timed out waiting for proof response close.")), 2_000);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function listen(server: Server): Promise<void> {

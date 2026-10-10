@@ -27,6 +27,7 @@ import {
   streamingProducerJobContext
 } from "../streaming-foundation-helpers.js";
 import { startStreamingFfmpegProcess, type StreamingFfmpegProcess } from "../streaming-process.js";
+import { revalidateStreamingFinalLaunch } from "../streaming-final-lineage-revalidation.js";
 import type {
   RenderSegmentSpoolAdmittedInput,
   RenderSegmentSpoolFailureCode,
@@ -214,6 +215,7 @@ async function spoolOneRange(input: {
   let process: StreamingFfmpegProcess | undefined;
   let producer: RenderSegmentRangeProducer | undefined;
   try {
+    await revalidateStreamingFinalLaunch();
     producer = await input.input.createRangeProducer({
       range: { index: input.range.index, startFrameIndex: input.range.startFrame, endFrameIndexExclusive: input.range.endFrameExclusive },
       timeline: input.input.timeline,
@@ -242,11 +244,6 @@ async function spoolOneRange(input: {
     } catch (error) {
       throw new SegmentSpoolOperationError("encoder", error);
     }
-    let inputEnded = false;
-    const earlyClose = process.closed.then((result) => {
-      if (!inputEnded) throw new SegmentSpoolOperationError("encoder", "Segment FFmpeg closed before the range completed.");
-      return result;
-    });
     const handoff = createRenderSegmentSpoolFrameSink({
       process,
       range: input.range,
@@ -260,6 +257,12 @@ async function spoolOneRange(input: {
       input.reporter,
       input.input.frameLane === "gpu" ? input.input.maxProcessTreeRssBytes : undefined
     );
+    await revalidateStreamingFinalLaunch();
+    let inputEnded = false;
+    const earlyClose = process.closed.then((result) => {
+      if (!inputEnded) throw new SegmentSpoolOperationError("encoder", "Segment FFmpeg closed before the range completed.");
+      return result;
+    });
     await Promise.race([producer.produce(handoff.sink, producerJob), earlyClose]);
     throwIfStopped(input.signal);
     handoff.assertComplete();

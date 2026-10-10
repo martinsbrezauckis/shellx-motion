@@ -50,12 +50,16 @@ export interface RenderFinalServices {
   executeFfmpegFinalRender?: (request: FinalRenderRequest) => Promise<MotionDebugResult>;
 }
 
-export async function dispatchRenderFinalCommand(
-  command: MotionDebugCommand,
+/**
+ * Parse and admit one final-render request without selecting a delivery executor.
+ *
+ * The coordinator consumes this exact typed request after its own cancellation-route policy,
+ * while blocking `motion.render.final` selects the compatible delivery executor below.
+ */
+export async function prepareFinalRenderRequest(
   args: unknown,
   services: RenderFinalServices
-): Promise<MotionDebugResult | null> {
-  if (command !== "motion.render.final") return null;
+): Promise<FinalRenderRequest | MotionDebugResult> {
   const packageRoot = stringArg(args, "packageRoot");
   const outputPath = stringArg(args, "outputPath");
   const framesDir = stringArg(args, "framesDir") ?? undefined;
@@ -143,7 +147,7 @@ export async function dispatchRenderFinalCommand(
       return invalidArgs(`Invalid browser workflow: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  const request: FinalRenderRequest = {
+  return {
     packageRoot, outputPath, frameLane, preset, dryRun, reuseAttested,
     ...(framesDir ? { framesDir } : {}),
     ...(keepFrames !== null ? { keepFrames } : {}),
@@ -155,6 +159,18 @@ export async function dispatchRenderFinalCommand(
     ...(qualityManifestPath ? { qualityManifestPath } : {}),
     ...(segmented ? { segmented } : {})
   };
+}
+
+export async function dispatchRenderFinalCommand(
+  command: MotionDebugCommand,
+  args: unknown,
+  services: RenderFinalServices
+): Promise<MotionDebugResult | null> {
+  if (command !== "motion.render.final") return null;
+  const prepared = await prepareFinalRenderRequest(args, services);
+  if ("ok" in prepared) return prepared;
+  const request = prepared;
+  const { frameLane, preset } = request;
   if (readStillFrameExportPreset(preset)) {
     if (frameLane === "gpu") return invalidArgs("GPU final rendering supports streamed FFmpeg video only, not still-frame presets.");
     if (!services.executeStillFinalRender) return capabilityUnavailable("Still-frame final rendering is unavailable.");

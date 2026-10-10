@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { motionJobFileKey } from "./job-id-file";
 import type { MotionJobLeaseRecord } from "./job-lease-types";
 import { isMotionJobFrameLane } from "./job-frame-lane";
+import { sha256 } from "./lifecycle-envelope-validation";
 import { PrivateMotionRuntimeDirectory } from "./private-runtime-directory";
 
 /** Opaque identity of one live lease run, never exposed by the caller-facing job-status contract. */
@@ -51,7 +52,15 @@ export async function writeMotionJobLeaseJsonAtomic(path: string, value: unknown
 /** Read one lease only after its persisted shape passes the storage boundary checks. */
 export async function readMotionJobLeaseRecord(path: string, unattributedCallerId: string): Promise<MotionJobLeaseRecord | null> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    return parseMotionJobLeaseRecord(JSON.parse(await readFile(path, "utf8")), unattributedCallerId);
+  } catch {
+    return null;
+  }
+}
+
+/** Shared parser for bounded no-follow inspectors; callers retain their own file authority. */
+export function parseMotionJobLeaseRecord(parsed: unknown, unattributedCallerId: string): MotionJobLeaseRecord | null {
+  try {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const schema = ownValue(parsed, "schema");
     const jobId = jobIdValue(ownValue(parsed, "jobId"));
@@ -59,6 +68,7 @@ export async function readMotionJobLeaseRecord(path: string, unattributedCallerI
     const lane = boundedString(ownValue(parsed, "lane"), 128);
     const frameLane = ownValue(parsed, "frameLane");
     const operation = boundedString(ownValue(parsed, "operation"), 256);
+    const rawPlanFingerprint = ownValue(parsed, "planFingerprint");
     const caller = ownValue(parsed, "callerId");
     const visibility = ownValue(parsed, "visibility");
     const startedAtMs = nonNegativeSafeInteger(ownValue(parsed, "startedAtMs"));
@@ -79,6 +89,14 @@ export async function readMotionJobLeaseRecord(path: string, unattributedCallerI
     if (typeof admitted !== "boolean") return null;
     if ((admittedAt === undefined) === admitted) return null;
     if (runNonce !== undefined && (typeof runNonce !== "string" || !isMotionJobLeaseRunNonce(runNonce))) return null;
+    let planFingerprint: string | undefined;
+    if (rawPlanFingerprint !== undefined) {
+      try {
+        planFingerprint = sha256(rawPlanFingerprint, "Job lease planFingerprint");
+      } catch {
+        return null;
+      }
+    }
     let cancelRequested: MotionJobLeaseRecord["cancelRequested"];
     if (cancellation !== undefined) {
       if (cancellation === null || typeof cancellation !== "object" || Array.isArray(cancellation)) return null;
@@ -99,6 +117,7 @@ export async function readMotionJobLeaseRecord(path: string, unattributedCallerI
       lane,
       ...(frameLane === undefined ? {} : { frameLane }),
       operation,
+      ...(planFingerprint === undefined ? {} : { planFingerprint }),
       callerId,
       ...(visibility === undefined ? {} : { visibility }),
       startedAtMs,

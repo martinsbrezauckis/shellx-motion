@@ -9,10 +9,8 @@ packages:
 # `vitest` both load — so without this declaration a fresh clone cannot install, and `pnpm build`
 # fails as well, because its dependency-status check re-runs the install.
 #
-# This does not reproduce on a machine that installed before pnpm 11, which is why it survived until
-# someone ran the published tree on a clean host. verified on a clean Windows box with
-# pnpm 11.1.3: `pnpm install && pnpm build` failed, then succeeded with this present (19 packages
-# built in 78s).
+# An existing installation may already have esbuild's platform binary and mask a missing build
+# permission. Fresh installs need this declaration.
 #
 # The two majors spell the setting differently and each ignores the other's key, so both are listed:
 #   pnpm 11+   -> allowBuilds            (onlyBuiltDependencies was REMOVED, not deprecated)

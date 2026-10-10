@@ -8,7 +8,7 @@
  * is built, so a refusal that is actionable on one transport is actionable on all of them.
  *
  * Extracted from `index.ts` rather than added to it: that file carries a declared non-growth
- * baseline in `scripts/module-size-gate.mjs`, and error wording is a coherent unit of its own.
+ * baseline in `scripts/public/module-size-gate.mjs`, and error wording is a coherent unit of its own.
  *
  * Dependencies: the tier vocabulary and refusal text from `@shellx-motion/debug-api` (which
  * re-exports it from `@shellx-motion/actions`); the SDK response envelope from

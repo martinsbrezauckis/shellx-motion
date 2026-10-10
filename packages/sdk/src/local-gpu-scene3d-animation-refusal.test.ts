@@ -22,9 +22,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe("local SDK O6 GPU preview boundary", () => {
+describe("local SDK scene3d animation GPU preview boundary", () => {
   it("refuses scene3dAnimation before Debug dispatch or output work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-o6-refusal-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-scene3d_animation-refusal-"));
     roots.push(root);
     const output = join(root, "must-not-exist");
     seams.loadPackage.mockResolvedValue(scenePackage());
@@ -44,9 +44,9 @@ describe("local SDK O6 GPU preview boundary", () => {
 function scenePackage(): MotionPackage {
   return {
     root: "/trusted/package",
-    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_o6_sdk", name: "O6 SDK", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
+    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_scene3d_animation_sdk", name: "Scene3D animation SDK", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
     motion: {
-      schema: "shellx-motion/motion@1", id: "motion_o6_sdk", name: "O6 SDK", durationMs: 100, fps: 30, width: 16, height: 8,
+      schema: "shellx-motion/motion@1", id: "motion_scene3d_animation_sdk", name: "Scene3D animation SDK", durationMs: 100, fps: 30, width: 16, height: 8,
       assets: [], provenance: { sourceApp: "test", createdBy: "test" }, layers: [],
       scene3dAnimation: { schema: "shellx-motion/scene3d-animation@1", tracks: [] },
     }

@@ -16,7 +16,7 @@ export interface StrictScene3dPreviewAdmission {
 }
 
 /**
- * Materializes the complete O6 document before a hash or compiler may touch it. The result is a
+ * Materializes the complete scene3d animation document before a hash or compiler may touch it. The result is a
  * frozen JSON-data tree: every source field was admitted through an own data descriptor and no
  * source object survives the boundary. This deliberately rejects exotic/proxied-on-reflection
  * values instead of attempting a convenient but unsafe clone.

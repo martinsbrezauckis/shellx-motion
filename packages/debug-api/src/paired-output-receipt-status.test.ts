@@ -7,8 +7,7 @@ import { dispatchDebugCommand } from "./index.js";
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
 
-// Real receipt/output verification requires an explicit Node 24 host fixture.
-// Source checks retain the injected pure publication proofs.
+// A real receipt/output pair requires an explicit fixture root and Node 24.
 const publicationFixtureRoot = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_ROOT;
 const describeQualifiedLinuxGpuPublication = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_FIXTURE === "1" && process.versions.node.startsWith("24.") && publicationFixtureRoot ? describe : describe.skip;
 

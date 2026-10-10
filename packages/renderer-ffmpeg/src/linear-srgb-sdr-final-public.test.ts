@@ -1,9 +1,22 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import type { DerivedOutputPublication, LocalMotionJobEvidence, LocalMotionJobGovernor, MotionPackage } from "@shellx-motion/core";
+import {
+  abortStrictSdrCandidateHeldPair,
+  closeStrictSdrCandidateHeldWorkspace,
+  createStrictSdrCandidateHeldWorkspace,
+  openStrictSdrCandidateHeldPair,
+  strictSdrCandidateOutputPublication,
+  strictSdrCandidateTerminalBinding,
+  withStrictSdrCandidateHeldPairRendering,
+  withStrictSdrCandidateHeldWorkspace,
+  type StrictSdrCandidateHeldPair,
+  type StrictSdrCandidateHeldWorkspace,
+} from "@shellx-motion/core/internal/strict-sdr-candidate-held-pair";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { claimLinearSrgbSdrFinalPreparation, prepareLinearSrgbSdrFinalForTest } from "./linear-srgb-sdr-final-adapter.js";
 import { compareLinearSrgbSdrFinalFrames } from "./linear-srgb-sdr-final-compare.js";
 import { validateLinearSrgbSdrFinalMedia } from "./linear-srgb-sdr-final-media.js";
@@ -13,9 +26,24 @@ import {
   planLinearSrgbSdrFinalRender,
   renderLinearSrgbSdrFinalUnpublishedForTest,
 } from "./linear-srgb-sdr-final-public.js";
+import { closeHeldMediaAfterPublication } from "./linear-srgb-sdr-final-held-media-publication.js";
 import type { RenderStreamingFinalInput } from "./streaming-final-adapter-types.js";
+import { LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER, LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE } from "@shellx-motion/renderer-browser/internal/linear-srgb-sdr-final";
 
 describe("public linear-sRGB SDR final activation", () => {
+  it("retains held publication failures when private held-media closure is uncertain", async () => {
+    const primary = new Error("Core staging failed"), cleanup = new Error("held root cleanup failed");
+    try {
+      await closeHeldMediaAfterPublication({ async close() { throw cleanup; } }, async () => { throw primary; });
+      throw new Error("expected held publication cleanup aggregation");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toEqual([primary, cleanup]);
+    }
+
+    await expect(closeHeldMediaAfterPublication({ async close() { throw cleanup; } }, async () => "adopted")).rejects.toBe(cleanup);
+  });
+
   it("keeps strict preparation test authority outside package export surfaces", async () => {
     const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
       exports: Record<string, unknown>;
@@ -103,6 +131,53 @@ describe("public linear-sRGB SDR final activation", () => {
     expect(result).toMatchObject({ kind: "refused", error: { message: expect.stringContaining("stale during tool preflight") } });
   });
 
+  it.skipIf(process.platform !== "linux")("accepts descriptor-relative publication paths only for the exact live Core-held candidate triple during plan and preflight", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-linear-sdr-held-plan-"));
+    let workspace: StrictSdrCandidateHeldWorkspace | undefined;
+    let pair: StrictSdrCandidateHeldPair | undefined;
+    try {
+      const ordinaryInput = { ...renderInput([]), outputPath: join(root, "ordinary.mp4"), outputRoots: [root] };
+      const sealed = await testPreflight(ordinaryInput, []);
+      if (sealed.kind !== "strict") throw new Error("expected sealed strict preparation");
+      const anchor = await createTrustedWorkspaceAnchor(root);
+      await withTrustedWorkspaceAnchor(anchor, async () => {
+        workspace = await createStrictSdrCandidateHeldWorkspace(anchor, root);
+        try {
+          await withStrictSdrCandidateHeldWorkspace(workspace, sealed.preparation.fingerprint, async () => {
+            pair = await openStrictSdrCandidateHeldPair(workspace!);
+            const outputPublication = strictSdrCandidateOutputPublication(pair);
+            const binding = strictSdrCandidateTerminalBinding(pair);
+            const candidateInput = {
+              ...ordinaryInput,
+              outputPublication,
+              outputPath: binding.outputPath,
+              outputRoots: [dirname(binding.outputPath)],
+              linearSrgbSdrFinalPreparation: sealed.preparation,
+            };
+            expect(outputPublication.outputPath).not.toBe(resolve(binding.outputPath));
+            await withStrictSdrCandidateHeldPairRendering(pair, sealed.preparation.fingerprint, async () => {
+              expect(planLinearSrgbSdrFinalRender(candidateInput)).toMatchObject({ kind: "strict" });
+              await expect(preflightLinearSrgbSdrFinalRenderForTest(candidateInput, async () => {
+                throw new Error("the sealed candidate preparation must avoid a second preflight");
+              })).resolves.toMatchObject({ kind: "strict", preparation: sealed.preparation });
+              expect(planLinearSrgbSdrFinalRender({ ...candidateInput, outputPath: join(dirname(binding.outputPath), "different.mp4") })).toMatchObject({ kind: "refused" });
+            });
+          });
+        } finally {
+          if (pair) {
+            await abortStrictSdrCandidateHeldPair(pair);
+            pair = undefined;
+          } else if (workspace) {
+            await closeStrictSdrCandidateHeldWorkspace(workspace);
+            workspace = undefined;
+          }
+        }
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("adopts only the verified MP4 into the private publication stage and binds strict receipt evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-linear-sdr-public-"));
     const outputPath = join(root, "strict-public.mp4");
@@ -149,17 +224,67 @@ describe("public linear-sRGB SDR final activation", () => {
     if (!result.ok) return;
     expect(adopted).toEqual([Buffer.from("verified strict mp4 bytes")]);
     expect(result.transport).toMatchObject({
-      schema: "shellx-motion/linear-srgb-sdr-final-transport@1",
+      schema: "shellx-motion/linear-srgb-sdr-final-transport@2",
       delivery: "streamed", frameLane: "gpu", retainedFrameCount: 0,
+      privateOutputAdoption: {
+        schema: "shellx-motion/linear-srgb-sdr-final-private-output-adoption@1",
+        verifiedOutput: { sha256: sha256(Buffer.from("verified strict mp4 bytes")), byteLength: Buffer.byteLength("verified strict mp4 bytes") },
+        privatePublicationStage: { sha256: sha256(Buffer.from("verified strict mp4 bytes")), byteLength: Buffer.byteLength("verified strict mp4 bytes") },
+      },
       producer: { frameLane: "gpu-linear-srgb-sdr", evidence: { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-producer@1" } },
       colorPipeline: { requested: { intent: "linear-srgb-sdr@1" }, actual: { comparison: { accepted: true } } },
     });
     expect(result.receipt).toMatchObject({
       status: "passed", lane: "ffmpeg",
-      output: { path: publication.stagingPath, encoder: "libx264", encoderSource: "software", color: { transfer: "bt709", range: "tv" }, tools: { ffmpeg: { tool: "ffmpeg" }, ffprobe: { tool: "ffprobe" } } },
+      output: { path: publication.stagingPath, byteLength: Buffer.byteLength("verified strict mp4 bytes"), encoder: "libx264", encoderSource: "software", color: { transfer: "bt709", range: "tv" }, tools: { ffmpeg: { tool: "ffmpeg" }, ffprobe: { tool: "ffprobe" } } },
     });
+    const adoption = (result.transport as Extract<typeof result.transport, { schema: "shellx-motion/linear-srgb-sdr-final-transport@2" }>).privateOutputAdoption;
+    expect(Object.isFrozen(adoption)).toBe(true);
+    expect(Object.isFrozen(adoption.verifiedOutput)).toBe(true);
+    expect(Object.isFrozen(adoption.privatePublicationStage)).toBe(true);
+    expect(JSON.stringify(adoption)).not.toContain(admittedScratch);
     expect(JSON.stringify(result.receipt)).not.toContain(admittedScratch);
     await expect(lstat(admittedScratch)).rejects.toMatchObject({ code: "ENOENT" });
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["the verified-file rehash disagrees with executor evidence", async (outputPath: string) => {
+      const bytes = Buffer.from("verified strict mp4 bytes");
+      await writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 });
+      return { sha256: sha256(Buffer.from("forged executor hash")), byteLength: bytes.byteLength };
+    }, async (bytes: Buffer) => ({ sha256: sha256(bytes), byteLength: bytes.byteLength }), "verified output changed"],
+    ["the private publication stage reports a different identity", async (outputPath: string) => {
+      const bytes = Buffer.from("verified strict mp4 bytes");
+      await writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 });
+      return { sha256: sha256(bytes), byteLength: bytes.byteLength };
+    }, async (bytes: Buffer) => ({ sha256: sha256(Buffer.from("forged stage identity")), byteLength: bytes.byteLength }), "publication stage did not preserve"],
+  ])("refuses success when %s", async (_label, executeEvidence, stageEvidence, message) => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-linear-sdr-adoption-hostile-"));
+    const outputPath = join(root, "strict-public.mp4");
+    const input = { ...renderInput([]), outputPath, outputRoots: [root] };
+    const preflight = await testPreflight(input, []);
+    if (preflight.kind !== "strict") throw new Error("expected strict preflight");
+    claimLinearSrgbSdrFinalPreparation(input.pkg.motion, preflight.preparation);
+    const publication = {
+      outputPath, kind: "file", stagingPath: join(root, "publication-stage"),
+      async writePrivateFile(bytes: Buffer) { return await stageEvidence(bytes); },
+    } as unknown as DerivedOutputPublication;
+    const result = await renderLinearSrgbSdrFinalUnpublishedForTest({
+      ...input,
+      scratchRoot: root,
+      governor: governor(root),
+      outputPublication: publication,
+      linearSrgbSdrFinalPreparation: preflight.preparation,
+    }, async ({ outputPath: privateOutputPath }) => {
+      const output = await executeEvidence(privateOutputPath);
+      return {
+        ok: true as const,
+        privateOutputPath,
+        evidence: { output },
+      } as never;
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: "linear_srgb_sdr_final_failed", message: expect.stringContaining(message) } });
     await rm(root, { recursive: true, force: true });
   });
 });
@@ -215,7 +340,7 @@ function resourceEvidence(root: string): LocalMotionJobEvidence {
 function producerEvidence(routeFingerprint: string, documentFingerprint: string, frame: Buffer) {
   return {
     schema: "shellx-motion/linear-srgb-sdr-final-webgpu-producer@1" as const, routeFingerprint, documentFingerprint,
-    pipeline: { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-pipeline@1" as const, implementationSha256: "1".repeat(64), workingTarget: "rgba16float" as const, publicationTarget: "rgba8unorm" as const, publicationUsage: "COPY_SRC" as const, composition: "premultiplied-linear-srgb-normal-source-over" as const, frameBoundary: "straight-srgb-rgba8" as const },
+    pipeline: { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-pipeline@1" as const, implementationSha256: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.implementationSha256, workingTarget: "rgba16float" as const, publicationTarget: "rgba8unorm" as const, publicationUsage: "COPY_SRC" as const, composition: "premultiplied-linear-srgb-normal-source-over" as const, frameBoundary: "straight-srgb-rgba8" as const, publicationDither: LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER },
     runtime: null, readback: { bytesPerRow: 256, paddedByteLength: 512, tightByteLength: frame.byteLength, mapOperations: 1, mappedBufferUnmapped: true, mappedBufferDestroyed: true }, retainedFrame: { bytes: frame.byteLength, sha256: sha256(frame) }, cleanup: { state: "complete" as const, resourcesReleased: true, pageClosed: true, runtimeClosed: true }, fingerprint: "2".repeat(64),
   };
 }

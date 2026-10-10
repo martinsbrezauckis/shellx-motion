@@ -65,6 +65,18 @@ private receipt copy while composing the bundle, and rechecks the exact roots, r
 identities immediately before publication. A changed, replaced, or mismatched input refuses
 publication rather than producing a bundle from mixed evidence.
 
+Direct CLI receipt discovery keeps nested receipts portable across hosts. Linux walks nested
+directories through retained no-follow directory descriptors. On hosts where Node does not expose
+an equivalent directory-open primitive, Core binds each directory's pre-open identity and canonical
+in-root route, rechecks both immediately after opening and after recursion, and refuses when a
+change is observed. That compatibility route is appropriate
+for the normal same-user, non-concurrent receipt tree: a hostile concurrent same-user rename can
+still make the operating system open a replacement symlink in the small interval before the
+post-open check. An unobservable same-user ABA can expose replacement entry names to the bounded
+scan, but stable receipt reads still resolve and revalidate the approved lexical root, so
+replacement receipt bytes are not read or admitted. A descriptor-safe Linux walk is required when
+the no-external-directory-open property itself is needed.
+
 Each copied review artifact records `producerIdentity`. It is `producer_verified` only when the
 receipt-provided producer SHA-256, and any producer byte length when provided, match the digest and length
 observed while streaming the portable copy. Older or otherwise digest-unbound artifacts remain

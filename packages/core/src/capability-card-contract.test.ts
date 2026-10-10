@@ -34,6 +34,9 @@ describe("renderer capability card contract", () => {
     expect(browser?.features).not.toEqual(expect.arrayContaining(["keyframe.volume", "keyframe.pan"]));
     expect(browser?.weaknesses.join(" ")).toContain("cooperative browser-session fallback");
     expect(browser?.weaknesses.join(" ")).toContain("killTree false");
+    expect(browser?.weaknesses.join(" ")).toContain("default is bounded streamed producer-to-FFmpeg delivery");
+    expect(browser?.weaknesses.join(" ")).toContain("explicit frame retention, captured browser workflows, exact-source quality comparisons, streaming-quality capacity, or an injected renderer select materialized frames");
+    expect(browser?.weaknesses.join(" ")).not.toContain("not a streamed producer-to-encoder pipeline");
   });
 
   it("rejects a future GPU frame producer even if it borrows browser's narrower fallback-attestation card", () => {

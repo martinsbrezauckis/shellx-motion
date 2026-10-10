@@ -38,9 +38,9 @@ describe("motion.preview.frame gpu lane", () => {
         loaderCalls += 1;
         return {
           root: "/trusted/package",
-          manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_o6_debug", name: "O6 Debug", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
+          manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_scene3d_animation_debug", name: "Scene3D animation Debug", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
           motion: {
-            schema: "shellx-motion/motion@1", id: "motion_o6_debug", name: "O6 Debug", durationMs: 100, fps: 30, width: 32, height: 32,
+            schema: "shellx-motion/motion@1", id: "motion_scene3d_animation_debug", name: "Scene3D animation Debug", durationMs: 100, fps: 30, width: 32, height: 32,
             assets: [], provenance: { sourceApp: "test", createdBy: "test" }, layers: [],
             scene3dAnimation: { schema: "shellx-motion/scene3d-animation@1", tracks: [] },
           }

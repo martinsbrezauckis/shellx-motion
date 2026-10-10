@@ -16,6 +16,15 @@ export class DerivedOutputPublicationError extends Error {
   }
 }
 
+/** Internal no-link outcome: a publisher hook stopped before `link(2)` was attempted. */
+export class DerivedOutputPublicationPreLinkCancelledError extends Error {
+  constructor() {
+    super("Final output publication was cancelled before its link attempt.");
+    this.name = "DerivedOutputPublicationPreLinkCancelledError";
+    Object.setPrototypeOf(this, DerivedOutputPublicationPreLinkCancelledError.prototype);
+  }
+}
+
 export interface DerivedOutputPublicationInput {
   outputPath: string;
   kind: DerivedOutputKind;
@@ -31,6 +40,10 @@ export interface DerivedOutputPublicationInput {
    * pre-rename failure. Non-empty directories, files, and symbolic links remain refusals.
    */
   replaceEmptyDirectory?: boolean;
+  /** Opaque Core-only held parent descriptor; arbitrary /proc strings remain untrusted paths. */
+  internalHeldDirectoryAuthority?: unknown;
+  /** Core-only ceiling for stable-file hashing during this file reservation. */
+  internalPrivateFileMaxBytes?: number;
 }
 
 export interface DerivedFilePublicationEvidence {

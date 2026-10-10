@@ -204,7 +204,7 @@ export const JOB_COMMAND_METADATA: MotionDebugCommandMetadata = {
       required: ["jobId"],
       properties: {
         jobId: { type: "string", description: "Active job to stop." },
-        reason: { type: "string", maxLength: 512, description: "Optional operator explanation recorded with the terminal cancellation." }
+        reason: { type: "string", minLength: 1, maxLength: 512, pattern: "^[^\\u0000-\\u001F\\u007F]+$", description: "Optional single-line operator explanation recorded with the terminal cancellation." }
       },
       additionalProperties: false
     },

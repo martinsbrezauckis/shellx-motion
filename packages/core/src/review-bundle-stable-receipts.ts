@@ -42,11 +42,11 @@ export async function bindStableReviewBundleReceiptEntries(
   const lexicalRoot = resolve(receiptsRoot);
   const rootAuthority = retainedRootAuthority
     ?? await ExistingDirectoryAuthority.acquire(await realpath(lexicalRoot));
-  await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
+  await assertApprovedReviewBundleReceiptsRoot(lexicalRoot, rootAuthority);
   const canonicalRoot = rootAuthority.path;
   const entries: BoundReviewBundleReceiptEntry[] = [];
   for (const candidate of supplied) {
-    await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
+    await assertApprovedReviewBundleReceiptsRoot(lexicalRoot, rootAuthority);
     const source = await readBoundedStableFile(candidate.path, {
       label: "Stable review bundle receipt",
       maxBytes: MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
@@ -76,11 +76,16 @@ export async function bindStableReviewBundleReceiptEntries(
     });
     entries.push(entry);
   }
-  await assertReceiptRootCurrent(lexicalRoot, rootAuthority);
+  await assertApprovedReviewBundleReceiptsRoot(lexicalRoot, rootAuthority);
   return entries;
 }
 
-async function assertReceiptRootCurrent(
+/**
+ * Recheck the selected receipt root against the authority captured at admission. Both direct CLI
+ * traversal and Debug-to-Core snapshot adoption use this same proof; re-resolving a request path
+ * alone would otherwise accept a replacement directory as a fresh source of receipt authority.
+ */
+export async function assertApprovedReviewBundleReceiptsRoot(
   lexicalRoot: string,
   authority: RetainedDirectoryAuthority
 ): Promise<void> {

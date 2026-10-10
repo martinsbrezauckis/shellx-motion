@@ -19,7 +19,7 @@ import { compileGpuScene3DAnimationFramePlan, type GpuScene3DAnimationFramePlan,
 
 export type BehaviorAwareGpuFrame = { ok: true; frame: GpuFramePlan; behaviorFramePlan?: GpuSceneBehaviorFramePlan; geometryKeyframesFramePlan?: GpuSceneGeometryKeyframesFramePlan; relationsFramePlan?: GpuSceneRelationsFramePlan; scene3dAnimationFramePlan?: GpuScene3DAnimationFramePlan } | { ok: false; failure: GpuScene2dFailure };
 
-/** The O6 wrapper binds its exact Core frame before resource preparation or runtime open. */
+/** The scene3d animation wrapper binds its exact Core frame before resource preparation or runtime open. */
 export function compileGpuScene3DAnimationPreResourceFrame(motion: MotionDocument, atMs: number, staticPlan: GpuScene3DAnimationStaticPlan | undefined): BehaviorAwareGpuFrame | undefined {
   return staticPlan ? compileBehaviorAwareGpuFrame(motion, atMs, undefined, {}, undefined, undefined, staticPlan) : undefined;
 }

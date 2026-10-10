@@ -106,7 +106,7 @@ describe("layer type source of truth", () => {
 function sourceFiles(): string[] {
   return [
     ...packageSourceRoots().flatMap((root) => walk(root)),
-    ...walk(join(repoRoot, "scripts")),
+    ...walk(join(repoRoot, "scripts", "public")),
   ];
 }
 

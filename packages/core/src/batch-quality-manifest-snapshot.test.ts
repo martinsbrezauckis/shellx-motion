@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  BatchQualityDerivedBudget,
   batchQualityInputEvidence,
   prepareBatchQualityManifestSnapshot,
   publishBatchQualityManifestSnapshot,
@@ -118,6 +119,49 @@ describe("batch quality manifest snapshots", () => {
     await prepareBatchQualityManifestSnapshot({ sourcePath: firstPath, context: context("ada"), requestBudget: budget });
     await expect(prepareBatchQualityManifestSnapshot({ sourcePath: secondPath, context: context("grace"), requestBudget: budget }))
       .rejects.toThrow(/aggregate limit/i);
+  });
+
+  it("refuses token amplification before materializing or hashing a manifest", async () => {
+    const root = await privateRoot("shellx-motion-batch-quality-expansion-");
+    const path = join(root, "quality.json");
+    await writeFile(path, JSON.stringify({ schema: "shellx-motion/quality-manifest@1", samples: [{ id: "{{large}}".repeat(280), atMs: 0 }] }));
+    await expect(prepareBatchQualityManifestSnapshot({ sourcePath: path, context: {
+      ...context("ada"), values: { large: "x".repeat(16 * 1024) },
+    } })).rejects.toThrow(/materialized manifest.*before expansion or hashing/i);
+  });
+
+  it("charges exact escaped UTF-8 JSON bytes across retained row manifests", async () => {
+    const root = await privateRoot("shellx-motion-batch-quality-derived-");
+    const path = join(root, "quality.json");
+    const source = { schema: "shellx-motion/quality-manifest@1", samples: [{ id: "{{glyph}}", atMs: 0 }] };
+    await writeFile(path, JSON.stringify(source));
+    const values = { glyph: "😀\n\\\"" };
+    const expected = Buffer.byteLength(JSON.stringify({ ...source, samples: [{ id: values.glyph, atMs: 0 }] }), "utf8");
+    const budget = new BatchQualityDerivedBudget(expected);
+    const first = await prepareBatchQualityManifestSnapshot({ sourcePath: path, context: { ...context("ada"), values }, derivedBudget: budget });
+    expect((first.materializedManifest.samples as Array<{ id: string }>)[0]?.id).toBe(values.glyph);
+    await expect(prepareBatchQualityManifestSnapshot({ sourcePath: path, context: { ...context("grace"), values }, derivedBudget: budget }))
+      .rejects.toThrow(/materialized manifests.*aggregate limit before expansion or hashing/i);
+  });
+
+  it("bounds literal single-render snapshots before hashing", async () => {
+    const root = await privateRoot("shellx-motion-single-quality-bound-");
+    const path = join(root, "quality.json");
+    await writeFile(path, JSON.stringify({ schema: "shellx-motion/quality-manifest@1", samples: [{ id: "literal", atMs: 0 }] }));
+    await expect(prepareBatchQualityManifestSnapshot({ sourcePath: path, context: context("ada"), interpolate: false, derivedBudget: new BatchQualityDerivedBudget(20) }))
+      .rejects.toThrow(/materialized manifests.*aggregate limit before expansion or hashing/i);
+  });
+
+  it("counts a surrogate pair split across literal and replacement fragments exactly", async () => {
+    const root = await privateRoot("shellx-motion-batch-quality-unicode-");
+    const path = join(root, "quality.json");
+    await writeFile(path, JSON.stringify({ schema: "shellx-motion/quality-manifest@1", samples: [{ id: "\ud83d{{low}}", atMs: 0 }] }));
+    const expected = Buffer.byteLength(JSON.stringify({ schema: "shellx-motion/quality-manifest@1", samples: [{ id: "😀", atMs: 0 }] }), "utf8");
+    const snapshot = await prepareBatchQualityManifestSnapshot({
+      sourcePath: path, context: { ...context("ada"), values: { low: "\ude00" } },
+      derivedBudget: new BatchQualityDerivedBudget(expected),
+    });
+    expect((snapshot.materializedManifest.samples as Array<{ id: string }>)[0]?.id).toBe("😀");
   });
 });
 

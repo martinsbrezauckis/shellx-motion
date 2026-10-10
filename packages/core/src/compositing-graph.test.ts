@@ -140,6 +140,25 @@ describe("typed compositing graph", () => {
     expect(new Set(compileMotionCompositingGraph(document, graph).layers.map((layer) => layer.id)).size).toBe(2);
   });
 
+  it("bounds repeated two-port fan-out before compiling expanded layers", async () => {
+    const document = { ...motion([shape("plate", "#112233")]), width: 1, height: 1 };
+    const bounded = repeatedBlendGraph(7);
+    expect(validateMotionCompositingGraph(bounded, context(document)).ok).toBe(true);
+    const compiled = compileMotionDocumentCompositing({ ...document, compositing: bounded });
+    expect(compiled.layers).toHaveLength(129); // hidden source plus 128 derived layers
+    expect(restoreMotionDocumentCompositing(compiled)).toEqual({ ...document, compositing: bounded });
+
+    for (const count of [8, 30]) {
+      const graph = repeatedBlendGraph(count);
+      const validation = validateMotionCompositingGraph(graph, context(document));
+      expect(validation.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: "graph.layer_budget" })]));
+      expect(validation.estimate.pixelOperations).toBeLessThan(1_000_000_000);
+      expect(validation.estimate.workingBytes).toBeLessThan(512 * 1024 * 1024);
+      expect(() => compileMotionCompositingGraph(document, graph)).toThrow(MotionCompositingGraphError);
+      expect((await validateDocument(await loadSchema("motion"), { ...document, compositing: graph })).ok).toBe(false);
+    }
+  });
+
   it("rejects cycles, port type mismatches, occupied inputs, and disconnected nodes", () => {
     const document = motion([shape("plate", "#112233")]);
     const mismatch = graphOf([
@@ -182,3 +201,18 @@ function context(document: MotionDocument) { return { width: document.width, hei
 function graphOf(nodes: MotionCompositingNode[], edges: MotionCompositingEdge[]): MotionCompositingGraph { return { schema: "shellx-motion/compositing-graph@1", id: "graph", nodes, edges }; }
 function edge(id: string, from: string, to: string, port: MotionCompositingEdge["to"]["port"]): MotionCompositingEdge { return { id, from: { nodeId: from, port: "output" }, to: { nodeId: to, port } }; }
 function chain(ids: string[]): MotionCompositingEdge[] { return ids.slice(1).map((id, index) => edge(`edge_${index}`, ids[index], id, "input")); }
+function repeatedBlendGraph(count: number): MotionCompositingGraph {
+  const nodes: MotionCompositingNode[] = [{ id: "source", type: "source", layerId: "plate" }];
+  const edges: MotionCompositingEdge[] = [];
+  let previous = "source";
+  for (let index = 1; index <= count; index += 1) {
+    const id = `blend${index}`;
+    nodes.push({ id, type: "blend", mode: "normal" });
+    edges.push(edge(`${id}_background`, previous, id, "background"));
+    edges.push(edge(`${id}_foreground`, previous, id, "foreground"));
+    previous = id;
+  }
+  nodes.push({ id: "output", type: "output" });
+  edges.push(edge("output_input", previous, "output", "input"));
+  return graphOf(nodes, edges);
+}

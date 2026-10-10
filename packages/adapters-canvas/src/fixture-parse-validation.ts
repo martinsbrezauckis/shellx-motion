@@ -66,8 +66,8 @@ export function parseLayer(input: unknown, path: string, problems: CanvasFixture
     ...layer,
     id: expectString(layer, "id", path, problems) ?? "",
     kind: kind ?? "",
-    startMs: expectNumber(layer, "startMs", path, problems) ?? 0,
-    durationMs: expectNumber(layer, "durationMs", path, problems) ?? 0
+    startMs: expectNonNegativeFiniteNumber(layer, "startMs", path, problems) ?? 0,
+    durationMs: expectPositiveFiniteNumber(layer, "durationMs", path, problems) ?? 0
   };
 }
 
@@ -96,8 +96,8 @@ export function parseImageEditorOutput(
     kind: expectString(output, "kind", path, problems) ?? "",
     path: expectString(output, "path", path, problems) ?? "",
     mimeType: expectString(output, "mimeType", path, problems) ?? "",
-    width: expectNumber(output, "width", path, problems) ?? 0,
-    height: expectNumber(output, "height", path, problems) ?? 0,
+    width: expectPositiveInteger(output, "width", path, problems) ?? 0,
+    height: expectPositiveInteger(output, "height", path, problems) ?? 0,
     sha256: expectString(output, "sha256", path, problems) ?? "",
     receiptId: typeof output.receiptId === "string" ? output.receiptId : undefined,
     editStack: expectBoundedArray(
@@ -137,6 +137,36 @@ export function expectNumber(record: JsonRecord, key: string, path: string, prob
   const value = record[key];
   if (typeof value !== "number" || !Number.isFinite(value)) {
     problems.add({ path: `${path}.${key}`, message: "must be a finite number" });
+    return null;
+  }
+  return value;
+}
+
+/** Accept Motion timing scalars without silently turning zero/negative values into output data. */
+export function expectPositiveFiniteNumber(record: JsonRecord, key: string, path: string, problems: CanvasFixtureProblemCollector): number | null {
+  const value = expectNumber(record, key, path, problems);
+  if (value !== null && value <= 0) {
+    problems.add({ path: `${path}.${key}`, message: "must be a positive finite number" });
+    return null;
+  }
+  return value;
+}
+
+/** Motion layer start times may begin at zero but never before the package timeline. */
+export function expectNonNegativeFiniteNumber(record: JsonRecord, key: string, path: string, problems: CanvasFixtureProblemCollector): number | null {
+  const value = expectNumber(record, key, path, problems);
+  if (value !== null && value < 0) {
+    problems.add({ path: `${path}.${key}`, message: "must be a non-negative finite number" });
+    return null;
+  }
+  return value;
+}
+
+/** Canvas/PNG geometry is integral pixels; positive odd dimensions remain valid. */
+export function expectPositiveInteger(record: JsonRecord, key: string, path: string, problems: CanvasFixtureProblemCollector): number | null {
+  const value = expectNumber(record, key, path, problems);
+  if (value !== null && (!Number.isInteger(value) || value <= 0)) {
+    problems.add({ path: `${path}.${key}`, message: "must be a positive integer" });
     return null;
   }
   return value;

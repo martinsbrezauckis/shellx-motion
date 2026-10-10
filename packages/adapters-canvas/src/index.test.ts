@@ -7,6 +7,7 @@ import {
   CanvasFixtureError,
   canvasFixtureContract,
   convertCanvasFrameToMotionPackage,
+  parseCanvasFrameSelection,
   type CanvasFixtureProblem
 } from "./index";
 
@@ -144,23 +145,27 @@ describe("Canvas frame adapter", () => {
     expect(result.manifest.compatibility.lanes).toEqual(["canvas", ...renderLanesFor(result.motion)]);
   });
 
-  // Superseded behaviour: this adapter kept its own GENERATED_RENDERER_LAYER_TYPES set which had
-  // drifted from the capability cards — it omitted particles/shader/scene3d/camera/adjustment/
-  // environment, so a package built from those kinds advertised lanes: ["canvas"] while the browser
-  // and ffmpeg lanes rendered it. An agent reading the field concluded its package could not be
-  // rendered by the lane that could. Proven end to end in
-  // artifacts/lane-truth-defects/falsifier-lanes.ts, which renders this very package on the browser
-  // lane.
+  // Advertised lanes must come from the current renderer capabilities, including newer layer
+  // kinds, so a valid Canvas package does not understate its renderable lanes.
   it("advertises the lanes that render kinds newer than any hand-written list", async () => {
     const fixture = await loadFixture() as Record<string, any>;
-    fixture.frames[0].layers = [
-      { id: "stage", kind: "scene3d", startMs: 0, durationMs: 5000 },
-      { id: "sparks", kind: "particles", startMs: 0, durationMs: 5000 }
-    ];
+    fixture.frames[0].layers = [{
+      id: "stage",
+      kind: "scene3d",
+      startMs: 0,
+      durationMs: 5000,
+      scene3d: {
+        schema: "shellx-motion/scene3d@1",
+        backgroundColor: "#020617",
+        camera: { position: [0, 1, 5], target: [0, 0, 0], fovDeg: 45, near: 0.1, far: 100 },
+        lighting: { ambient: 0.2, direction: [0, -1, -1], intensity: 1, color: "#ffffff" },
+        objects: [{ id: "cube", primitive: "box", position: [0, 0, 0], rotationDeg: [0, 0, 0], scale: 1, color: "#ffffff" }]
+      }
+    }];
 
     const result = convertCanvasFrameToMotionPackage(fixture);
 
-    expect(result.manifest.compatibility.lanes).toEqual(["canvas", "browser", "ffmpeg"]);
+    expect(result.manifest.compatibility.lanes).toEqual(["canvas", "browser", "gpu", "ffmpeg"]);
     expect(result.manifest.compatibility.lanes).toEqual(["canvas", ...renderLanesFor(result.motion)]);
   });
 
@@ -418,14 +423,8 @@ describe("Canvas frame adapter", () => {
 });
 
 /**
- * Regression suite for the two agent-facing defects a blind external agent reproduced against the
- * live MCP server during cross-host verification:
- *
- *   Invalid layer kind — a fixture using `kind: "rect"` packaged cleanly, `motion.package.validate` answered
- *        `valid: true`, and then preview and render both refused it ("Lane browser does not support
- *        rect layers"). The engine told the author the package was valid and would not draw it.
- *   Incomplete fixture shape — each call revealed exactly one missing field, so
- *        learning the contract took thirteen round trips.
+ * Canvas fixture validation must reject unsupported layer kinds before render and report all
+ * required shape fields together, so callers can correct a fixture in one pass.
  */
 describe("Canvas fixture contract", () => {
   const rectFixture = {
@@ -492,13 +491,13 @@ describe("Canvas fixture contract", () => {
     expect(result.motion.layers.map((layer) => [layer.type, layer.shape])).toEqual([["shape", "rect"], ["shape", "ellipse"]]);
   });
 
-  it("accepts only layer kinds a registered renderer lane can consume", () => {
-    // The gate reads renderableLayerTypes(), so this asserts agreement with the lane cards rather
-    // than with a list written down twice.
+  it("admits only layer kinds a registered renderer lane can consume before semantic conversion", () => {
+    // The parser's gate reads renderableLayerTypes(); Core separately validates kind-specific
+    // payloads before conversion publishes an export.
     for (const kind of renderableLayerTypes()) {
       const fixture = structuredClone(rectFixture) as any;
       fixture.frames[0].layers = [{ id: "probe", kind, startMs: 0, durationMs: 1000 }];
-      expect(() => convertCanvasFrameToMotionPackage(fixture), `kind ${kind} should be accepted`).not.toThrow();
+      expect(() => parseCanvasFrameSelection(fixture), `kind ${kind} should be admitted`).not.toThrow();
     }
   });
 

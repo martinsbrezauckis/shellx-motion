@@ -119,7 +119,7 @@ describe("human Workbench path selection", () => {
     expect(docsController).toContain('closest("a[data-doc-page-id]")');
     expect(docsController).not.toMatch(/location\.(assign|replace|href)\s*=/);
 
-    const uiSmoke = await readFile(new URL("../../../scripts/workbench-ui-clickthrough.ts", import.meta.url), "utf8");
+    const uiSmoke = await readFile(new URL("../../../scripts/public/workbench-ui-clickthrough.ts", import.meta.url), "utf8");
     expect(uiSmoke).toContain('browser: { executable: portablePathIdentity("browser-executable", executablePath)');
     expect(uiSmoke).toContain('revealCalls: revealCalls.map((path) => portablePathIdentity("revealed-local-artifact", path))');
     expect(uiSmoke).toContain("assertPortableReportPaths(report");

@@ -7,7 +7,7 @@ import type { LocalMotionSdkOptions } from "./local.js";
 /** The local SDK must refuse before creating a Debug context or output path. */
 export function localGpuPreviewScene3dAnimationRefusal(motion: MotionDocument): LocalMotionSdkError | undefined {
   const refusal = motionScene3DAnimationLaneRefusal(motion, "gpu-static");
-  return refusal && new LocalMotionSdkError(refusal.code, "Local SDK GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API.", false);
+  return refusal && new LocalMotionSdkError(refusal.code, "Local SDK GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API.", false);
 }
 
 /** Loads and settles local GPU preview refusal before a Debug context or output path exists. */

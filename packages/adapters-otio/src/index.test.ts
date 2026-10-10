@@ -140,6 +140,23 @@ describe("OTIO adapter", () => {
     });
   });
 
+  it("refuses same-track overlaps before publishing an OTIO timeline or success receipt", async () => {
+    const packageRoot = await writeMotionPackage();
+    const outputRoot = await mkdtemp(join(tmpdir(), "shellx-motion-otio-overlap-"));
+    const outPath = join(outputRoot, "overlap.otio");
+    tempDirs.push(packageRoot, outputRoot);
+    const motionPath = join(packageRoot, "motion.json");
+    const motion = JSON.parse(await readFile(motionPath, "utf8")) as { layers: Array<{ id: string; startMs: number }> };
+    motion.layers.find((layer) => layer.id === "title")!.startMs = 1_000;
+    await writeFile(motionPath, `${JSON.stringify(motion, null, 2)}\n`, "utf8");
+
+    await expect(exportMotionPackageToOtio({ packageRoot, outPath })).rejects.toThrow(
+      "OTIO export does not support overlapping layers on the same Motion track"
+    );
+    await expect(readFile(outPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(`${outPath}.receipt.json`, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("imports an OTIO timeline into a Motion package with lossiness warnings for unsupported items", async () => {
     const sourceDir = await mkdtemp(join(tmpdir(), "shellx-motion-otio-import-source-"));
     const packageDir = await mkdtemp(join(tmpdir(), "shellx-motion-otio-import-package-"));
@@ -330,13 +347,9 @@ describe("OTIO adapter", () => {
   });
 
   it("exports byte-identical OTIO regardless of the host locale", async () => {
-    // Regression for a reproduced defect: track order and the intra-track clip tie-break sorted
-    // with `String.prototype.localeCompare`, and both are written into the OTIO JSON that
-    // `otioSha256` hashes and the receipt id embeds. Live probe on one machine, same package:
-    // 155cf43c… under en_US.UTF-8, ca39d05f… under sv_SE.UTF-8, 2fa3a9e1… under tr_TR.UTF-8.
-    // Track ids are unconstrained (non-ASCII reaches sv-SE's disagreement) and layer ids are ASCII
-    // by schema (tr-TR collates "I" against "i" differently from every other locale), so the
-    // fixture below carries one of each.
+    // Regression for a reproduced defect: track order sorted with `localeCompare`, which changed
+    // the OTIO JSON bytes, `otioSha256`, and receipt id. Track ids are unconstrained, so the fixture
+    // carries strings whose code-unit and locale sort order differ.
     const packageRoot = await writeLocaleProbePackage();
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-otio-locale-"));
     tempDirs.push(packageRoot, outDir);
@@ -365,10 +378,10 @@ describe("OTIO adapter", () => {
     expect(trapped.trackCount).toBe(2);
   });
 
-  it("orders tracks and clips by code unit, not by collation", async () => {
-    // The observable half of the same fix. Under en-US collation "\u00e4-track" sorts before
-    // "z-track" and "i1" before "I2"; code-unit order is the opposite in both cases, and it is the
-    // order the exported bytes must always have.
+  it("orders tracks by code unit and preserves serial clip order", async () => {
+    // Under en-US collation "\u00e4-track" sorts before "z-track"; code-unit order is the opposite
+    // and is the order the exported bytes must always have. Layers stay serial because OTIO export
+    // rejects same-track overlaps.
     const packageRoot = await writeLocaleProbePackage();
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-otio-order-"));
     tempDirs.push(packageRoot, outDir);
@@ -543,10 +556,8 @@ function otioFixture(): Record<string, unknown> {
 }
 
 /**
- * Package whose track and layer ids are exactly the strings locales disagree about: "\u00e4-track"
- * versus "z-track" (en-US and sv-SE order these differently) and "I2" versus "i1" (tr-TR orders
- * these differently from every other locale). Both pairs tie on their numeric sort key, so the
- * string tie-break decides the exported byte order.
+ * Package whose track ids are strings locales disagree about: "\u00e4-track" versus "z-track".
+ * Its layers are deliberately serial because OTIO export rejects same-track overlaps.
  */
 async function writeLocaleProbePackage(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "shellx-motion-otio-locale-pkg-"));
@@ -559,8 +570,8 @@ async function writeLocaleProbePackage(): Promise<string> {
     sourceApp: "shellx-motion",
     compatibility: { lanes: ["native"], hosts: ["motion"] }
   }, null, 2)}\n`, "utf8");
-  const layer = (id: string, trackId: string, x: number) => ({
-    id, type: "text", text: id, startMs: 0, durationMs: 2_000, trackId,
+  const layer = (id: string, trackId: string, x: number, startMs: number) => ({
+    id, type: "text", text: id, startMs, durationMs: 2_000, trackId,
     transform: { x, y: x, scale: 1, rotation: 0 },
     style: { fontFamily: "Inter", fontSize: 40, color: "#ffffff" }
   });
@@ -577,7 +588,7 @@ async function writeLocaleProbePackage(): Promise<string> {
       { id: "z-track", type: "video", name: "Z", order: 0 },
       { id: "\u00e4-track", type: "video", name: "A umlaut", order: 0 }
     ],
-    layers: [layer("I2", "z-track", 10), layer("i1", "z-track", 20), layer("u3", "\u00e4-track", 30)],
+    layers: [layer("I2", "z-track", 10, 0), layer("i1", "z-track", 20, 2_000), layer("u3", "\u00e4-track", 30, 0)],
     assets: [],
     provenance: { sourceApp: "shellx-motion", createdBy: "locale-probe" }
   }, null, 2)}\n`, "utf8");

@@ -42,7 +42,8 @@ import {
 } from "./fixture-contract";
 import {
   expectBoundedArray,
-  expectNumber,
+  expectPositiveFiniteNumber,
+  expectPositiveInteger,
   expectRecord,
   expectString,
   parseImageEditorOutput,
@@ -256,10 +257,10 @@ function parseFrame(
   return {
     id: expectString(frame, "id", path, problems) ?? "",
     name: expectString(frame, "name", path, problems) ?? "",
-    durationMs: expectNumber(frame, "durationMs", path, problems) ?? 0,
-    fps: expectNumber(frame, "fps", path, problems) ?? 0,
-    width: expectNumber(frame, "width", path, problems) ?? 0,
-    height: expectNumber(frame, "height", path, problems) ?? 0,
+    durationMs: expectPositiveFiniteNumber(frame, "durationMs", path, problems) ?? 0,
+    fps: expectPositiveFiniteNumber(frame, "fps", path, problems) ?? 0,
+    width: expectPositiveInteger(frame, "width", path, problems) ?? 0,
+    height: expectPositiveInteger(frame, "height", path, problems) ?? 0,
     background: typeof frame.background === "string" ? frame.background : undefined,
     safeAreas: parseSafeAreas(frame.safeAreas, `${path}.safeAreas`, problems),
     layers: layerValues.map((layer, index) => parseLayer(layer, `${path}.layers[${index}]`, problems))

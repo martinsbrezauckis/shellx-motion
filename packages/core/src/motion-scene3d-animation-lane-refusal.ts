@@ -1,6 +1,6 @@
 import type { CapabilityMatch, MotionDocument, RendererCapability } from "./types";
 
-/** Generic render, delivery, import, and capability paths fail closed outside the exact O6 lowerer. */
+/** Generic render, delivery, import, and capability paths fail closed outside the exact scene3d animation lowerer. */
 export type MotionScene3DAnimationLegacyLane =
   | "browser"
   | "native"
@@ -73,7 +73,7 @@ export function motionScene3DAnimationPackageRefusal(motion: MotionDocument) {
   return {
     code: "package_unrenderable" as const,
     message: "Generic render lanes do not support document scene3dAnimation@1; the sole exception is the direct @shellx-motion/renderer-browser renderMotionGpuPreview PNG-preview API.",
-    suggestedAction: "Use the strict direct @shellx-motion/renderer-browser renderMotionGpuPreview PNG-preview API when its O6 package limits are met, or remove document scene3dAnimation@1.",
+    suggestedAction: "Use the strict direct @shellx-motion/renderer-browser renderMotionGpuPreview PNG-preview API when its scene3d animation GPU preview package limits are met, or remove document scene3dAnimation@1.",
     layers: [{ layerId: "__scene3d_animation__", type: "document_scene3d_animation" }],
   };
 }

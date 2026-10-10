@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { motionCapabilityCatalog } from "@shellx-motion/core";
+import { motionCapabilityCatalog, PublicationCommitUncertainError } from "@shellx-motion/core";
 
 vi.mock("./template-to-cut", () => ({
   runTemplateToCutConnector: vi.fn()
@@ -95,5 +95,40 @@ describe.runIf(process.platform === "linux")("connector typed failure convergenc
     });
     expect((result as { error: { suggestedAction?: string } }).error.suggestedAction).toBeUndefined();
     expect(JSON.stringify(result)).not.toMatch(/private[\\/]connector/);
+  });
+
+  it("preserves only Core-authenticated connector publication uncertainty through failure normalization", async () => {
+    vi.mocked(runTemplateToCutConnector).mockRejectedValueOnce(new PublicationCommitUncertainError({
+      publicPath: "/governed/connector-delivery",
+      kind: "directory",
+      expectedIdentity: { dev: 1, ino: 2 },
+      expected: { sha256: "a".repeat(64), entryCount: 0, entries: [] }
+    }, new Error("post-rename identity observation failed")));
+    const descriptor = motionCapabilityCatalog().descriptors.find((entry) => entry.id === "connector.template-to-cut@1");
+    if (!descriptor) throw new Error("Template-to-Cut descriptor is missing.");
+    const prepared = prepareAdmittedMotionConnectorJob({
+      capabilityId: descriptor.id,
+      descriptorRevision: descriptor.revision,
+      descriptorFingerprint: descriptor.fingerprint,
+      requestSchemaId: descriptor.request.id,
+      request: { input: "input_ref", output: "output_ref" }
+    });
+    const result = await executePreparedMotionConnectorJob(prepared, {
+      callerId: "cut:workspace-a",
+      references: { async resolvePath(input) { return input.access === "read" ? "/motion/input" : "/motion/output"; } },
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({ ok: false, committed: true, error: { code: "publication_commit_uncertain" } });
+
+    vi.mocked(runTemplateToCutConnector).mockRejectedValueOnce(Object.assign(new Error("untrusted marker"), {
+      code: "publication_commit_uncertain", possiblyCommitted: true
+    }));
+    const untrusted = await executePreparedMotionConnectorJob(prepared, {
+      callerId: "cut:workspace-a",
+      references: { async resolvePath(input) { return input.access === "read" ? "/motion/input" : "/motion/output"; } },
+      signal: new AbortController().signal
+    });
+    expect(untrusted).toMatchObject({ ok: false, error: { code: "publication_commit_uncertain" } });
+    expect(untrusted).not.toHaveProperty("committed");
   });
 });

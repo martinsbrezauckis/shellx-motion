@@ -13,7 +13,7 @@
  *  - `domains/agent.ts` enriches `motion.actions.guide` / `motion.actions.plan` steps with
  *    `debugCommandArgumentContract()`. It imports here rather than from `index.ts` because
  *    `index.ts` imports the domain routers — the reverse edge would be an import cycle.
- *  - `scripts/generate-public-contracts.ts` publishes the result into `schemas/debug.json`.
+ *  - `scripts/public/generate-public-contracts.ts` publishes the result into `schemas/debug.json`.
  */
 import {
   buildDebugCommandContracts,

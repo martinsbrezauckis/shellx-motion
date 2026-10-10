@@ -37,6 +37,19 @@ still matches the schema. `pnpm debug:coverage` checks only its fixture-defined 
 subset; it is not all-command execution or test coverage. Its generated numerator, denominator, and
 limits are in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.md#debug-coverage-gate-scope).
 
+## Closed timeline authoring guides
+
+Three existing Debug/MCP-only families need exact authority and identity handling beyond the generated
+argument table:
+
+- [Checkpoint storyboard records](../../skill/shellx-motion/references/checkpoint-storyboard.md): host-sealed record-store lifecycle, not package authoring or delivery.
+- [Timeline relations](../../skill/shellx-motion/references/timeline-relations.md): host-rooted copy-on-write relation bindings with explicit current renderer refusal.
+- [Timeline relation-actions](../../skill/shellx-motion/references/timeline-relation-actions.md): host-rooted copy-on-write definitions and exact-base materialization.
+
+They have no CLI, local-SDK, or Action route. Follow each guide's tier, root, output, identity, receipt,
+and non-render boundary; the generated [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.md) remains the
+machine argument contract.
+
 ## Start the local server
 
 For normal local use, start Motion with one persistent key and an already-unlocked Workbench:
@@ -277,8 +290,9 @@ public challenge and requires the current listener's keyed HMAC proof. The proof
 under a 4 KiB cap, stdio request frames are capped at 1 MB, and privileged HTTP or WebSocket delivery
 must reuse the exact TCP connection that supplied the proof. It sends neither the private listener
 credential nor the MCP request body when that proof or socket binding fails, and it never forwards
-the durable Bearer capability to the discovered port. A stale record rebound after a crash therefore
-receives no credential or MCP body, while a restart publishes a new record and key. The record is owner-private on supported hosts; this
+the durable Bearer capability to the discovered port. A port reached through a stale record after
+shutdown or a crash receives no credential or MCP body, including when another process rebinds that
+port; a restart publishes a new record and key. The record is owner-private on supported hosts; this
 boundary does not make a same-user process a distinct trusted principal. Direct
 non-loopback binding is disabled. If a trusted tunnel or reverse proxy is ever added, it must provide
 its own authentication and explicit host/origin policy.

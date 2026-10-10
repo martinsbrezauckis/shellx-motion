@@ -35,7 +35,9 @@ commands.
 
 ## Verify the public source release
 
-After installing dependencies, run `pnpm test` to check this published source snapshot.
+After installing dependencies, run `pnpm test` to check the published source
+tree. A passing source test run does not establish native rendering or installed
+application behavior; use the platform verification guide for those checks.
 
 ### POSIX source-checkout permissions
 

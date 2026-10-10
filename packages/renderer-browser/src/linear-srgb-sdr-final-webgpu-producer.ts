@@ -1,10 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalJsonSha256, motionDocumentBudgetError } from "@shellx-motion/core";
 import {
-  composeLinearSrgbSourceOver,
-  sampleLinearSrgbGradient,
   type LinearSrgbSdrFinalRoute,
-  type LinearSrgbSdrStraightRgba,
 } from "@shellx-motion/core/internal/linear-srgb-sdr-final";
 import { GPU_ADAPTER_REQUEST_OPTIONS, openGpuRuntime, type GpuRuntimeOpenResult } from "./gpu-browser-runtime";
 import { isGpuBrowserProcess, isGpuFinalLaunchContext, isPrecontainedGpuBrowser, type GpuStreamingJobContext } from "./gpu-process-containment";
@@ -13,12 +10,30 @@ import {
   LINEAR_SRGB_SDR_FINAL_WEBGPU_ENCODE_WGSL,
   LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE,
   LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER,
 } from "./linear-srgb-sdr-final-webgpu-contract";
+export type { LinearSrgbSdrFinalReferenceDitherMask } from "./linear-srgb-sdr-final-webgpu-reference";
+import { renderLinearSrgbSdrFinalReferenceFrame } from "./linear-srgb-sdr-final-webgpu-reference";
+export { LINEAR_SRGB_SDR_FINAL_F2A_REFERENCE_DITHER_MASK_BYTES, linearSrgbSdrPublicationGradientCoverage, buildLinearSrgbSdrFinalReferenceDitherMask, linearSrgbSdrFinalReferenceDitherMaskBit } from "./linear-srgb-sdr-final-webgpu-reference";
 import {
   LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE,
   LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE_SCHEMA,
   LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_WGSL,
 } from "./linear-srgb-sdr-final-f2a-gradient-webgpu-contract";
+import {
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE,
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA,
+} from "./linear-srgb-sdr-final-f2b-screen-webgpu-contract";
+export {
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE,
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA,
+} from "./linear-srgb-sdr-final-f2b-screen-webgpu-contract";
+export {
+  LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE,
+  LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER,
+  LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER_SCHEMA,
+} from "./linear-srgb-sdr-final-webgpu-contract";
 import {
   closeLinearSrgbSdrFinalWebGpuPage,
   openLinearSrgbSdrFinalWebGpuPage,
@@ -60,6 +75,8 @@ export interface LinearSrgbSdrFinalWebGpuProducerEvidence {
     readonly publicationUsage: "COPY_SRC";
     readonly composition: "premultiplied-linear-srgb-normal-source-over";
     readonly frameBoundary: "straight-srgb-rgba8";
+    /** Hash-bound final-publication policy, including its flat/endpoint exclusions. */
+    readonly publicationDither: typeof LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER;
   };
   /** Present only when a F2a draw binds the separately hash-bound gradient shader. */
   readonly gradientPipeline?: {
@@ -69,6 +86,16 @@ export interface LinearSrgbSdrFinalWebGpuProducerEvidence {
     readonly publicationTarget: "rgba8unorm";
     readonly publicationUsage: "COPY_SRC";
     readonly composition: "premultiplied-linear-srgb-normal-source-over";
+    readonly frameBoundary: "straight-srgb-rgba8";
+  };
+  /** Present only when an admitted F2b rectangle binds the separately hash-bound screen blend state. */
+  readonly screenPipeline?: {
+    readonly schema: typeof LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA;
+    readonly implementationSha256: string;
+    readonly workingTarget: "rgba16float";
+    readonly publicationTarget: "rgba8unorm";
+    readonly publicationUsage: "COPY_SRC";
+    readonly composition: "premultiplied-linear-srgb-screen";
     readonly frameBoundary: "straight-srgb-rgba8";
   };
   readonly runtime: GpuRuntimeEvidence | null;
@@ -115,11 +142,13 @@ export function createLinearSrgbSdrFinalWebGpuProducer(value: unknown, options: 
     active = true; evidence = initialEvidence(route);
     let runtime: Extract<GpuRuntimeOpenResult, { ok: true }>["session"] | undefined;
     let pageOpenAttempted = false, pageOpened = false, prepared = false, resourcesReleased = false, pageClosed = false, runtimeClosed = false, cleanupFailed = false;
+    let primary: unknown, hasPrimary = false; const cleanupErrors: unknown[] = [];
     try {
       throwIfAborted(job.signal);
       const opened = await openRuntime(job);
       if (!opened.ok) throw new Error(opened.failure.message);
       runtime = opened.session;
+      throwIfAborted(job.signal);
       const browser = runtime.browserProcess;
       if (!isGpuBrowserProcess(browser) || !isPrecontainedGpuBrowser(browser.containment, browser.pid, job.maxProcessTreeRssBytes)) throw new Error("The strict linear-sRGB SDR producer refused an uncontained Browser runtime.");
       job.watchProcess(browser.pid);
@@ -142,48 +171,47 @@ export function createLinearSrgbSdrFinalWebGpuProducer(value: unknown, options: 
       const rgba8SrgbSha256 = sha256(rgba8Srgb);
       evidence = Object.freeze({ ...evidence, readback: { bytesPerRow: readback.evidence.bytesPerRow, paddedByteLength: readback.evidence.paddedByteLength, tightByteLength: readback.evidence.tightByteLength, mapOperations: 1, mappedBufferUnmapped: readback.evidence.mappedBufferUnmapped, mappedBufferDestroyed: readback.evidence.mappedBufferDestroyed }, retainedFrame: { bytes: rgba8Srgb.byteLength, sha256: rgba8SrgbSha256 } });
       return Object.freeze({ schema: LINEAR_SRGB_SDR_FINAL_WEBGPU_FRAME_SCHEMA, routeFingerprint: route.fingerprint, documentFingerprint: route.documentFingerprint, width: route.canvas.width, height: route.canvas.height, bytesPerRow: route.canvas.width * 4, rgba8SrgbSha256, rgba8Srgb });
+    } catch (error) {
+      primary = error; hasPrimary = true; throw error;
     } finally {
       if (runtime && prepared) {
-        const release = await runtime.page.evaluate(releaseLinearSrgbSdrFinalWebGpuPage).catch(() => null);
-        if (!release?.hadResources || release.releaseFailed || release.remainingGpuBytes !== 0 || release.releasedGpuBytes <= 0) cleanupFailed = true;
+        const release = await runtime.page.evaluate(releaseLinearSrgbSdrFinalWebGpuPage).catch((error) => { cleanupErrors.push(error); return null; });
+        if (!release?.hadResources || release.releaseFailed || release.remainingGpuBytes !== 0 || release.releasedGpuBytes <= 0) { cleanupFailed = true; cleanupErrors.push(new Error("Strict SDR producer GPU resource cleanup facts are incomplete.")); }
         else resourcesReleased = true;
       }
       if (runtime && pageOpenAttempted) {
         try {
           const close = await runtime.page.evaluate(closeLinearSrgbSdrFinalWebGpuPage);
-          if (pageOpened && (!close.deviceDestroyed || close.forcedResourceRelease || close.releaseFailed)) cleanupFailed = true;
+          if (pageOpened && (!close.deviceDestroyed || close.forcedResourceRelease || close.releaseFailed)) { cleanupFailed = true; cleanupErrors.push(new Error("Strict SDR producer page cleanup facts are incomplete.")); }
           else pageClosed = true;
-        } catch { cleanupFailed = true; }
+        } catch (error) { cleanupFailed = true; cleanupErrors.push(error); }
       }
-      if (runtime) try { await runtime.close(); runtimeClosed = true; } catch { cleanupFailed = true; }
+      if (runtime) try { await runtime.close(); runtimeClosed = true; } catch (error) { cleanupFailed = true; cleanupErrors.push(error); }
       evidence = finishEvidence(evidence, resourcesReleased, pageClosed, runtimeClosed, cleanupFailed);
       active = false;
-      if (cleanupFailed) throw new Error("The strict linear-sRGB SDR producer could not prove terminal Browser/GPU cleanup.");
+      if (cleanupFailed) {
+        const cleanup = new AggregateError(cleanupErrors, "The strict linear-sRGB SDR producer could not prove terminal Browser/GPU cleanup.");
+        if (hasPrimary) throw new AggregateError([primary, cleanup], "The strict linear-sRGB SDR producer failed and could not prove terminal Browser/GPU cleanup.");
+        throw cleanup;
+      }
     }
   } }) });
 }
 
-/** CPU-only expected pixels for conformance vectors; this does not replace the isolated WebGPU producer. */
 export function linearSrgbSdrFinalReferenceFrame(route: LinearSrgbSdrFinalRoute): Buffer {
   if (!validateRoute(route)) throw new Error("The linear-sRGB SDR reference requires an admitted frozen route plan.");
-  const bytes = Buffer.alloc(route.canvas.width * route.canvas.height * 4);
-  for (let y = 0; y < route.canvas.height; y += 1) for (let x = 0; x < route.canvas.width; x += 1) {
-    const layers: LinearSrgbSdrStraightRgba[] = [{ ...route.canvas.background, a: 1 }];
-    for (const rect of route.rects) if (x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height) {
-      if ("fill" in rect) layers.push({ ...rect.fill, a: rect.opacity });
-      else layers.push({ ...sampleLinearSrgbGradient(rect.gradient, (x - rect.x + 0.5) / rect.width, (y - rect.y + 0.5) / rect.height), a: rect.opacity });
-    }
-    const pixel = composeLinearSrgbSourceOver(layers), offset = (y * route.canvas.width + x) * 4;
-    bytes[offset] = quantize(pixel.r); bytes[offset + 1] = quantize(pixel.g); bytes[offset + 2] = quantize(pixel.b); bytes[offset + 3] = quantize(pixel.a);
-  }
-  return bytes;
+  return renderLinearSrgbSdrFinalReferenceFrame(route);
 }
 
 function pageInput(route: LinearSrgbSdrFinalRoute): LinearSrgbSdrFinalWebGpuPageInput {
   const base = { schema: LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_INPUT_SCHEMA, routeFingerprint: route.fingerprint, documentFingerprint: route.documentFingerprint, pipelineImplementationSha256: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.implementationSha256, shaderSourceSha256: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.shaderSourceSha256, compositeWgsl: LINEAR_SRGB_SDR_FINAL_WEBGPU_COMPOSITE_WGSL, encodeWgsl: LINEAR_SRGB_SDR_FINAL_WEBGPU_ENCODE_WGSL, canvas: { width: route.canvas.width, height: route.canvas.height, background: { ...route.canvas.background } }, rects: route.rects.map((rect) => "fill" in rect ? { ...rect, fill: { ...rect.fill } } : { ...rect, gradient: { ...rect.gradient, stops: rect.gradient.stops.map((stop) => ({ offset: stop.offset, color: { ...stop.color } })) } }) };
-  return Object.freeze(route.rects.some((rect) => "gradient" in rect)
-    ? { ...base, gradientPipelineImplementationSha256: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE.implementationSha256, gradientShaderSourceSha256: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE.shaderSourceSha256, gradientWgsl: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_WGSL }
-    : base);
+  const gradients = route.rects.some((rect) => "gradient" in rect);
+  const screen = route.rects.some((rect) => rect.blendMode === "screen");
+  return Object.freeze({
+    ...base,
+    ...(gradients ? { gradientPipelineImplementationSha256: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE.implementationSha256, gradientShaderSourceSha256: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE.shaderSourceSha256, gradientWgsl: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_WGSL } : {}),
+    ...(screen ? { screenPipelineImplementationSha256: LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE.implementationSha256 } : {}),
+  });
 }
 
 function readbackInput(route: LinearSrgbSdrFinalRoute) {
@@ -192,6 +220,7 @@ function readbackInput(route: LinearSrgbSdrFinalRoute) {
 
 function initialEvidence(route: LinearSrgbSdrFinalRoute): LinearSrgbSdrFinalWebGpuProducerEvidence {
   const gradients = route.rects.some((rect) => "gradient" in rect);
+  const screen = route.rects.some((rect) => rect.blendMode === "screen");
   const basePipeline = {
     schema: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA,
     implementationSha256: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.implementationSha256,
@@ -200,6 +229,7 @@ function initialEvidence(route: LinearSrgbSdrFinalRoute): LinearSrgbSdrFinalWebG
     publicationUsage: "COPY_SRC" as const,
     composition: "premultiplied-linear-srgb-normal-source-over" as const,
     frameBoundary: "straight-srgb-rgba8" as const,
+    publicationDither: LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER,
   };
   const gradientPipeline = gradients ? {
     schema: LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PIPELINE_SCHEMA,
@@ -210,7 +240,16 @@ function initialEvidence(route: LinearSrgbSdrFinalRoute): LinearSrgbSdrFinalWebG
     composition: "premultiplied-linear-srgb-normal-source-over" as const,
     frameBoundary: "straight-srgb-rgba8" as const,
   } : undefined;
-  return Object.freeze({ schema: LINEAR_SRGB_SDR_FINAL_WEBGPU_PRODUCER_SCHEMA, routeFingerprint: route.fingerprint, documentFingerprint: route.documentFingerprint, pipeline: basePipeline, ...(gradientPipeline ? { gradientPipeline } : {}), runtime: null, readback: { bytesPerRow: null, paddedByteLength: null, tightByteLength: null, mapOperations: 0, mappedBufferUnmapped: false, mappedBufferDestroyed: false }, retainedFrame: { bytes: 0, sha256: null }, cleanup: { state: "pending" as const, resourcesReleased: false, pageClosed: false, runtimeClosed: false }, fingerprint: null });
+  const screenPipeline = screen ? {
+    schema: LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA,
+    implementationSha256: LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE.implementationSha256,
+    workingTarget: "rgba16float" as const,
+    publicationTarget: "rgba8unorm" as const,
+    publicationUsage: "COPY_SRC" as const,
+    composition: "premultiplied-linear-srgb-screen" as const,
+    frameBoundary: "straight-srgb-rgba8" as const,
+  } : undefined;
+  return Object.freeze({ schema: LINEAR_SRGB_SDR_FINAL_WEBGPU_PRODUCER_SCHEMA, routeFingerprint: route.fingerprint, documentFingerprint: route.documentFingerprint, pipeline: basePipeline, ...(gradientPipeline ? { gradientPipeline } : {}), ...(screenPipeline ? { screenPipeline } : {}), runtime: null, readback: { bytesPerRow: null, paddedByteLength: null, tightByteLength: null, mapOperations: 0, mappedBufferUnmapped: false, mappedBufferDestroyed: false }, retainedFrame: { bytes: 0, sha256: null }, cleanup: { state: "pending" as const, resourcesReleased: false, pageClosed: false, runtimeClosed: false }, fingerprint: null });
 }
 
 function finishEvidence(evidence: LinearSrgbSdrFinalWebGpuProducerEvidence, resourcesReleased: boolean, pageClosed: boolean, runtimeClosed: boolean, failed: boolean): LinearSrgbSdrFinalWebGpuProducerEvidence {
@@ -226,7 +265,7 @@ function validJob(value: GpuStreamingJobContext): boolean {
 function validateRoute(value: unknown): LinearSrgbSdrFinalRoute | null {
   if (!deepFrozenData(value) || !record(value) || !sameKeys(value, ["schema", "admission", "contract", "canvas", "rects", "documentFingerprint", "fingerprint"])) return null;
   const route = value as unknown as LinearSrgbSdrFinalRoute;
-  if (route.schema !== "shellx-motion/linear-srgb-sdr-final-route@1" || !hash(route.documentFingerprint) || !hash(route.fingerprint) || !admission(route.admission) || !contract(route.contract) || !canvas(route.canvas) || !Array.isArray(route.rects) || route.rects.length > 64 || motionDocumentBudgetError(route.canvas)) return null;
+  if (route.schema !== "shellx-motion/linear-srgb-sdr-final-route@1" || !hash(route.documentFingerprint) || !hash(route.fingerprint) || !admission(route.admission, route.rects) || !contract(route.contract) || !canvas(route.canvas) || !Array.isArray(route.rects) || route.rects.length > 64 || motionDocumentBudgetError(route.canvas)) return null;
   const ids = new Set<string>();
   if (!route.rects.every((rect) => rectangle(rect, route.canvas, ids) && !ids.has(rect.id) && (ids.add(rect.id), true))) return null;
   const base = { schema: route.schema, admission: route.admission, contract: route.contract, canvas: route.canvas, rects: route.rects, documentFingerprint: route.documentFingerprint };
@@ -253,7 +292,7 @@ function deepFrozenData(value: unknown, seen = new WeakSet<object>()): boolean {
   } catch { return false; }
 }
 
-function admission(value: unknown): boolean { return record(value) && sameKeys(value, ["schema", "target", "frameLane", "delivery", "finalLane", "preset", "composition", "working", "frameBoundary"]) && value.schema === "shellx-motion/linear-srgb-sdr-final-admission@1" && value.target === "final" && value.frameLane === "gpu" && value.delivery === "streamed" && value.finalLane === "ffmpeg" && value.preset === "mp4-h264" && value.composition === "normal-source-over-document-order" && value.working === "premultiplied-linear-srgb-rgba16float" && value.frameBoundary === "straight-srgb-rgba8"; }
+function admission(value: unknown, rects: unknown): boolean { const screen = Array.isArray(rects) && rects.some((rect) => record(rect) && rect.blendMode === "screen"); return record(value) && sameKeys(value, ["schema", "target", "frameLane", "delivery", "finalLane", "preset", "composition", "working", "frameBoundary"]) && value.schema === "shellx-motion/linear-srgb-sdr-final-admission@1" && value.target === "final" && value.frameLane === "gpu" && value.delivery === "streamed" && value.finalLane === "ffmpeg" && value.preset === "mp4-h264" && value.composition === (screen ? "normal-and-screen-document-order" : "normal-source-over-document-order") && value.working === "premultiplied-linear-srgb-rgba16float" && value.frameBoundary === "straight-srgb-rgba8"; }
 
 function contract(value: unknown): boolean { return record(value) && sameKeys(value, ["schema", "intent", "package", "render"]) && value.schema === "shellx-motion/color-pipeline@1" && value.intent === "linear-srgb-sdr@1" && record(value.package) && sameKeys(value.package, ["input", "profileBearingImageVideo", "working"]) && value.package.input === "unprofiled-srgb-assumed" && value.package.profileBearingImageVideo === "refused" && value.package.working === "premultiplied-linear-srgb" && record(value.render) && sameKeys(value.render, ["delivery", "frameAlphaBoundary", "outputAlpha", "laneRequirement", "outputRequirement", "fallbackPolicy"]) && value.render.delivery === "sdr-bt709-limited" && value.render.frameAlphaBoundary === "straight-srgb-rgba" && value.render.outputAlpha === "not-applicable" && value.render.laneRequirement === "gpu-to-ffmpeg" && value.render.outputRequirement === "mp4-h264" && value.render.fallbackPolicy === "refuse"; }
 
@@ -261,8 +300,10 @@ function canvas(value: unknown): value is LinearSrgbSdrFinalRoute["canvas"] { re
 
 function rectangle(value: unknown, current: LinearSrgbSdrFinalRoute["canvas"], ids: ReadonlySet<string>): value is LinearSrgbSdrFinalRoute["rects"][number] {
   if (!record(value) || typeof value.id !== "string" || !/^[a-z][a-z0-9_-]{0,127}$/u.test(value.id) || ids.has(value.id) || !integer(value.x, 0, current.width - 1) || !integer(value.y, 0, current.height - 1) || !integer(value.width, 1, current.width) || !integer(value.height, 1, current.height) || value.x + value.width > current.width || value.y + value.height > current.height || !finite(value.opacity, 0, 1)) return false;
-  return (sameKeys(value, ["id", "x", "y", "width", "height", "fill", "opacity"]) && color(value.fill))
-    || (sameKeys(value, ["id", "x", "y", "width", "height", "gradient", "opacity"]) && gradient(value.gradient));
+  if (value.blendMode !== undefined && value.blendMode !== "screen") return false;
+  const base = ["id", "x", "y", "width", "height", "opacity", ...(value.blendMode === "screen" ? ["blendMode"] : [])];
+  return (sameKeys(value, [...base, "fill"]) && color(value.fill))
+    || (sameKeys(value, [...base, "gradient"]) && gradient(value.gradient));
 }
 
 function gradient(value: unknown): boolean {
@@ -297,7 +338,6 @@ function hash(value: unknown): value is string { return typeof value === "string
 function integer(value: unknown, minimum: number, maximum: number): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maximum; }
 function finite(value: unknown, minimum: number, maximum: number): value is number { return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum; }
 function positiveFinite(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) && value > 0; }
-function quantize(value: number): number { return Math.round(Math.min(1, Math.max(0, value)) * 255); }
 function sha256(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
 function throwIfAborted(signal: AbortSignal): void { if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The strict linear-sRGB SDR producer was cancelled."); }
 function refuse(message: string): LinearSrgbSdrFinalWebGpuProducerResolution { return Object.freeze({ ok: false, refusal: Object.freeze({ code: "linear_srgb_sdr_final_producer_refused", message }) }); }

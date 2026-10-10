@@ -19,4 +19,5 @@ fixed field mechanics own the silhouette, with no hard aperture or collision gui
 the particle motion. The package participates in strict GPU static/frame admission; native pixel, retained
 resource, transport, and final-receipt proof remain separate qualification evidence.
 
-This package is a shipped, ready-to-use source sample.
+The shipped package is self-contained. There are no third-party source assets, fonts, logos,
+characters, generated image inputs, or copied visual references to attribute.

@@ -18,12 +18,9 @@ const FIXTURES = fileURLToPath(new URL("../../../fixtures/packages", import.meta
 const INTER_LICENSE_SHA256 = "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345";
 
 /**
- * Source-only G9 product-film preflight. This deliberately opens fixed repository
- * assets directly rather than calling loadMotionPackage: topology ownership is
- * intentionally unavailable in the managed WSL sandbox, while the packages are
- * still required to prove their schema, bounded GPU topology, resource identity,
- * representative exact-time frames, and final-lane declaration before hardware
- * qualification starts on a supported native host.
+ * Source-level G9 product-film fixture checks. These assets prove schema,
+ * bounded GPU topology, resource identity, representative exact-time frames,
+ * and final-lane declaration. Hardware rendering has a separate opt-in test.
  */
 describe("G9 advanced GPU product film fixtures", () => {
   it("admits Particle Cathedral as a deterministic 100k fixed-compute final-lane package", async () => {

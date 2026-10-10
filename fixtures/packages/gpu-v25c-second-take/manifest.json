@@ -21,6 +21,7 @@
     "v25Batch": "V25-C3",
     "sourceAssetPolicy": "original-declarative-json-and-authored-transparent-svgs-no-binaries-or-fonts",
     "effectModule": "motion.afterimage-stack@1.0.0",
-    "effectIntrinsic": "motion.afterimage-stack.v1"
+    "effectIntrinsic": "motion.afterimage-stack.v1",
+    "verification": "source-static-admission-only; native-render-required"
   }
 }

@@ -1,7 +1,7 @@
 /**
  * The required render smokes must speak the canonical job/receipt vocabulary.
  *
- * Role: `scripts/render-*-smoke.ts` are the host gates that decide whether Motion can deliver media
+ * Role: `scripts/public/render-*-smoke.ts` are the host gates that decide whether Motion can deliver media
  * on a platform. They are shell scripts in spirit — nothing type-checks their *expectations* against
  * `schemas/job-status.json`, and nothing runs them except a human typing `pnpm run …:smoke`. That is
  * Four of them once demanded `receipt.status === "passed"`
@@ -13,7 +13,7 @@
  * the gates. It runs inside `packages/cli`'s vitest suite — therefore inside `pnpm test` — and holds
  * two lines of defence:
  *
- *   1. **Behaviour.** `scripts/render-smoke-status.ts` is executed and probed directly. The critical
+ *   1. **Behaviour.** `scripts/public/render-smoke-status.ts` is executed and probed directly. The critical
  *      property is not that it accepts `warning`; it is that it REFUSES a `warning` that names no
  *      expected advisory. Widening the accepted status set without that refusal is precisely the
  *      "fix" that would make the render-smoke contract look closed while removing the gate's teeth.
@@ -37,7 +37,7 @@ import { describe, expect, it } from "vitest";
 import { JOB_STATES, jobOutcomeForReceiptStatus } from "@shellx-motion/core";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const scriptsRoot = join(repoRoot, "scripts");
+const scriptsRoot = join(repoRoot, "scripts", "public");
 
 /** Every smoke this contract covers, with the npm script a maintainer would run to reproduce it. */
 const SMOKES = {
@@ -100,7 +100,7 @@ describe("canonical receipt-status to job-outcome mapping", () => {
   });
 });
 
-describe("scripts/render-smoke-status.ts acceptance rule", () => {
+describe("scripts/public/render-smoke-status.ts acceptance rule", () => {
   const advisories = [helper.FONT_FALLBACK_ADVISORY, helper.MOTION_DENSITY_ADVISORY] as const;
   const accept = (receipt: unknown) => helper.assertReceiptSucceeded(receipt, { label: "probe", expectedAdvisories: advisories });
 

@@ -1,0 +1,29 @@
+{
+  "schema": "shellx-motion/motion@1",
+  "id": "motion_linear_srgb_sdr_f2b_screen_controls",
+  "name": "Linear sRGB SDR F2b Screen Controls",
+  "durationMs": 2000,
+  "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "background": "#000000",
+  "colorPipeline": {
+    "schema": "shellx-motion/color-pipeline@1",
+    "intent": "linear-srgb-sdr@1"
+  },
+  "layers": [
+    { "id": "saturated_base", "type": "shape", "shape": "rect", "fill": "#101820", "startMs": 0, "durationMs": 2000, "transform": { "x": 64, "y": 180, "width": 352, "height": 352 } },
+    { "id": "saturated_red_screen", "type": "shape", "shape": "rect", "fill": "#ff0040", "opacity": 0.4, "blendMode": "screen", "startMs": 0, "durationMs": 2000, "transform": { "x": 64, "y": 180, "width": 352, "height": 352 } },
+    { "id": "saturated_blue_screen", "type": "shape", "shape": "rect", "fill": "#0066ff", "opacity": 0.45, "blendMode": "screen", "startMs": 0, "durationMs": 2000, "transform": { "x": 64, "y": 180, "width": 352, "height": 352 } },
+    { "id": "partial_base", "type": "shape", "shape": "rect", "fill": "#0c1420", "startMs": 0, "durationMs": 2000, "transform": { "x": 464, "y": 180, "width": 352, "height": 352 } },
+    { "id": "partial_normal", "type": "shape", "shape": "rect", "fill": "#204080", "opacity": 0.18, "startMs": 0, "durationMs": 2000, "transform": { "x": 464, "y": 180, "width": 352, "height": 352 } },
+    { "id": "partial_screen", "type": "shape", "shape": "rect", "fill": "#ff5020", "opacity": 0.31, "blendMode": "screen", "startMs": 0, "durationMs": 2000, "transform": { "x": 464, "y": 180, "width": 352, "height": 352 } },
+    { "id": "zero_alpha_base", "type": "shape", "shape": "rect", "fill": "#305070", "startMs": 0, "durationMs": 2000, "transform": { "x": 864, "y": 180, "width": 352, "height": 352 } },
+    { "id": "zero_alpha_screen", "type": "shape", "shape": "rect", "fill": "#ff0080", "opacity": 0, "blendMode": "screen", "startMs": 0, "durationMs": 2000, "transform": { "x": 864, "y": 180, "width": 352, "height": 352 } }
+  ],
+  "assets": [],
+  "provenance": {
+    "sourceApp": "shellx-motion",
+    "createdBy": "linear-srgb-sdr-f2b-proof-controls"
+  }
+}

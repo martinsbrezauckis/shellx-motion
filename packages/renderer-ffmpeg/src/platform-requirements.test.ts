@@ -33,17 +33,9 @@ import {
 /**
  * The three tools, pinned to paths this suite created, for every test in this file.
  *
- * The probe resolves a real executable PATH from the real machine and hands that to the runner, so
- * without a pin these tests answer about whatever browser and FFmpeg the host happens to carry. That
- * is not hypothetical, and it has now cost this suite twice. The fixture recognised tools by NAME:
- * first it did not know `ffmpeg.exe`, and four tests failed on Windows alone; then it did not know
- * `/usr/bin/google-chrome` — the first system candidate, the browser GitHub's runner image carries,
- * and the exact path this repository's own CI pins into `SHELLX_MOTION_BROWSER` — and six tests
- * failed on CI while passing on every workstation whose browser was a Playwright cache entry named
- * `chrome`. Both are the same defect: a test that lets the machine choose its own input.
- *
- * Pinning ends the guess rather than extending it by one more name. There is exactly one path each
- * tool can resolve to, on every machine and every OS, and the runner below matches it exactly.
+ * The probe resolves executables from the host PATH. Pinning the fixture paths keeps these
+ * tests deterministic across platforms and prevents an installed browser or FFmpeg from
+ * changing the simulated readiness result. The runner matches each pinned path exactly.
  */
 let pins: MotionToolPins;
 beforeAll(() => { pins = pinMotionToolExecutables("platform-requirements"); });

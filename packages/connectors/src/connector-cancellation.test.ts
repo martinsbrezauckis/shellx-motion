@@ -4,9 +4,8 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MotionPackage, OperationReceipt } from "@shellx-motion/core";
 
-// This focused test owns only the cancellation boundary. Production artifact-topology checks
-// remain covered by streaming-final.test.ts; this hosted filesystem's `/` owner deliberately
-// refuses those topology checks before a renderer can be called.
+// This focused test owns the cancellation boundary. `streaming-final.test.ts` covers
+// artifact topology; the mocked topology keeps cancellation independent of host filesystem ownership.
 vi.mock("./artifact-handle.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./artifact-handle.js")>();
   return {

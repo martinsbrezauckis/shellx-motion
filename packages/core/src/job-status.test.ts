@@ -118,20 +118,19 @@ describe("every state documents what an agent should do", () => {
     }
   });
 
-  it("states the invariant that stops an agent restarting cancelled work", () => {
+  it("does not invent optional terminal detail", () => {
     const cancelled = JOB_STATUS_CONTRACT.outcomes.find((entry) => entry.name === "cancelled");
-    // An agent whose retry policy is `if (job.error?.retryable) retry()` must be structurally
-    // incapable of restarting something a human stopped.
-    expect(cancelled?.absent).toContain("error");
+    expect(cancelled?.guaranteed).toEqual(expect.arrayContaining(["endedAtMs", "durationMs", "queueWaitMs", "warnings"]));
+    expect(cancelled?.agentGuidance).toContain("Do not auto-retry");
     const failed = JOB_STATUS_CONTRACT.outcomes.find((entry) => entry.name === "failed");
-    expect(failed?.guaranteed).toContain("error");
+    expect(failed?.guaranteed).not.toContain("error");
+    expect(failed?.agentGuidance).toContain("if error is present");
   });
 
-  it("proves nothing ran when a job was skipped", () => {
+  it("only treats a missing start time as proof that skipped work was not admitted", () => {
     const skipped = JOB_STATUS_CONTRACT.outcomes.find((entry) => entry.name === "skipped");
-    // startedAt being absent is the machine-checkable proof.
-    expect(skipped?.absent).toContain("startedAt");
-    expect(skipped?.absent).toContain("error");
+    expect(skipped?.meaning).toContain("If startedAtMs is absent");
+    expect(skipped?.guaranteed).not.toContain("startedAtMs");
   });
 
   it("distinguishes a job that does not exist from one that is not visible", () => {

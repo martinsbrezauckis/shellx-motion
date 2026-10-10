@@ -12,7 +12,7 @@ interface GpuPreviewStaticPlanSessionInput {
   admittedScene3DAnimationPackage(): MotionPackage | undefined;
 }
 
-/** Retains the resolved plan and resource promise while scene3d animation swaps only the Motion package façade. */
+/** Retains the resolved plan and resource promise while the scene3d animation route swaps only the Motion package façade. */
 export function createGpuPreviewStaticPlanSession(input: GpuPreviewStaticPlanSessionInput) {
   let staticPlan: StaticPlan | undefined, staticPlanPromise: Promise<StaticPlan> | undefined;
   let preparedResources: Promise<PreparedGpuSceneResources> | undefined;

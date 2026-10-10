@@ -7,27 +7,19 @@
  * WHERE IT IS ENFORCED: at the privilege boundary, not in `dispatchDebugCommand`. Every transport of
  * the loopback debug server applies it once, above the command — `caller-boundary.ts` in this
  * package records who counts as a caller and why the dispatcher itself cannot be the choke point
- * (Motion re-enters it with its own derived paths). An earlier revision of this comment said
- * "enforced centrally, in dispatchDebugCommand", which stopped being true when the check moved to
- * the transport and was worth correcting: a reader who believes the dispatcher enforces it will add
- * a transport and assume it inherited something it did not.
+ * (Motion re-enters it with its own derived paths). New transports must apply
+ * this policy explicitly before dispatch.
  *
- * It was not always central, and the reason it is now is worth keeping. The policy originally
- * guarded only the four `draft_motion` WRITE commands that reach the host receipt writer
- * (`motion.prompt.run`, `motion.timeline.playhead.set` / `range.select` / `viewport.set`), on the
- * theory that the risk was Motion writing somewhere it should not. That missed the read direction: a
- * security review found `motion.agent.transcript` — permission `read_motion`, the LOWEST tier —
- * accepting the same argument and using it to discover and return prompt transcripts from any
- * process-readable directory holding receipt-shaped JSON. Reading someone else's evidence needs no
- * write at all, and 30-odd commands across a dozen domains take this argument, so a per-command
- * check was always one new command away from being wrong again.
+ * Both reads and writes need this boundary. `motion.agent.transcript` accepts `receiptsRoot`
+ * at `read_motion` tier; without containment, a caller could discover receipt-shaped JSON
+ * in another process-readable directory. Applying the check to each command separately
+ * would leave a new command able to miss it.
  *
  * Hence: one policy, applied once, above dispatch. A command cannot forget to call it, and a command
  * added tomorrow inherits it without its author knowing this file exists.
  *
  * The trusted set mirrors `qualityOutputRoots` in `index.ts` (`scratchRoot` + `receiptsRoot`),
- * which is what `motion.quality.check` already fences `receiptsRoot` against — this finding is that
- * the other four commands never adopted it. One deliberate difference: `qualityOutputRoots`
+ * which also fences `motion.quality.check` receiptsRoot. One deliberate difference: `qualityOutputRoots`
  * substitutes a literal `".scratch"` when the host configured no scratch root, and this module does
  * not. A defaulted relative path is a root nobody chose, and the whole point here is that only a
  * root the host named counts, so an unconfigured host fails closed instead of trusting `./.scratch`.

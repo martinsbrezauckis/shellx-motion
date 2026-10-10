@@ -2,7 +2,7 @@ import type { MotionPackage } from "@shellx-motion/core";
 import { gltfPbrFinalPresentMarkerRefusal, type GltfPbrFinalEntrypointRefusal } from "./gltf-pbr-final-entrypoint-refusal";
 
 /**
- * O6 is asset-free across both document authorities. This deliberately reflects the package and
+ * The scene3d animation preview is asset-free across both document authorities. This deliberately reflects the package and
  * manifest descriptors instead of evaluating either `manifest` or `manifest.assets`: an accessor,
  * inherited value, reflection failure, or anything other than an own empty data-array is hostile.
  */
@@ -25,7 +25,7 @@ export function gpuScene3dAnimationManifestAssetRefusal(pkg: MotionPackage): { c
 }
 
 /**
- * O6 cannot send an arbitrary manifest through the legacy marker probe: that probe reads
+ * The scene3d animation preview cannot send an arbitrary manifest through the legacy marker probe: that probe reads
  * `manifest.data.adapter`. Inspect its exact presence path as descriptors instead, so hostile
  * data, adapter, or marker accessors refuse before hashing, resources, runtime, or output work.
  */
@@ -72,13 +72,13 @@ function recordState(value: unknown): "record" | "not-record" | "hostile" {
 function refusal(): { code: "gpu_unsupported_feature"; message: string } {
   return {
     code: "gpu_unsupported_feature",
-    message: "The strict O6 GPU preview lowerer requires an own descriptor-safe empty package manifest.assets array before manifest hashing, resource preparation, runtime opening, or output work.",
+    message: "The strict scene3d animation GPU preview lowerer requires an own descriptor-safe empty package manifest.assets array before manifest hashing, resource preparation, runtime opening, or output work.",
   };
 }
 
 function pbrDescriptorRefusal(): { code: "gpu_unsupported_feature"; message: string } {
   return {
     code: "gpu_unsupported_feature",
-    message: "The strict O6 GPU preview lowerer requires descriptor-safe package manifest.data and manifest.data.adapter marker fields before manifest hashing, resource preparation, runtime opening, or output work.",
+    message: "The strict scene3d animation GPU preview lowerer requires descriptor-safe package manifest.data and manifest.data.adapter marker fields before manifest hashing, resource preparation, runtime opening, or output work.",
   };
 }

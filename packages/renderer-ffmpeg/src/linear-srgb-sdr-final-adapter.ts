@@ -12,6 +12,11 @@ import {
 } from "@shellx-motion/core/internal/linear-srgb-sdr-final";
 import {
   createLinearSrgbSdrFinalWebGpuProducer,
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE,
+  LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER,
+  LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE,
+  LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA,
   type LinearSrgbSdrFinalWebGpuProducerEvidence,
   type LinearSrgbSdrFinalWebGpuProducerResolution,
 } from "@shellx-motion/renderer-browser/internal/linear-srgb-sdr-final";
@@ -28,11 +33,12 @@ import {
   type LinearSrgbSdrFinalFfmpegPreflightEvidence,
 } from "./linear-srgb-sdr-final-ffmpeg-contract.js";
 import { validateLinearSrgbSdrFinalMedia, type LinearSrgbSdrFinalMediaObservation } from "./linear-srgb-sdr-final-media.js";
+import { openLinearSrgbSdrHeldMedia, type LinearSrgbSdrHeldMediaOperation, type LinearSrgbSdrHeldMediaSuccess } from "./linear-srgb-sdr-final-held-media.js";
+import { createStrictSdrCandidateHeldChromiumProducer, type StrictSdrCandidateHeldChromiumExecutor } from "./linear-srgb-sdr-final-held-chromium.js";
 import { startStreamingFfmpegProcess, type StreamingFfmpegProcess, type StreamingFfmpegProcessFactory } from "./streaming-process.js";
-
+import { isStreamingFinalLineageRevalidationFailure, revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 export const LINEAR_SRGB_SDR_FINAL_PREPARATION_SCHEMA = "shellx-motion/linear-srgb-sdr-final-preparation@1" as const;
 export const LINEAR_SRGB_SDR_FINAL_EXECUTION_SCHEMA = "shellx-motion/linear-srgb-sdr-final-execution@1" as const;
-
 const REQUEST = Object.freeze({ target: "final" as const, frameLane: "gpu" as const, delivery: "streamed" as const, finalLane: "ffmpeg" as const, preset: "mp4-h264" as const });
 const ISSUED_PREPARATIONS = new WeakSet<object>();
 const CLAIMED_PREPARATIONS = new WeakSet<object>();
@@ -73,6 +79,11 @@ export interface LinearSrgbSdrFinalExecutionEvidence {
 export type LinearSrgbSdrFinalExecutionResult =
   | { readonly ok: true; readonly privateOutputPath: string; readonly evidence: LinearSrgbSdrFinalExecutionEvidence }
   | { readonly ok: false; readonly code: "linear_srgb_sdr_final_refused" | "linear_srgb_sdr_final_cancelled" | "linear_srgb_sdr_final_failed"; readonly message: string };
+
+/** Relative-source candidate result; the held source stays inaccessible except for its bounded Core writer operation. */
+export type LinearSrgbSdrHeldMediaExecutionResult = Exclude<LinearSrgbSdrFinalExecutionResult, { ok: false }> & {
+  readonly heldMedia: LinearSrgbSdrHeldMediaSuccess;
+};
 
 type Services = {
   readonly createProducer: (route: unknown) => LinearSrgbSdrFinalWebGpuProducerResolution;
@@ -134,26 +145,75 @@ export async function executeLinearSrgbSdrFinalForTest(input: Parameters<typeof 
   return await execute(input, services);
 }
 
+/**
+ * Candidate-only branch reached after Core's internal ALS scope has minted and consumed one opaque
+ * renderer binding. It cannot be selected through a render request, service, command, or CLI flag.
+ */
+export async function executeLinearSrgbSdrFinalHeldMedia(
+  input: Parameters<typeof executeLinearSrgbSdrFinal>[0],
+  executor: StrictSdrCandidateHeldChromiumExecutor,
+): Promise<LinearSrgbSdrHeldMediaExecutionResult | Extract<LinearSrgbSdrFinalExecutionResult, { ok: false }>> {
+  let operation: LinearSrgbSdrHeldMediaOperation | undefined;
+  let held: LinearSrgbSdrHeldMediaSuccess | undefined;
+  try {
+    const { route, processJob } = beginStrictExecution(input);
+    operation = await openLinearSrgbSdrHeldMedia({
+      route,
+      job: processJob,
+      privateRoot: input.job.scratchRoot,
+      outputPath: input.outputPath,
+      decodedPath: input.decodedPath,
+    });
+    const producer = createStrictSdrCandidateHeldChromiumProducer(executor, input.job, route);
+    const { frame, producerEvidence, producerEvidenceSha256 } = await produceStrictFrame(route, processJob, { ...PRODUCTION, createProducer: () => producer });
+    held = await operation.execute(frame);
+    const base = {
+      schema: LINEAR_SRGB_SDR_FINAL_EXECUTION_SCHEMA,
+      routeFingerprint: route.fingerprint,
+      documentFingerprint: route.documentFingerprint,
+      preparationFingerprint: input.preparation.fingerprint,
+      ffmpegContractSha256: LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT_SHA256,
+      producerEvidenceSha256,
+      producer: cloneProducerEvidence(producerEvidence),
+      retainedFrame: { sha256: frame.rgba8SrgbSha256, byteLength: frame.rgba8Srgb.byteLength, repeatedFrames: Math.ceil((route.canvas.durationMs / 1_000) * route.canvas.fps), sequenceSha256: canonicalJsonSha256({ mode: "repeated-static", frameSha256: frame.rgba8SrgbSha256, frameCount: Math.ceil((route.canvas.durationMs / 1_000) * route.canvas.fps) }) },
+      commands: held.evidence.commands,
+      media: held.evidence.media,
+      comparison: held.evidence.comparison,
+      output: held.evidence.output,
+      cleanup: { browserTerminal: true as const, encoderExitCode: 0 as const, probeExitCode: 0 as const, inverseExitCode: 0 as const, decodedFrameRemoved: true as const },
+    };
+    return { ok: true, privateOutputPath: input.outputPath, evidence: freeze({ ...base, fingerprint: canonicalJsonSha256(base) }), heldMedia: held };
+  } catch (error) {
+    if (operation) {
+      try {
+        await operation.close();
+      } catch (cleanupError) {
+        error = new AggregateError([error, cleanupError], "Strict SDR held-media execution failed and retained uncertain cleanup state.");
+      }
+    } else if (held) {
+      try {
+        await held.close();
+      } catch (cleanupError) {
+        error = new AggregateError([error, cleanupError], "Strict SDR held-media execution failed and retained uncertain cleanup state.");
+      }
+    }
+    const message = safeMessage(error);
+    return input?.job?.signal?.aborted
+      ? { ok: false, code: "linear_srgb_sdr_final_cancelled", message }
+      : { ok: false, code: "linear_srgb_sdr_final_refused", message };
+  }
+}
+
 async function execute(input: Parameters<typeof executeLinearSrgbSdrFinal>[0], services: Services): Promise<LinearSrgbSdrFinalExecutionResult> {
   let active: StreamingFfmpegProcess | undefined;
   let outputStarted = false;
   let succeeded = false;
   try {
-    const route = validateInput(input);
-    const processJob = strictProcessJob(input.job);
+    const { route, processJob } = beginStrictExecution(input);
     if (resolve(input.outputPath) === resolve(input.decodedPath)) throw new Error("Strict SDR encoded and decoded private artifacts must be distinct.");
     await assertAbsentPrivateChild(input.job.scratchRoot, input.outputPath);
     await assertAbsentPrivateChild(input.job.scratchRoot, input.decodedPath);
-    const producerResolution = services.createProducer(route);
-    if (!producerResolution.ok) throw new Error(producerResolution.refusal.message);
-    const frame = await producerResolution.producer.produce(processJob);
-    const producerEvidence = producerResolution.producer.evidence;
-    if (!producerEvidence.fingerprint || producerEvidence.cleanup.state !== "complete" || !producerEvidence.cleanup.resourcesReleased || !producerEvidence.cleanup.pageClosed || !producerEvidence.cleanup.runtimeClosed
-      || frame.routeFingerprint !== route.fingerprint || frame.documentFingerprint !== route.documentFingerprint || frame.width !== route.canvas.width || frame.height !== route.canvas.height
-      || frame.bytesPerRow !== route.canvas.width * 4 || frame.rgba8Srgb.byteLength !== route.canvas.width * route.canvas.height * 4 || sha256(frame.rgba8Srgb) !== frame.rgba8SrgbSha256) {
-      throw new Error("Strict SDR WebGPU producer evidence or retained frame is invalid.");
-    }
-    for (let offset = 3; offset < frame.rgba8Srgb.byteLength; offset += 4) if (frame.rgba8Srgb[offset] !== 255) throw new Error("Strict SDR WebGPU producer returned a non-opaque frame.");
+    const { frame, producerEvidence, producerEvidenceSha256 } = await produceStrictFrame(route, processJob, services);
     const frameCount = Math.ceil((route.canvas.durationMs / 1_000) * route.canvas.fps);
     const encode = linearSrgbSdrFinalEncodeCommand({ width: route.canvas.width, height: route.canvas.height, fps: route.canvas.fps, frameCount }, input.outputPath);
     active = await start(services, encode, processJob); outputStarted = true;
@@ -183,7 +243,7 @@ async function execute(input: Parameters<typeof executeLinearSrgbSdrFinal>[0], s
       documentFingerprint: route.documentFingerprint,
       preparationFingerprint: input.preparation.fingerprint,
       ffmpegContractSha256: LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT_SHA256,
-      producerEvidenceSha256: producerEvidence.fingerprint,
+      producerEvidenceSha256,
       producer: cloneProducerEvidence(producerEvidence),
       retainedFrame: { sha256: frame.rgba8SrgbSha256, byteLength: frame.rgba8Srgb.byteLength, repeatedFrames: frameCount, sequenceSha256: canonicalJsonSha256({ mode: "repeated-static", frameSha256: frame.rgba8SrgbSha256, frameCount }) },
       commands: { encodeSha256: commandHash(encode, input.outputPath, LINEAR_SRGB_SDR_FINAL_OUTPUT_TOKEN), probeSha256: commandHash(probeCommand, input.outputPath, LINEAR_SRGB_SDR_FINAL_OUTPUT_TOKEN), inverseSha256: inverseHash(inverse, input.outputPath, input.decodedPath) },
@@ -195,6 +255,7 @@ async function execute(input: Parameters<typeof executeLinearSrgbSdrFinal>[0], s
     succeeded = true;
     return { ok: true, privateOutputPath: input.outputPath, evidence: freeze({ ...base, fingerprint: canonicalJsonSha256(base) }) };
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
     return input?.job?.signal?.aborted
       ? { ok: false, code: "linear_srgb_sdr_final_cancelled", message: "Strict linear-sRGB SDR final execution was cancelled before private verification completed." }
       : { ok: false, code: outputStarted ? "linear_srgb_sdr_final_failed" : "linear_srgb_sdr_final_refused", message: safeMessage(error) };
@@ -211,7 +272,46 @@ function validateInput(input: Parameters<typeof executeLinearSrgbSdrFinal>[0]): 
   return input.preparation.route;
 }
 
+function beginStrictExecution(input: Parameters<typeof executeLinearSrgbSdrFinal>[0]): { readonly route: LinearSrgbSdrFinalRoute; readonly processJob: LinearSrgbSdrFinalJob } {
+  return { route: validateInput(input), processJob: strictProcessJob(input.job) };
+}
+
+async function produceStrictFrame(route: LinearSrgbSdrFinalRoute, processJob: LinearSrgbSdrFinalJob, services: Services) {
+  const producerResolution = services.createProducer(route);
+  if (!producerResolution.ok) throw new Error(producerResolution.refusal.message);
+  await revalidateStreamingFinalLaunch();
+  const frame = await producerResolution.producer.produce(processJob);
+  const producerEvidence = producerResolution.producer.evidence;
+  const producerEvidenceSha256 = producerEvidence.fingerprint;
+  if (!producerEvidenceSha256 || !validProducerEvidenceForRoute(route, producerEvidence) || producerEvidence.cleanup.state !== "complete" || !producerEvidence.cleanup.resourcesReleased || !producerEvidence.cleanup.pageClosed || !producerEvidence.cleanup.runtimeClosed
+    || frame.routeFingerprint !== route.fingerprint || frame.documentFingerprint !== route.documentFingerprint || frame.width !== route.canvas.width || frame.height !== route.canvas.height
+    || frame.bytesPerRow !== route.canvas.width * 4 || frame.rgba8Srgb.byteLength !== route.canvas.width * route.canvas.height * 4 || sha256(frame.rgba8Srgb) !== frame.rgba8SrgbSha256) {
+    throw new Error("Strict SDR WebGPU producer evidence or retained frame is invalid.");
+  }
+  for (let offset = 3; offset < frame.rgba8Srgb.byteLength; offset += 4) if (frame.rgba8Srgb[offset] !== 255) throw new Error("Strict SDR WebGPU producer returned a non-opaque frame.");
+  return { frame, producerEvidence, producerEvidenceSha256 };
+}
+
 function validPreparation(value: LinearSrgbSdrFinalPreparation): boolean { if (!value || !Object.isFrozen(value) || value.schema !== LINEAR_SRGB_SDR_FINAL_PREPARATION_SCHEMA || !Object.isFrozen(value.route) || !Object.isFrozen(value.ffmpeg)) return false; const { fingerprint, ...base } = value; return /^[a-f0-9]{64}$/u.test(fingerprint) && fingerprint === canonicalJsonSha256(base); }
+function validProducerEvidenceForRoute(route: LinearSrgbSdrFinalRoute, evidence: LinearSrgbSdrFinalWebGpuProducerEvidence): boolean {
+  const pipeline = evidence.pipeline;
+  if (pipeline.schema !== LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE_SCHEMA
+    || pipeline.implementationSha256 !== LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.implementationSha256
+    || pipeline.workingTarget !== "rgba16float" || pipeline.publicationTarget !== "rgba8unorm" || pipeline.publicationUsage !== "COPY_SRC"
+    || pipeline.composition !== "premultiplied-linear-srgb-normal-source-over" || pipeline.frameBoundary !== "straight-srgb-rgba8"
+    || canonicalJsonSha256(pipeline.publicationDither) !== canonicalJsonSha256(LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER)) return false;
+  const needsScreen = route.rects.some((rect) => rect.blendMode === "screen");
+  const screen = evidence.screenPipeline;
+  if (!needsScreen) return screen === undefined;
+  return !!screen
+    && screen.schema === LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE_SCHEMA
+    && screen.implementationSha256 === LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE.implementationSha256
+    && screen.workingTarget === "rgba16float"
+    && screen.publicationTarget === "rgba8unorm"
+    && screen.publicationUsage === "COPY_SRC"
+    && screen.composition === "premultiplied-linear-srgb-screen"
+    && screen.frameBoundary === "straight-srgb-rgba8";
+}
 function validJob(value: LinearSrgbSdrFinalJob): boolean { return value?.admission === "pre-acquired" && value.signal instanceof AbortSignal && typeof value.scratchRoot === "string" && value.scratchRoot.length > 0 && Number.isSafeInteger(value.maxProcessTreeRssBytes) && value.maxProcessTreeRssBytes >= 64 * 1024 * 1024 && typeof value.watchProcess === "function" && typeof value.reportProcessContainment === "function"; }
 function strictProcessJob(job: LinearSrgbSdrFinalJob): LinearSrgbSdrFinalJob {
   let containmentFingerprint: string | undefined;
@@ -232,7 +332,10 @@ function strictProcessJob(job: LinearSrgbSdrFinalJob): LinearSrgbSdrFinalJob {
     },
   };
 }
-async function start(services: Services, command: FfmpegCommand, job: LinearSrgbSdrFinalJob): Promise<StreamingFfmpegProcess> { return await services.startProcess({ command, signal: job.signal, scratchRoot: job.scratchRoot, maxProcessTreeRssBytes: job.maxProcessTreeRssBytes, watchProcess: job.watchProcess, reportProcessContainment: job.reportProcessContainment }); }
+async function start(services: Services, command: FfmpegCommand, job: LinearSrgbSdrFinalJob): Promise<StreamingFfmpegProcess> {
+  await revalidateStreamingFinalLaunch();
+  return await services.startProcess({ command, signal: job.signal, scratchRoot: job.scratchRoot, maxProcessTreeRssBytes: job.maxProcessTreeRssBytes, watchProcess: job.watchProcess, reportProcessContainment: job.reportProcessContainment });
+}
 function assertAck(value: { backpressured: boolean; bufferedInputBytes: number; inputHighWaterMarkBytes: number }): void { if (typeof value.backpressured !== "boolean" || !integer(value.bufferedInputBytes, 0, 64 * 1024 * 1024) || !integer(value.inputHighWaterMarkBytes, 1, 64 * 1024 * 1024)) throw new Error("Strict SDR encoder returned an invalid bounded write acknowledgement."); }
 async function assertAbsentPrivateChild(root: string, path: string): Promise<void> { const base = resolve(root), child = resolve(path), relation = relative(base, child); if (!relation || relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation)) throw new Error("Strict SDR private artifact escaped the admitted scratch root."); await assertAbsent(child); }
 async function assertAbsent(path: string): Promise<void> { await lstat(path).then(() => { throw new Error("Strict SDR private artifact already exists."); }, (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; }); }

@@ -22,10 +22,9 @@ const EXPECTED_RANGES = [
 ] as const;
 
 /**
- * Source and accepted-native fixture preflight. `loadMotionPackage` intentionally owns stable-file/output
- * topology, which the managed WSL sandbox does not grant to tests. Read package files directly
- * here so schema, semantic, shader, static-plan, and exact-time plan evidence remain testable
- * without a CLI output root or renderer launch; native segmented evidence is documented separately.
+ * Source fixture preflight reads package files directly to test schema, semantic, shader,
+ * static-plan, and exact-time plan behavior without requiring an output root or renderer launch.
+ * `loadMotionPackage` separately enforces stable-file/output topology.
  */
 describe("Tideglass Almanac V25-B2 restricted-shader hybrid source fixture", () => {
   it("keeps one bounded hybrid surface stable through all four intended 90-frame arcs", async () => {
@@ -39,7 +38,7 @@ describe("Tideglass Almanac V25-B2 restricted-shader hybrid source fixture", () 
     expect(rawManifest.metadata).toMatchObject({
       hybridSurface: "one-isolated-restricted-glsl-texture",
       segmentFrames: 90,
-      acceptance: "native-qualified-restricted-glsl-resume-cold-replay-accepted"
+      verification: "native-render-and-replay-required"
     });
     expect(pkg.motion).toMatchObject({ durationMs: 12_000, fps: 30, width: 1_920, height: 1_080 });
     const frameCount = pkg.motion.durationMs * pkg.motion.fps / 1_000;

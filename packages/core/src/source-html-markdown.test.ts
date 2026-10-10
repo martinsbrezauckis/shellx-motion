@@ -133,6 +133,17 @@ describe("fetched HTML to Markdown", () => {
     }
   });
 
+  it("keeps anchor fallback when later hrefs are empty or unterminated", () => {
+    const cases = [
+      '<a href="first" href="">label</a>',
+      '<a href="first" href="" href="">label</a>',
+      '<a href="first" href="unterminated>label</a>',
+      '<a href="first" href="second>still" >label</a>',
+      '<a href="first" data-href="second">label</a>'
+    ];
+    for (const html of cases) expect(htmlToMarkdown(html), html).toBe(legacyHtmlToMarkdown(html));
+  });
+
   it("converts 815 KB of never-closed list items without stalling", () => {
     // 14.7 s before the rewrite: every `<li>` re-scanned the rest of the document for a `</li>`.
     const bomb = `<html><body><ul>${"<li>x".repeat(163_000)}</ul></body></html>`;
@@ -209,5 +220,18 @@ describe("anchor pass cost", () => {
     const small = Math.max(timeFor(unit, 20_000), 1);
     const large = timeFor(unit, 80_000);
     expect(large).toBeLessThan(small * 9);
+  });
+
+  it("grows near-linearly when many empty href openers share one tag terminator", () => {
+    const timeForSharedTerminator = (count: number): number => {
+      const html = '<a href=""'.repeat(count) + '>';
+      const started = performance.now();
+      htmlToMarkdown(html);
+      return performance.now() - started;
+    };
+    timeForSharedTerminator(500);
+    const small = Math.max(timeForSharedTerminator(2_000), 1);
+    const large = timeForSharedTerminator(8_000);
+    expect(large, `2k: ${small.toFixed(1)} ms; 8k: ${large.toFixed(1)} ms`).toBeLessThan(small * 9);
   });
 });

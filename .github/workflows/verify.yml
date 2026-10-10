@@ -62,7 +62,7 @@ jobs:
       # Checks the repository-owned CI invariants that a YAML syntax checker cannot express:
       # immutable action identities, least-privilege jobs, host coverage, and no PR-target trigger.
       - name: CI configuration contract
-        run: node scripts/ci-workflow-contract.mjs
+        run: node scripts/public/ci-workflow-contract.mjs
 
       # No NUL bytes, one job status vocabulary, and consistent shipping imports and determinism.
       - name: Source hygiene
@@ -74,7 +74,7 @@ jobs:
       # That is deliberate on `pull_request` too, forks included, because a fork PR editing the README
       # is exactly the change this gate exists to check. It is safe to run on untrusted text only
       # because the fence line must first parse into an argv of inert tokens
-      # (scripts/readme-command-tokenize.mjs), and the only program ever executed is `pnpm` running a
+      # (scripts/public/readme-command-tokenize.mjs), and the only program ever executed is `pnpm` running a
       # script this repository declares. Before that fix the raw line went to a shell after a
       # prefix-only check, and a README fence was arbitrary code execution on this runner. If that
       # tokeniser is ever relaxed, this step stops being safe here — narrow the trigger, do not

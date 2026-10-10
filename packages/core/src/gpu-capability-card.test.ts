@@ -38,7 +38,7 @@ describe("GPU capability card", () => {
     expect(card.weaknesses.join(" ")).toContain("visual-only");
     expect(card.weaknesses.join(" ")).toContain("32 entries and 128 MiB");
     expect(card.weaknesses.join(" ")).toContain("64 MiB of in-flight RGBA");
-    expect(card.weaknesses.join(" ")).toContain("Native preview pixels, resource bounds, and cleanup require fresh host verification");
+    expect(card.weaknesses.join(" ")).toContain("Source checks do not establish native pixels");
     expect(card.weaknesses.join(" ")).toContain("GPU post-render identity");
     expect(card.weaknesses.join(" ")).toContain("fixed image/video threshold, spill, and bounded matte-cleanup passes");
     expect(card.weaknesses.join(" ")).toContain("roto masks are refused");
@@ -49,9 +49,9 @@ describe("GPU capability card", () => {
     expect(card.weaknesses.join(" ")).toContain("not arbitrary compute");
     expect(card.weaknesses.join(" ")).toContain("arbitrary WGSL");
     expect(card.weaknesses.join(" ")).toContain("host-owned segmented delivery");
-    expect(card.weaknesses.join(" ")).toContain("V25-B2 restricted-GLSL interruption and replay require fresh host verification");
+    expect(card.weaknesses.join(" ")).toContain("V25-B2 restricted-GLSL interrupted-resume and cold replay require fresh host verification");
     expect(card.strengths.join(" ")).toContain("human-installed governed local afterimage modules");
-    expect(card.weaknesses.join(" ")).toContain("Native module execution and replay require fresh host verification");
+    expect(card.weaknesses.join(" ")).toContain("Native module execution, final pixels, replay, and cleanup require fresh host verification");
     expect(card.weaknesses.join(" ")).toContain("not package WGSL, JavaScript, native code");
     expect(card.weaknesses.join(" ")).toContain("target preview, output png-frame");
     expect(card.weaknesses.join(" ")).toContain("4 scene layers, 32 objects, 8192 mesh vertices, 49152 mesh indices, 64 tracks, 2048 keys, and 256 frame work units");

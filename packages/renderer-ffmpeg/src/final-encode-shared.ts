@@ -23,6 +23,7 @@ import type {
   ProbeMediaResult
 } from "./index.js";
 import { summarizeFfmpegDiagnostic } from "./ffmpeg-process-control.js";
+import { isStreamingFinalLineageRevalidationFailure } from "./streaming-final-lineage-revalidation.js";
 
 export function resolveFinalAudioInputs(input: {
   audioTracks?: FfmpegAudioInput[];
@@ -175,6 +176,7 @@ export async function measureFinalLoudnessInputs(
         note = "Loudness measurement incomplete; applied single-pass loudnorm.";
       }
     } catch (error) {
+      if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
       const diagnostic = summarizeFfmpegDiagnostic(error instanceof Error ? error.message : String(error))
         || "measurement did not provide a diagnostic";
       note = `Loudness measurement failed (${diagnostic}); applied single-pass loudnorm.`;
@@ -206,7 +208,8 @@ export async function measureFinalProgramLoudness(
       truePeakDbtp: level.truePeakDbtp,
       lra: level.loudnessRangeLu
     };
-  } catch {
+  } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
     return null;
   }
 }

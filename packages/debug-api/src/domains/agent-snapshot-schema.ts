@@ -62,7 +62,12 @@ export const AGENT_SNAPSHOT_SCHEMA_DOCUMENT: JsonSchemaDocument = {
     receipt: closed(["id", "operation", "status", "createdAt"], { id: text(MAX_AGENT_SNAPSHOT_ID_SCALARS), operation: text(MAX_AGENT_SNAPSHOT_OPERATION_SCALARS), status: { enum: ["passed", "failed", "warning", "not_run", "other"] }, createdAt: text(MAX_AGENT_SNAPSHOT_TIMESTAMP_SCALARS), packageId: text(MAX_AGENT_SNAPSHOT_ID_SCALARS), lane: text(64) }),
     receiptCounts: closed(["passed", "failed", "warning", "notRun", "other"], { passed: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), failed: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), warning: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), notRun: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), other: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES) }),
     receipts: closed(["count", "countExact", "statusCounts", "statusCountsExact", "recent"], { count: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), countExact: bool(), statusCounts: ref("receiptCounts"), statusCountsExact: bool(), recent: list(MAX_AGENT_SNAPSHOT_RECEIPTS, ref("receipt")) }),
-    job: closed(["id", "state", "lifecycle", "operation", "lane", "createdAtMs", "warningCount"], { id: text(MAX_AGENT_SNAPSHOT_ID_SCALARS), state: { enum: ["pending", "running", "succeeded", "failed", "cancelled", "skipped"] }, lifecycle: { enum: ["pending", "running", "ended"] }, operation: text(MAX_AGENT_SNAPSHOT_OPERATION_SCALARS), lane: text(64), outcome: { enum: ["succeeded", "failed", "cancelled", "skipped"] }, createdAtMs: integer(), pollAfterMs: integer(), warningCount: integer() }),
+    job: closed(["id", "state", "lifecycle", "operation", "lane", "createdAtMs", "warningCount"], { id: text(MAX_AGENT_SNAPSHOT_ID_SCALARS), state: { enum: ["pending", "running", "succeeded", "failed", "cancelled", "skipped"] }, lifecycle: { enum: ["pending", "running", "ended"] }, operation: text(MAX_AGENT_SNAPSHOT_OPERATION_SCALARS), lane: text(64), outcome: { enum: ["succeeded", "failed", "cancelled", "skipped"] }, committed: { const: true }, createdAtMs: integer(), pollAfterMs: integer(), warningCount: integer() }, {
+      allOf: [{
+        if: { required: ["committed"] },
+        then: { required: ["outcome"], properties: { lifecycle: { const: "ended" }, outcome: { const: "failed" }, state: { const: "failed" } } }
+      }]
+    }),
     jobs: closed(["count", "countExact", "recent"], { count: integer(MAX_AGENT_SNAPSHOT_JOB_COUNT), countExact: bool(), recent: list(MAX_AGENT_SNAPSHOT_JOBS, ref("job")) }),
     warning: closed(["source", "message"], { source: { enum: ["package", "timeline", "receipts", "jobs"] }, message: text(MAX_AGENT_SNAPSHOT_WARNING_SCALARS) }),
     countTruncation: closed(["omitted", "exact"], { omitted: integer(MAX_AGENT_SNAPSHOT_RECEIPT_DISCOVERY_ENTRIES), exact: bool() }),
@@ -73,6 +78,6 @@ export const AGENT_SNAPSHOT_SCHEMA_DOCUMENT: JsonSchemaDocument = {
 function bool(): JsonSchemaDocument { return { type: "boolean" }; }
 function ref(name: string): JsonSchemaDocument { return { $ref: `#/$defs/${name}` }; }
 function list(maxItems: number, items: JsonSchemaDocument): JsonSchemaDocument { return { type: "array", maxItems, items }; }
-function closed(required: string[], properties: Record<string, JsonSchemaDocument>): JsonSchemaDocument {
-  return { type: "object", required, additionalProperties: false, properties };
+function closed(required: string[], properties: Record<string, JsonSchemaDocument>, constraints: Record<string, unknown> = {}): JsonSchemaDocument {
+  return { type: "object", required, additionalProperties: false, properties, ...constraints };
 }

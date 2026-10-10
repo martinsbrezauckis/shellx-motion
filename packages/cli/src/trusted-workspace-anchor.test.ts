@@ -39,12 +39,12 @@ describe("CLI trusted workspace anchor", () => {
     const result = await runCli([
       "debug", "package-patch", "--tier", "edit_motion", "--trusted-local-tier",
       "--package", source, "--out", outDir, "--receipts-root", receiptsRoot,
-      "--patch-json", '[{"op":"replace","path":"/layers/0/text","value":"Managed WSL"}]'
+      "--patch-json", '[{"op":"replace","path":"/layers/0/text","value":"Example Text"}]'
     ]);
 
     expect(result).toMatchObject({ ok: true, result: { packageDir: outDir } });
     expect(await readFile(join(source, "motion.json"), "utf8")).toContain('"text": "Anna"');
-    expect(await readFile(join(outDir, "motion.json"), "utf8")).toContain('"text": "Managed WSL"');
+    expect(await readFile(join(outDir, "motion.json"), "utf8")).toContain('"text": "Example Text"');
     expect(await readFile(join(outDir, "receipts", "package-patch.receipt.json"), "utf8")).toContain('"operation": "package.patch"');
   });
 

@@ -3,11 +3,8 @@
  *
  * Role: a Motion render is two lanes. The browser lane draws frames; the ffmpeg lane encodes them
  * and muxes audio. An audio layer therefore reaches the frame lane, is correctly not drawn, and is
- * handled downstream — that is the design, not a defect. The frame renderer nonetheless recorded it
- * as an ordinary receipt warning, and because a frame receipt's status is derived from
- * `warnings.length`, a completely successful audio render came out as `status: "warning"`. The
- * `audio-launch` product-pack family failed its release proof on exactly that (the success-status invariant:
- * "status should describe the final deliverable, not an expected division of work between lanes").
+ * handled downstream. This expected handoff must not become an ordinary receipt warning:
+ * `warnings.length` drives frame receipt status, while final delivery decides whether audio arrived.
  *
  * So this module splits the two things the layer walk can discover:
  *   - `warnings` — the lane could not do something it was supposed to do. Derives status, as before.

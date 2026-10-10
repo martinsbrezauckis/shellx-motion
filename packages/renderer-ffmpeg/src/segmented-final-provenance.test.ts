@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   agentScriptExecutionEvidenceForDataOnly,
@@ -6,6 +7,7 @@ import {
   type MotionPackage
 } from "@shellx-motion/core";
 import { withSegmentedFinalCliPublication } from "./segmented-final-internal/segmented-final-cli-publication.js";
+import { revalidateStreamingFinalLaunch, withStreamingFinalLaunchRevalidation } from "./streaming-final-lineage-revalidation.js";
 
 const renderInternal = vi.fn();
 vi.mock("./segmented-final-internal/segmented-final-adapter.js", () => ({
@@ -14,6 +16,19 @@ vi.mock("./segmented-final-internal/segmented-final-adapter.js", () => ({
 
 describe("public segmented final producer provenance", () => {
   beforeEach(() => renderInternal.mockReset());
+
+  it("keeps the V1 coordinator hook out of the render request, package barrel, and published exports", async () => {
+    const [source, index, packageJson] = await Promise.all([
+      readFile(new URL("./segmented-final.ts", import.meta.url), "utf8"),
+      readFile(new URL("./index.ts", import.meta.url), "utf8"),
+      readFile(new URL("../package.json", import.meta.url), "utf8")
+    ]);
+    const request = source.match(/export interface RenderSegmentedFinalInput \{[\s\S]*?\n\}/u)?.[0] ?? "";
+
+    expect(request).not.toMatch(/revalidate|lineage|render-plan@2|permit|token|fingerprint/u);
+    expect(index).not.toMatch(/streaming-final-lineage-revalidation|withStreamingFinalLaunchRevalidation/u);
+    expect(packageJson).not.toMatch(/streaming-final-lineage-revalidation/u);
+  });
 
   it("publishes complete data-only producer evidence at the top-level receipt", async () => {
     const pkg = motionPackage([]);
@@ -59,6 +74,98 @@ describe("public segmented final producer provenance", () => {
       store: { intent: "resume" }, producer: { frameLane: "browser", scriptExecution }
     }));
     expect(result).toMatchObject({ ok: true, receipt: { output: { scriptExecution } } });
+  });
+
+  it("keeps the coordinator fence internal and refuses before the active-script session or internal renderer starts", async () => {
+    const pkg = motionPackage([{ id: "agent-entry", type: "html", source: "agent-entry.html", startMs: 0, durationMs: 1_000 }]);
+    const sessionFactory = vi.fn(async () => ({ scriptExecution: activeEvidence(), close: async () => undefined }));
+    const { renderSegmentedFinal } = await import("./segmented-final.js");
+
+    const result = await renderSegmentedFinal({
+      pkg,
+      frameLane: "browser",
+      outputPath: "/private/final.mp4",
+      segmented: { segmentFrames: 1 },
+      toolPolicy: { browser: { activeScriptSessionAvailable: true, sessionFactory: sessionFactory as never } }
+    }, {
+      revalidateLineage: async () => { throw new Error("stable lineage changed before segmented script session"); }
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "render_failed", retryable: false, message: "stable lineage changed before segmented script session" } });
+    expect(sessionFactory).not.toHaveBeenCalled();
+    expect(renderInternal).not.toHaveBeenCalled();
+  });
+
+  it("maps a sentinel retained through aggregate cleanup causes to non-retryable V1 render_failed", async () => {
+    const pkg = motionPackage([]);
+    let sentinel: unknown;
+    try {
+      await withStreamingFinalLaunchRevalidation(
+        async () => { throw new Error("stable lineage changed before final segmented readback"); },
+        async () => await revalidateStreamingFinalLaunch(),
+      );
+    } catch (error) {
+      sentinel = error;
+    }
+    renderInternal.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "segmented_final_failed",
+        evidence: { phase: "finalize" },
+        primaryCause: new AggregateError([new Error("cleanup failed"), sentinel], "cleanup retained the launch fence"),
+        cleanupCauses: []
+      }
+    });
+    const { renderSegmentedFinal } = await import("./segmented-final.js");
+
+    const result = await renderSegmentedFinal({
+      pkg,
+      frameLane: "browser",
+      outputPath: "/private/final.mp4",
+      segmented: { segmentFrames: 1 }
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "render_failed", retryable: false, message: "stable lineage changed before final segmented readback" } });
+  });
+
+  it("preserves a nested sentinel without invoking hostile aggregate members during failure normalization", async () => {
+    const pkg = motionPackage([]);
+    let sentinel: unknown;
+    try {
+      await withStreamingFinalLaunchRevalidation(
+        async () => { throw new Error("stable lineage changed under cleanup wrapping"); },
+        async () => await revalidateStreamingFinalLaunch(),
+      );
+    } catch (error) {
+      sentinel = error;
+    }
+    let prototypeReads = 0;
+    let propertyReads = 0;
+    const hostile = new Proxy(new Error("hostile retained cleanup member"), {
+      getPrototypeOf() { prototypeReads += 1; throw new Error("normalization must not inspect a hostile prototype"); },
+      get() { propertyReads += 1; throw new Error("normalization must not invoke a hostile getter"); }
+    });
+    renderInternal.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "segmented_final_failed",
+        evidence: { phase: "finalize" },
+        primaryCause: new AggregateError([hostile, sentinel], "cleanup retained the launch fence"),
+        cleanupCauses: []
+      }
+    });
+    const { renderSegmentedFinal } = await import("./segmented-final.js");
+
+    const result = await renderSegmentedFinal({
+      pkg,
+      frameLane: "browser",
+      outputPath: "/private/final.mp4",
+      segmented: { segmentFrames: 1 }
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "render_failed", retryable: false, message: "stable lineage changed under cleanup wrapping" } });
+    expect(prototypeReads).toBeGreaterThan(0);
+    expect(propertyReads).toBe(0);
   });
 
   it("does not accept caller GPU identity or range proof: it sends only an internal admitted-host request", async () => {

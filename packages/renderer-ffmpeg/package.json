@@ -1,11 +1,12 @@
 {
   "name": "@shellx-motion/renderer-ffmpeg",
-  "version": "0.2.66",
+  "version": "0.2.67",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./frame-lane-warnings": "./src/frame-lane-warnings.ts",
+    "./unadopted/descriptor-bound-tool-execution": "./src/unadopted/descriptor-bound-tool-execution.ts",
     "./internal/physics-visual-installed-final-video-policy": "./src/internal/physics-visual-installed-final-video-policy.ts",
     "./internal/segmented-final-cli-publication": "./src/segmented-final-internal/segmented-final-cli-publication.ts",
     "./internal/scene3d-gltf-pbr-hdr10-direct-final": "./src/hdr10-pq-direct-final.ts",
@@ -38,7 +39,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build.mjs --package @shellx-motion/renderer-ffmpeg",
+    "build": "node ../../scripts/public/build.mjs --package @shellx-motion/renderer-ffmpeg",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   },

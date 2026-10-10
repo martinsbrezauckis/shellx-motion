@@ -2,15 +2,8 @@
 import { dirname } from "node:path";
 import { packageAudioEncodeInput, resolvePackageAudioInputs } from "@shellx-motion/connectors";
 import {
-  acquireDerivedOutputPublication,
-  activeScriptLayers,
-  bindFinalRenderReceiptLineage,
-  isPublicationCommitUncertain,
-  type MotionPackage,
-  type OperationReceipt,
-  type PackageRenderLineage,
-  type PublicationCommitUncertainEvidence,
-  type ReceiptActor
+  acquireDerivedOutputPublication, activeScriptLayers, bindFinalRenderReceiptLineage, isPublicationCommitUncertain,
+  type MotionPackage, type OperationReceipt, type PackageRenderLineage, type PublicationCommitUncertainEvidence, type ReceiptActor
 } from "@shellx-motion/core";
 import {
   resolveGpuEffectModuleStaticPlanForUse,
@@ -21,7 +14,6 @@ import {
   checkFfmpeg,
   planLinearSrgbSdrFinalRender,
   planStreamingFinalCommand,
-  preflightLinearSrgbSdrFinalRender,
   preliminaryGpuAudio,
   renderStreamingFinal,
   type FfmpegExportPreset,
@@ -33,6 +25,7 @@ import {
 } from "@shellx-motion/renderer-ffmpeg";
 import type { MotionDebugResult } from "../command-registry.js";
 import { normalizePublicationUncertainty } from "../publication-uncertainty.js";
+import { coordinatedLineageRevalidationFailure, type CoordinatedLineageRevalidation } from "./coordinated-lineage-revalidation.js";
 
 export interface StreamedFinalDebugContext {
   ffmpegRunner?: FfmpegRunner;
@@ -70,8 +63,10 @@ export async function runStreamedFinalDebugRender(input: {
   /** Batch-only delivered-media quality gate. It mutates the receipt before any success receipt is persisted. */
   evaluateDeliveredQuality?: (receipt: OperationReceipt) => Promise<{ qualityCheck: MotionDebugResult; failure?: MotionDebugResult }>;
   persistReceipt(receiptsRoot: string, receipt: OperationReceipt, actor?: ReceiptActor): Promise<string>;
+  /** Coordinator-only source guard; never caller request data. */
+  revalidateLineage?: CoordinatedLineageRevalidation;
 }): Promise<MotionDebugResult> {
-  const { pkg, lineage, outputPath, frameLane, preset, quality, receiptsRoot, warnings, transport, context, dryRun, evaluateDeliveredQuality, persistReceipt } = input;
+  const { pkg, lineage, outputPath, frameLane, preset, quality, receiptsRoot, warnings, transport, context, dryRun, evaluateDeliveredQuality, persistReceipt, revalidateLineage } = input;
   const audioTracks = resolvePackageAudioInputs(pkg);
   const audioMaster = packageAudioEncodeInput(pkg).audioMaster;
   const packageAudio = {
@@ -156,18 +151,12 @@ export async function runStreamedFinalDebugRender(input: {
     ...(context.callerId ? { callerId: context.callerId } : {}),
     ...(strictColorPlan.kind === "strict" ? {} : { toolPolicy: streamedFinalToolPolicy(context, frameLane) })
   };
-  const strictColorPreflight = await preflightLinearSrgbSdrFinalRender(streamingInput);
-  if (strictColorPreflight.kind === "refused") return { ok: false, error: strictColorPreflight.error, warnings: [] };
-  if (strictColorPreflight.kind === "strict" && context.streamingFinalRenderer) {
+  if (strictColorPlan.kind === "strict" && context.streamingFinalRenderer) {
     return { ok: false, error: { code: "linear_srgb_sdr_final_unsupported", message: "linear-srgb-sdr@1 requires Motion's fixed WebGPU and FFmpeg executor; an injected streamed-final renderer is refused before output publication." }, warnings: [] };
   }
-  const preparedStreamingInput: RenderStreamingFinalInput = {
-    ...streamingInput,
-    ...(strictColorPreflight.kind === "strict" ? { linearSrgbSdrFinalPreparation: strictColorPreflight.preparation } : {})
-  };
   const streamed = context.streamingFinalRenderer
-    ? await runInjectedStreamingFinal(context.streamingFinalRenderer, preparedStreamingInput, transport, context.ffmpegRunner)
-    : await runDefaultStreamingFinal(preparedStreamingInput, transport, context.ffmpegRunner);
+    ? await runInjectedStreamingFinal(context.streamingFinalRenderer, streamingInput, transport, context.ffmpegRunner, revalidateLineage)
+    : await runDefaultStreamingFinal(streamingInput, transport, context.ffmpegRunner, revalidateLineage);
   if (!streamed.ok) {
     const uncertainty = normalizePublicationUncertainty(streamed.error);
     return {
@@ -183,6 +172,8 @@ export async function runStreamedFinalDebugRender(input: {
 
   const receipt = streamed.receipt;
   await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
+  const beforeQualityReadback = evaluateDeliveredQuality ? await coordinatedLineageRevalidationFailure(revalidateLineage) : undefined;
+  if (beforeQualityReadback) return { ok: false, error: beforeQualityReadback, result: { lane: "ffmpeg", frameLane, preset, packageId: pkg.manifest.id, outputPath, frameTransport: planned.transport }, warnings };
   const qualityEvaluation = evaluateDeliveredQuality ? await evaluateDeliveredQuality(receipt) : undefined;
   if (qualityEvaluation?.failure) {
     await bindFinalRenderReceiptLineage(receipt, pkg, lineage);
@@ -257,9 +248,14 @@ async function missingGpuModuleAuthorityFailure(
 async function runDefaultStreamingFinal(
   input: RenderStreamingFinalInput,
   transport: Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>,
-  runner: FfmpegRunner | undefined
+  runner: FfmpegRunner | undefined,
+  revalidateLineage: CoordinatedLineageRevalidation | undefined,
 ): Promise<RenderStreamingFinalResult> {
-  if (input.linearSrgbSdrFinalPreparation) return await renderStreamingFinal(input);
+  if (planLinearSrgbSdrFinalRender(input).kind === "strict") {
+    return await renderStreamingFinal(input, { revalidateLineage });
+  }
+  const beforeHealth = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforeHealth) return { ok: false, transport, error: beforeHealth };
   const health = await checkFfmpeg({ runner });
   if (!health.ok) return { ok: false, transport, error: health.error };
   return await renderStreamingFinal({
@@ -268,7 +264,7 @@ async function runDefaultStreamingFinal(
       ...input.toolPolicy,
       ...(health.version ? { ffmpegVersion: health.version } : {})
     }
-  });
+  }, { revalidateLineage });
 }
 
 /** Host renderer seams write only to the same private publication stage as the default adapter. */
@@ -276,8 +272,15 @@ async function runInjectedStreamingFinal(
   renderer: NonNullable<StreamedFinalDebugContext["streamingFinalRenderer"]>,
   input: RenderStreamingFinalInput,
   transport: Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>,
-  runner: FfmpegRunner | undefined
+  runner: FfmpegRunner | undefined,
+  revalidateLineage: CoordinatedLineageRevalidation | undefined,
 ): Promise<RenderStreamingFinalResult> {
+  const beforeHealth = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforeHealth) return { ok: false, transport, error: beforeHealth };
+  const health = await checkFfmpeg({ runner });
+  if (!health.ok) return { ok: false, transport, error: health.error };
+  const beforeReservation = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforeReservation) return { ok: false, transport, error: beforeReservation };
   let publication: Awaited<ReturnType<typeof acquireDerivedOutputPublication>>;
   try {
     publication = await acquireDerivedOutputPublication({ outputPath: input.outputPath, kind: "file" });
@@ -286,8 +289,8 @@ async function runInjectedStreamingFinal(
   }
   let published = false;
   try {
-    const health = await checkFfmpeg({ runner });
-    if (!health.ok) return { ok: false, transport, error: health.error };
+    const beforeRenderer = await coordinatedLineageRevalidationFailure(revalidateLineage);
+    if (beforeRenderer) return { ok: false, transport, error: beforeRenderer };
     const staged = await renderer({
       ...input,
       outputPath: publication.stagingPath,
@@ -298,6 +301,8 @@ async function runInjectedStreamingFinal(
       }
     });
     if (!staged.ok) return staged;
+    const beforePublication = await coordinatedLineageRevalidationFailure(revalidateLineage);
+    if (beforePublication) return { ok: false, transport, error: beforePublication };
     await publication.publishFile(await publication.verifyFile());
     published = true;
     return {

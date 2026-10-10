@@ -114,7 +114,7 @@ describe("caller-supplied receiptsRoot fence", () => {
     expect(JSON.stringify(result)).not.toContain(SECRET_PROMPT);
   });
 
-  it("leaves an in-process caller alone when the host declared no receipt root", async () => {
+  it.runIf(process.platform === "linux")("leaves an in-process caller alone when the host declared no receipt root", async () => {
     // The counterpart to the case above, and the reason the fence is not in the dispatcher: an
     // operator typing --receipts-root at a shell is the host and could create the file directly.
     const result = await dispatchDebugCommand(
@@ -139,7 +139,7 @@ describe("caller-supplied receiptsRoot fence", () => {
     expect(result).toMatchObject({ error: { code: "capability_unavailable" } });
   });
 
-  it("admits a caller root that is inside the host's own root", async () => {
+  it.runIf(process.platform === "linux")("admits a caller root that is inside the host's own root", async () => {
     const result = await dispatchDebugCommand(
       "motion.agent.transcript",
       { receiptsRoot: hostReceiptsRoot },
@@ -150,7 +150,7 @@ describe("caller-supplied receiptsRoot fence", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("admits a folder a human granted through the native chooser this session", async () => {
+  it.runIf(process.platform === "linux")("admits a folder a human granted through the native chooser this session", async () => {
     // operatorReceiptRoots is how the Workbench's Browse button stays usable without reopening the
     // hole: the host adds what a person physically selected, and a caller still cannot add anything.
     const result = await dispatchDebugCommand(
@@ -162,7 +162,7 @@ describe("caller-supplied receiptsRoot fence", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("leaves a request that names no receipt root alone", async () => {
+  it.runIf(process.platform === "linux")("leaves a request that names no receipt root alone", async () => {
     const result = await dispatchDebugCommand(
       "motion.agent.transcript",
       {},

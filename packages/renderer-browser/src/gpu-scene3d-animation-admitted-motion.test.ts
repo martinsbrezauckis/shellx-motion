@@ -9,13 +9,13 @@ import type { GpuFrameRenderSessionOpenResult } from "./gpu-frame-renderer";
 import { renderMotionGpuPreview } from "./gpu-points-preview";
 import type { GpuRuntimeEvidence } from "./gpu-runtime-types";
 
-describe("O6 Browser admitted Motion transport", () => {
-  it("uses the exact Core-admitted O6 snapshot for post-admission hashing, planning, and receipt evidence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-admitted-snapshot-"));
+describe("scene3d animation Browser admitted Motion transport", () => {
+  it("uses the exact Core-admitted scene3d animation snapshot for post-admission hashing, planning, and receipt evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-admitted-snapshot-"));
     const pkg = scenePackage(root), source = pkg.motion;
     const expectedMotionHash = createHash("sha256").update(core.canonicalJson(source)).digest("hex");
     let reads = 0;
-    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original O6 Motion must remain unread after admission"); } });
+    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original scene3d animation Motion must remain unread after admission"); } });
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication").mockImplementation(async ({ outputPath }) => ({
       stagingPath: `${outputPath}.staging`,
       async verifyFile() { const bytes = await readFile(`${outputPath}.staging`); return { sha256: createHash("sha256").update(bytes).digest("hex") }; },
@@ -35,34 +35,34 @@ describe("O6 Browser admitted Motion transport", () => {
     }
   });
 
-  it("re-admits transparent-proxy O6 Motion after draw and refuses a changed source before staging or receipt work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-admitted-stale-motion-"));
+  it("re-admits transparent-proxy scene3d animation Motion after draw and refuses a changed source before staging or receipt work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-admitted-stale-motion-"));
     const pkg = scenePackage(root), source = pkg.motion;
     let reads = 0;
-    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original O6 Motion must remain unread after admission"); } });
+    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original scene3d animation Motion must remain unread after admission"); } });
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication");
     try {
       const result = await renderMotionGpuPreview(pkg, {
         atMs: 500,
         outDir: join(root, "out"),
-        sessionOptions: { openRuntime: async () => fakeRuntime(() => { source.name = "mutated after O6 admission"; }) },
+        sessionOptions: { openRuntime: async () => fakeRuntime(() => { source.name = "mutated after scene3d animation admission"; }) },
       });
       expect(result).toMatchObject({ ok: false, error: { code: "gpu_resource_refused", message: expect.stringContaining("stale") } });
       expect({ reads }).toEqual({ reads: 0 });
       expect(publication).not.toHaveBeenCalled();
-      await expect(stat(join(root, "out", "pkg_o6_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, "out", "pkg_scene3d_animation_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       publication.mockRestore();
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("applies F0 to Core's O6 snapshot before resource, runtime, or output work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-admitted-color-pipeline-"));
+  it("applies F0 to Core's scene3d animation snapshot before resource, runtime, or output work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-admitted-color-pipeline-"));
     const pkg = scenePackage(root), source = pkg.motion;
     source.colorPipeline = { schema: "shellx-motion/color-pipeline@1", intent: "linear-srgb-sdr@1" };
     let reads = 0, prepared = 0, opened = 0;
-    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original O6 Motion must remain unread before F0 refusal"); } });
+    pkg.motion = new Proxy(source, { get() { reads += 1; throw new Error("original scene3d animation Motion must remain unread before F0 refusal"); } });
     try {
       const result = await renderMotionGpuPreview(pkg, {
         atMs: 500,
@@ -74,7 +74,7 @@ describe("O6 Browser admitted Motion transport", () => {
       });
       expect(result).toMatchObject({ ok: false, error: { code: "color_pipeline_unsupported" } });
       expect({ reads, prepared, opened }).toEqual({ reads: 0, prepared: 0, opened: 0 });
-      await expect(stat(join(root, "out", "pkg_o6_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, "out", "pkg_scene3d_animation_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -84,9 +84,9 @@ describe("O6 Browser admitted Motion transport", () => {
 function scenePackage(root: string): MotionPackage {
   return {
     root,
-    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_o6_scene", name: "O6 scene", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
+    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_scene3d_animation_scene", name: "Scene3D animation scene", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
     motion: {
-      schema: "shellx-motion/motion@1", id: "motion_o6_scene", name: "O6 scene", durationMs: 1_000, fps: 30, width: 16, height: 8,
+      schema: "shellx-motion/motion@1", id: "motion_scene3d_animation_scene", name: "Scene3D animation scene", durationMs: 1_000, fps: 30, width: 16, height: 8,
       assets: [], provenance: { sourceApp: "test", createdBy: "test" },
       layers: [{
         id: "world", type: "scene3d", startMs: 0, durationMs: 1_000,

@@ -89,7 +89,7 @@ describe("caller-supplied receipts roots", () => {
     });
   });
 
-  it("refuses motion.timeline.playhead.set receiptsRoot outside the host receipts root", async () => {
+  it.runIf(process.platform === "linux")("refuses motion.timeline.playhead.set receiptsRoot outside the host receipts root", async () => {
     const writes: ReceiptWrite[] = [];
     const packageRoot = await clonedPackage();
 

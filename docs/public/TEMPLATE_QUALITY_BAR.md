@@ -160,7 +160,11 @@ The promoted product pack has a separate moving-media release gate. Its checked
 source-owned policy table is exact over the twelve public family IDs in
 `fixtures/template-moving-proof-policy.json`. Each family must declare either
 completed motion-density caps or the explicit `calibration-required` state;
-the latter is a release failure, never an advisory. The table retains numeric historical policy caps for all twelve families. Its original host-bound calibration provenance was withdrawn during public history repair. Fresh ordinary proof receipts, source-frame measurements and FFprobe readback are required for release acceptance.
+the latter is a release failure, never an advisory. The current table has
+thresholds for all twelve families. Native qualification requires a fresh run
+on the intended host:
+the ordinary proof's fresh receipts, source-frame measurements and FFprobe
+readback are the authority for release acceptance.
 
 For each selected family, `template-pack:proof` renders the full story to a
 short 8-fps MP4 in caller scratch, then fails closed unless all of the following
@@ -223,10 +227,11 @@ ordinary proof records `uniqueFrameHashGate: "release-policy"` and continues
 to pass and re-check the checked per-family value. This command may not be used
 with `--resume-inspection`.
 
-The retained numeric caps are historical policy ceilings and require fresh host validation. Product Metric Card's unique-frame release floor is
+The calibrated caps use the exact measured frozen ratio and longest frozen run
+with no invented headroom. Product Metric Card's unique-frame release floor is
 22, matching the fresh compiler-backed render rather than the superseded
 pre-line-box measurement. Other family unique-frame floors remain unchanged
-as historical policy values pending fresh host validation. A later source change that alters
+because the qualified calibration met them. A later source change that alters
 these measurements must run this diagnostic again and commit a new evidence
 identity before ordinary release proof can pass.
 

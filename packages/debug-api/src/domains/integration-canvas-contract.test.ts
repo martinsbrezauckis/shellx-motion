@@ -1,8 +1,7 @@
 /**
  * Agent-facing contract for the Canvas import and for the validate verdict that follows it.
  *
- * Both behaviours pinned here were reproduced against the live MCP server by driving an external
- * agent blind during cross-host verification:
+ * These cases pin the public Canvas package and validation contracts:
  *
  *   Invalid layer kind — a fixture whose layers used `kind: "rect"` packaged cleanly, `motion.package.validate`
  *        answered `valid: true`, and preview and render then both refused it with "Lane browser does

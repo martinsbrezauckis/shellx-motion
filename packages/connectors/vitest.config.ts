@@ -16,7 +16,7 @@ export default defineConfig({
   test: {
     testTimeout: 20000,
     // Keeps rendered jobs out of the developer's real runtime directory — see
-    // scripts/vitest-setup-job-stores.ts.
-    setupFiles: ["../../scripts/vitest-setup-job-stores.ts"]
+    // scripts/public/vitest-setup-job-stores.ts.
+    setupFiles: ["../../scripts/public/vitest-setup-job-stores.ts"]
   }
 });

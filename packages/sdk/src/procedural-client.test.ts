@@ -133,8 +133,8 @@ describe("procedural SDK transport guards", () => {
   /**
    * A relationship is checked WITHOUT a document, so the layers and audio envelopes it names are
    * synthesized around it (`placeholderLayers` / `placeholderEnvelopes`). These three cases pin what
-   * a caller may be told about that invented half — all three were reproduced against the shipped
-   * code during cross-host verification before the attribution was added.
+   * a caller may be told about that invented half. The caller must not be told to edit
+   * fields that exist only in the synthesized context.
    */
   describe("relationship pre-flight against a placeholder document context", () => {
     const envelopeRelationship = (envelopeIds: string[]) => ({

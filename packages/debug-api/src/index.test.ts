@@ -318,7 +318,7 @@ describe("motion debug API", () => {
     expect(actionsRegistry).toMatchObject({
       schema: "shellx-motion/actions@1",
       actionSchema: "shellx-motion/action@1",
-      generatedBy: "scripts/generate-public-contracts.ts",
+      generatedBy: "scripts/public/generate-public-contracts.ts",
       actionCount: ACTIONS.length
     });
     expect(actionsRegistry.permissions).toEqual(["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"]);
@@ -328,7 +328,7 @@ describe("motion debug API", () => {
     expect(debugRegistry).toMatchObject({
       schema: "shellx-motion/debug-contracts@1",
       debugSchema: "shellx-motion/debug@1",
-      generatedBy: "scripts/generate-public-contracts.ts",
+      generatedBy: "scripts/public/generate-public-contracts.ts",
       commandCount: DEBUG_COMMAND_CONTRACTS.length
     });
     expect(debugRegistry.permissions).toEqual(["read_motion", "draft_motion", "render_motion", "edit_motion", "write_local", "push_remote"]);
@@ -1510,6 +1510,38 @@ describe("motion debug API", () => {
             expect.objectContaining({ role: "review_artifact", status: "available", mediaType: "video/mp4" })
           ])
         });
+        const portable = await dispatchDebugCommand(
+          "motion.review.html.bundle",
+          { packageRoot, outDir: join(tempRoot, "review-portable"), receiptsRoot },
+          { tier: "write_local", artifactRoots: [tempRoot], callerId: "test-operator",
+            crossCallerJobScope: true, stableReceiptStorePlatform: "darwin" }
+        );
+        expect(portable.ok).toBe(true);
+        if (portable.ok) {
+          expect(portable.visibleState).toMatchObject({
+            receiptCount: 1, copiedArtifactCount: 1, qualityGateCount: 1
+          });
+        }
+        const foreignReceipt = JSON.parse(await readFile(join(receiptsRoot, "render.receipt.json"), "utf8"));
+        foreignReceipt.id = "render-final-review-foreign";
+        foreignReceipt.output.callerId = "foreign-operator";
+        await writeFile(join(receiptsRoot, "foreign.receipt.json"), `${JSON.stringify(foreignReceipt)}\n`, "utf8");
+        const privateOutDir = join(tempRoot, "review-private");
+        const privateResult = await dispatchDebugCommand(
+          "motion.review.html.bundle",
+          { packageRoot, outDir: privateOutDir, receiptsRoot },
+          { tier: "write_local", artifactRoots: [tempRoot], callerId: "test-operator",
+            stableReceiptStorePlatform: "darwin" }
+        );
+        expect(privateResult.ok).toBe(true);
+        if (privateResult.ok) {
+          expect(privateResult.visibleState).toMatchObject({
+            receiptCount: 0, copiedArtifactCount: 0, qualityGateCount: 0
+          });
+          const privateHtml = await readFile(join(privateOutDir, "review-html-bundle.html"), "utf8");
+          expect(privateHtml).not.toContain("render.final");
+          expect(privateHtml).not.toContain("rendered_media-");
+        }
       }
     } finally {
       await rm(packageRoot, { recursive: true, force: true });
@@ -3492,12 +3524,19 @@ describe("motion debug API", () => {
           { id: "find", command: "motion.actions.find", args: { request: "" } },
           { id: "guide", command: "motion.actions.guide", args: { request: "" } },
           { id: "plan", command: "motion.actions.plan", args: { request: "" } },
-          { id: "run", command: "motion.prompt.run", args: { request: "" } },
+          { id: "agentPanel", command: "motion.agent.panel", args: {} },
           { id: "agentHealth", command: "motion.agent.health", args: {} }
         ],
+        promptProviderSelection: {
+          selectionRequired: true,
+          argument: "agentId",
+          promptCapableAgentIds: ["claude-code", "grok"],
+          candidateSource: "declared-built-in-candidates",
+          message: "Select agentId explicitly. Declared built-in prompt-capable candidates: claude-code, grok; host readiness is not checked here."
+        },
         suggestedActions: [
           { id: "plan", command: "motion.actions.plan", args: { request: "describe the Motion task" } },
-          { id: "runPrompt", command: "motion.prompt.run", args: { request: "describe the Motion task" } },
+          { id: "agentPanel", command: "motion.agent.panel", args: {} },
           { id: "agentHealth", command: "motion.agent.health", args: {} }
         ]
       });
@@ -3578,8 +3617,8 @@ describe("motion debug API", () => {
         adapterCount: 4,
         localCliCount: 4,
         cliSubscriptionCount: 4,
-        defaultAgentId: "codex",
-        promptFollowUpCount: 3,
+        selectionRequired: true,
+        promptFollowUpCount: 2,
         warningCount: 0
       });
       expect(result.result).toMatchObject({
@@ -3588,26 +3627,26 @@ describe("motion debug API", () => {
           adapters: 4,
           localCliAdapters: 4,
           cliSubscriptionAdapters: 4,
-          promptFollowUps: 3
+          promptFollowUps: 2
         },
         selectionPolicy: {
-          defaultAgentId: "codex",
+          promptCapableAgentIds: ["claude-code", "grok"],
+          candidateSource: "declared-built-in-candidates",
           selectedUnavailableFallback: "none",
-          defaultMode: "auto-local-cli"
+          defaultMode: "selection-required"
         },
         adapters: [
           {
             agentId: "codex",
             label: "Codex CLI",
-            default: true,
+            promptCapable: false,
             transport: "local-cli",
             billing: "cli-subscription",
             probe: { executable: "codex", args: ["--version"], shell: false },
             prompt: {
               executable: "codex",
               args: [
-                "exec", "--json", "--sandbox", "read-only", "--ask-for-approval", "never",
-                "--ephemeral"
+                "exec", "--json", "--sandbox", "read-only", "--ephemeral"
               ],
               shell: false,
               stdin: "prompt"
@@ -3621,6 +3660,7 @@ describe("motion debug API", () => {
           },
           expect.objectContaining({
             agentId: "claude-code",
+            promptCapable: true,
             prompt: expect.objectContaining({
               executable: "claude",
               args: [
@@ -3632,6 +3672,7 @@ describe("motion debug API", () => {
           }),
           expect.objectContaining({
             agentId: "grok",
+            promptCapable: true,
             prompt: expect.objectContaining({
               executable: "grok",
               args: [
@@ -3662,7 +3703,6 @@ describe("motion debug API", () => {
         },
         suggestedActions: [
           { id: "health", command: "motion.agent.health", args: {} },
-          { id: "run", command: "motion.prompt.run", args: { request: "" } },
           { id: "transcript", command: "motion.agent.transcript", args: { receiptsRoot: "" } }
         ],
         warnings: []
@@ -3980,7 +4020,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("refuses raw-prompt retention without a host-configured receipt root before prompt execution", async () => {
+  itLinux("refuses raw-prompt retention without a host-configured receipt root before prompt execution", async () => {
     const request = "raw prompt that must not be returned without governed persistence";
     let runtimeCalls = 0;
     const runtime = createFakePromptRuntime();
@@ -4712,7 +4752,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("refuses direct receipt reads outside the host receipts root", async () => {
+  itLinux("refuses direct receipt reads outside the host receipts root", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-receipt-read-"));
     const receiptsRoot = join(outDir, "receipts");
     const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-receipt-outside-"));
@@ -13905,7 +13945,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("summarizes export presets into panel-ready groups through the debug API", async () => {
+  itLinux("summarizes export presets into panel-ready groups through the debug API", async () => {
     const result = await dispatchDebugCommand("motion.export.panel", {}, { tier: "read_motion", receiptsRoot: tmpdir() });
 
     expect(result.ok).toBe(true);
@@ -13972,7 +14012,7 @@ describe("motion debug API", () => {
     }
   });
 
-  it("plans export presets with package-aware preflight guidance through the debug API", async () => {
+  itLinux("plans export presets with package-aware preflight guidance through the debug API", async () => {
     const packageRoot = await writeDebugPackageWithTimeline();
     const outputPath = join(packageRoot, "..", "render", "transparent.webm"), receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-debug-export-plan-receipts-"));
     try {
@@ -14064,7 +14104,7 @@ describe("motion debug API", () => {
         needsAudio: true,
         outputPath
       },
-      { tier: "read_motion", receiptsRoot: tmpdir() }
+      { tier: "read_motion" }
     );
 
     expect(result.ok).toBe(true);
@@ -14104,7 +14144,7 @@ describe("motion debug API", () => {
     const result = await dispatchDebugCommand(
       "motion.export.plan",
       { preset: "png-frame", target: "thumbnail", needsAudio: true },
-      { tier: "read_motion", receiptsRoot: tmpdir() }
+      { tier: "read_motion" }
     );
 
     expect(result.ok).toBe(true);
@@ -14125,7 +14165,7 @@ describe("motion debug API", () => {
     const result = await dispatchDebugCommand(
       "motion.export.plan",
       { preset: "gif", target: "animated transparent review with sound", needsAudio: true, needsAlpha: true },
-      { tier: "read_motion", receiptsRoot: tmpdir() }
+      { tier: "read_motion" }
     );
 
     expect(result.ok).toBe(true);

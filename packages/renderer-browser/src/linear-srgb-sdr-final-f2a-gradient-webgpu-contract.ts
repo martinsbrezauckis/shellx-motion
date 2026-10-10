@@ -83,8 +83,14 @@ fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32>
   return vec4<f32>(positions[index], 0.0, 1.0);
 }
 
+struct GradientOutput {
+  @location(0) working: vec4<f32>,
+  /** R is blend-aware gradient coverage; A is minimum screen occlusion for final publication dithering. */
+  @location(1) ditherMask: vec4<f32>,
+};
+
 @fragment
-fn gradientMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+fn gradientMain(@builtin(position) position: vec4<f32>) -> GradientOutput {
   if (position.x < layer.rect.x || position.y < layer.rect.y
       || position.x >= layer.rect.x + layer.rect.z || position.y >= layer.rect.y + layer.rect.w) {
     discard;
@@ -92,7 +98,13 @@ fn gradientMain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
   let local = (position.xy - layer.rect.xy) / layer.rect.zw;
   let alpha = layer.header.y;
   let linear = stopColor(gradientPosition(local));
-  return vec4<f32>(linear * alpha, alpha);
+  // center.z is the host-bound screen selector. Normal gradients must use
+  // opacity so an opaque black draw clears lower coverage; screen gradients
+  // contribute only where their own linear colour visibly changes the output.
+  let screenGradientCoverage = max(max(linear.r, linear.g), linear.b) * alpha;
+  let gradientCoverage = select(alpha, screenGradientCoverage, layer.center.z > 0.5);
+  let screenOcclusion = min(min(linear.r, linear.g), linear.b) * alpha;
+  return GradientOutput(vec4<f32>(linear * alpha, alpha), vec4<f32>(gradientCoverage, 0.0, 0.0, screenOcclusion));
 }`;
 
 const implementation = {

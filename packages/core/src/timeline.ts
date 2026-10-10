@@ -5059,11 +5059,9 @@ function splitLayerTransitions(layer: MotionLayer): {
  * `keyframes` through untouched, so a hand-written `motion.json` can hold `"opacity": { "0": 0 }`
  * and reach here. `unreadableLayerKeyframes` deliberately skips such a track — "must be an array" is
  * the validator's own structural error and reporting it as unreadable keyframes would double-count
- * it under a misleading name — which leaves the split free to drop the track entirely. Measured
- * before this guard existed: validate reported `/layers/0/keyframes/opacity: must be an array`, the
- * split answered ok with `keyframes: undefined` on both halves, and the patched document then
- * validated CLEAN. The command deleted the error by deleting the author's data, which is the exact
- * laundering the readability gate above exists to stop.
+ * it under a misleading name — which otherwise leaves the split free to drop the track entirely.
+ * A malformed track must be refused before the mutation can delete the author's data and
+ * allow the result to validate. That is the laundering the readability gate prevents.
  *
  * @param layer the layer about to be rewritten.
  * @param layerIndex the layer's index in `motion.layers`, so the path matches the validator's.
@@ -5091,9 +5089,8 @@ function assertArrayKeyframeTracks(layer: MotionLayer, layerIndex: number, opera
  * accepts: `shader.uniforms.<name>` is a legal, engine-readable keyframe target whenever the layer
  * declares that uniform (see `validateLayerKeyframes`), and `effectiveLayerAtMs` interpolates it. A
  * target the static list does not name appeared in neither half, so splitting the layer deleted the
- * track outright. Measured on the shipped `fixtures/packages/restricted-shader`, whose
- * `signal-bloom` layer animates `shader.uniforms.u_speed`: `motion.timeline.layer.split` answered
- * `ok: true` with `warnings: []` and both halves came back with no `keyframes` at all.
+ * track outright. The shipped `fixtures/packages/restricted-shader` exercises a dynamic
+ * `shader.uniforms.u_speed` target that both split halves must retain.
  *
  * Reading the layer's own keys makes the set of tracks that survive a split equal to the set of
  * tracks the author wrote, which is the only definition that cannot go stale as targets are added.
@@ -5140,9 +5137,9 @@ function splitLayerKeyframes(
  * situation — the interpolator refused the track — and in that situation neither is an answer. The
  * middle term hands back the FIRST keyframe's value regardless of where the split lands, which is
  * not the value at `atMs` and is not even the right type when the track's values do not match its
- * target. The final `?? 0` writes a literal zero, and on the the keyframe regression `{ t, v }` document that is
- * precisely what shipped: both halves came back as a single `{ atMs, value: 0 }`, replacing every
- * authored keyframe, and the result validated clean because the offenders had been deleted.
+ * target. The final `?? 0` writes a literal zero. A malformed `{ t, v }` track could
+ * therefore be replaced by synthesized `{ atMs, value: 0 }` keyframes, deleting the
+ * authored track and allowing the result to validate.
  *
  * `splitLayerAtMs` now proves the whole layer readable before calling this, so the interpolators can
  * only refuse for the one remaining reason: the track's values are the wrong TYPE for its target —

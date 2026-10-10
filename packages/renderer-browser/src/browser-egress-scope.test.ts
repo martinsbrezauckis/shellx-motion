@@ -2,7 +2,7 @@
  * browser-egress-scope.test.ts — regression coverage for the three ways the browser lane's egress
  * policy could be stepped around WITHOUT the receipt saying so.
  *
- * Previously observed failure modes, fixed before 0.1.0:
+ * The covered egress cases are:
  *
  * 1. POPUPS RENDERED OUTSIDE THE GUARD. `attachBrowserRedirectGuard` opens one CDP session against
  *    one target. A `window.open()` popup is a different target, and Playwright never routes
@@ -363,6 +363,27 @@ describe("redirect guard liveness failsafe", () => {
     cdp.emit("Inspector.detached", { reason: "target_closed" });
 
     expect(state.redirectGuardFailures).toEqual(["redirect guard CDP session detached"]);
+  });
+
+  it("records a detached CDP target once even if another loss event follows", async () => {
+    const { context, page, cdp, emitPageEvent } = fakeGuardTarget();
+    const state = freshNetworkState();
+    await attachBrowserRedirectGuard(context, page, new Set<string>(), () => state);
+
+    cdp.emit("Target.detachedFromTarget", { sessionId: "lost-target" });
+    emitPageEvent("close");
+
+    expect(state.redirectGuardFailures).toEqual(["redirect guard CDP target detached"]);
+  });
+
+  it("records a page crash on the leased frame", async () => {
+    const { context, page, emitPageEvent } = fakeGuardTarget();
+    const state = freshNetworkState();
+    await attachBrowserRedirectGuard(context, page, new Set<string>(), () => state);
+
+    emitPageEvent("crash");
+
+    expect(state.redirectGuardFailures).toEqual(["guarded page crashed"]);
   });
 
   it("records a guarded page that closes mid-render", async () => {

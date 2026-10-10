@@ -15,7 +15,7 @@
  *     constructors into `*.test-support.ts`.
  *
  * Dependencies: `runCli` and the non-shipping module convention documented in
- * `scripts/source-modules.mjs` (mirrored locally rather than imported, because that module is
+ * `scripts/public/source-modules.mjs` (mirrored locally rather than imported, because that module is
  * untyped `.mjs` and this file is type-checked).
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -29,7 +29,7 @@ import { runCli } from "./main";
 const PACKAGES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /**
- * Mirrors `isNonShippingSource` in `scripts/source-modules.mjs`: nonshipping source is excluded
+ * Mirrors `isNonShippingSource` in `scripts/public/source-modules.mjs`: nonshipping source is excluded
  * from the build and tarballs, while only test scaffolding is sanctioned for a scripted runtime.
  */
 function isNonShippingSource(path: string): boolean {

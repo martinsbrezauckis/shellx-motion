@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildSourceImportDocument, loadedPackageInputHashes, motionCapabilityCatalog, PublicationCommitUncertainError, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
@@ -63,8 +63,9 @@ import { runCanvasToCutConnector } from "./canvas-to-cut";
 import { executePreparedMotionConnectorJob, prepareAdmittedMotionConnectorJob, type MotionConnectorReferenceAuthority } from "./connector-job-registry";
 import { runScriptToCutConnector } from "./script-to-cut";
 import { runSourceToCutConnector } from "./source-to-cut";
+import { createOwnerPrivateTempRoots } from "./owner-private-temp-roots.test-support";
 
-const roots: string[] = [];
+const roots = createOwnerPrivateTempRoots();
 afterEach(async () => {
   faults.preview = undefined;
   faults.final = undefined;
@@ -73,7 +74,7 @@ afterEach(async () => {
   faults.commitUncertainError = undefined;
   faults.commitCalls = 0;
   faults.stagingRoots = [];
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await roots.cleanup();
 });
 
 // These mock only fixed internal producers. They prove private P2B assembly and publication
@@ -511,8 +512,7 @@ describe("P2B portable refusal", () => {
 });
 
 async function fixture(): Promise<{ root: string; sourceDir: string; outDir: string }> {
-  const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-p2b-"));
-  roots.push(root);
+  const root = await roots.create("p2b");
   const sourceDir = join(root, "input"), outDir = join(root, "out");
   await mkdir(sourceDir, { recursive: true, mode: 0o700 });
   return { root, sourceDir, outDir };

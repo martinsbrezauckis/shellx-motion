@@ -16,6 +16,7 @@ import { canonicalDirectory, canonicalRouteDirectories, collectEntireExistingRou
 import { OutputPathTopologyError } from "./output-path-topology-error";
 import { captureTrustedWorkspaceParentRoute } from "./output-path-trusted-route";
 import type { TrustedWorkspaceAnchorRoute } from "./output-path-trusted-workspace";
+import { heldOutputDirectoryAllowsPath, heldOutputDirectoryState } from "./output-path-held-directory-authority";
 
 export { OutputPathTopologyError } from "./output-path-topology-error";
 
@@ -27,6 +28,8 @@ export type OutputDirectoryAuthorityOptions = {
   requiresChildWrite?: boolean;
   /** A retained store may be reopened only when its selected root excludes unrelated child creators. */
   requireExclusiveChildAuthority?: boolean;
+  /** Process-local internal descriptor authority; unbranded paths remain ordinary path input. */
+  heldDirectoryAuthority?: unknown;
 };
 
 export type OutputDirectoryReservationOptions = {
@@ -84,11 +87,17 @@ export type OutputPathLeafIdentity =
 type CapturedDirectory = OutputPathIdentity & { path: string; requiresChildWrite: boolean };
 
 export class OutputPathTopology {
-  private constructor(readonly targetPath: string, readonly parentPath: string, private readonly directories: readonly CapturedDirectory[], private readonly trustedWorkspaceAnchor: TrustedWorkspaceAnchorRoute | undefined) {}
+  private constructor(readonly targetPath: string, readonly parentPath: string, private readonly directories: readonly CapturedDirectory[], private readonly trustedWorkspaceAnchor: TrustedWorkspaceAnchorRoute | undefined, private readonly heldDirectoryAuthority: unknown = undefined) {}
 
-  static async acquire(path: string): Promise<OutputPathTopology> {
+  static async acquire(path: string, options: { heldDirectoryAuthority?: unknown } = {}): Promise<OutputPathTopology> {
     const targetPath = resolve(path);
     const parentPath = dirname(targetPath);
+    const held = heldOutputDirectoryState(options.heldDirectoryAuthority);
+    if (held) {
+      if (!heldOutputDirectoryAllowsPath(options.heldDirectoryAuthority, parentPath)) throw new OutputPathTopologyError("Held output directory authority does not admit that target parent.", targetPath);
+      const facts = await canonicalDirectory(parentPath, { requiresChildWrite: true, heldDirectoryAuthority: options.heldDirectoryAuthority });
+      return new OutputPathTopology(targetPath, parentPath, [{ path: parentPath, dev: Number(facts.dev), ino: Number(facts.ino), requiresChildWrite: true }], undefined, options.heldDirectoryAuthority);
+    }
     const route = await captureParentDirectories(parentPath, targetPath, true);
     return new OutputPathTopology(targetPath, parentPath, route.directories, route.trustedWorkspaceAnchor);
   }
@@ -108,7 +117,7 @@ export class OutputPathTopology {
   /** Revalidate the captured lexical route before an output path operation. */
   async assertCurrent(): Promise<void> {
     await this.trustedWorkspaceAnchor?.assertCurrent();
-    const actualDirectories = await canonicalRouteDirectories(this.directories);
+    const actualDirectories = await canonicalRouteDirectories(this.directories.map((directory) => ({ ...directory, heldDirectoryAuthority: this.heldDirectoryAuthority })));
     for (let index = 0; index < this.directories.length; index += 1) {
       const directory = this.directories[index]!;
       const actual = actualDirectories[index]!;
@@ -162,7 +171,7 @@ export class OutputDirectoryReservation implements RetainedDirectoryAuthority {
     }
     const privateDirectory = initial.kind === "missing" || options.requirePrivate === true;
     const authority = privateDirectory
-      ? { private: true }
+      ? { private: true, requireExclusiveChildAuthority: options.requireExclusiveChildAuthority === true }
       : { requiresChildWrite: true, requireExclusiveChildAuthority: options.requireExclusiveChildAuthority === true };
     const identity = await captureOutputDirectoryIdentity(targetPath, "Output directory reservation", authority);
     if (!options.allowExistingContents && (await readdir(targetPath)).length !== 0) {
@@ -186,7 +195,7 @@ export class OutputDirectoryReservation implements RetainedDirectoryAuthority {
       this.identity,
       "Output directory reservation",
       this.privateDirectory
-        ? { private: true }
+        ? { private: true, requireExclusiveChildAuthority: this.exclusiveChildAuthority }
         : { requiresChildWrite: true, requireExclusiveChildAuthority: this.exclusiveChildAuthority }
     );
   }
@@ -232,7 +241,8 @@ export async function captureOutputDirectoryIdentity(
   options: OutputDirectoryAuthorityOptions = {}
 ): Promise<OutputPathIdentity> {
   const facts = await canonicalDirectory(path, {
-    requiresChildWrite: options.private === true || options.requiresChildWrite === true || options.requireExclusiveChildAuthority === true
+    requiresChildWrite: options.private === true || options.requiresChildWrite === true || options.requireExclusiveChildAuthority === true,
+    heldDirectoryAuthority: options.heldDirectoryAuthority
   });
   if (options.private) assertPrivateDirectoryAuthority(facts, path, label);
   if (options.requireExclusiveChildAuthority) assertExclusiveChildAuthority(facts, path, label);
@@ -255,9 +265,9 @@ async function captureParentDirectories(parentPath: string, targetPath: string, 
   directories: CapturedDirectory[]; trustedWorkspaceAnchor: TrustedWorkspaceAnchorRoute | undefined;
 }> {
   const trustedRoute = await captureTrustedWorkspaceParentRoute(parentPath, targetPath, createMissing, async (path, requiresChildWrite) => {
-    const facts = await canonicalDirectory(path, { requiresChildWrite });
-    return { dev: Number(facts.dev), ino: Number(facts.ino) };
-  });
+      const facts = await canonicalDirectory(path, { requiresChildWrite });
+      return { dev: Number(facts.dev), ino: Number(facts.ino) };
+    });
   if (trustedRoute) return trustedRoute;
 
   const root = parse(parentPath).root;

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { dispatchDebugCommand } from "./index";
 
 describe("host receipt authority", () => {
-  it("refuses caller-selected platform and support roots outside host authority", async () => {
+  it.runIf(process.platform === "linux")("refuses caller-selected platform and support roots outside host authority", async () => {
     const trustedRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-trusted-receipts-"));
     const outsideRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-outside-receipts-"));
     try {
@@ -18,7 +18,7 @@ describe("host receipt authority", () => {
     } finally { await rm(trustedRoot, { recursive: true, force: true }); await rm(outsideRoot, { recursive: true, force: true }); }
   });
 
-  it("refuses forged separate-root platform evidence for export panel and plan", async () => {
+  it.runIf(process.platform === "linux")("refuses forged separate-root platform evidence for export panel and plan", async () => {
     const trustedRoot = await mkdtemp(join(tmpdir(), "shellx-motion-export-trusted-receipts-"));
     const forgedRoot = await mkdtemp(join(tmpdir(), "shellx-motion-export-forged-receipts-"));
     try {

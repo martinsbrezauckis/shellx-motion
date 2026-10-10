@@ -27,8 +27,8 @@ import {
 
 const LAUNCHER_FILE = "enforced-untrusted-ffmpeg-launcher.mjs";
 const LAUNCHER_ENV = "SHELLX_MOTION_ENFORCED_FFMPEG_CONFIG";
-// Keep the inherited runtime surface to shared-library locations plus the exact alternatives
-// directory required to resolve this host's measured libblas symlink. The selected FFmpeg and
+// Keep the inherited runtime surface to shared-library locations plus the alternatives
+// directory needed for library symlink resolution. The selected FFmpeg and
 // FFprobe directories are added separately below after their identities are pinned. Do not bind
 // broad host configuration (/etc), application trees (/opt), or administrative binaries.
 const READ_ONLY_RUNTIME_ROOTS = ["/lib", "/lib64", "/usr/lib", "/usr/lib64", "/etc/alternatives"] as const;

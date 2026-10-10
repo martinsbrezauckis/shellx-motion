@@ -86,7 +86,9 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
   receipt records this under `output.gpuVideoPreview`, including source/frame identities, CFR
   selection, cache telemetry, texture metrics, and the explicit limits `audio-not-rasterized` and
   `final-not-attested`. This is visual-only preview, not a V25-B1 final-video, audio, encoding, or
-  mux capability; existing GPU-final rules remain unchanged. Native pixel and resource qualification requires fresh host evidence.
+  mux capability; existing GPU-final rules remain unchanged. Source contracts cover playhead
+  mapping, bounded resource use, stable textures, and cleanup; native behavior requires a
+  fresh verification run on the intended host.
 - Fixed rain, water, snow, and fog environments can retain bounded 2..8-sample authored shutter
   blur on the GPU lane. Motion evaluates each sample at exact canonical time, accumulates the
   premultiplied samples through retained textures, and composites the layer once. The four-authored-
@@ -107,8 +109,9 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
   form runs package code in WebGPU. Both are final-video-only and may use ordinary streaming or
   durable segmented delivery. Segmented delivery freezes the source, browser/runtime policy, exact
   Core microsecond requests, capture plan, per-range pixel ledger, and cleanup evidence before
-  checkpoint publication; changed or missing facts refuse. Native restricted-GLSL replay requires fresh host evidence. Strict HTML aliases retain
-  source/integration proof but do not yet carry the same native visual qualification.
+  checkpoint publication; changed or missing facts refuse. Restricted-GLSL interrupted-resume
+  and cold replay have a native qualification path; strict HTML aliases have source/integration
+  coverage but no corresponding native visual qualification. Verify the intended host separately.
 - Fixed analytic particle compute is a separate, refusal-first route: one normal-blend circular
   emitter may use exactly 100,000..131,072 particles. V1 keeps one to three radial/vortex sources.
   Closed v2 adds up to four weighted origins and four fixed radial/vortex/flow/turbulence/finite-
@@ -152,9 +155,12 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
   SDR sRGB-encoded values, and unprofiled raster input is assumed to be sRGB. The exact
   `linear-srgb-sdr@1` static-rectangle final route performs premultiplied linear-sRGB WebGPU
   composition, including the F2a rectangular linear/radial subset with stop interpolation in linear
-  light (2–16 canonical opaque stops, static angle/centre, normal source-over only), explicit
+  light (2–16 canonical opaque stops, static angle/centre) and F2b document-ordered `screen`
+  alongside normal source-over only, explicit
   straight-sRGB frame publication, fixed limited-BT.709 H.264 conversion,
   FFprobe validation, and mandatory inverse-decoded frame comparison before output publication.
+  This H.264 route requires positive even canvas dimensions within 1920 × 1080 and refuses odd
+  geometry before GPU/output allocation; compatible still-image routes retain odd dimensions.
   Native PNG and general Browser/GPU paths retain their documented encoded/Chromium-defined
   behaviour and make no cross-renderer colour-parity claim. HDR, wide-gamut, ICC profile
   conversion, OCIO, and selectable working spaces remain unsupported.
@@ -177,17 +183,18 @@ the callable surface is indexed in [`DEBUG_API_COMMANDS.md`](DEBUG_API_COMMANDS.
   considers currently free RAM, divides the safe pool across concurrent jobs, and reports the exact
   resolved ceiling through `doctor` / `motion.platform.requirements`. A trusted host may still pin
   `SHELLX_MOTION_MAX_JOB_RSS_BYTES`; 6 GiB is now only the fallback when host facts are unavailable. A browser
-  render reuses one Chromium session for the whole sequence, so peak memory grows with frame count
-  and with `effects.motionBlur.samples`; a 15 s 1080p30 delivery carrying two WebGL environment
-  layers and 3-sample motion blur measured 5.07 GiB on the reference host.
+  render reuses one Chromium session for the whole sequence, so plan for memory use across the
+  full frame count and the configured `effects.motionBlur.samples`.
   A shared preflight still guards materialised browser sequences when their conservative estimate
   exceeds the resolved admission budget, with that estimate, budget and retention cardinality in
   dry-run/receipt evidence. Ordinary file-video final rendering streams instead; the preflight
   remains relevant only when the pre-execution transport decision requires materialisation.
   Crossing the ceiling after admission still aborts the job with `job_rss_limit_exceeded`. Budget the
-  piece up front — see [rendering.md](rendering.md) for the measurements and the levers that move them.
+  piece up front — see [rendering.md](rendering.md) for capacity planning and ways to reduce demand.
 - Fixture-proven mattes and effects, chroma/luma keying with spill/matte cleanup, vector roto,
   compositing graphs, and bounded procedural bindings with enable/disable, bake, and detach.
+  A compositing graph may derive at most 128 layers at any node; validation refuses larger
+  expansions before compilation, including when both blend ports reuse one upstream branch.
 - A `points` layer keeps stable ordered points and up to 12 position samples in one bounded payload
   (four layers per document). Every host supports 8,192 points/layer; adaptive tiers admit 16,384,
   32,768, or 65,536 when resolved per-job memory and CPU allow it. State/payload caps scale from
@@ -222,15 +229,22 @@ The Debug/MCP and CLI routes cover the complete interchange set below. The local
 dedicated interchange operation is bounded glTF/GLB scene import (`gltfImport`):
 
 - Bounded HTML/CSS snippet import/export without script execution, network fetches, unsafe SVG,
-  arbitrary transforms, or claims of lossless export for unsupported features
-  (`motion.html.snippet.import` / `.export`, CLI `html-snippet-import` / `html-snippet-export`).
-- OTIO import/export (`motion.otio.import` / `.export`), package archive/extract
+  arbitrary transforms, or claims of lossless export for unsupported features. Composition timing
+  metadata includes fps, so supported 24fps and 60fps compositions retain their rate across the
+  HTML adapter (`motion.html.snippet.import` / `.export`, CLI `html-snippet-import` /
+  `html-snippet-export`).
+- OTIO import/export (`motion.otio.import` / `.export`) refuses overlapping layers on one Motion
+  track before it publishes output, because an OTIO track serializes its children. Put overlapping
+  layers on separate Motion tracks. Unsupported unmapped layers become warned OTIO gaps so later
+  supported clips keep their timing; package archive/extract
   (`motion.package.archive` / `.extract`), bounded glTF/GLB scene import
   (`motion.scene3d.gltf.import`; local SDK `gltfImport`), connector plans, and receiver capability
   inspection.
 - Canvas, Cut connector, scripted-video, source Markdown, OTIO, and package archive inputs share
   explicit byte, file-count, depth, aggregate, and concurrency caps with no-follow stable-file
-  admission. Exact limits and the receipt boundary are in [Host interchange and archive limits](interchange-limits.md).
+  admission. Canvas frame duration/fps must be positive finite values, while Canvas and image
+  dimensions are positive integers; odd dimensions remain supported. Exact limits and the receipt
+  boundary are in [Host interchange and archive limits](interchange-limits.md).
 - glTF/GLB source import additionally admits one **contained PNG base-color PBR direct-final subset**:
   static opaque triangles with exact `TEXCOORD_0`, base-color/metallic/roughness/emissive factors,
   immutable 1280x720 canonical scene state, copied PNG assets (max 16 primitives/textures, 16 MiB decoded each, 48 MiB GPU, 4 MiB readback), and bound package/renderer/FFmpeg
@@ -330,10 +344,9 @@ policy and scratch-boundary contract.
   duration/frame, hash, receipt, and quality result.
 - Unsupported or unproven interchange never silently lowers. Preserve source data and report the
   fallback or lossiness.
-- glTF, HTML/CSS, codecs, and native Cut editability are bounded to the declared fixture/capability
-  contracts; they are not general-purpose browser, 3D, or NLE compatibility. Lottie/dotLottie is
-  bounded the same way. (An earlier revision of this file called Lottie unreachable; that was
-  corrected when `motion.lottie.import` / `motion.dotlottie.import` were wired up — see above.)
+- glTF, HTML/CSS, codecs, native Cut editability, and Lottie/dotLottie import are bounded to the
+  declared fixture/capability contracts; they are not general-purpose browser, 3D, or NLE
+  compatibility.
 - `validate` reports ordered structural-schema and runtime-semantic results in its JSON envelope;
   a schema pass alone is not a renderability claim. See [Motion document validation](MOTION_VALIDATION.md).
   With a governed

@@ -166,8 +166,8 @@ describe("motion.support.bundle governed directory publication", () => {
             "diagnostic=/host-private/diagnostics with spaces/ffmpeg private.log",
             "output=C:\\host-private\\render with spaces\\final private.mp4",
             "home=~/Library/Application Support/Motion/private.log",
-            "named-home=~martin/.config/motion/private.log",
-            "rooted-drive=\\Users\\martin\\AppData\\Local\\Motion\\private.log"
+            "named-home=~exampleuser/.config/motion/private.log",
+            "rooted-drive=\\Users\\exampleuser\\AppData\\Local\\Motion\\private.log"
           ]
         }),
         listPlatformReceiptEntries: async () => [{
@@ -189,7 +189,7 @@ describe("motion.support.bundle governed directory publication", () => {
     if (!result?.ok) return;
     const bundle = await readFile(join(fixture.outDir, "support-bundle.json"), "utf8");
     const receipt = await readFile(join(fixture.outDir, "support-bundle.receipt.json"), "utf8");
-    for (const forbidden of [fixture.root, "/host-private", "C:\\host-private", "diagnostics with spaces", "render with spaces", "ffmpeg private.log", "~/Library", "~martin", "\\Users\\martin", "platform.log"]) {
+    for (const forbidden of [fixture.root, "/host-private", "C:\\host-private", "diagnostics with spaces", "render with spaces", "ffmpeg private.log", "~/Library", "~exampleuser", "\\Users\\exampleuser", "platform.log"]) {
       expect(bundle).not.toContain(forbidden);
       expect(receipt).not.toContain(forbidden);
     }

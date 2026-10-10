@@ -57,10 +57,8 @@ describe("browser package fingerprint", () => {
   });
 
   it("fingerprints the same tree identically regardless of the host locale", async () => {
-    // Regression for a reproduced defect: the directory walk was ordered with
-    // `String.prototype.localeCompare`, and that order IS the `path\0size\0hash` record list the
-    // fingerprint hashes. Live probe on one machine, same tree: 1380b63d… under en_US.UTF-8,
-    // 70ad8f6c… under sv_SE.UTF-8, f4d0b7df… under tr_TR.UTF-8.
+    // The directory walk must use locale-independent ordering because the sorted
+    // `path\0size\0hash` records determine the fingerprint across hosts.
     const root = await writeProbeTree();
     const baseline = await browserPackageFingerprint(root);
     expect(await withLocaleTrap(() => browserPackageFingerprint(root))).toBe(baseline);

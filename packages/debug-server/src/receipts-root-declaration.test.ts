@@ -125,6 +125,8 @@ describe("shipped server receipt-root declaration", () => {
       body: JSON.stringify({ command: "motion.agent.transcript", args: { receiptsRoot: declaredRoot } })
     });
 
-    expect(await response.json()).toMatchObject({ ok: true });
+    expect(await response.json()).toMatchObject(process.platform === "linux"
+      ? { ok: true }
+      : { ok: false, error: { code: "capability_unavailable" } });
   });
 });

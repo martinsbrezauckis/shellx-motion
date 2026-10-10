@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/job-evidence@1",
+  "$comment": "Closed terminal evidence projection for a previously admitted final-video job. It contains no output path, URL, credential, or artifact descriptor path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "jobId", "callerId", "operation", "planFingerprint", "outcome", "warnings", "receiptIds", "producerEvidence", "artifacts", "fingerprint"],
+  "properties": {
+    "schema": { "const": "shellx-motion/job-evidence@1" },
+    "jobId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" },
+    "callerId": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] },
+    "operation": { "const": "render.final" },
+    "planFingerprint": { "$ref": "#/$defs/sha256" },
+    "outcome": { "enum": ["succeeded", "failed", "cancelled", "skipped"] },
+    "warnings": { "type": "array", "maxItems": 64, "items": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 512 }, { "$ref": "#/$defs/pathFreeOpaqueText" }] } },
+    "receiptIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 192, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] } },
+    "producerEvidence": { "$ref": "#/$defs/producerEvidence" },
+    "artifacts": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/artifact" } },
+    "fingerprint": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "pathFreeOpaqueText": { "type": "string", "pattern": "^(?![~/\\\\])(?![A-Za-z]:)(?![hH][tT][tT][pP][sS]?:|[fF][iI][lL][eE]:|[dD][aA][tT][aA]:|[bB][lL][oO][bB]:)(?!.*[\\\\/])(?!.*(?:[aA][pP][iI][_-]?[kK][eE][yY]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[cC][oO][oO][kK][iI][eE]|[pP][rR][iI][vV][aA][tT][eE][_-]?[kK][eE][yY]))[^\\u0000-\\u001F\\u007F]+$" },
+    "secretFreeSchemaId": { "type": "string", "pattern": "^(?!.*(?:[aA][pP][iI][_-]?[kK][eE][yY]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[cC][oO][oO][kK][iI][eE]|[pP][rR][iI][vV][aA][tT][eE][_-]?[kK][eE][yY])).+$" },
+    "producerEvidence": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frameLane"],
+          "properties": { "frameLane": { "enum": ["browser", "native", "gpu"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frameLane", "schema"],
+          "properties": {
+            "frameLane": { "enum": ["browser", "native", "gpu"] },
+            "schema": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9.-]{0,63}/[a-z][a-z0-9._-]{0,95}@\\d{1,8}$" }, { "$ref": "#/$defs/secretFreeSchemaId" }] }
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "operationHash", "sha256"],
+      "properties": {
+        "schema": { "const": "shellx-motion/artifact-handle@1" },
+        "id": { "type": "string", "pattern": "^artifact-[a-f0-9]{24}$" },
+        "operationHash": { "$ref": "#/$defs/sha256" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

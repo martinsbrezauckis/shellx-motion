@@ -260,7 +260,7 @@ export const SURFACE_COMMAND_METADATA = {
     argsSchema: argsSchema(["request"], {
       request: { type: "string", aliases: ["prompt"], description: "Natural-language instruction handed to the host-injected local agent runtime. The command returns capability_unavailable when the host has not injected one." },
       packageId: { type: "string", default: "unknown", description: "Package id recorded in the prompt receipt." },
-      agentId: { type: "string", description: "Agent adapter to run; the default adapter when omitted." },
+      agentId: { type: "string", description: "Explicit prompt-capable agent adapter to run. Syntax remains optional for transport compatibility. Motion's built-in runtime returns agent_selection_required when it is omitted, before a provider is probed or spawned; an injected host runtime owns its own adapter-selection contract." },
       cwd: { type: "string", description: "Working directory for the agent; must be inside a trusted prompt working root." },
       receiptsRoot: { type: "string", description: "Optional trusted host receipt mirror for the prompt receipt." },
       executeAgentCommands: {

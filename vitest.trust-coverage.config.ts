@@ -7,8 +7,8 @@
  * unauthorized request. It also names the currently integrated producer-to-segment boundary:
  * canonical producer ranges, immutable package input, resumable checkpoint storage, constrained
  * concat authority, and the contained sequential spool. It deliberately excludes the separately
- * evolving high-level final adapter. `all: true` makes a removed import or test show up as zero
- * coverage.
+ * evolving high-level final adapter. The explicit coverage include list keeps a removed import or
+ * test visible as zero coverage under Vitest 4.
  */
 import { defineConfig } from "vitest/config";
 
@@ -17,6 +17,7 @@ export default defineConfig({
     include: [
       "packages/actions/src/permission-refusal.test.ts",
       "packages/core/src/job-governor.test.ts",
+      "packages/core/src/package-create.test.ts",
       "packages/core/src/job-lease.test.ts",
       "packages/core/src/network-policy.test.ts",
       "packages/core/src/output-dir-guard.test.ts",
@@ -28,6 +29,9 @@ export default defineConfig({
       "packages/core/src/capability-delivery-pipeline.test.ts",
       "packages/core/src/integration-protocol.test.ts",
       "packages/renderer-browser/src/browser-redirect-downgrade.test.ts",
+      "packages/renderer-browser/src/browser-response-boundary.test.ts",
+      "packages/renderer-browser/src/browser-egress-scope.test.ts",
+      "packages/renderer-browser/src/approved-agent-entry-route-policy.test.ts",
       "packages/renderer-browser/src/browser-streaming-producer.test.ts",
       "packages/renderer-native/src/native-frame-producer.test.ts",
       "packages/renderer-ffmpeg/src/ffmpeg-process-control.test.ts",
@@ -36,9 +40,11 @@ export default defineConfig({
       "packages/renderer-ffmpeg/src/render-segment-spool.test.ts",
       "packages/renderer-ffmpeg/src/render-segment-store.test.ts",
       "packages/renderer-ffmpeg/src/streaming-process.test.ts",
+      "packages/renderer-ffmpeg/src/streaming-process-lifecycle.test.ts",
+      "packages/renderer-ffmpeg/src/streaming-foundation-boundaries.test.ts",
       "packages/renderer-ffmpeg/src/streaming-foundation.test.ts"
     ],
-    setupFiles: ["./scripts/vitest-setup-job-stores.ts"],
+    setupFiles: ["./scripts/public/vitest-setup-job-stores.ts"],
     // The suites create real temporary files, leases, and local HTTP servers. Serial file execution
     // keeps the gate deterministic and avoids competing with Motion's heavier browser workloads.
     fileParallelism: false,
@@ -49,7 +55,6 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       enabled: true,
-      all: true,
       include: [
         "packages/actions/src/permission-refusal.ts",
         "packages/core/src/job-governor.ts",

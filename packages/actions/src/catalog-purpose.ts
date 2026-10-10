@@ -10,8 +10,8 @@ import { TIMELINE_REMAINING_PURPOSES } from "./catalog-timeline-remaining-purpos
  *
  * Exported because the MCP tool listing needs it: a tool described only as
  * "debug command motion.render.final. permission=render_motion. mutates=true." tells an agent
- * nothing about when to reach for it. An independent agent tester called the bare listings
- * "near-useless" and had to fall back on actions.guide for every decision.
+ * nothing about when to reach for it. Purpose text lets a caller choose the right command
+ * without relying on an additional guide for every decision.
  */
 export function purposeForCall(call: string): string {
   const purposes: Record<string, string> = {
@@ -42,8 +42,8 @@ export function purposeForCall(call: string): string {
     "motion.prompt.queue": "On Linux, read stable receipt-derived prompt annotations and follow-ups; it never observes a live provider.",
     "motion.prompt.cancel": "On Linux, write a stable receipt-derived prompt-cancellation annotation; it never stops a live provider.",
     "motion.prompt.retry": "On Linux, write a stable receipt-derived prompt-retry annotation; it never starts a live provider.",
-    "motion.actions.panel": "Show grouped actions, permission tiers, prompt commands, and suggested prompt-run follow-ups.",
-    "motion.agent.panel": "Show local CLI agent selection policy, adapter command shapes, safety guarantees, and prompt follow-ups.",
+    "motion.actions.panel": "Show grouped actions, permission tiers, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run.",
+    "motion.agent.panel": "Show prompt-provider selection policy, adapter command shapes, safety guarantees, and readiness/transcript follow-ups without a default provider or bare prompt run.",
     "motion.agent.health": "Probe local CLI subscription agent readiness without mutating packages.",
     "motion.agent.snapshot": "Read a compact path-free snapshot from host-approved package and receipt roots, with only the authenticated caller's jobs.",
     "motion.packages.browse": "Browse local Motion packages with package metadata, template availability, asset counts, and suggested follow-up actions.",

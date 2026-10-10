@@ -1147,9 +1147,12 @@ describe("browser renderer lane", () => {
     expect(layer).toMatchObject({ layerId: "title", policy: "auto-fit", status: "auto-fitted", textRuns: { scale: expect.any(Number), runs: [{ fontAssetId: "font-codicon", inheritsLayerFontSize: false, requestedFontSizePx: 160 }, { fontAssetId: "font-codicon", inheritsLayerFontSize: true, requestedFontSizePx: null }] } });
     const textRuns = layer?.textRuns;
     if (!layer || !textRuns) throw new Error("expected styled text-fit evidence");
+    expect(layer).toMatchObject({ requestedFontSize: 64, minFontSize: 16 });
+    expect(layer.appliedFontSize).toBeGreaterThanOrEqual(16);
     expect(textRuns.scale).toBeGreaterThan(0);
     expect(textRuns.scale).toBeLessThan(1);
-    expect(textRuns.runs[0]!.effectiveFontSizePx).toBeCloseTo(160 * textRuns.scale, 2);
+    expect(textRuns.scale).toBeCloseTo(layer.appliedFontSize / layer.requestedFontSize, 2);
+    expect(textRuns.runs[0]!.effectiveFontSizePx).toBeCloseTo(160 * layer.appliedFontSize / layer.requestedFontSize, 2);
     expect(textRuns.runs[1]!.effectiveFontSizePx).toBeCloseTo(layer.appliedFontSize, 2);
     expect(textRuns.runs[0]!.effectiveFontSizePx).toBeGreaterThan(textRuns.runs[1]!.effectiveFontSizePx);
   });
@@ -6298,7 +6301,7 @@ async function writeGeneratedStyledTextFitPackage(policy: "safe" | "auto-fit"): 
         id: "title", type: "text", startMs: 0, durationMs: 1_000,
         transform: { x: 20, y: 20, width: 200, height: 80 },
         style: { fontSize: 64, lineHeight: 1, color: "#ffffff" },
-        textFit: { policy, safeAreaId: "title", ...(policy === "auto-fit" ? { minFontSize: 24 } : {}) },
+        textFit: { policy, safeAreaId: "title", ...(policy === "auto-fit" ? { minFontSize: 16 } : {}) },
         textRuns: { schema: "shellx-motion/text-runs@1", runs: [
           { text: "\uea60\uea60\uea60", fontAssetId: "font-codicon", fontSizePx: 160, letterSpacingPx: 4 },
           { text: "\uea60", fontAssetId: "font-codicon" }

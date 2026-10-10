@@ -2,7 +2,7 @@
  * version.test.ts — the engine constant must equal what this package is published as.
  *
  * `MOTION_ENGINE_VERSION` is generated from the repository root `package.json` by
- * `scripts/version-parity.ts`, and every runtime surface (CLI banner, `GET /health`,
+ * `scripts/public/version-parity.ts`, and every runtime surface (CLI banner, `GET /health`,
  * `GET /debug/contracts`, MCP `serverInfo`, the local SDK capability contract, the Engine Room
  * update check) reads it. This suite is the unit-level half of that guarantee: it fails inside
  * vitest — no gate script, no build — the moment the constant is hand-edited away from the

@@ -1,10 +1,8 @@
 /**
  * The falsifier for the silent-keyframe-drop defect, kept permanently.
  *
- * The failure this covers, measured: an external agent authored a 15-second piece with 309 keyframes
- * written as `{ t, v }` instead of `{ atMs, value }`. The evaluator dropped all 309 without a word,
- * `motion.package.validate` answered `valid: true`, the render reported success, and the delivered
- * MP4 was frozen for ~90% of its duration.
+ * Keyframes written as `{ t, v }` instead of `{ atMs, value }` must be refused before an
+ * otherwise valid document can render without its intended animation.
  *
  * Two directions are pinned here, and both matter:
  *   - a document the evaluator cannot animate is REFUSED, by a message that names the correct form;
@@ -14,8 +12,7 @@
  * disagree. Anything `isReadableMotionKeyframe` rejects must produce at least one validation error at
  * that keyframe's path, so a future edit cannot quietly reopen the gap by loosening one side.
  *
- * These fixtures reproduce the measured 309-keyframe failure shape inline so the suite remains
- * self-contained and does not depend on non-shipping evidence.
+ * The fixtures keep the malformed keyframe shape self-contained.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -60,7 +57,7 @@ function documentWithKeyframes(keyframes: Record<string, unknown>): MotionDocume
   } as unknown as MotionDocument;
 }
 
-/** The shape the external agent actually produced, at the scale it produced it. */
+/** A malformed shorthand keyframe shape. */
 const GROK_SHAPED_KEYFRAMES = {
   opacity: [{ t: 0, v: 0 }, { t: 600, v: 0.92, easing: "ease-out" }],
   "transform.x": [{ t: 0, v: -80 }, { t: 700, v: 40, easing: "back-out" }]

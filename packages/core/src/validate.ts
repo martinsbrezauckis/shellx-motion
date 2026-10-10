@@ -34,6 +34,7 @@ import { validateParticleComputeDensity } from "./particle-compute-validation";
 import { SCHEMAS } from "./validate-schemas";
 import { validatePlatformVerificationEvidenceFields } from "./validate-platform-verification";
 import { validateSupportBundleDocument } from "./support-bundle-validation";
+import { inspectStrictLinearSrgbSdrFinalReceipt } from "./strict-linear-srgb-sdr-receipt";
 export type SchemaName =
   | "motion"
   | "packageManifest"
@@ -2082,6 +2083,8 @@ function validateReceiptDocument(
   if ("artifacts" in record) validateReceiptArtifacts(record.artifacts, `${basePath}/artifacts`, errors);
   validateStandaloneStringArray(record.warnings, `${basePath}/warnings`, errors);
   if ("actor" in record) validateReceiptActor(record.actor, `${basePath}/actor`, errors);
+  const strictSdr = inspectStrictLinearSrgbSdrFinalReceipt(record, basePath);
+  if (strictSdr.kind === "invalid-strict-v2") errors.push(...strictSdr.errors);
 }
 
 /**

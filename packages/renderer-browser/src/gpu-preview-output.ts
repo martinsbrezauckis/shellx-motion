@@ -1,5 +1,5 @@
 import { realpath, writeFile } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { acquireDerivedOutputPublication, canonicalJsonSha256, createPreviewReceipt, OutputPathTopology, type DerivedOutputPublication, type GpuSceneBehaviorFramePlan, type GpuSceneBehaviorStaticPlan, type GpuSceneRelationsFramePlan, type GpuSceneRelationsStaticPlan, type LocalMotionJobEvidence, type MotionPackage, type OperationReceipt } from "@shellx-motion/core";
 import { isCoreDerivedOutputPublication } from "@shellx-motion/core/internal/derived-output-publication-authenticity";
 import { GPU_SCENE3D_ANIMATION_PREVIEW_LIMITS, type GpuScene3DAnimationFramePlan, type GpuScene3DAnimationPreviewLimits, type GpuScene3DAnimationStaticPlan } from "@shellx-motion/core/internal/scene3d-animation-gpu-preview";
@@ -23,7 +23,7 @@ export interface GpuRelationsPreviewReceiptEvidence {
   fingerprint: string;
 }
 
-/** Exact O6 wrapper facts only; it carries no hardware, installed, or pixel-quality claim. */
+/** Exact scene3d animation wrapper facts only; it carries no hardware, installed, or pixel-quality claim. */
 export interface GpuScene3DAnimationPreviewReceiptEvidence {
   schema: typeof GPU_SCENE3D_ANIMATION_PREVIEW_RECEIPT_SCHEMA;
   staticWrapperFingerprint: string;
@@ -58,7 +58,7 @@ export function gpuRelationsPreviewReceiptEvidence(staticPlan: GpuSceneRelations
   return Object.freeze({ ...payload, fingerprint: canonicalJsonSha256(payload) });
 }
 
-/** Derives receipt evidence only from the Core-issued O6 static/frame wrappers that rendered. */
+/** Derives receipt evidence only from the Core-issued scene3d animation static/frame wrappers that rendered. */
 export function gpuScene3dAnimationPreviewReceiptEvidence(staticPlan: GpuScene3DAnimationStaticPlan, framePlan: GpuScene3DAnimationFramePlan): GpuScene3DAnimationPreviewReceiptEvidence {
   if (staticPlan.fingerprint !== framePlan.staticFingerprint
     || staticPlan.animationStaticFingerprint !== framePlan.animationFramePlan.staticFingerprint
@@ -101,12 +101,12 @@ export async function resolveGpuPreviewOutputPath(packageInput: string | { manif
   const packageId = typeof packageInput === "string" ? packageInput : packageInput.manifest.id;
   const generated = `${safeToken(packageId)}-gpu-${options.atMs ?? 0}.png`;
   const output = resolve(options.outputPath ?? `${root}/${generated}`);
-  if (!inside(root, output)) throw new Error("GPU preview outputPath must be inside outDir.");
+  if (!isGpuPreviewPathInside(root, output)) throw new Error("GPU preview outputPath must be inside outDir.");
   const topology = await OutputPathTopology.acquire(output);
   await topology.assertCurrent();
   const canonicalRoot = await realpath(root);
   const canonicalParent = await realpath(dirname(output));
-  if (!inside(canonicalRoot, canonicalParent)) throw new Error("GPU preview outputPath parent must not escape outDir through a symlink.");
+  if (!isGpuPreviewPathInside(canonicalRoot, canonicalParent)) throw new Error("GPU preview outputPath parent must not escape outDir through a symlink.");
   await topology.assertCurrent();
   return output;
 }
@@ -231,9 +231,9 @@ export function verifyGpuScene3dAnimationPreviewReceiptEvidence(value: unknown):
   return Object.freeze({ ...payload, targetLayerIds: Object.freeze([...payload.targetLayerIds]), limits: Object.freeze({ ...payload.limits }), fingerprint });
 }
 
-function inside(root: string, candidate: string): boolean {
-  const value = relative(root, candidate);
-  return value === "" || (!value.startsWith("..") && !value.includes("../") && !value.includes("..\\"));
+export function isGpuPreviewPathInside(root: string, candidate: string, pathApi: Pick<typeof import("node:path"), "relative" | "isAbsolute"> = { relative, isAbsolute }): boolean {
+  const value = pathApi.relative(root, candidate);
+  return value === "" || (!pathApi.isAbsolute(value) && !value.startsWith("..") && !value.includes("../") && !value.includes("..\\"));
 }
 function safeToken(value: string): string {
   const token = basename(value).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");

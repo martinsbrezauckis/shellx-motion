@@ -54,9 +54,14 @@ describe("legacy authoring roots across debug transports", () => {
         command: "motion.script.compile",
         requestedTier: "write_local",
         args: { scriptPath, packageDir, createdAt: "2026-08-11T00:00:00.000Z" }
-      });
-      expect(inside).toMatchObject({ ok: true, command: "motion.script.compile", visibleState: { packageDir } });
-      await expect(readFile(join(packageDir, "manifest.json"), "utf8")).resolves.toContain('"id": "pkg_script_transport_demo"');
+      }, process.platform === "linux" ? 200 : 500);
+      if (process.platform === "linux") {
+        expect(inside).toMatchObject({ ok: true, command: "motion.script.compile", visibleState: { packageDir } });
+        await expect(readFile(join(packageDir, "manifest.json"), "utf8")).resolves.toContain('"id": "pkg_script_transport_demo"');
+      } else {
+        expect(inside).toMatchObject({ ok: false, error: { code: "script_compile_failed", message: expect.stringContaining("Linux descriptor-relative primitive") } });
+        await expect(readFile(join(packageDir, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      }
 
       const insideStoryboard = await postJson(new URL("/debug", rooted.url), {
         command: "motion.storyboard.graph",

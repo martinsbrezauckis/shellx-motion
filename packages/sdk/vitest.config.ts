@@ -15,12 +15,12 @@
  * run. Rendering records live and finished jobs under `$XDG_RUNTIME_DIR/shellx-motion` by design —
  * that is how a second process answers "what is my render doing" — so without this a test suite
  * leaves its jobs in the developer's own `motion job list`, and parallel test files can see each
- * other's work. See scripts/vitest-setup-job-stores.ts.
+ * other's work. See scripts/public/vitest-setup-job-stores.ts.
  */
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    setupFiles: ["../../scripts/vitest-setup-job-stores.ts"]
+    setupFiles: ["../../scripts/public/vitest-setup-job-stores.ts"]
   }
 });

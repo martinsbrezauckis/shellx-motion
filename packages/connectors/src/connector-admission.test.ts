@@ -1,5 +1,6 @@
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_HOST_INTERCHANGE_LIMITS } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
@@ -12,15 +13,14 @@ const canvasFixture = resolve("../../fixtures/canvas/shape-text-frame-selection.
 const templateFixture = resolve("../../fixtures/cut-native-static-package");
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(tempDirs.splice(0).map((dir) => removeOwnerPrivateSystemTempRoot(dir)));
 });
 
 describe("connector host-interchange admission", () => {
   it.runIf(process.platform === "linux")("refuses oversized and symlinked Canvas selections before creating output", async () => {
-    const oversized = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-canvas-admission-large-"));
-    const symlinked = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-canvas-admission-link-"));
-    const parentLink = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-canvas-admission-parent-"));
-    tempDirs.push(oversized, symlinked, parentLink);
+    const oversized = await createOwnerPrivateSystemTempRoot("shellx-motion-canvas-admission-large-");
+    const symlinked = await createOwnerPrivateSystemTempRoot("shellx-motion-canvas-admission-link-");
+    const parentLink = await createOwnerPrivateSystemTempRoot("shellx-motion-canvas-admission-parent-");
 
     const oversizedPath = join(oversized, "selection.json");
     await writeFile(oversizedPath, Buffer.alloc(MAX_FILE_BYTES + 1));
@@ -46,8 +46,7 @@ describe("connector host-interchange admission", () => {
   });
 
   it.runIf(process.platform === "linux")("counts a Canvas selection and all referenced assets against one aggregate budget before publication", async () => {
-    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-canvas-admission-aggregate-"));
-    tempDirs.push(root);
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-canvas-admission-aggregate-");
     const selection = JSON.parse(await readFile(canvasFixture, "utf8")) as Record<string, any>;
     const frame = selection.frames[0];
     selection.imageEditorOutputs = [];
@@ -76,8 +75,7 @@ describe("connector host-interchange admission", () => {
   }, 45_000);
 
   it.runIf(process.platform === "linux")("refuses symlinked Template-to-Cut trees during source admission before delivery", async () => {
-    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-admission-"));
-    tempDirs.push(root);
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-template-admission-");
     const source = join(root, "source");
     const outDir = join(root, "out");
     await cp(templateFixture, source, { recursive: true });
@@ -90,8 +88,7 @@ describe("connector host-interchange admission", () => {
   });
 
   it.runIf(process.platform === "linux")("refuses a Template-to-Cut source reached through a symlinked parent during source admission", async () => {
-    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-admission-parent-"));
-    tempDirs.push(root);
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-template-admission-parent-");
     const realParent = join(root, "real-parent");
     const linkedParent = join(root, "linked-parent");
     const outDir = join(root, "out");
@@ -106,8 +103,7 @@ describe("connector host-interchange admission", () => {
   });
 
   it.runIf(process.platform === "linux")("refuses a Template-to-Cut tree over the host aggregate limit during source admission", async () => {
-    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-admission-aggregate-"));
-    tempDirs.push(root);
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-template-admission-aggregate-");
     const source = join(root, "source");
     const outDir = join(root, "out");
     await cp(templateFixture, source, { recursive: true });
@@ -123,8 +119,7 @@ describe("connector host-interchange admission", () => {
   }, 45_000);
 
   it.runIf(process.platform === "linux")("refuses empty-directory fanout at the package-tree entry limit before creating connector output", async () => {
-    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-admission-tree-entries-"));
-    tempDirs.push(root);
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-template-admission-tree-entries-");
     const source = join(root, "source");
     const outDir = join(root, "out");
     await cp(templateFixture, source, { recursive: true });
@@ -138,9 +133,61 @@ describe("connector host-interchange admission", () => {
       .rejects.toThrow(/entry package-tree limit/);
     await expect(stat(outDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.runIf(process.platform === "linux")("removes its owner-private system fixture after successful Canvas admission", async () => {
+    const root = await createOwnerPrivateSystemTempRoot("shellx-motion-canvas-admission-success-");
+    try {
+      const selectionPath = join(root, "selection.json");
+      await cp(canvasFixture, selectionPath);
+
+      const result = await runInTrustedRoot(root, async () => await runCanvasMp4Export({
+        canvasSelectionPath: selectionPath,
+        outDir: join(root, "out")
+      }));
+
+      expect(result.ok).toBe(true);
+      await expect(stat(result.packageDir)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    } finally {
+      removeTrackedTempDir(root);
+      await removeOwnerPrivateSystemTempRoot(root);
+    }
+  });
 });
 
 async function runInTrustedRoot<T>(root: string, run: () => Promise<T>): Promise<T> {
   const anchor = await createTrustedWorkspaceAnchor(root);
   return await withTrustedWorkspaceAnchor(anchor, run);
+}
+
+async function createOwnerPrivateSystemTempRoot(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    await chmod(root, 0o700);
+    await assertOwnerPrivateSystemTempRoot(root);
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
+  tempDirs.push(root);
+  return root;
+}
+
+async function assertOwnerPrivateSystemTempRoot(root: string): Promise<void> {
+  const currentUid = process.getuid?.();
+  if (currentUid === undefined) throw new Error("Connector admission fixtures require a POSIX current-user identity.");
+  if (dirname(root) !== tmpdir()) throw new Error("Connector admission fixture was not created directly in the system temp namespace.");
+
+  const metadata = await stat(root);
+  if (metadata.uid !== currentUid) throw new Error("Connector admission fixture is not owned by the current POSIX user.");
+  if ((metadata.mode & 0o777) !== 0o700) throw new Error("Connector admission fixture must be owner-private (0700).");
+}
+
+async function removeOwnerPrivateSystemTempRoot(root: string): Promise<void> {
+  await rm(root, { recursive: true, force: true });
+  await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+}
+
+function removeTrackedTempDir(root: string): void {
+  const index = tempDirs.indexOf(root);
+  if (index >= 0) tempDirs.splice(index, 1);
 }

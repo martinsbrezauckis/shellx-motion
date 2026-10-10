@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "shellx-motion/canvas-frame-selection@1",
-  "$comment": "Published contract for the Canvas -> Motion frame-selection payload. Authority on the Motion side is the parser in packages/adapters-canvas/src/fixture-parse.ts (parseCanvasFrameSelection + parseFrame/parseLayer/parseImageEditorOutput). This schema is kept in sync with that parser by the contracts drift test (packages/adapters-canvas/src/schema-contract.test.ts) and validated against fixtures/canvas/*.json. It intentionally models only the structural acceptance rules the parser enforces; extra fields on the root/frames/layers/outputs are passed through by the parser and are therefore permitted. The layer.kind enum is NOT hand-maintained: it must equal renderableLayerTypes() from @shellx-motion/core (the union of the renderer capability cards), and schema-contract.test.ts fails if it drifts.",
+  "$comment": "Published contract for the Canvas -> Motion frame-selection payload. Authority on the Motion side is the parser in packages/adapters-canvas/src/fixture-parse.ts (parseCanvasFrameSelection + parseFrame/parseLayer/parseImageEditorOutput). This schema is kept in sync with that parser by the contracts drift test (packages/adapters-canvas/src/schema-contract.test.ts) and validated against fixtures/canvas/*.json. It intentionally models the structural and primitive-value acceptance rules the parser enforces; extra fields on the root/frames/layers/outputs are passed through by the parser and are therefore permitted. Canvas and PNG dimensions are positive integers; odd dimensions are supported. The layer.kind enum is NOT hand-maintained: it must equal renderableLayerTypes() from @shellx-motion/core (the union of the renderer capability cards), and schema-contract.test.ts fails if it drifts.",
   "type": "object",
   "required": ["schema", "selectedFrameId", "project", "brand", "frames", "imageEditorOutputs"],
   "properties": {
@@ -62,10 +62,10 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
-        "durationMs": { "type": "number" },
-        "fps": { "type": "number" },
-        "width": { "type": "number" },
-        "height": { "type": "number" },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 },
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "width": { "type": "integer", "exclusiveMinimum": 0 },
+        "height": { "type": "integer", "exclusiveMinimum": 0 },
         "background": { "type": "string" },
         "safeAreas": {
           "type": "object",
@@ -86,8 +86,8 @@
           "$comment": "Rectangles, ellipses and stars are kind \"shape\" with a shape field; there is no \"rect\" or \"ellipse\" layer kind.",
           "enum": ["adjustment", "audio", "camera", "canvas", "caption", "environment", "group", "html", "image", "particles", "points", "scene3d", "shader", "shape", "text", "video", "web"]
         },
-        "startMs": { "type": "number" },
-        "durationMs": { "type": "number" }
+        "startMs": { "type": "number", "minimum": 0 },
+        "durationMs": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "safeArea": {
@@ -108,8 +108,8 @@
         "kind": { "type": "string", "minLength": 1 },
         "path": { "type": "string", "minLength": 1 },
         "mimeType": { "type": "string", "minLength": 1 },
-        "width": { "type": "number" },
-        "height": { "type": "number" },
+        "width": { "type": "integer", "exclusiveMinimum": 0 },
+        "height": { "type": "integer", "exclusiveMinimum": 0 },
         "sha256": { "type": "string", "minLength": 1 },
         "receiptId": { "type": "string" },
         "editStack": { "type": "array" }

@@ -23,6 +23,7 @@ import { MotionJobRegistry, type MotionJobRecord } from "./job-registry";
 import { projectJobState, type JobLifecycle, type JobOutcome, type JobState } from "./generated/job-status";
 import type { MotionJobFrameLane } from "./job-frame-lane";
 import { motionJobOwnerKey } from "./job-id-file";
+import type { MotionJobEvidence } from "./job-evidence";
 
 /** One job, however it is currently stored. Shaped by the contract, not by the storage. */
 export interface MotionJobStatus {
@@ -33,6 +34,8 @@ export interface MotionJobStatus {
   /** Optional rasterizer selected within this final-video job's delivery lane. */
   frameLane?: MotionJobFrameLane;
   operation: string;
+  /** Host-derived immutable V1 render-plan identity, when retained by this job. */
+  planFingerprint?: string;
   lifecycle: JobLifecycle;
   /** Present if and only if lifecycle is "ended". */
   outcome: JobOutcome | null;
@@ -43,18 +46,21 @@ export interface MotionJobStatus {
   endedAtMs?: number;
   durationMs?: number;
   queueWaitMs?: number;
-  /** The process holding this job, present only while it is live. */
-  pid?: number;
   /** Accepted stop intent, or null; state remains pending/running until the worker has actually settled. */
   cancelRequested: { requestedBy: string; reason?: string; requestedAtMs: number } | null;
   error?: MotionJobRecord["error"];
+  /** Literal failed-only publication uncertainty; it neither attests an artifact nor authorizes deletion. */
+  committed?: true;
   cancellation?: MotionJobRecord["cancellation"];
   skip?: MotionJobRecord["skip"];
   warnings: string[];
+  /** @deprecated Host-local compatibility linkage only; never portable receipt or artifact authority. */
   receiptPath?: string;
   receiptId?: string;
   /** Compact link to producer evidence retained in the exact final receipt. */
   producerEvidence?: { frameLane: MotionJobFrameLane; schema?: string };
+  /** Optional path-free V1 terminal evidence. Absent for live jobs. */
+  evidence?: MotionJobEvidence;
   lineage?: MotionJobRecord["lineage"];
   /**
    * How long to wait before asking again. Absent once the job has ended, which is the machine-
@@ -135,6 +141,7 @@ function statusFromLease(lease: MotionJobLeaseRecord): MotionJobStatus {
     lane: lease.lane,
     ...(lease.frameLane ? { frameLane: lease.frameLane } : {}),
     operation: lease.operation,
+    ...(lease.planFingerprint ? { planFingerprint: lease.planFingerprint } : {}),
     lifecycle,
     outcome: null,
     state: projectJobState(lifecycle, null),
@@ -143,7 +150,6 @@ function statusFromLease(lease: MotionJobLeaseRecord): MotionJobStatus {
     // "waiting for a slot" message into a false "rendering..." one.
     ...(lease.admittedAtMs !== undefined ? { startedAtMs: lease.admittedAtMs } : {}),
     ...(lease.admittedAtMs !== undefined ? { queueWaitMs: Math.max(0, lease.admittedAtMs - lease.startedAtMs) } : {}),
-    pid: lease.pid,
     cancelRequested: lease.cancelRequested ?? null,
     warnings: [],
     pollAfterMs: DEFAULT_POLL_AFTER_MS
@@ -159,6 +165,7 @@ function statusFromRecord(record: MotionJobRecord): MotionJobStatus {
     lane: record.lane,
     ...(record.frameLane ? { frameLane: record.frameLane } : {}),
     operation: record.operation,
+    ...(record.planFingerprint ? { planFingerprint: record.planFingerprint } : {}),
     lifecycle: "ended",
     outcome: record.outcome,
     state: projectJobState("ended", record.outcome),
@@ -169,12 +176,14 @@ function statusFromRecord(record: MotionJobRecord): MotionJobStatus {
     queueWaitMs: record.queueWaitMs,
     cancelRequested: null,
     ...(record.error ? { error: record.error } : {}),
+    ...(record.committed === true ? { committed: true } : {}),
     ...(record.cancellation ? { cancellation: record.cancellation } : {}),
     ...(record.skip ? { skip: record.skip } : {}),
     warnings: record.warnings,
     ...(record.receiptPath ? { receiptPath: record.receiptPath } : {}),
     ...(record.receiptId ? { receiptId: record.receiptId } : {}),
     ...(record.producerEvidence ? { producerEvidence: record.producerEvidence } : {}),
+    ...(record.evidence ? { evidence: record.evidence } : {}),
     ...(record.lineage ? { lineage: record.lineage } : {})
   };
 }

@@ -3,56 +3,21 @@
   "id": "template_shellx_keyed_subject_promo",
   "name": "ShellX Keyed Subject Promo",
   "motion": "motion.json",
-  "compatibleLanes": [
-    "browser",
-    "ffmpeg",
-    "gpu"
-  ],
-  "compatibleHosts": [
-    "shellx-motion",
-    "shellx-canvas",
-    "shellx-cut"
-  ],
+  "compatibleLanes": ["browser", "ffmpeg", "gpu"],
+  "compatibleHosts": ["shellx-motion", "shellx-canvas", "shellx-cut"],
   "metadata": {
     "inputSchema": {
       "type": "object",
-      "required": [
-        "title",
-        "backgroundMedia",
-        "subjectMedia"
-      ],
+      "required": ["title", "backgroundMedia", "subjectMedia"],
       "properties": {
-        "eyebrow": {
-          "type": "string",
-          "maxLength": 30
-        },
-        "title": {
-          "type": "string",
-          "maxLength": 58
-        },
-        "subtitle": {
-          "type": "string",
-          "maxLength": 112
-        },
-        "badge": {
-          "type": "string",
-          "maxLength": 22
-        },
-        "backgroundMedia": {
-          "type": "string"
-        },
-        "subjectMedia": {
-          "type": "string"
-        },
-        "spillSuppression": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "accentColor": {
-          "type": "string",
-          "format": "color"
-        }
+        "eyebrow": { "type": "string", "maxLength": 30 },
+        "title": { "type": "string", "maxLength": 58 },
+        "subtitle": { "type": "string", "maxLength": 112 },
+        "badge": { "type": "string", "maxLength": 22 },
+        "backgroundMedia": { "type": "string" },
+        "subjectMedia": { "type": "string" },
+        "spillSuppression": { "type": "number", "minimum": 0, "maximum": 1 },
+        "accentColor": { "type": "string", "format": "color" }
       }
     },
     "inputExamples": [
@@ -74,24 +39,11 @@
       "maxHeight": 2160,
       "minDurationMs": 4000,
       "maxDurationMs": 12000,
-      "aspectRatios": [
-        "16:9",
-        "1:1",
-        "9:16"
-      ]
+      "aspectRatios": ["16:9", "1:1", "9:16"]
     },
     "suitability": {
-      "bestFor": [
-        "keyed subject promo",
-        "presenter-led product film",
-        "creator announcement",
-        "composited campaign spot"
-      ],
-      "notFor": [
-        "native-only preview",
-        "unprepared low-contrast key plate",
-        "flat slide deck"
-      ]
+      "bestFor": ["keyed subject promo", "presenter-led product film", "creator announcement", "composited campaign spot"],
+      "notFor": ["native-only preview", "unprepared low-contrast key plate", "flat slide deck"]
     },
     "license": {
       "id": "shellx-generated-sample",
@@ -103,43 +55,13 @@
       "notes": "Both package-local defaults are generated samples. User subject and background replacements require appropriate rights. Typography uses package-local Inter faces under SIL OFL 1.1."
     },
     "assetsAttribution": [
-      {
-        "name": "Atmosphere Fog Rays Background Footage",
-        "license": "shellx-generated-sample",
-        "author": "ShellX Motion",
-        "path": "assets/generated/atmosphere-fog-rays.mp4"
-      },
-      {
-        "name": "Neon Studio Sample (still-image alternate)",
-        "license": "shellx-generated-sample",
-        "author": "ShellX Motion",
-        "path": "assets/samples/neon-studio.svg"
-      },
-      {
-        "name": "Green Screen Subject Sample",
-        "license": "shellx-generated-sample",
-        "author": "ShellX Motion",
-        "path": "assets/samples/green-screen-subject.svg"
-      },
-      {
-        "name": "Inter SemiBold (Latin subset)",
-        "license": "SIL-OFL-1.1",
-        "author": "The Inter Project Authors",
-        "url": "https://github.com/rsms/inter",
-        "path": "assets/fonts/inter-latin-600-normal.woff2"
-      },
-      {
-        "name": "Inter Black (Latin subset)",
-        "license": "SIL-OFL-1.1",
-        "author": "The Inter Project Authors",
-        "url": "https://github.com/rsms/inter",
-        "path": "assets/fonts/inter-latin-900-normal.woff2"
-      }
+      { "name": "Atmosphere Fog Rays Background Footage", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/generated/atmosphere-fog-rays.mp4" },
+      { "name": "Neon Studio Sample (still-image alternate)", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/samples/neon-studio.svg" },
+      { "name": "Green Screen Subject Sample", "license": "shellx-generated-sample", "author": "ShellX Motion", "path": "assets/samples/green-screen-subject.svg" },
+      { "name": "Inter SemiBold (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-600-normal.woff2" },
+      { "name": "Inter Black (Latin subset)", "license": "SIL-OFL-1.1", "author": "The Inter Project Authors", "url": "https://github.com/rsms/inter", "path": "assets/fonts/inter-latin-900-normal.woff2" }
     ],
-    "preview": {
-      "poster": "preview/poster.png",
-      "thumbnail": "preview/poster.png"
-    },
+    "preview": { "poster": "preview/poster.png", "thumbnail": "preview/poster.png" },
     "provenance": {
       "source": "shellx-product-pack-keyed-subject-promo",
       "sourceHash": "1ada26179d632bf96c54cbf62bba9cb23d3091010d96948768025f293be3c91a"
@@ -148,10 +70,7 @@
       "recommendedLane": "ffmpeg",
       "renderCost": "high",
       "previewFps": 24,
-      "notes": [
-        "Uses chroma keying, spill suppression, matte cleanup, motion blur and a layered finishing pass.",
-        "GPU admission includes V25-B1 visual-only preview through the host-owned exact-time CFR video provider and the existing render --lane ffmpeg --frame-lane gpu final path. Preview does not attest audio, final-video staging, encoding, or mux. Native visual output and resource cleanup require fresh host verification."
-      ]
+      "notes": ["Uses chroma keying, spill suppression, matte cleanup, motion blur and a layered finishing pass.", "GPU admission includes V25-B1 visual-only preview through the host-owned exact-time CFR video provider and the existing render --lane ffmpeg --frame-lane gpu final path. Preview does not attest audio, final-video staging, encoding, or mux. Verify native pixels, resource bounds, and cleanup on the intended host."]
     },
     "story": {
       "kind": "keyed-presenter-promo",
@@ -162,15 +81,8 @@
           "intent": "Reveal the keyed subject as part of the scene instead of as a rectangular insert.",
           "startMs": 0,
           "durationMs": 1700,
-          "layerIds": [
-            "background-scene",
-            "subject",
-            "subject-halo"
-          ],
-          "mediaParamIds": [
-            "backgroundMedia",
-            "subjectMedia"
-          ],
+          "layerIds": ["background-scene", "subject", "subject-halo"],
+          "mediaParamIds": ["backgroundMedia", "subjectMedia"],
           "cameraIntent": "Opposing subject and background pushes create parallax."
         },
         {
@@ -179,15 +91,8 @@
           "intent": "Balance the presenter silhouette with a safe readable campaign message.",
           "startMs": 850,
           "durationMs": 3500,
-          "layerIds": [
-            "eyebrow",
-            "title",
-            "subtitle",
-            "subject"
-          ],
-          "mediaParamIds": [
-            "subjectMedia"
-          ],
+          "layerIds": ["eyebrow", "title", "subtitle", "subject"],
+          "mediaParamIds": ["subjectMedia"],
           "cameraIntent": "Hold subject eye line while copy enters from the opposite side."
         },
         {
@@ -196,12 +101,7 @@
           "intent": "Resolve on a branded badge and clean keyed edge.",
           "startMs": 4000,
           "durationMs": 2000,
-          "layerIds": [
-            "badge-panel",
-            "badge",
-            "subject",
-            "finish"
-          ],
+          "layerIds": ["badge-panel", "badge", "subject", "finish"],
           "cameraIntent": "Settle the subject and accent into a stable end frame."
         }
       ]
@@ -211,10 +111,7 @@
         "paramId": "backgroundMedia",
         "role": "composite-background",
         "description": "Full-frame licensed image or silent footage for the synthetic set behind the keyed subject. Ships with real generated fog-rays background footage; the 1920x1080 minimum is the recommended replacement size (the shipped sample is native-ceiling 736x400 footage relying on fit: fill upscale).",
-        "acceptedKinds": [
-          "image",
-          "video"
-        ],
+        "acceptedKinds": ["image", "video"],
         "fit": "fill",
         "minWidth": 1920,
         "minHeight": 1080,
@@ -224,9 +121,7 @@
         "paramId": "subjectMedia",
         "role": "green-screen-subject",
         "description": "Still subject plate on an even #00ff00 background with adequate edge separation.",
-        "acceptedKinds": [
-          "image"
-        ],
+        "acceptedKinds": ["image"],
         "fit": "contain",
         "minWidth": 720,
         "minHeight": 1080,
@@ -235,12 +130,7 @@
     ],
     "qualityTargets": {
       "manifest": "quality/representative-frames.json",
-      "representativeFramesMs": [
-        500,
-        1500,
-        3500,
-        5000
-      ],
+      "representativeFramesMs": [500, 1500, 3500, 5000],
       "minDistinctFrames": 4,
       "maxBlankFrames": 0,
       "minEdgePixels": 1100,
@@ -250,226 +140,42 @@
     }
   },
   "groups": [
-    {
-      "id": "content",
-      "label": "Content",
-      "order": 1
-    },
-    {
-      "id": "media",
-      "label": "Composite media",
-      "order": 2
-    },
-    {
-      "id": "key",
-      "label": "Key cleanup",
-      "order": 3
-    },
-    {
-      "id": "style",
-      "label": "Style",
-      "order": 4
-    }
+    { "id": "content", "label": "Content", "order": 1 },
+    { "id": "media", "label": "Composite media", "order": 2 },
+    { "id": "key", "label": "Key cleanup", "order": 3 },
+    { "id": "style", "label": "Style", "order": 4 }
   ],
   "params": [
-    {
-      "id": "eyebrow",
-      "label": "Eyebrow",
-      "type": "text",
-      "defaultValue": "CREATOR MODE",
-      "group": "content",
-      "order": 1
-    },
-    {
-      "id": "title",
-      "label": "Title",
-      "type": "text",
-      "defaultValue": "Put the story in the room",
-      "group": "content",
-      "order": 2
-    },
-    {
-      "id": "subtitle",
-      "label": "Subtitle",
-      "type": "text",
-      "defaultValue": "A cleaned, spill-suppressed subject sits inside a moving branded scene with one deterministic render.",
-      "group": "content",
-      "order": 3
-    },
-    {
-      "id": "badge",
-      "label": "Badge",
-      "type": "text",
-      "defaultValue": "LOCAL COMPOSITE",
-      "group": "content",
-      "order": 4
-    },
-    {
-      "id": "backgroundMedia",
-      "label": "Background",
-      "type": "media",
-      "defaultValue": "assets/generated/atmosphere-fog-rays.mp4",
-      "group": "media",
-      "order": 1
-    },
-    {
-      "id": "subjectMedia",
-      "label": "Green-screen subject",
-      "type": "media",
-      "defaultValue": "assets/samples/green-screen-subject.svg",
-      "group": "media",
-      "order": 2
-    },
-    {
-      "id": "spillSuppression",
-      "label": "Spill suppression",
-      "type": "number",
-      "defaultValue": 0.72,
-      "group": "key",
-      "order": 1,
-      "min": 0,
-      "max": 1,
-      "step": 0.02
-    },
-    {
-      "id": "accentColor",
-      "label": "Accent color",
-      "type": "color",
-      "defaultValue": "#c084fc",
-      "group": "style",
-      "order": 1
-    }
+    { "id": "eyebrow", "label": "Eyebrow", "type": "text", "defaultValue": "CREATOR MODE", "group": "content", "order": 1 },
+    { "id": "title", "label": "Title", "type": "text", "defaultValue": "Put the story in the room", "group": "content", "order": 2 },
+    { "id": "subtitle", "label": "Subtitle", "type": "text", "defaultValue": "A cleaned, spill-suppressed subject sits inside a moving branded scene with one deterministic render.", "group": "content", "order": 3 },
+    { "id": "badge", "label": "Badge", "type": "text", "defaultValue": "LOCAL COMPOSITE", "group": "content", "order": 4 },
+    { "id": "backgroundMedia", "label": "Background", "type": "media", "defaultValue": "assets/generated/atmosphere-fog-rays.mp4", "group": "media", "order": 1 },
+    { "id": "subjectMedia", "label": "Green-screen subject", "type": "media", "defaultValue": "assets/samples/green-screen-subject.svg", "group": "media", "order": 2 },
+    { "id": "spillSuppression", "label": "Spill suppression", "type": "number", "defaultValue": 0.72, "group": "key", "order": 1, "min": 0, "max": 1, "step": 0.02 },
+    { "id": "accentColor", "label": "Accent color", "type": "color", "defaultValue": "#c084fc", "group": "style", "order": 1 }
   ],
   "controls": [
-    {
-      "paramId": "eyebrow",
-      "widget": "text",
-      "label": "Eyebrow"
-    },
-    {
-      "paramId": "title",
-      "widget": "textarea",
-      "label": "Title"
-    },
-    {
-      "paramId": "subtitle",
-      "widget": "textarea",
-      "label": "Subtitle"
-    },
-    {
-      "paramId": "badge",
-      "widget": "text",
-      "label": "Badge"
-    },
-    {
-      "paramId": "backgroundMedia",
-      "widget": "media",
-      "label": "Background"
-    },
-    {
-      "paramId": "subjectMedia",
-      "widget": "media",
-      "label": "Green-screen subject"
-    },
-    {
-      "paramId": "spillSuppression",
-      "widget": "slider",
-      "label": "Spill suppression"
-    },
-    {
-      "paramId": "accentColor",
-      "widget": "color",
-      "label": "Accent color"
-    }
+    { "paramId": "eyebrow", "widget": "text", "label": "Eyebrow" },
+    { "paramId": "title", "widget": "textarea", "label": "Title" },
+    { "paramId": "subtitle", "widget": "textarea", "label": "Subtitle" },
+    { "paramId": "badge", "widget": "text", "label": "Badge" },
+    { "paramId": "backgroundMedia", "widget": "media", "label": "Background" },
+    { "paramId": "subjectMedia", "widget": "media", "label": "Green-screen subject" },
+    { "paramId": "spillSuppression", "widget": "slider", "label": "Spill suppression" },
+    { "paramId": "accentColor", "widget": "color", "label": "Accent color" }
   ],
   "bindings": [
-    {
-      "paramId": "eyebrow",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/4/text",
-        "layerId": "eyebrow"
-      }
-    },
-    {
-      "paramId": "title",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/5/text",
-        "layerId": "title"
-      }
-    },
-    {
-      "paramId": "subtitle",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/6/text",
-        "layerId": "subtitle"
-      }
-    },
-    {
-      "paramId": "badge",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/8/text",
-        "layerId": "badge"
-      }
-    },
-    {
-      "paramId": "backgroundMedia",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/0/source",
-        "layerId": "background-scene"
-      }
-    },
-    {
-      "paramId": "backgroundMedia",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/0/assetRef",
-        "layerId": "background-scene"
-      }
-    },
-    {
-      "paramId": "subjectMedia",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/2/source",
-        "layerId": "subject"
-      }
-    },
-    {
-      "paramId": "subjectMedia",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/2/assetRef",
-        "layerId": "subject"
-      }
-    },
-    {
-      "paramId": "spillSuppression",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/2/keying/spillSuppression",
-        "layerId": "subject"
-      }
-    },
-    {
-      "paramId": "accentColor",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/3/fill",
-        "layerId": "subject-halo"
-      }
-    },
-    {
-      "paramId": "accentColor",
-      "target": {
-        "kind": "motion_path",
-        "path": "/layers/7/fill",
-        "layerId": "badge-panel"
-      }
-    }
+    { "paramId": "eyebrow", "target": { "kind": "motion_path", "path": "/layers/4/text", "layerId": "eyebrow" } },
+    { "paramId": "title", "target": { "kind": "motion_path", "path": "/layers/5/text", "layerId": "title" } },
+    { "paramId": "subtitle", "target": { "kind": "motion_path", "path": "/layers/6/text", "layerId": "subtitle" } },
+    { "paramId": "badge", "target": { "kind": "motion_path", "path": "/layers/8/text", "layerId": "badge" } },
+    { "paramId": "backgroundMedia", "target": { "kind": "motion_path", "path": "/layers/0/source", "layerId": "background-scene" } },
+    { "paramId": "backgroundMedia", "target": { "kind": "motion_path", "path": "/layers/0/assetRef", "layerId": "background-scene" } },
+    { "paramId": "subjectMedia", "target": { "kind": "motion_path", "path": "/layers/2/source", "layerId": "subject" } },
+    { "paramId": "subjectMedia", "target": { "kind": "motion_path", "path": "/layers/2/assetRef", "layerId": "subject" } },
+    { "paramId": "spillSuppression", "target": { "kind": "motion_path", "path": "/layers/2/keying/spillSuppression", "layerId": "subject" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/3/fill", "layerId": "subject-halo" } },
+    { "paramId": "accentColor", "target": { "kind": "motion_path", "path": "/layers/7/fill", "layerId": "badge-panel" } }
   ]
 }

@@ -1,18 +1,19 @@
 import { isAbsolute } from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalJsonSha256 } from "@shellx-motion/core";
-import type { FfmpegCommand, FfmpegRunner } from "./index.js";
+import { resolveFfmpegExecutable, type FfmpegCommand, type FfmpegRunner } from "./index.js";
 import {
   LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT,
   LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT_SHA256,
   LINEAR_SRGB_SDR_FINAL_FORWARD_FILTER,
   LINEAR_SRGB_SDR_FINAL_INVERSE_FILTER,
-  LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES,
   linearSrgbSdrFinalEncodeCommand,
   linearSrgbSdrFinalFfmpegPreflightCommand,
   linearSrgbSdrFinalInverseDecodeCommand,
   preflightLinearSrgbSdrFinalFfmpeg,
 } from "./linear-srgb-sdr-final-ffmpeg-contract.js";
+
+const FORWARD_FILTER = "zscale=primariesin=bt709:transferin=iec61966-2-1:matrixin=gbr:rangein=full:primaries=bt709:transfer=bt709:matrix=bt709:range=limited:dither=none,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv";
 
 describe("strict linear-sRGB SDR FFmpeg contract", () => {
   it("pins one exact output-free zscale/libx264 capability exercise", () => {
@@ -25,7 +26,7 @@ describe("strict linear-sRGB SDR FFmpeg contract", () => {
         "-hide_banner", "-v", "error", "-nostdin",
         "-f", "lavfi", "-i", "color=c=black:s=2x2:r=1:d=1,format=rgba",
         "-frames:v", "1", "-vf", LINEAR_SRGB_SDR_FINAL_FORWARD_FILTER,
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-crf", "16", "-preset", "slow", "-pix_fmt", "yuv420p", "-x264-params", "aq-mode=3:aq-strength=0.8",
         "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
         "-f", "null", "-",
       ],
@@ -77,16 +78,23 @@ describe("strict linear-sRGB SDR FFmpeg contract", () => {
     await expect(preflightLinearSrgbSdrFinalFfmpeg({ runner: missingZscale })).rejects.toThrow("exact strict linear-sRGB SDR zscale");
   });
 
-  it("builds a strict raw-RGBA software encode without the generic SDR tail", () => {
+  it("builds the complete strict raw-RGBA software encode command without the generic SDR tail", () => {
     const command = linearSrgbSdrFinalEncodeCommand({ width: 1920, height: 1080, fps: 30, frameCount: 90 }, "/private/work.mp4");
-    expect(command.args).toEqual([
-      "-hide_banner", "-v", "error", "-nostdin", "-n",
-      "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", "1920x1080", "-framerate", "30", "-i", "pipe:0",
-      "-map", "0:v:0", "-an", "-frames:v", "90", "-vf", LINEAR_SRGB_SDR_FINAL_FORWARD_FILTER,
-      "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
-      "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
-      "-movflags", "+faststart", "-fs", String(LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES), "/private/work.mp4",
-    ]);
+    const executable = resolveFfmpegExecutable();
+    expect(isAbsolute(executable)).toBe(true);
+    expect(executable).toMatch(/(?:^|[\\/])ffmpeg(?:\.exe)?$/iu);
+    expect(command).toStrictEqual({
+      executable,
+      shell: false,
+      args: [
+        "-hide_banner", "-v", "error", "-nostdin", "-n",
+        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", "1920x1080", "-framerate", "30", "-i", "pipe:0",
+        "-map", "0:v:0", "-an", "-frames:v", "90", "-vf", FORWARD_FILTER,
+        "-c:v", "libx264", "-crf", "16", "-preset", "slow", "-pix_fmt", "yuv420p", "-x264-params", "aq-mode=3:aq-strength=0.8",
+        "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
+        "-movflags", "+faststart", "-fs", "268435456", "/private/work.mp4",
+      ],
+    });
     expect(command.args.join(" ")).not.toContain("scale=in_range");
     expect(command.args.filter((value) => value === "pipe:0")).toHaveLength(1);
   });
@@ -103,16 +111,20 @@ describe("strict linear-sRGB SDR FFmpeg contract", () => {
 
   it("rejects oversized or malformed command inputs before command construction", () => {
     expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1921, height: 1080, fps: 30, frameCount: 1 }, "/work.mp4")).toThrow("bounded positive");
+    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1919, height: 1080, fps: 30, frameCount: 1 }, "/work.mp4")).toThrow("even canvas dimensions");
+    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1920, height: 1079, fps: 30, frameCount: 1 }, "/work.mp4")).toThrow("even canvas dimensions");
     expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1, height: 1, fps: Number.NaN, frameCount: 1 }, "/work.mp4")).toThrow("bounded positive");
     expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1, height: 1, fps: 1, frameCount: 0 }, "/work.mp4")).toThrow("bounded positive");
-    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1, height: 1, fps: 1, frameCount: 1 }, "-")).toThrow("path is invalid");
-    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 1, height: 1, fps: 1, frameCount: 1 }, "/work.mov")).toThrow(".mp4 extension");
+    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 2, height: 2, fps: 1, frameCount: 1 }, "-")).toThrow("path is invalid");
+    expect(() => linearSrgbSdrFinalEncodeCommand({ width: 2, height: 2, fps: 1, frameCount: 1 }, "/work.mov")).toThrow(".mp4 extension");
   });
 
   it("binds the complete immutable transform contract", () => {
+    expect(LINEAR_SRGB_SDR_FINAL_FORWARD_FILTER).toBe(FORWARD_FILTER);
     expect(LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT).toMatchObject({
       source: { transfer: "iec61966-2-1", matrix: "gbr", range: "full" },
-      encode: { codec: "libx264", hardware: "refused" },
+      forward: { filter: FORWARD_FILTER, dither: "none" },
+      encode: { codec: "libx264", crf: 16, preset: "slow", pixelFormat: "yuv420p", x264Params: "aq-mode=3:aq-strength=0.8", hardware: "refused" },
       signal: { primaries: "bt709", transfer: "bt709", matrix: "bt709", range: "tv" },
       inverse: { intermediatePixelFormat: "gbrp", outputPixelFormat: "rgba" },
     });

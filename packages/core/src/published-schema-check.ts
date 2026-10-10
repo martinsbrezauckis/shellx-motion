@@ -10,12 +10,9 @@
  * understand, so a schema can never silently rely on an unimplemented constraint (which would give
  * false confidence). It is the stage-one structural validator in Motion's runtime two-stage
  * validation path, and is also used by schema drift tests and by
- * scripts/generate-public-contracts.ts in --check mode. It is not part of the render hot path.
+ * scripts/public/generate-public-contracts.ts in --check mode. It is not part of the render hot path.
  *
- * Supported keywords: type, const, enum, required, properties, additionalProperties (boolean or
- * schema), items (single schema), minLength, maxLength, minItems, maxItems, uniqueItems, minimum, maximum, exclusiveMinimum,
- * exclusiveMaximum, pattern, allOf, anyOf, oneOf, if/then/else, and `$ref` to local
- * `#/$defs/<name>` definitions or an explicit caller-supplied published-schema resolver.
+ * Supported standard keywords include type, properties, items, bounds, patterns, combinators, and local `$ref`.
  * Ignored (metadata): $schema, $id, $comment, title, description, examples, default, $defs.
  */
 import { isCanonicalMotionEffectModuleVersion, MOTION_EFFECT_MODULE_VERSION_SCHEMA_PATTERN } from "./effect-module";
@@ -23,6 +20,7 @@ import { checkUniqueJsonItems } from "./published-schema-unique-items";
 import { isSupportedFunctionalEasing, MOTION_FUNCTIONAL_EASING_PATTERN } from "./functional-easing";
 import { isMotionPublishedSchema } from "./motion-scene3d-animation-root-preflight";
 import { motionDocumentRootPreflight } from "./motion-document-root-preflight";
+import { LIFECYCLE_V1_PUBLISHED_SCHEMA_PATTERNS } from "./published-schema-patterns-lifecycle-v1";
 /** A JSON Schema document (subset) as a plain JSON object. */
 export type JsonSchemaDocument = Record<string, unknown>;
 /** Resolve a non-local JSON Schema reference for a composed published contract. */
@@ -114,10 +112,7 @@ function checkNode(
 /**
  * Exact precompiled patterns used by Motion's published schemas.
  *
- * This checker is intentionally not a general JSON Schema evaluator. Keeping the closed set as
- * regex literals means a caller can never make this exported helper compile caller-selected regex
- * source. A new published-schema pattern therefore needs an explicit source review and code change,
- * just like a new supported JSON Schema keyword.
+ * The closed literal set prevents caller-selected regex compilation; additions need explicit review.
  */
 const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp | typeof isSupportedFunctionalEasing>([
   ["^#[0-9A-F]{8}$", /^#[0-9A-F]{8}$/],
@@ -163,6 +158,7 @@ const PUBLISHED_SCHEMA_PATTERNS = new Map<string, RegExp | typeof isSupportedFun
   ["^quality/(?!.*\\.\\.)[^/].*$", /^quality\/(?!.*\.\.)[^\/].*$/],
   ["^segments/segment-[0-9]{6}\\.[a-z0-9]{1,16}$", /^segments\/segment-[0-9]{6}\.[a-z0-9]{1,16}$/],
   ["^steps\\(", /^steps\(/],
+  ...LIFECYCLE_V1_PUBLISHED_SCHEMA_PATTERNS,
 ]);
 
 function checkString(node: JsonSchemaDocument, value: string, path: string, errors: Array<{ path: string; message: string }>): void {

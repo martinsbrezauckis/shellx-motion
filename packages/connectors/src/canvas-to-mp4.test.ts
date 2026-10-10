@@ -547,7 +547,12 @@ describe.runIf(process.platform === "linux")("Canvas independent MP4 export conn
     });
 
     const renderReceipt = JSON.parse(await readFile(result.render.receiptPath, "utf8")) as Record<string, any>;
+    const pkg = await loadMotionPackage(result.packageDir);
     const audioPath = join(result.packageDir, "assets", "voice.wav");
+    // Audio is a direct layer source.  It has no raster dimensions, so it must not masquerade as
+    // an image-editor output (whose width and height are positive pixel dimensions).
+    expect(pkg.manifest.assets).toEqual(["assets/voice.wav"]);
+    expect(pkg.motion.assets).toEqual([]);
     expect(audioInput).toMatchObject({ path: audioPath });
     expect(renderReceipt.output).toMatchObject({
       audio: {
@@ -772,26 +777,12 @@ function audioShapeTextFrameSelection(): unknown {
     {
       id: "voiceover",
       kind: "audio",
-      assetId: "asset_voice",
       source: "assets/voice.wav",
       startMs: 100,
       durationMs: 800,
       volume: 0.4,
       fadeInMs: 120,
       fadeOutMs: 200
-    }
-  ];
-  selection.imageEditorOutputs = [
-    {
-      id: "voice_output",
-      assetId: "asset_voice",
-      kind: "audio",
-      path: "assets/voice.wav",
-      mimeType: "audio/wav",
-      width: 0,
-      height: 0,
-      sha256: "sample-voice",
-      editStack: []
     }
   ];
   return selection;

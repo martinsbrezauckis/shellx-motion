@@ -1245,7 +1245,7 @@ describe("schemas", () => {
     const actions = {
       schema: "shellx-motion/actions@1",
       actionSchema: "shellx-motion/action@1",
-      generatedBy: "scripts/generate-public-contracts.ts",
+      generatedBy: "scripts/public/generate-public-contracts.ts",
       actionCount: 1,
       permissions: ["read_motion"],
       surfaces: ["prompt"],
@@ -1263,7 +1263,7 @@ describe("schemas", () => {
     const debugContracts = {
       schema: "shellx-motion/debug-contracts@1",
       debugSchema: "shellx-motion/debug@1",
-      generatedBy: "scripts/generate-public-contracts.ts",
+      generatedBy: "scripts/public/generate-public-contracts.ts",
       commandCount: 1,
       permissions: ["read_motion"],
       commands: ["motion.state"],

@@ -87,5 +87,3 @@ the requested frame before handoff.
 | Browser CPU lowering | `packages/renderer-browser/src/trail-render.test.ts`: one real Chromium point-trail frame checks nonzero tapered history, stronger newer segment, and a black pre-history region. It is serial, one worker, with no file parallelism. |
 | GPU fixed-compositor admission | `packages/core/src/gpu-scene-2d-plan.test.ts` and `gpu-capability-match.test.ts`: a screen-blended trail emits screen ribbon/cap/head draws, accounts three fixed compositor passes, and stays aligned with static capability admission. |
 | Generated contracts | `pnpm run contracts:generate`, then `pnpm run contracts:check` and `pnpm run docs:debug-api` keep `effects.trail`, action discovery, Debug/MCP metadata, and public schemas fresh. |
-
-Run only focused serial proofs in constrained WSL sessions; do not overlap browser or full Vitest chains.

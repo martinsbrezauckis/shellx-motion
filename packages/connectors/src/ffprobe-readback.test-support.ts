@@ -35,11 +35,7 @@ export const SDR_BT709_DELIVERED_TAGS: DeliveredColorTags = {
   color_range: "tv"
 };
 
-/**
- * The shape measured on a Windows FFmpeg N-125773 (8.x dev) build during cross-host verification: matrix and range
- * survive to the container, `transfer` and `primaries` do not — while the receipt still declared
- * `sdr-bt709`. This is the exact reading the honesty check exists to catch.
- */
+/** A delivered colour reading missing transfer and primaries despite an SDR bt709 preset. */
 export const UNTAGGED_TRANSFER_DELIVERED_TAGS: DeliveredColorTags = {
   color_space: "bt709",
   color_range: "tv"

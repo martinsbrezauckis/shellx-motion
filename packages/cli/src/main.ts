@@ -27,7 +27,7 @@ import {
 } from "./render-batch-delivery-uncertainty";
 import { gpuBatchFrameTransport, gpuBatchPreflightRefusal, readBatchFrameLane, type BatchFrameLane } from "./gpu-batch-policy";
 import { activeScriptCliRefusal } from "./agent-script-cli-refusal";
-import { batchQualityInputEvidence, prepareBatchQualityManifestSnapshot, publishBatchQualityManifestSnapshot, type BatchQualityInputEvidence, type PublishedBatchQualityManifestSnapshot } from "./batch-quality-manifest";
+import { BatchQualityDerivedBudget, batchQualityInputEvidence, createBatchQualityRequestBudget, prepareBatchQualityManifestSnapshot, publishBatchQualityManifestSnapshot, type BatchQualityInputEvidence, type PublishedBatchQualityManifestSnapshot } from "./batch-quality-manifest";
 import { enrichRenderReceiptWithQualityManifest, remapRetainedQualityInputPaths, retainQualityManifestForEvaluation } from "./quality-manifest-retention";
 import { unhandledFailure } from "./unhandled-failure";
 import { packageValidationResult } from "./package-refusals";
@@ -154,6 +154,7 @@ import {
 } from "./render-browser-frame-batch";
 import { renderMaterializedFinalVideo, withoutTransientFrameSourcePaths } from "./render-final-video-materialized";
 import { linearSrgbSdrFinalCliDryRun, planLinearSrgbSdrFinalCliRender, preflightLinearSrgbSdrFinalCliRender, streamingFinalCliRenderInput, type StreamingFinalCliContext } from "./linear-srgb-sdr-final-cli";
+import { runStrictLinearSrgbSdrTerminal } from "./strict-linear-srgb-sdr-terminal";
 import {
   abortPreparedRenderCatalog,
   commitPreparedRenderCatalog,
@@ -215,7 +216,6 @@ import {
   planStreamingFinalCommand,
   preliminaryGpuAudio,
   renderSegmentedFinal,
-  renderStreamingFinal,
   summarizeFfmpegDiagnostic,
   stillFrameOutputPathError,
   type MotionExportPreset,
@@ -1146,10 +1146,8 @@ async function templateCommand(argv: string[]): Promise<CliResult> {
     operation: "template.apply",
     // A template apply that dropped a binding is not a pass. `applied.warnings` carries lines like
     // "Template binding title target /layers/99/text was not applied" -- the engine saying it ignored
-    // something the caller declared, which is the exact defect class this release exists to remove.
-    // measured during cross-host verification before this escalated: `template apply --set title=...` against an
-    // unresolvable binding wrote a receipt reading `passed` over a document still holding the old
-    // text.
+    // something the caller declared. A receipt must not report `passed` when an
+    // unresolved binding leaves the document's previous value in place.
     status: escalateReceiptStatusForWarnings("passed", applied.warnings),
     packageId: pkg.manifest.id,
     inputHashes: {
@@ -2446,148 +2444,36 @@ async function renderCommand(argv: string[], options: RunCliOptions = {}): Promi
     if (strictColorPreflight.kind === "refused") {
       return { ok: false, command: "render", lane: "ffmpeg", frameLane, frameTransport, error: strictColorPreflight.error };
     }
-    const receiptPath = renderReceiptPathForOutput(pkg.manifest.id, resolvedOutputPath, "ffmpeg");
-    const publication = await PairedOutputReceiptPublication.acquire({
-      outputPath: resolvedOutputPath, receiptPath,
-      outputArtifact: { role: "rendered_media", mediaType: mediaTypeForPath(resolvedOutputPath), primary: true },
-      receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
-      ...(forceOutput ? { forceOutput: true, forceReceipt: true } : {})
-    });
-    let streamed: Awaited<ReturnType<typeof renderStreamingFinal>>;
-    try {
-      streamed = await renderStreamingFinal({
-      ...streamingRenderInput,
-      outputPublication: publication.outputPublication,
-      ...(strictColorPreflight.kind === "strict" ? { linearSrgbSdrFinalPreparation: strictColorPreflight.preparation } : {})
-      });
-    } catch (error) {
-      await publication.abort().catch(() => undefined);
-      throw error;
-    }
-    if (!streamed.ok) {
-      await publication.abort().catch(() => undefined);
-      return {
-        ok: false,
-        command: "render",
-        lane: "ffmpeg",
-        frameLane,
-        frameTransport,
-        ffmpegPlan: streamingPlan.command,
-        error: streamed.error
-      };
-    }
-    const finalCommand = { ...streamed.command, args: streamed.command.args.map((arg) => arg === publication.outputPublication.stagingPath ? resolvedOutputPath : arg) };
-    const rawQualityCheck = qualityManifestPath ? await qualityCheckRenderManifest({ inputPath: publication.outputPublication.stagingPath, manifestPath: qualityManifestPath, preset: ffmpegPreset, packageRoot, durationMs: pkg.motion.durationMs, fps: pkg.motion.fps, options }) : undefined;
-    const qualityCheck = rawQualityCheck
-      ? remapPrivatePublicationResultPaths(rawQualityCheck, publication.outputPublication.stagingPath, resolvedOutputPath)
-      : undefined;
-    if (qualityManifestPath && qualityCheck) {
-      await enrichRenderReceiptWithQualityManifest(streamed.receipt, qualityManifestPath, qualityCheck);
-      await recordReceiptFfprobeProvenance(streamed.receipt, { contributed: true, ...(options.ffmpegRunner ? { runner: options.ffmpegRunner } : {}) });
-      if (!qualityCheck.ok) {
-        await bindFinalRenderReceiptLineage(streamed.receipt, pkg, lineage);
-        remapReceiptOutputPath(streamed.receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
-        await publication.abort();
-        return await renderQualityManifestFailure({ packageId: pkg.manifest.id, lane: "ffmpeg", frameLane, preset: ffmpegPreset, outputPath: resolvedOutputPath, receipt: streamed.receipt, qualityManifestPath, qualityCheck, force: forceOutput, extra: { frameTransport, ffmpeg: finalCommand } });
-      }
-    }
-    await bindFinalRenderReceiptLineage(streamed.receipt, pkg, lineage);
-    let workflowCatalog: RenderReceiptFinalizeResult | undefined;
-    try {
-      const preparedCatalog = await prepareRenderReceipt({
-        packageId: pkg.manifest.id,
-        receipt: streamed.receipt,
-        outputPath: resolvedOutputPath,
-        receiptPath,
-        atMs: 0,
-        workflowCatalogPath,
-        failOnDrift, force: forceOutput
-      });
-      workflowCatalog = preparedCatalog;
-      if (preparedCatalog.error) {
-        await abortPreparedRenderCatalog(preparedCatalog);
-        streamed.receipt.status = "failed";
-        remapReceiptOutputPath(streamed.receipt, publication.outputPublication.stagingPath, resolvedOutputPath);
-        await publication.abort();
-        preparedCatalog.receiptPath = await writeRenderReceiptFile(streamed.receipt, receiptPath, { force: forceOutput });
-        preparedCatalog.artifacts = streamed.receipt.artifacts;
-        return {
-          ok: false,
-          command: "render",
-          lane: "ffmpeg",
-          frameLane,
-          preset: ffmpegPreset,
-          ...workflowCatalogFields(preparedCatalog),
-          ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
-          ...(audio ? { audio } : {}),
-          ...(audioTracks ? { audioTracks } : {}),
-          ...(qualityManifestPath ? { qualityManifestPath } : {}),
-          outputPath: resolvedOutputPath,
-          output: streamed.receipt.output,
-          receipt: streamed.receipt,
-          ...(qualityCheck ? { qualityCheck } : {}),
-          warnings: streamed.receipt.warnings,
-          frameTransport,
-          ffmpeg: finalCommand,
-          error: preparedCatalog.error
-        };
-      }
-      await publication.stageReceipt(streamed.receipt);
-      await publication.commit({ cancelled: () => options.signal?.aborted === true });
-    } catch (error) {
-      await abortPreparedRenderCatalog(workflowCatalog).catch(() => undefined);
-      await publication.abort().catch(() => undefined);
-      if (error instanceof PairedOutputReceiptCommitUncertainError) {
-        return { ok: false, command: "render", lane: "ffmpeg", frameLane, preset: ffmpegPreset, ...pairedPublicationUncertaintyFields(error, "renderCommitUncertain"), error: pairedPublicationUncertaintyError(error) };
-      }
-      throw error;
-    }
-    let committedCatalog: RenderReceiptFinalizeResult;
-    try {
-      committedCatalog = await commitPreparedRenderCatalog(workflowCatalog!, streamed.receipt);
-    } catch (error) {
-      return {
-        ok: false,
-        command: "render",
-        lane: "ffmpeg",
-        frameLane,
-        preset: ffmpegPreset,
-        renderCommitted: true,
-        ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
-        ...(audio ? { audio } : {}),
-        ...(audioTracks ? { audioTracks } : {}),
-        ...(qualityManifestPath ? { qualityManifestPath } : {}),
-        outputPath: resolvedOutputPath,
-        output: streamed.receipt.output,
-        receipt: streamed.receipt,
-        receiptPath,
-        ...(qualityCheck ? { qualityCheck } : {}),
-        warnings: streamed.receipt.warnings,
-        frameTransport,
-        ffmpeg: finalCommand,
-        error: { code: "render_catalog_update_failed", message: error instanceof Error ? error.message : String(error) }
-      };
-    }
-    return {
-      ok: true,
-      command: "render",
-      lane: "ffmpeg",
+    const strictTerminal = await runStrictLinearSrgbSdrTerminal({
+      pkg,
+      lineage,
       frameLane,
-      preset: ffmpegPreset,
-      ...workflowCatalogFields(committedCatalog),
-      ...(resolvedAudioPath ? { audioPath: resolvedAudioPath } : {}),
-      ...(audio ? { audio } : {}),
-      ...(audioTracks ? { audioTracks } : {}),
-      ...(qualityManifestPath ? { qualityManifestPath } : {}),
-      outputPath: resolvedOutputPath,
-      output: streamed.receipt.output,
-      receipt: streamed.receipt,
-      receiptPath,
-      ...(qualityCheck ? { qualityCheck } : {}),
-      warnings: streamed.receipt.warnings,
       frameTransport,
-      ffmpeg: finalCommand
-    };
+      preset: ffmpegPreset,
+      ffmpegPlan: streamingPlan.command,
+      outputPath: resolvedOutputPath,
+      audioPath: resolvedAudioPath,
+      audio,
+      audioTracks,
+      qualityManifestPath,
+      workflowCatalogPath,
+      failOnDrift,
+      force: forceOutput,
+      signal: options.signal,
+      ffmpegRunner: options.ffmpegRunner,
+      renderInput: streamingRenderInput,
+      preparation: strictColorPreflight.kind === "strict" ? strictColorPreflight.preparation : undefined,
+      qualityCheck: async (inputPath) => await qualityCheckRenderManifest({
+        inputPath,
+        manifestPath: qualityManifestPath!,
+        preset: ffmpegPreset,
+        packageRoot,
+        durationMs: pkg.motion.durationMs,
+        fps: pkg.motion.fps,
+        options,
+      }),
+    });
+    return strictTerminal.result;
   }
 
   if (frameLane === "gpu") {
@@ -4631,6 +4517,8 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
   const { batchOutput, packagesRoot, renderRoot, receiptsRoot, previousBatchJobs } = admittedOutput;
 
   const jobs: Array<Record<string, unknown>> = [];
+  const qualityRequestBudget = qualityManifestPath ? createBatchQualityRequestBudget() : undefined;
+  const qualityDerivedBudget = qualityManifestPath ? new BatchQualityDerivedBudget() : undefined;
   try {
     for (let index = 0; index < expanded.length; index += 1) {
       if (index > 0) await options.batchTestHooks?.beforeNextRow?.();
@@ -4641,7 +4529,9 @@ async function renderBatchCommand(argv: string[], options: RunCliOptions = {}): 
       const outputPath = batchRenderOutputPath(renderRoot, job.manifest.id, jobPreset);
       const qualitySnapshot = qualityManifestPath ? await prepareBatchQualityManifestSnapshot({
         sourcePath: qualityManifestPath,
-        context: { values: job.row.values, rowId: job.row.id, rowIndex: job.row.index, rowHash: job.row.hash, rowKey: job.row.key, packageId: job.manifest.id, packageDir, outputPath }
+        context: { values: job.row.values, rowId: job.row.id, rowIndex: job.row.index, rowHash: job.row.hash, rowKey: job.row.key, packageId: job.manifest.id, packageDir, outputPath },
+        requestBudget: qualityRequestBudget,
+        derivedBudget: qualityDerivedBudget,
       }) : undefined;
       const qualityInputs = qualitySnapshot ? batchQualityInputEvidence(qualitySnapshot) : undefined;
       const frameTransport = frameLane === "gpu" ? gpuBatchFrameTransport(quality) : undefined;

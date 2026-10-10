@@ -263,8 +263,8 @@ function applyMotionRowReplacements(motion: MotionDocument, replacements: RowRep
  * It also fails loud on a patched keyframe track the evaluator cannot read. A track is an array, so
  * it REPLACES rather than merges (see `mergeJsonRecords`) — the row's array becomes the whole track,
  * unchecked. A row that writes `{ t, v }` therefore replaced a working track with keyframes that
- * animate nothing, and nothing looked at it: expansion has no schema step, and the render lane's
- * readability gate (the keyframe regression) fires far downstream, in a message about a layer in a generated
+ * animate nothing, and expansion has no schema step. The render lane's readability gate fires
+ * downstream, in a message about a layer in a generated
  * document with no way back to the row that wrote it. The refusal here names the row.
  *
  * @param motion the expanded document, after token interpolation and `replace.*` maps.

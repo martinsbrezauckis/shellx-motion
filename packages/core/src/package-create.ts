@@ -1,54 +1,18 @@
 /**
- * Creating a Motion package from nothing.
+ * Create a valid, renderable Motion package without an existing source package.
  *
- * Role: this was the single biggest hole in the agent surface. Every authoring command in Motion
- * edits a package that already exists — `layer.create`, `keyframe.upsert`, `template apply` — and
- * every route that *makes* one was an importer (Lottie, glTF, HTML snippet, Canvas, script compile).
- * An agent asked to build something original had no first step.
+ * The default document has a background and a visible layer so a caller can preview it
+ * immediately, then edit it. Width, height, frame rate and duration use the same limits
+ * as the renderers; creation must not accept a package that its first preview refuses.
+ * Background colours must resolve in both render lanes.
  *
- * Found by giving an independent agent only the skill doc and the MCP tools and asking it to build
- * a chart: it searched for a create command, found none, and only recovered because an unrelated
- * fixture package happened to be left in the machine's temp directory, whose shape it copied.
- * Without that accident it would have had nowhere to start. `motion.actions.find("create new empty
- * motion package")` answered with the glTF importer.
+ * Package IDs include a random suffix and use lowercase ASCII characters. This keeps
+ * identities distinct across packages and on case-insensitive filesystems.
  *
- * What "minimal" means here: a package that **validates and renders** as-is. Not a stub that needs
- * repair before the next command will accept it — the whole point is that the agent's second call
- * can be a real edit. It therefore ships a background and one visible layer, because a document
- * with an empty `layers` array renders a blank frame and an agent cannot tell that from a failure.
+ * Creation uses a sibling staging directory and one final rename. Concurrent creators
+ * cannot both publish to the target, and interruption cannot expose a partial package.
  *
- * INPUTS ARE BOUNDED BY WHAT THE RENDERERS ENFORCE. The first version accepted any positive
- * width/height/fps/durationMs, so `create` reported success for a 100000x100000 document and the
- * agent's very next call — `motion.preview.frame` — died inside `assertLocalMotionFrameBudget` with
- * an unhandled `LocalMotionJobError` and a stack trace instead of a result. The bounds are read from
- * `MOTION_DOCUMENT_LIMITS`, which is assembled in `job-governor.ts` out of the guards that do the
- * refusing later, so this command cannot promise a size the renderers will not serve.
- *
- * THE BACKGROUND IS A COLOUR THIS ENGINE KNOWS. It used to be copied through as any string. Motion
- * resolves 22 CSS colour names, not the 148 CSS defines, so `midnightblue` authored fine and then
- * failed the first native preview with "Unsupported color format" (and renders as TRANSPARENT in the
- * browser lane, which is worse: a wrong picture with no error at all).
- *
- * IDS ARE UNIQUE PER PACKAGE, NOT PER NAME. They used to be a fold of the human name, so every
- * unnamed package on the machine was `pkg_untitled_motion`, and `Launch Hero` and `LAUNCH-HERO`
- * were the same package as far as receipts, caches and host lineage were concerned. A 64-bit random
- * suffix now identifies the package itself. The alphabet is `[a-z0-9_]` only — no uppercase, ever —
- * because `job-id-file.ts` paid for that lesson during cross-host verification: ids that differ only in case are one id on
- * Windows and macOS, where the filesystem folds case, and one id means one caller's evidence
- * silently overwrites another's.
- *
- * PUBLICATION IS ATOMIC. The first version checked that the target directory was empty and then
- * wrote into it directly. That violated the command-and-creation contract in two ways: two
- * concurrent creators could each pass the check and then write over each other, and an interruption
- * between the two `writeFile` calls left a directory holding half a package — which is worse than
- * no package, because `motion.package.validate` reads it as a broken package rather than a missing
- * one. The package is now built in a staging directory beside the target and published with a single
- * `rename`, the same temp-then-rename discipline `writeJsonAtomic` uses in `job-registry.ts` and
- * `job-lease.ts`. A caller therefore observes the target as absent or complete, never in between,
- * and a crash leaves an inert dot-prefixed staging directory rather than a corrupt package.
- *
- * Dependencies: node:fs and the package types. Primary callers: `motion.package.create` in the
- * Debug API and `package-create` in the CLI.
+ * Primary callers: `motion.package.create` in the Debug API and `package-create` in the CLI.
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";

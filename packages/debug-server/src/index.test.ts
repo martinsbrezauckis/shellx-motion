@@ -762,6 +762,21 @@ describe("motion debug loopback server", () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
+      if (process.platform !== "linux") {
+        expect(body).toMatchObject({
+          jsonrpc: "2.0",
+          id: "mcp-cut-generate-failed",
+          result: {
+            isError: true,
+            structuredContent: {
+              ok: false,
+              command: "motion.connector.cut_generate_to_cut",
+              error: { code: "connector_failed", message: expect.stringContaining("Linux descriptor-relative primitive") }
+            }
+          }
+        });
+        return;
+      }
       expect(body).toMatchObject({
         jsonrpc: "2.0",
         id: "mcp-cut-generate-failed",

@@ -3,11 +3,9 @@
  *
  * WHY THIS MODULE EXISTS
  *
- * An external agent authored a 15-second piece with 309 keyframes written as `{ t, v }` instead of
- * the schema's `{ atMs, value }`. The evaluator's `readNumericKeyframes` returns null the moment a
- * value is not a finite number, so every one of those keyframes was discarded — and nothing said so.
- * The render succeeded, `motion.package.validate` answered `valid: true`, and the delivered MP4 was
- * frozen for ~90% of its duration. The author did the work; the engine threw it away in silence.
+ * A malformed track such as `{ t, v }` can pass shallow package loading but cannot be
+ * interpolated as the schema's `{ atMs, value }` keyframes. It must be refused explicitly
+ * before validation or rendering can claim success over a static result.
  *
  * Before this module the rule was written three times, in three files, by hand:
  *   - `readNumericKeyframes` / `readStringKeyframes` (timeline.ts) — the runtime, which checked
@@ -275,7 +273,7 @@ export function unreadableLayerKeyframes(layer: MotionLayer, layerIndex: number)
  *
  * WHY A MUTATION NEEDS ITS OWN GATE, ON TOP OF THE READ GATE
  *
- * the keyframe regression put the refusal on the READ path — validate and both render lanes. That is where a
+ * The read-path refusal runs in validate and both render lanes. That is where a
  * finished package is judged. It is not where an IN-PROGRESS package lives, and a mutation reaches
  * an in-progress package: the author writes `motion.json` by hand, gets the field names wrong, and
  * runs an editing command before ever running validate.
@@ -283,8 +281,8 @@ export function unreadableLayerKeyframes(layer: MotionLayer, layerIndex: number)
  * A rewriting mutation then does something the read gate cannot undo. `motion.timeline.layer.split`
  * assigns each keyframe to a half by comparing `atMs` against the split point; a keyframe whose
  * `atMs` is not a number satisfies none of `<`, `>` or `===`, so it lands in NEITHER half and is
- * gone. Measured on the the keyframe regression `{ t, v }` document: four authored keyframes became one synthesized
- * boundary keyframe per half, and the patched document then passed `validateDocument` — the command
+ * gone. A malformed `{ t, v }` track can become synthesized boundary keys, and the patched
+ * document can then pass `validateDocument` — the command
  * had deleted every error. The author's work and the evidence of it disappeared in the same step,
  * and the command answered `ok: true` with no warnings.
  *

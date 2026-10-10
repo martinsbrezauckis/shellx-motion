@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BoundedResourceBudget, DEFAULT_PACKAGE_ARCHIVE_WRITE_LIMITS, type OperationReceipt } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { readSourceImportReceiptEvidence } from "./source-import-receipt-evidence";
+import { createOwnerPrivateTempRoots } from "./owner-private-temp-roots.test-support";
 
-const roots: string[] = [];
-afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+const roots = createOwnerPrivateTempRoots();
+afterEach(async () => await roots.cleanup());
 
 describe("source import receipt evidence", () => {
   it("returns no evidence when the exact adjacent receipt is absent", async () => {
@@ -42,8 +43,7 @@ describe("source import receipt evidence", () => {
 });
 
 async function fixture(): Promise<{ sourcePath: string; sourceRoot: string; markdownHash: string }> {
-  const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-source-receipt-"));
-  roots.push(root);
+  const root = await roots.create("source-receipt");
   const sourceRoot = join(root, "input"), sourcePath = join(sourceRoot, "source.md"), markdown = "# Source\nImmutable evidence\n";
   await mkdir(sourceRoot, { recursive: true, mode: 0o700 });
   await writeFile(sourcePath, markdown, "utf8");

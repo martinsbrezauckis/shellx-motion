@@ -109,4 +109,22 @@ describe("browser remote response boundary", () => {
     expect(network.activeResponseCount).toBe(0);
     expect(calls.some(({ method, params }) => method === "Fetch.fulfillRequest" && params.body === "UE5H")).toBe(true);
   });
+
+  it("releases response concurrency when Chromium rejects stream close", async () => {
+    const calls: string[] = [];
+    const broker: BrowserResponseBrokerSession = { send: async (method) => {
+      calls.push(method);
+      if (method === "Fetch.takeResponseBodyAsStream") return { stream: "stream-1" };
+      if (method === "IO.read") return { data: "ok", eof: true };
+      if (method === "IO.close") throw new Error("target closed during cleanup");
+      return {};
+    } };
+    const network = state();
+    await expect(brokerBoundedBrowserResponse(broker, event([{ name: "content-type", value: "text/plain" }]),
+      network, async () => { throw new Error("must not fail"); })).resolves.toBeUndefined();
+    expect(calls).toEqual(["Fetch.takeResponseBodyAsStream", "IO.read", "Fetch.fulfillRequest", "IO.close"]);
+    expect(network.activeResponseCount).toBe(0);
+    expect(network.admittedResponseBytes).toBe(2);
+    expect(network.blockedResponsePolicies).toEqual([]);
+  });
 });

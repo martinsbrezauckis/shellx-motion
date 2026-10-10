@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,13 +35,14 @@ vi.mock("./artifact-handle", async (importOriginal) => {
 });
 
 import { runTemplateToCutConnector } from "./template-to-cut";
+import { createOwnerPrivateTempRoots } from "./owner-private-temp-roots.test-support";
 
-const roots: string[] = [];
+const roots = createOwnerPrivateTempRoots();
 afterEach(async () => {
   privateFaults.preview = undefined;
   privateFaults.final = undefined;
   privateFaults.handle = undefined;
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await roots.cleanup();
 });
 
 // Internal producer seams prove only structural/atomic assembly. Real Browser+FFmpeg acceptance is
@@ -189,8 +190,7 @@ describe("Template-to-Cut P2A portable early refusals", () => {
 });
 
 async function fixture(precreateOutput = false): Promise<{ root: string; source: string; outDir: string }> {
-  const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-p2a-"));
-  roots.push(root);
+  const root = await roots.create("template-p2a");
   const source = join(root, "source"), outDir = join(root, "delivery");
   await cp(resolve("../../fixtures/packages/editable-lower-third"), source, { recursive: true });
   // A Git checkout created under umask 0002 has group-writable directory modes. The copied source

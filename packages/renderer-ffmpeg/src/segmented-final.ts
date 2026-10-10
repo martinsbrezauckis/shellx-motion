@@ -35,14 +35,26 @@ import {
   type SegmentedFinalTransportEvidence
 } from "./segmented-final-internal/segmented-final-adapter.js";
 import type { SegmentedFinalFailureEvidence } from "./segmented-final-internal/segmented-final-adapter-types.js";
-import { SegmentedPublicationIdentityError } from "./segmented-final-internal/segmented-final-adapter-store.js";
 import type { StreamingFfmpegProcessFactory } from "./streaming-process.js";
 import type { SegmentedGpuToolPolicy } from "./segmented-final-gpu-policy.js";
 import type { SegmentedGpuStaticPreflight } from "./segmented-final-gpu-host-types.js";
 import { createSegmentedRangeProducer, segmentedFrameLaneRefusal, segmentedProducerFacts } from "./segmented-final-producers.js";
 import { readSegmentedFinalRequest } from "./segmented-final-request.js";
 import { hasGpuScene3dGltfPbrFinalRouteMarker } from "@shellx-motion/renderer-browser/internal/scene3d-gltf-pbr-final";
+import {
+  isStreamingFinalLineageRevalidationFailure,
+  revalidateStreamingFinalLaunch,
+  withStreamingFinalLaunchRevalidation
+} from "./streaming-final-lineage-revalidation.js";
+import { nestedLineageRevalidationFailure } from "./segmented-final-lineage-failure.js";
+import { publicFailure, resourceMessage, segmentedPublicationUncertainty } from "./segmented-final-failure-projection.js";
 export type { SegmentedGpuToolPolicy } from "./segmented-final-gpu-policy.js";
+export { segmentedPublicationUncertainty } from "./segmented-final-failure-projection.js";
+
+/** Internal coordinator-only lifecycle hooks; never populated from a render request. */
+interface CoordinatedSegmentedFinalHooks {
+  revalidateLineage?: () => Promise<void>;
+}
 
 export interface SegmentedFinalOptions {
   /** Positive count of canonical frames per durable FFV1 checkpoint. */
@@ -105,6 +117,7 @@ export type SegmentedFinalErrorCode =
   | "job_deadline_exceeded"
   | "job_rss_limit_exceeded"
   | "job_scratch_budget_failed"
+  | "render_failed"
   | "segmented_final_failed";
 
 export interface SegmentedFinalPublicFailure {
@@ -133,10 +146,30 @@ export type RenderSegmentedFinalResult =
  * an exclusive sibling lock; a failed run preserves only its verified checkpoint for a later
  * explicit resume, while a successful run publishes no-clobber and removes owned intermediates.
  */
-export async function renderSegmentedFinal(candidate: RenderSegmentedFinalInput): Promise<RenderSegmentedFinalResult> {
+export async function renderSegmentedFinal(
+  candidate: RenderSegmentedFinalInput,
+  hooks: CoordinatedSegmentedFinalHooks = {},
+): Promise<RenderSegmentedFinalResult> {
+  try {
+    return await withStreamingFinalLaunchRevalidation(
+      hooks.revalidateLineage,
+      async () => await renderSegmentedFinalWithHooks(candidate),
+    );
+  } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) {
+      return publicFailure("render_failed", error.message, false, { phase: "preflight" });
+    }
+    throw error;
+  }
+}
+
+async function renderSegmentedFinalWithHooks(candidate: RenderSegmentedFinalInput): Promise<RenderSegmentedFinalResult> {
   const parsed = readSegmentedFinalRequest(candidate);
   if (!parsed.ok) return publicFailure(parsed.code, parsed.message, false, { phase: "preflight" });
   const { pkg, frameLane, segmented, toolPolicy, request } = parsed;
+  if ((request.preset ?? "mp4-h264") === "mp4-h264" && (pkg.motion.width % 2 !== 0 || pkg.motion.height % 2 !== 0)) {
+    return publicFailure("segmented_final_unsupported", "Segmented MP4 H.264 delivery requires even canvas dimensions for yuv420p output.", false, { phase: "preflight" });
+  }
   try {
     const lane = frameLane === "browser" ? "ffmpeg-browser" : frameLane === "native" ? "ffmpeg-native" : "ffmpeg-gpu";
     const colorPipelineRefusal = colorPipelinePreallocationRefusal(pkg.motion, `ffmpeg-segmented-${frameLane}`);
@@ -195,8 +228,16 @@ export async function renderSegmentedFinal(candidate: RenderSegmentedFinalInput)
         ...(hasModules ? { effectModuleUse: { authority: authority!, resolution: resolved.resolution! } } : {})
       };
     }
-    producer = frameLane === "gpu" ? undefined : await segmentedProducerFacts(input);
+    if (frameLane !== "gpu") {
+      // Active-script facts open a host Browser session; it is a real launch boundary even though
+      // no FFmpeg process has started yet.
+      await revalidateStreamingFinalLaunch();
+      producer = await segmentedProducerFacts(input);
+    }
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) {
+      return publicFailure("render_failed", error.message, false, { phase: "preflight" });
+    }
     return publicFailure("segment_checkpoint_invalid", "Segmented final setup could not prove the package and canonical segment plan.", false, {
       phase: "preflight"
     });
@@ -278,6 +319,8 @@ export async function renderSegmentedFinal(candidate: RenderSegmentedFinalInput)
 }
 
 function normalizedFailure(code: string, evidence: SegmentedFinalFailureEvidence, primaryCause: unknown): RenderSegmentedFinalResult {
+  const lineageFailure = nestedLineageRevalidationFailure(primaryCause);
+  if (lineageFailure) return publicFailure("render_failed", lineageFailure.message, false, evidence, evidence.resources);
   if (code === "segment_store_busy") return publicFailure(code, "Another segmented render owns this output's derived checkpoint store.", true, evidence);
   if (code === "segment_source_changed") return publicFailure(code, "Package content changed while durable checkpoints were being created; start a fresh segmented render.", false, evidence);
   if (code === "job_cancelled" || code === "job_deadline_exceeded" || code === "job_rss_limit_exceeded" || code === "job_scratch_budget_failed") {
@@ -302,32 +345,4 @@ function normalizedFailure(code: string, evidence: SegmentedFinalFailureEvidence
   }
   void primaryCause;
   return publicFailure("segmented_final_failed", "Segmented final delivery did not complete. Verified checkpoints, if any, were retained only for an explicit resume.", true, evidence, evidence.resources);
-}
-
-/** Public direct-final failures retain the exact artifact whose post-link proof did not settle. */
-export function segmentedPublicationUncertainty(error: unknown): Pick<SegmentedFinalPublicFailure, "possiblyCommitted" | "publicPaths" | "expectedPublications"> | undefined {
-  if (!(error instanceof SegmentedPublicationIdentityError)) return undefined;
-  return {
-    possiblyCommitted: true,
-    publicPaths: [error.expectedPublication.publicPath],
-    expectedPublications: [error.expectedPublication]
-  };
-}
-
-function resourceMessage(code: Extract<SegmentedFinalErrorCode, `job_${string}`>): string {
-  if (code === "job_cancelled") return "Segmented final delivery was cancelled; retry with segmented.resume to continue from verified checkpoints.";
-  if (code === "job_deadline_exceeded") return "Segmented final delivery reached its deadline; retry with segmented.resume after increasing the host deadline.";
-  if (code === "job_rss_limit_exceeded") return "Segmented final delivery exceeded the host memory limit; retry after increasing the configured render budget.";
-  return "Segmented final delivery exceeded the host scratch-space budget; free space or increase the configured budget before retrying.";
-}
-
-function publicFailure(
-  code: SegmentedFinalErrorCode,
-  message: string,
-  retryable: boolean,
-  evidence: SegmentedFinalFailureEvidence,
-  resources?: LocalMotionJobEvidence,
-  uncertainty?: Pick<SegmentedFinalPublicFailure, "possiblyCommitted" | "publicPaths" | "expectedPublications">
-): RenderSegmentedFinalResult {
-  return { ok: false, error: { code, message, retryable, evidence, ...(resources ? { resources } : {}), ...uncertainty } };
 }

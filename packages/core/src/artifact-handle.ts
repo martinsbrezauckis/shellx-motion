@@ -8,6 +8,7 @@ import { packageRenderLineageInputHashes, validatePackageRenderLineage, type Pac
 import { childEnvironment } from "./child-environment";
 import { resolveTrustedExecutable } from "./trusted-executable";
 import type { OperationReceipt } from "./types";
+import { assertArtifactMediaMagic } from "./artifact-media-magic";
 
 const execFileAsync = promisify(execFile);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -134,7 +135,7 @@ export async function createAttestedArtifactHandle(
   const maxBytes = readMaxBytes(input.maxBytes);
   const canonical = await canonicalExistingRootFile(input.root, input.artifactPath, "artifact");
   const measured = await hashBoundedFile(canonical.path, maxBytes, "artifact");
-  assertArtifactMagic(measured.header, input.mediaType);
+  assertArtifactMediaMagic(measured.header, input.mediaType);
   validateReceiptAttestations(input.receipts);
   if (input.packageLineage) validatePackageRenderLineage(input.packageLineage);
   const probe = await maybeProbeArtifact(canonical.path, input.mediaType, input.probe);
@@ -164,9 +165,8 @@ export async function verifyAttestedArtifactHandle(
   handle: AttestedArtifactHandle,
   options: VerifyAttestedArtifactHandleOptions = {}
 ): Promise<VerifiedAttestedArtifact> {
-  validateArtifactHandle(handle);
+  validateAttestedArtifactHandle(handle);
   validateExpectedArtifactFields(handle, options.expected ?? {});
-  validateReceiptAttestations(handle.receipts);
   for (const role of options.requiredReceiptRoles ?? ["render"]) {
     if (!handle.receipts.some((receipt) => receipt.role === role)) {
       throw new Error(`artifact handle is missing required ${role} receipt attestation`);
@@ -184,7 +184,7 @@ export async function verifyAttestedArtifactHandle(
   if (measured.sha256 !== handle.sha256) {
     throw new Error(`artifact sha256 mismatch: expected ${handle.sha256}, got ${measured.sha256}`);
   }
-  assertArtifactMagic(measured.header, handle.mediaType);
+  assertArtifactMediaMagic(measured.header, handle.mediaType);
 
   const receipts = [];
   for (const attestation of handle.receipts) {
@@ -219,7 +219,7 @@ export async function verifyAttestedArtifactHandle(
 }
 
 export async function writeAttestedArtifactHandle(path: string, handle: AttestedArtifactHandle): Promise<void> {
-  validateArtifactHandle(handle);
+  validateAttestedArtifactHandle(handle);
   const target = resolve(path);
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   const staging = resolve(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`);
@@ -245,7 +245,7 @@ export async function readAttestedArtifactHandle(path: string): Promise<Attested
   } catch {
     throw new Error("artifact handle descriptor contains invalid JSON");
   }
-  validateArtifactHandle(parsed);
+  validateAttestedArtifactHandle(parsed);
   return parsed;
 }
 
@@ -270,7 +270,7 @@ export async function verifyAttestedArtifactHandleReference(
   } catch {
     throw new Error("artifact handle descriptor contains invalid JSON");
   }
-  validateArtifactHandle(handle);
+  validateAttestedArtifactHandle(handle);
   if (handle.id !== reference.id) throw new Error("artifact handle reference id does not match the descriptor");
   if (handle.operationHash !== reference.operationHash) throw new Error("artifact handle reference operationHash does not match the descriptor");
   if (!sameJson(handle.packageLineage, reference.packageLineage)) throw new Error("artifact handle reference packageLineage does not match the descriptor");
@@ -283,7 +283,7 @@ export function createAttestedArtifactHandleReference(
   rootRelativePath: string,
   descriptorSha256: string
 ): AttestedArtifactHandleReference {
-  validateArtifactHandle(handle);
+  validateAttestedArtifactHandle(handle);
   assertCanonicalRootRelativePath(rootRelativePath, "artifact handle descriptor");
   assertSha256(descriptorSha256, "artifact handle descriptor sha256");
   return {
@@ -423,20 +423,6 @@ async function openReadNoFollow(path: string) {
   }
 }
 
-function assertArtifactMagic(header: Buffer, mediaType: string): void {
-  const checks: Record<string, () => boolean> = {
-    "image/png": () => header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
-    "image/jpeg": () => header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff,
-    "image/gif": () => header.subarray(0, 6).toString("ascii") === "GIF87a" || header.subarray(0, 6).toString("ascii") === "GIF89a",
-    "video/mp4": () => header.subarray(4, 8).toString("ascii") === "ftyp",
-    "video/quicktime": () => header.subarray(4, 8).toString("ascii") === "ftyp",
-    "video/webm": () => header.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])),
-    "audio/wav": () => header.subarray(0, 4).toString("ascii") === "RIFF" && header.subarray(8, 12).toString("ascii") === "WAVE"
-  };
-  const check = checks[mediaType];
-  if (!check) throw new Error(`unsupported attested artifact media type: ${mediaType}`);
-  if (!check()) throw new Error(`artifact bytes do not match declared media type ${mediaType}`);
-}
 
 async function maybeProbeArtifact(path: string, mediaType: string, probe: false | ArtifactMediaProbe | undefined): Promise<ArtifactMediaProbeSummary | undefined> {
   if (probe === false) return undefined;
@@ -444,7 +430,8 @@ async function maybeProbeArtifact(path: string, mediaType: string, probe: false 
   return (probe ?? probeArtifactWithFfprobe)(path);
 }
 
-function validateArtifactHandle(handle: AttestedArtifactHandle): void {
+/** Validate all handle fields, including every receipt attestation, before trust projection or I/O. */
+export function validateAttestedArtifactHandle(handle: AttestedArtifactHandle): void {
   if (!handle || handle.schema !== "shellx-motion/artifact-handle@1") throw new Error("unsupported artifact handle schema");
   if (typeof handle.id !== "string" || !/^artifact-[a-f0-9]{24}$/.test(handle.id)) throw new Error("artifact handle id is invalid");
   validateArtifactIdentityFields(handle);
@@ -452,7 +439,7 @@ function validateArtifactHandle(handle: AttestedArtifactHandle): void {
   if (!Number.isSafeInteger(handle.byteLength) || handle.byteLength < 0) throw new Error("artifact byteLength must be a non-negative safe integer");
   assertSha256(handle.sha256, "artifact sha256");
   if (!Number.isFinite(Date.parse(handle.createdAt))) throw new Error("artifact createdAt must be an ISO-compatible timestamp");
-  if (!Array.isArray(handle.receipts)) throw new Error("artifact receipts must be an array");
+  validateReceiptAttestations(handle.receipts);
   if (handle.packageLineage) validatePackageRenderLineage(handle.packageLineage);
   if (handle.id !== artifactHandleId(handle)) throw new Error("artifact handle id does not bind its identity and packageLineage");
 }

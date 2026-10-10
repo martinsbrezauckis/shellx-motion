@@ -6,6 +6,7 @@ import type { StreamingEncodeAttemptOutcome } from "../streaming-foundation-type
 import type { StreamingFfmpegProcessFactory } from "../streaming-process.js";
 import { partialOutput, removeUnpublishedStage } from "./segmented-final-adapter-store.js";
 import type { FfmpegProcessResult } from "../index.js";
+import { isStreamingFinalLineageRevalidationFailure } from "../streaming-final-lineage-revalidation.js";
 
 export interface SegmentedConcatAttemptsResult {
   attempts: StreamingEncodeAttemptOutcome[];
@@ -46,6 +47,13 @@ export async function runSegmentedConcatAttempts(
       });
       output = await process.end();
     } catch (error) {
+      if (isStreamingFinalLineageRevalidationFailure(error)) {
+        const partial = await partialOutput(stagingPath);
+        const cleanup = await removeUnpublishedStage(stagingPath);
+        stagingCleanup = cleanup.outcome;
+        if (cleanup.cause !== undefined) cleanupCauses.push(cleanup.cause);
+        return { attempts: outcomes, cleanupCauses, partial, stagingCleanup, primaryCause: error };
+      }
       if (error instanceof LocalMotionJobError) {
         outcomes.push({
           source: attempt.source,

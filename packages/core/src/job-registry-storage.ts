@@ -1,15 +1,23 @@
 /** Filesystem mechanics for terminal job records; registry policy stays in job-registry.ts. */
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { motionJobOwnerKey } from "./job-id-file";
-import { readStoredMotionJobRecord } from "./job-record-read";
+import { parseStoredMotionJobRecord, readStoredMotionJobRecord } from "./job-record-read";
 import type { MotionJobRecord } from "./job-registry";
 
 export interface MotionJobRecordFile {
   name: string;
   endedAtMs: number;
 }
+
+/** A current owner-qualified filename whose contents independently validated that identity. */
+export interface ValidatedCurrentMotionJobRecordFile extends MotionJobRecordFile {
+  record: MotionJobRecord;
+}
+
+const MOTION_JOB_RECORD_RETENTION_MAX_BYTES = 512 * 1024;
 
 export async function writeMotionJobRecord(root: string, record: MotionJobRecord): Promise<void> {
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -26,6 +34,15 @@ export async function listMotionJobRecordFiles(root: string): Promise<MotionJobR
 
 export async function readMotionJobRecord(root: string, name: string): Promise<MotionJobRecord | null> {
   return await readStoredMotionJobRecord(join(root, name));
+}
+
+export async function listValidatedCurrentMotionJobRecords(root: string): Promise<ValidatedCurrentMotionJobRecordFile[]> {
+  const current: ValidatedCurrentMotionJobRecordFile[] = [];
+  for (const file of await listMotionJobRecordFiles(root)) {
+    const retained = await readCurrentMotionJobRecordForRetention(root, file.name);
+    if (retained && isCurrentMotionJobRecordFile(file.name, retained.record)) current.push({ ...file, ...retained });
+  }
+  return current;
 }
 
 /** Compatibility lookup for the former caller-less amend(jobId, patch) API. */
@@ -57,40 +74,6 @@ export async function hasExclusiveOwnedLegacyMotionJobRecord(
   return !hasCurrentOwnedRecord && legacy.length === 1 && legacy[0]!.callerId === input.callerId;
 }
 
-export async function removeOtherMotionJobRecords(root: string, record: MotionJobRecord): Promise<void> {
-  const keep = motionJobRecordFileName(record.callerId, record.jobId, record.endedAtMs);
-  const candidates = (await listMotionJobRecordFiles(root)).filter((file) => file.name !== keep);
-  await Promise.all(candidates.map(async (file) => {
-    const stored = await readMotionJobRecord(root, file.name);
-    if (!stored || stored.jobId !== record.jobId || stored.callerId !== record.callerId) return;
-    await rm(join(root, file.name), { force: true }).catch(() => {});
-  }));
-}
-
-export async function pruneMotionJobRecords(
-  root: string,
-  nowMs: number,
-  retentionMs: number,
-  retentionCount: number
-): Promise<void> {
-  const files = await listMotionJobRecordFiles(root);
-  const cutoff = nowMs - retentionMs;
-  const aged = files.filter((file) => file.endedAtMs < cutoff);
-  const fresh = files.filter((file) => file.endedAtMs >= cutoff)
-    .sort((left, right) => right.endedAtMs - left.endedAtMs);
-  const freshByOwner = new Map<string, MotionJobRecordFile[]>();
-  for (const file of fresh) {
-    const record = await readMotionJobRecord(root, file.name);
-    if (!record) continue;
-    const owned = freshByOwner.get(record.callerId) ?? [];
-    owned.push(file);
-    freshByOwner.set(record.callerId, owned);
-  }
-  const overCount = [...freshByOwner.values()].flatMap((owned) => owned.slice(retentionCount));
-  await Promise.all([...aged, ...overCount].map((file) =>
-    rm(join(root, file.name), { force: true }).catch(() => {})));
-}
-
 export function motionJobRecordFileName(callerId: string, jobId: string, endedAtMs: number): string {
   return `${motionJobOwnerKey(callerId, jobId)}--${Math.max(0, Math.floor(endedAtMs))}.job.json`;
 }
@@ -107,4 +90,46 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }
+}
+
+async function readCurrentMotionJobRecordForRetention(root: string, name: string): Promise<{ record: MotionJobRecord } | null> {
+  try {
+    const path = join(root, name);
+    const before = await lstat(path);
+    assertRetentionRecordFile(before);
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const opened = await handle.stat();
+      assertRetentionRecordFile(opened);
+      if (!sameFile(before, opened)) return null;
+      const raw = Buffer.allocUnsafe(opened.size + 1);
+      let offset = 0;
+      while (offset < raw.byteLength) {
+        const { bytesRead } = await handle.read(raw, offset, raw.byteLength - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      const after = await handle.stat();
+      const lexicalAfter = await lstat(path);
+      if (offset !== opened.size || !sameFile(opened, after) || !sameFile(after, lexicalAfter)) return null;
+      const record = parseStoredMotionJobRecord(raw.subarray(0, offset).toString("utf8"));
+      return record ? { record } : null;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function assertRetentionRecordFile(metadata: Stats): void {
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || !Number.isSafeInteger(metadata.size)
+    || metadata.size < 2 || metadata.size > MOTION_JOB_RECORD_RETENTION_MAX_BYTES) {
+    throw new Error("Motion job retention record must be a bounded single-link regular non-symlink file.");
+  }
+}
+
+function sameFile(left: Stats, right: Stats): boolean {
+  return right.isFile() && !right.isSymbolicLink() && left.dev === right.dev && left.ino === right.ino
+    && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }

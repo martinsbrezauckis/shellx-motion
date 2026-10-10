@@ -13,12 +13,12 @@ import { admitStrictScene3dPreviewDocument } from "./gpu-scene3d-animation-admis
 import { motionScene3DAnimationPackageRefusal } from "./motion-scene3d-animation-lane-refusal";
 import type { MotionDocument } from "./types";
 
-describe("O6 strict GPU scene3d animation preview composition", () => {
+describe("strict GPU scene3d animation preview composition", () => {
   it("keeps the shared GPU root-authority fence closed to procedural and compositing authority", () => {
     expect(GPU_UNLOWERED_ROOT_AUTHORITIES).toEqual(["relationships", "compositing"]);
   });
 
-  it("refuses unlowered relationships and compositing roots across generic and O6 GPU planning without evaluating them", () => {
+  it("refuses unlowered relationships and compositing roots across generic and scene3d animation GPU planning without evaluating them", () => {
     for (const root of GPU_UNLOWERED_ROOT_AUTHORITIES) {
       let rootReads = 0, assetsReads = 0, layersReads = 0, resourceReads = 0;
       const document = new Proxy({
@@ -139,7 +139,7 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     expect({ assetsReads, layersReads }).toEqual({ assetsReads: 0, layersReads: 0 });
   });
 
-  it("descriptor-admits O6 assets and layers before static or frame planning can read hostile roots", () => {
+  it("descriptor-admits scene3d animation assets and layers before static or frame planning can read hostile roots", () => {
     for (const field of ["assets", "layers"] as const) {
       const source = animatedScene();
       const original = source[field];
@@ -181,9 +181,9 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     expect({ assetsReads, layersReads }).toEqual({ assetsReads: 0, layersReads: 0 });
   });
 
-  it("materializes the complete O6 document before static or frame compilers can touch hostile data", () => {
+  it("materializes the complete scene3d animation document before static or frame compilers can touch hostile data", () => {
     const ordinary = animatedScene() as MotionDocument & Record<string, unknown>;
-    ordinary.unknownO6Data = { source: ["loaded", { value: 1 }] };
+    ordinary.unknownScene3DAnimationData = { source: ["loaded", { value: 1 }] };
     const loaded = JSON.parse(JSON.stringify(ordinary)) as MotionDocument;
     const ordinaryPlan = compileGpuScene3DAnimationStaticPlan(ordinary);
     const loadedPlan = compileGpuScene3DAnimationStaticPlan(loaded);
@@ -192,9 +192,9 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     if (!ordinaryPlan.ok || !loadedPlan.ok) return;
     expect(loadedPlan.plan.documentFingerprint).toBe(ordinaryPlan.plan.documentFingerprint);
     const admission = admitStrictScene3dPreviewDocument(ordinary);
-    expect(admission.motion).toMatchObject({ unknownO6Data: { source: ["loaded", { value: 1 }] } });
+    expect(admission.motion).toMatchObject({ unknownScene3DAnimationData: { source: ["loaded", { value: 1 }] } });
     expect(Object.isFrozen(admission.motion)).toBe(true);
-    expect(Object.isFrozen((admission.motion as unknown as Record<string, unknown>).unknownO6Data)).toBe(true);
+    expect(Object.isFrozen((admission.motion as unknown as Record<string, unknown>).unknownScene3DAnimationData)).toBe(true);
 
     const cases: ReadonlyArray<readonly [string, (motion: MotionDocument, onRead: () => void) => void]> = [
       ["top-level id", (motion, onRead) => Object.defineProperty(motion, "id", { configurable: true, enumerable: true, get: onRead })],
@@ -246,7 +246,7 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     expect({ frameReads, resourceReads }).toEqual({ frameReads: 0, resourceReads: 0 });
   });
 
-  it("refuses reflection-hostile, cyclic, and over-budget O6 data before compilers or hashes run", () => {
+  it("refuses reflection-hostile, cyclic, and over-budget scene3d animation data before compilers or hashes run", () => {
     const reflectionHostile = animatedScene();
     let getReads = 0;
     reflectionHostile.layers[0]!.scene3d!.objects = new Proxy(reflectionHostile.layers[0]!.scene3d!.objects, {
@@ -350,7 +350,7 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     }
   });
 
-  it("rejects inherited or non-plain GPU documents before static, frame, O6, or capability reads", () => {
+  it("rejects inherited or non-plain GPU documents before static, frame, scene3d animation, or capability reads", () => {
     const ordinary = animatedScene(); delete ordinary.scene3dAnimation;
     const inherited = Object.assign(Object.create({ relationships: {} }), ordinary) as MotionDocument;
     const staticPlan = compileGpuScene3DAnimationStaticPlan(animatedScene());
@@ -459,7 +459,7 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
     expect(motionScene3DAnimationPackageRefusal(motion)).toMatchObject({
       code: "package_unrenderable",
       message: expect.stringContaining("direct @shellx-motion/renderer-browser renderMotionGpuPreview PNG-preview API"),
-      suggestedAction: expect.stringContaining("O6 package limits"),
+      suggestedAction: expect.stringContaining("scene3d animation GPU preview package limits"),
     });
     expect(matchRendererCapabilityCards(motion, { target: "preview", output: "raw-rgba" }).matches.find((match) => match.lane === "gpu")).toMatchObject({
       ok: false,
@@ -473,7 +473,7 @@ describe("O6 strict GPU scene3d animation preview composition", () => {
 
 function animatedScene(): MotionDocument {
   return {
-    schema: "shellx-motion/motion@1", id: "o6-scene", name: "O6 Scene", durationMs: 1_000, fps: 30, width: 100, height: 60,
+    schema: "shellx-motion/motion@1", id: "scene3d_animation-scene", name: "Scene3D animation scene", durationMs: 1_000, fps: 30, width: 100, height: 60,
     assets: [], provenance: { sourceApp: "test", createdBy: "test" },
     layers: [{
       id: "world", type: "scene3d", startMs: 0, durationMs: 1_000,

@@ -7,7 +7,7 @@
  *
  * Why this file exists rather than an assertion bolted onto an existing batch test: the
  * The CLI batch, connectors, and core use the unified rule. This surface must use it too.
- * `scripts/render-batch-smoke.ts` drives
+ * `scripts/public/render-batch-smoke.ts` drives
  * `runCli`, so the debug batch had no status coverage at all — a gate measuring less than its name
  * implies. The regression is demonstrated by rendering
  * `fixtures/packages/batch-card` at `mp4-h264` through both surfaces:
@@ -89,15 +89,9 @@ describe("debug batch receipt status", () => {
   }, 600_000);
 
   it("resumes rows that succeeded with a warning instead of re-rendering them", async () => {
-    // The half of the change that has no other coverage. `index.test.ts` exercises resume through an
-    // INJECTED FFmpeg runner, so its rows carry no warnings and report `passed` — meaning it would
-    // stay green whether resume matched on the literal `passed` or on the job outcome. That is the
-    // precise blind spot that let the identical regression ship in the CLI: resume kept matching on
-    // `!== "passed"`, and the moment successful rows began reporting `warning` it silently
-    // re-rendered every row it should have reused. Nothing failed; the work was just done twice.
-    //
-    // So this drives the REAL renderer, where batch-card's rows do report `warning`, and asserts the
-    // second pass reused them.
+    // The injected FFmpeg runner in `index.test.ts` produces no warnings, so it cannot
+    // distinguish a successful `warning` row from a failed row during resume. This test
+    // uses the renderer to produce a warning and checks that resume reuses the row.
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-debug-batch-resume-warning-"));
     try {
       const args = { packageRoot: "../../fixtures/packages/batch-card", outDir, preset: "mp4-h264" as const, dryRun: false };

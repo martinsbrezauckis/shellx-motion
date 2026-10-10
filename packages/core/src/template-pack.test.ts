@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,64 +14,23 @@ const PRODUCT_PACK_ROOT = resolve(
   "../../../templates/shellx-product-pack"
 );
 
-/**
- * The families this tree is expected to hold, derived from the ONE contract rather than repeated.
- *
- * The implementation tree can retain additional withheld families while the public tree contains
- * only the published contract. Deriving the local set keeps the same tests valid in both trees.
- */
-const EXPECTED_PRODUCT_PACK_DIRS = readdirSync(PRODUCT_PACK_ROOT, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
-  .sort();
-
-/**
- * Families the export manifest withholds, read as DATA rather than imported.
- *
- * `scripts/template-product-pack-catalog.ts` owns the same derivation, but core cannot import from
- * `scripts/` -- its tsconfig rootDir is `packages/core/src`, and a cross-boundary import fails
- * typecheck in both trees. Reading the manifest JSON keeps the single source of truth (the manifest)
- * without creating a module dependency that does not belong.
- */
-function withheldFamilies(): Set<string> {
-  const manifestPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/public-export-manifest.json");
-  // Absent in the published tree: the published tree does not carry the export manifest (it is implementation-side release machinery), and by definition nothing is withheld there -- the withheld families are simply absent. An empty set is the correct answer, not an error.
-  if (!existsSync(manifestPath)) return new Set<string>();
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { excludeWithin: Array<{ glob: string }> };
-  const prefix = "**/templates/shellx-product-pack/";
-  return new Set(
-    manifest.excludeWithin
-      .map((entry) => entry.glob)
-      .filter((glob) => glob.startsWith(prefix) && glob.endsWith("/**"))
-      .map((glob) => glob.slice(prefix.length, -"/**".length))
-  );
-}
-
-/** Families present here, so a test needing a withheld family can skip in the published tree. */
+/** The shipped product roster is shared with the public template proof and asset inventory. */
+const EXPECTED_PRODUCT_PACK_DIRS = JSON.parse(readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/public/public-template-roster.json"), "utf8"
+)) as string[];
 const PRESENT_FAMILIES = new Set(EXPECTED_PRODUCT_PACK_DIRS);
-
-/** Withheld families that are still on disk in THIS tree (all three in the implementation repo, none in the export). */
-const WITHHELD_PRESENT = [...withheldFamilies()].filter((dir) => PRESENT_FAMILIES.has(dir)).sort();
 
 describe("ShellX product template pack", () => {
   it("loads every promoted starter template with catalog-ready metadata", async () => {
     const entries = await readdir(PRODUCT_PACK_ROOT, { withFileTypes: true });
-    const packageDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+    const onDisk = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+    const packageDirs = EXPECTED_PRODUCT_PACK_DIRS.filter((dir) => onDisk.has(dir));
 
     expect(packageDirs).toEqual(EXPECTED_PRODUCT_PACK_DIRS);
-    // The PUBLIC pack is 12 families. Asserted as "present minus withheld" so the same line is true
-    // in both trees -- the implementation repo holds 15 with 3 withheld, the export holds 12 with 0
-    // withheld -- and so a family silently disappearing is caught here rather than at publish time.
-    // The family ROSTER itself is enforced by assertProductTemplateContract in the pack gates; core
-    // cannot import that (rootDir boundary), so this pins the count it can prove from here.
-    expect(packageDirs.length - WITHHELD_PRESENT.length, "the published pack must be 12 families").toBe(12);
+    expect(packageDirs.length, "all shipped product families must be present").toBe(12);
 
     const packages = await Promise.all(packageDirs.map((dir) => loadMotionPackage(join(PRODUCT_PACK_ROOT, dir))));
-    // Derived from the directories present, not a frozen 15-name list: the published tree ships 12 of
-    // these families and the implementation tree 15, so a hard-coded roster is wrong in one of them.
-    // What is asserted is the RELATIONSHIP -- every family's package id is its directory name in the
-    // pkg_shellx_<dir> form -- which is the naming contract the list was really encoding, and which
-    // holds in both trees.
+    // Each family's package id follows its directory name.
     expect(packages.map((pkg) => pkg.manifest.id).sort()).toEqual(
       packageDirs.map((dir) => `pkg_shellx_${dir.replace(/-/g, "_")}`).sort()
     );
@@ -131,9 +90,8 @@ describe("ShellX product template pack", () => {
       .join(" ")
       .toLowerCase();
 
-    // Split by whether the family ships. The published pack must still cover every design family it
-    // promises; the three withheld families are only asserted where they exist, so this test states
-    // the public contract in the export and the fuller contract in the implementation tree.
+    // Require the product's design families; check additional local families
+    // when their directories are present.
     for (const phrase of [
       "saas launch",
       "feature announcement",
@@ -149,26 +107,15 @@ describe("ShellX product template pack", () => {
     ]) {
       expect(searchText, `public design-family coverage lost: ${phrase}`).toContain(phrase);
     }
-    for (const [dir, phrase] of [
-      ["lower-third-modern", "lower third"],
-      ["data-report-brief", "data report"],
-      ["tutorial-overlay", "tutorial overlay"]
-    ] as const) {
-      if (PRESENT_FAMILIES.has(dir)) expect(searchText, `${dir} present but uncovered`).toContain(phrase);
-    }
   });
 
   it("passes the quality bar for new non-audio starter templates with expected evidence", async () => {
-    // Filtered to what this tree holds: three of these are withheld from the published pack, and a
-    // test that hard-codes them is red in the export for a reason that has nothing to do with quality.
+    // Evaluate each named shipped family.
     const dirs = [
-      "data-report-brief",
       "feature-announcement",
       "kinetic-type",
       "launch-bumper",
-      "lower-third-modern",
-      "social-stat-card",
-      "tutorial-overlay"
+      "social-stat-card"
     ].filter((dir) => PRESENT_FAMILIES.has(dir));
     expect(dirs.length, "no non-audio starter families present to assess").toBeGreaterThan(0);
 
@@ -195,8 +142,7 @@ describe("ShellX product template pack", () => {
   });
 
   it("loads a shipped media-slot family with package-local media slot metadata", async () => {
-    // media-launch, not tutorial-overlay: the media-slot contract must be covered by a family that
-    // actually ships, or the published tree loses the coverage entirely.
+    // The media-slot contract is covered by a shipped family.
     const pkg = await loadMotionPackage(join(PRODUCT_PACK_ROOT, "media-launch"));
 
     expect(pkg.manifest).toMatchObject({
@@ -210,50 +156,6 @@ describe("ShellX product template pack", () => {
       ]
     });
     expect(pkg.template?.params.some((param) => param.type === "media")).toBe(true);
-  });
-
-  it.skipIf(!PRESENT_FAMILIES.has("tutorial-overlay"))("loads tutorial-overlay with package-local media slot metadata", async () => {
-    const pkg = await loadMotionPackage(join(PRODUCT_PACK_ROOT, "tutorial-overlay"));
-
-    expect(pkg.manifest).toMatchObject({
-      id: "pkg_shellx_tutorial_overlay",
-      // The bundled Inter faces are declared alongside the media slot: every family that names a
-      // real font family carries the weights it renders with.
-      assets: [
-        "assets/placeholders/tutorial-screen.svg",
-        "assets/fonts/inter-latin-700-normal.woff2",
-        "assets/fonts/inter-latin-900-normal.woff2"
-      ]
-    });
-    expect(pkg.motion.layers).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "screen",
-        type: "image",
-        source: "assets/placeholders/tutorial-screen.svg",
-        assetRef: "assets/placeholders/tutorial-screen.svg"
-      })
-    ]));
-    expect(pkg.template?.params).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "screenMedia",
-        type: "media",
-        defaultValue: "assets/placeholders/tutorial-screen.svg"
-      })
-    ]));
-    expect(pkg.template?.metadata?.assetsAttribution).toEqual([
-      expect.objectContaining({
-        name: "Tutorial Screen Placeholder",
-        path: "assets/placeholders/tutorial-screen.svg"
-      }),
-      expect.objectContaining({
-        license: "SIL-OFL-1.1",
-        path: "assets/fonts/inter-latin-700-normal.woff2"
-      }),
-      expect.objectContaining({
-        license: "SIL-OFL-1.1",
-        path: "assets/fonts/inter-latin-900-normal.woff2"
-      })
-    ]);
   });
 
   it("loads the media-launch template with package-local generated asset provenance", async () => {

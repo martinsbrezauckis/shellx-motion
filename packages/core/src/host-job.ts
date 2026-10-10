@@ -29,6 +29,13 @@ import { MotionJobRegistry, assertMotionJobId, mintMotionJobId, type MotionJobRe
 import type { JobOutcome, JobSkipCode } from "./generated/job-status";
 import type { MotionJobFrameLane } from "./job-frame-lane";
 import { motionJobFailure, type MotionJobFailureInput } from "./job-failure";
+import { createMotionJobEvidence, type MotionJobEvidence } from "./job-evidence";
+import {
+  canonicalMotionJobRecordCancellation,
+  canonicalMotionJobRecordWarnings
+} from "./job-record-contract";
+import { canonicalMotionJobTerminalEvidence } from "./job-terminal-evidence-contract";
+import { sha256 } from "./lifecycle-envelope-validation";
 
 export interface MotionHostJobInput {
   /** The id the host chose. Omit to have Motion mint one, which `jobId` then reports back. */
@@ -39,6 +46,8 @@ export interface MotionHostJobInput {
   frameLane?: MotionJobFrameLane;
   /** What the host asked for, in the receipt operation vocabulary — "render.final", not "ffmpeg.render". */
   operation: string;
+  /** Optional host-derived immutable render-plan fingerprint for this exact job. */
+  planFingerprint?: string;
   /** Optional immutable lineage for a newly submitted retry. */
   lineage?: MotionJobRecord["lineage"];
   /** Internal observer used by a durable coordinator to append the real admission transition. */
@@ -76,6 +85,10 @@ export interface MotionHostJobEnd {
   error?: MotionJobFailureInput;
   cancellation?: { requestedBy: string; reason?: string };
   skip?: { code: JobSkipCode; reason?: string };
+  /** Literal failure uncertainty: publication became irreversible or may have done so. */
+  committed?: true;
+  /** Optional path-free V1 terminal evidence for this exact final job. */
+  evidence?: MotionJobEvidence;
 }
 
 /**
@@ -86,6 +99,8 @@ export interface MotionHostJobEnd {
  */
 export class MotionHostJob {
   private ended = false;
+  /** The first terminal operation, whether it records an outcome or only releases capacity. */
+  private endOperation: Promise<boolean> | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
   /**
    * When the first governed operation this job owns was admitted.
@@ -101,6 +116,7 @@ export class MotionHostJob {
     private readonly lane: string,
     private readonly frameLane: MotionJobFrameLane | undefined,
     private readonly operation: string,
+    private readonly planFingerprint: string | undefined,
     private readonly lineage: MotionJobRecord["lineage"] | undefined,
     private readonly onRunning: (() => Promise<void> | void) | undefined,
     private readonly startedAtMs: number,
@@ -117,14 +133,15 @@ export class MotionHostJob {
     const startedAtMs = now();
     const jobId = input.jobId === undefined ? mintMotionJobId(startedAtMs) : assertMotionJobId(input.jobId);
     const callerId = input.callerId ?? UNATTRIBUTED_CALLER_ID;
+    const planFingerprint = input.planFingerprint === undefined ? undefined : sha256(input.planFingerprint, "Motion host job planFingerprint");
     const leases = input.leases === undefined ? new MotionJobLeaseDirectory() : input.leases;
     const records = input.records === undefined ? new MotionJobRegistry() : input.records;
     // Announced PENDING. A host job does not queue for the machine cap itself, but the governed
     // operations it performs do — and until one of them is admitted, nothing is being produced.
     // `markRunning()` promotes it the moment the first one starts. Reporting "running" from the
     // outset would tell a caller "rendering..." while its work sits in a queue.
-    const leaseRun = await leases?.announce({ jobId, lane: input.lane, ...(input.frameLane ? { frameLane: input.frameLane } : {}), operation: input.operation, callerId, visibility: "host", admitted: false }) ?? null;
-    const job = new MotionHostJob(jobId, callerId, input.lane, input.frameLane, input.operation, input.lineage, input.onRunning, startedAtMs, leases, leaseRun, records, now);
+    const leaseRun = await leases?.announce({ jobId, lane: input.lane, ...(input.frameLane ? { frameLane: input.frameLane } : {}), operation: input.operation, ...(planFingerprint ? { planFingerprint } : {}), callerId, visibility: "host", admitted: false }) ?? null;
+    const job = new MotionHostJob(jobId, callerId, input.lane, input.frameLane, input.operation, planFingerprint, input.lineage, input.onRunning, startedAtMs, leases, leaseRun, records, now);
     if (leases && leaseRun) {
       // Unref'd: refreshing a lease must never be the reason a process stays alive.
       job.heartbeat = setInterval(() => { void leases.heartbeat(leaseRun); }, LEASE_HEARTBEAT_INTERVAL_MS);
@@ -141,12 +158,17 @@ export class MotionHostJob {
    */
   async markRunning(): Promise<void> {
     if (this.ended || this.admittedAtMs !== undefined) return;
-    this.admittedAtMs = this.now();
     if (!this.leaseRun) return;
-    this.leaseRun = await this.leases?.announce({
-      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation,
-      callerId: this.callerId, visibility: "host", admitted: true, run: this.leaseRun
+    const priorRun = this.leaseRun;
+    const promotedRun = await this.leases?.announce({
+      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation, ...(this.planFingerprint ? { planFingerprint: this.planFingerprint } : {}),
+      callerId: this.callerId, visibility: "host", admitted: true, run: priorRun
     }) ?? null;
+    // A failed promotion must not erase the exact pending-run capability. The caller cannot claim
+    // running (or publish its onRunning transition) unless the promoted lease is durable.
+    if (!promotedRun) throw new Error("Motion host lease promotion is unavailable.");
+    this.leaseRun = promotedRun;
+    this.admittedAtMs = this.now();
     await this.onRunning?.();
   }
 
@@ -159,26 +181,30 @@ export class MotionHostJob {
   async requestCancellation(input: { requestedBy: string; reason?: string }): Promise<void> {
     if (this.ended || !this.leaseRun) return;
     const cancellation = { requestedBy: input.requestedBy, ...(input.reason ? { reason: input.reason } : {}), requestedAtMs: this.now() };
-    this.leaseRun = await this.leases?.announce({
-      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation,
+    const priorRun = this.leaseRun;
+    const updatedRun = await this.leases?.announce({
+      jobId: this.jobId, lane: this.lane, ...(this.frameLane ? { frameLane: this.frameLane } : {}), operation: this.operation, ...(this.planFingerprint ? { planFingerprint: this.planFingerprint } : {}),
       callerId: this.callerId, visibility: "host", admitted: this.admittedAtMs !== undefined,
-      cancelRequested: cancellation, run: this.leaseRun
+      cancelRequested: cancellation, run: priorRun
     }) ?? null;
+    // Do not lose the only exact release capability when cancellation mutation degrades.
+    if (!updatedRun) throw new Error("Motion host cancellation lease mutation is unavailable.");
+    this.leaseRun = updatedRun;
   }
 
-  async succeeded(detail: Pick<MotionHostJobEnd, "receiptPath" | "warnings"> = {}): Promise<void> {
+  async succeeded(detail: Pick<MotionHostJobEnd, "receiptPath" | "receiptId" | "producerEvidence" | "warnings" | "evidence"> = {}): Promise<void> {
     await this.end("succeeded", detail);
   }
 
-  async failed(detail: Pick<MotionHostJobEnd, "receiptPath" | "warnings" | "error">): Promise<void> {
+  async failed(detail: Pick<MotionHostJobEnd, "receiptPath" | "receiptId" | "producerEvidence" | "warnings" | "error" | "committed" | "evidence">): Promise<void> {
     await this.end("failed", detail);
   }
 
-  async cancelled(detail: Pick<MotionHostJobEnd, "cancellation" | "warnings"> = {}): Promise<void> {
+  async cancelled(detail: Pick<MotionHostJobEnd, "receiptId" | "producerEvidence" | "cancellation" | "warnings" | "evidence"> = {}): Promise<void> {
     await this.end("cancelled", detail);
   }
 
-  async skipped(detail: Pick<MotionHostJobEnd, "skip" | "warnings">): Promise<void> {
+  async skipped(detail: Pick<MotionHostJobEnd, "receiptId" | "producerEvidence" | "skip" | "warnings" | "evidence">): Promise<void> {
     await this.end("skipped", detail);
   }
 
@@ -189,10 +215,62 @@ export class MotionHostJob {
    * runtime directory must still be able to render, it simply cannot report afterwards.
    */
   async end(outcome: JobOutcome, detail: MotionHostJobEnd = {}): Promise<void> {
-    if (this.ended) return;
+    await this.endAcknowledged(outcome, detail);
+  }
+
+  /**
+   * @internal Complete this host job and acknowledge whether its exact terminal record was durable.
+   *
+   * The ordinary terminal helpers intentionally remain `Promise<void>` best-effort reporting APIs.
+   * A coordinator can use this result to retain its own identity claim until the terminal record is
+   * known to be durable. Repeated calls reuse the first operation and acknowledgement rather than
+   * rewriting the outcome.
+   */
+  async endAcknowledged(outcome: JobOutcome, detail: MotionHostJobEnd = {}): Promise<boolean> {
+    if (!this.endOperation) {
+      this.ended = true;
+      this.endOperation = this.writeTerminalRecord(outcome, detail);
+    }
+    return await this.endOperation;
+  }
+
+  /** @internal True only when the initial pending host lease was durably announced. */
+  hasPublishedLease(): boolean {
+    return this.leaseRun !== null;
+  }
+
+  /**
+   * @internal End this host run without producing a terminal record.
+   *
+   * A coordinator uses this when it no longer holds the identity authority required to state an
+   * outcome. It shares the one-way end cache with endAcknowledged(), stops the host heartbeat,
+   * and releases only this exact lease capability.
+   */
+  async releaseCapacityWithoutRecord(): Promise<void> {
+    if (!this.endOperation) {
+      this.ended = true;
+      this.endOperation = this.releaseExactLease().then(() => false);
+    }
+    await this.endOperation;
+  }
+
+  private async writeTerminalRecord(outcome: JobOutcome, detail: MotionHostJobEnd): Promise<boolean> {
     this.ended = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
     const endedAtMs = this.now();
+    // A trusted host may receive producer-provided evidence, but no committed failure may retain
+    // an artifact handle. Rebuild the bounded envelope from the facts this write will retain; if
+    // any fact cannot be represented, omit optional evidence rather than writing a record that
+    // the durable reader would later reject.
+    const warnings = canonicalMotionJobRecordWarnings(detail.warnings);
+    const requestedEvidence = outcome === "failed" && detail.committed === true
+      ? this.committedFailureEvidence(detail, warnings)
+      : detail.evidence;
+    // Omit optional evidence whose warning mirror cannot survive the durable reader boundary.
+    const evidence = canonicalMotionJobTerminalEvidence(requestedEvidence, warnings);
+    const cancellation = outcome === "cancelled"
+      ? canonicalMotionJobRecordCancellation(detail.cancellation, this.callerId)
+      : undefined;
     const record: MotionJobRecord = {
       schema: "shellx-motion/job-record@1",
       jobId: this.jobId,
@@ -200,6 +278,7 @@ export class MotionHostJob {
       lane: this.lane,
       ...(this.frameLane ? { frameLane: this.frameLane } : {}),
       operation: this.operation,
+      ...(this.planFingerprint ? { planFingerprint: this.planFingerprint } : {}),
       lifecycle: "ended",
       outcome,
       createdAtMs: this.startedAtMs,
@@ -215,19 +294,54 @@ export class MotionHostJob {
       ...(outcome === "failed" && detail.error
         ? { error: motionJobFailure(detail.error, { code: "invalid_args", message: detail.error.message }) }
         : {}),
-      ...(outcome === "cancelled" ? { cancellation: detail.cancellation ?? { requestedBy: this.callerId } } : {}),
+      // A committed marker is failure uncertainty only. It is never a general completion flag.
+      ...(outcome === "failed" && detail.committed === true ? { committed: true } : {}),
+      ...(cancellation ? { cancellation } : {}),
       ...(outcome === "skipped" && detail.skip ? { skip: detail.skip } : {}),
-      warnings: detail.warnings ?? [],
+      warnings,
       ...(detail.receiptPath ? { receiptPath: detail.receiptPath } : {}),
       ...(detail.receiptId ? { receiptId: detail.receiptId } : {}),
       ...(detail.producerEvidence ? { producerEvidence: detail.producerEvidence } : {}),
+      ...(evidence ? { evidence } : {}),
       ...(this.lineage ? { lineage: this.lineage } : {})
     };
+    let durable = false;
     try {
-      await this.records?.record(record);
+      durable = this.records === null ? false : await this.records.recordTerminalAcknowledged(record);
     } catch {
       // See above: losing the record must not fail the work it describes.
+      durable = false;
+    } finally {
+      // Terminal reporting must not strand a live capacity lease merely because its terminal
+      // record could not be persisted. A stale lease can otherwise make a completed job look live.
+      await this.releaseExactLease();
     }
-    if (this.leaseRun) await this.leases?.release(this.leaseRun);
+    return durable;
+  }
+
+  private committedFailureEvidence(detail: MotionHostJobEnd, warnings: readonly string[]): MotionJobEvidence | undefined {
+    if (!detail.evidence || this.operation !== "render.final" || !this.planFingerprint) return undefined;
+    try {
+      return createMotionJobEvidence({
+        jobId: this.jobId,
+        callerId: this.callerId,
+        operation: "render.final",
+        planFingerprint: this.planFingerprint,
+        outcome: "failed",
+        warnings,
+        receiptIds: detail.receiptId ? [detail.receiptId] : [],
+        producerEvidence: detail.producerEvidence ?? null,
+        artifacts: []
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async releaseExactLease(): Promise<void> {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    const run = this.leaseRun;
+    this.leaseRun = null;
+    if (run) await this.leases?.release(run).catch(() => {});
   }
 }

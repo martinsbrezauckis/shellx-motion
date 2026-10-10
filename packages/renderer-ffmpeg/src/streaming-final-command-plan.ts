@@ -30,8 +30,19 @@ export function planStreamingFinalCommand(input: PlanStreamingFinalCommandInput)
     };
   }
   const frameCount = Math.ceil((input.durationMs / 1_000) * input.fps);
+  const preset = resolveExportPreset(input.preset);
   const metadataError = streamingMetadataError({ frameCount, ...input });
   if (metadataError) return { ok: false, transport: transport.plan, error: metadataError };
+  if (preset.preset === "mp4-h264" && (input.width % 2 !== 0 || input.height % 2 !== 0)) {
+    return {
+      ok: false,
+      transport: transport.plan,
+      error: {
+        code: "h264_dimensions_invalid",
+        message: "MP4 H.264 streaming delivery requires even canvas dimensions for yuv420p output."
+      }
+    };
+  }
   let audioMaster: MotionAudioMasterBus | undefined;
   try {
     audioMaster = normalizeMotionAudioMaster(input.audioMaster) ?? undefined;
@@ -44,7 +55,6 @@ export function planStreamingFinalCommand(input: PlanStreamingFinalCommandInput)
     };
   }
   const audioInputs = resolveFinalAudioInputs(input);
-  const preset = resolveExportPreset(input.preset);
   if (audioMaster && (audioInputs.length === 0 || !preset.audioCodec)) {
     return {
       ok: false,

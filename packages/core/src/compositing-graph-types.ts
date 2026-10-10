@@ -8,6 +8,7 @@ export const MAX_COMPOSITING_GRAPH_EDGES = 128;
 export const MAX_COMPOSITING_GRAPH_DEPTH = 32;
 export const MAX_COMPOSITING_PIXEL_OPERATIONS = 1_000_000_000;
 export const MAX_COMPOSITING_WORKING_BYTES = 512 * 1024 * 1024;
+export const MAX_COMPOSITING_DERIVED_LAYERS = 128;
 
 export type MotionCompositingNodeType =
   | "source" | "transform" | "mask" | "matte" | "blend" | "color" | "blur" | "output";

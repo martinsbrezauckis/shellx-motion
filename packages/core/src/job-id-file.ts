@@ -5,13 +5,9 @@
  * name files after a job id. A job id is caller-supplied and may legally contain characters a
  * filename may not, so it has to be transformed — and the transform is the whole problem.
  *
- * WHY A HASH AND NOT A SUBSTITUTION. The previous encoding folded every disallowed character to
- * `-`, which is not injective: `cut:render-42` and `cut-render-42` produced one filename. That is
- * not a theoretical id — `cut:render-42` is the form `shellx-motion job` documents to Cut. Two callers
- * using both spellings shared one lease file and one record prefix, so the second caller's write
- * silently destroyed the first caller's live lease AND its terminal record, leaving a job that had
- * actually succeeded answering `job_unknown` forever. An adversarial regression reproduced this with two
- * concurrent renders and no authentication of any kind.
+ * WHY A HASH AND NOT A SUBSTITUTION. Folding every disallowed character to `-` is not injective:
+ * `cut:render-42` and `cut-render-42` would produce one filename. Distinct callers could then
+ * share a lease file and record prefix, allowing one job to overwrite another's state.
  *
  * Case folding is the same defect with a different cause: job ids are case-sensitive
  * (`assertMotionJobId` accepts both), but Windows and macOS filesystems are case-insensitive by

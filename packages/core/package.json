@@ -1,11 +1,13 @@
 {
   "name": "@shellx-motion/core",
-  "version": "0.2.66",
+  "version": "0.2.67",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./internal/linear-srgb-sdr-final": "./src/linear-srgb-sdr-final-route.ts",
+    "./internal/canonical-json": "./src/canonical-json.ts",
+    "./internal/linear-srgb-sdr-final-math": "./src/linear-srgb-sdr-final-math.ts",
     "./internal/scene3d-gltf-material": "./src/scene-3d-gltf-material-package-route.ts",
     "./internal/scene3d-gltf-pbr-final": "./src/scene-3d-gltf-material-final-route.ts",
     "./internal/scene3d-gltf-pbr-hdr10-final": "./src/scene-3d-gltf-pbr-hdr10-final-route.ts",
@@ -16,6 +18,8 @@
     "./internal/trusted-host-workspace": "./src/output-path-trusted-workspace.ts",
     "./internal/derived-output-publication-authenticity": "./src/derived-output-publication-authenticity.ts",
     "./internal/paired-output-receipt-verification": "./src/paired-output-receipt-verification.ts",
+    "./internal/paired-output-receipt-publication": "./src/paired-output-receipt-publication.ts",
+    "./internal/strict-sdr-candidate-held-pair": "./src/strict-sdr-candidate-held-pair.ts",
     "./internal/admitted-package-execution": "./src/package-admitted-execution-internal.ts",
     "./internal/closed-directory-inventory": "./src/closed-directory-inventory-internal.ts",
     "./internal/checkpoint-storyboard-scalar-spatial-materializer": "./src/internal/checkpoint-storyboard/checkpoint-storyboard-scalar-spatial-materializer.ts",
@@ -83,6 +87,14 @@
         "types": "./dist/paired-output-receipt-verification.d.ts",
         "default": "./dist/paired-output-receipt-verification.js"
       },
+      "./internal/paired-output-receipt-publication": {
+        "types": "./dist/paired-output-receipt-publication.d.ts",
+        "default": "./dist/paired-output-receipt-publication.js"
+      },
+      "./internal/strict-sdr-candidate-held-pair": {
+        "types": "./dist/strict-sdr-candidate-held-pair.d.ts",
+        "default": "./dist/strict-sdr-candidate-held-pair.js"
+      },
       "./internal/admitted-package-execution": {
         "types": "./dist/package-admitted-execution-internal.d.ts",
         "default": "./dist/package-admitted-execution-internal.js"
@@ -134,7 +146,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build.mjs --package @shellx-motion/core",
+    "build": "node ../../scripts/public/build.mjs --package @shellx-motion/core",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   }

@@ -128,26 +128,20 @@ describe("LocalMotionSdkRenderJob", () => {
     expect(rendererCalls).toBe(0);
   });
 
-  it("preserves a durable-segmented GPU job lane in SDK status/events without creating a reuse identity", async () => {
+  it("preserves a refused durable-segmented GPU job receipt without creating reusable authority", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-coordinator-gpu-"));
     roots.push(root);
     await withCoordinatorRoots(root, async () => {
-      let renders = 0;
+      let directFinalCalls = 0;
       const sdk = createLocalMotionSdk({
-      callerId: "cut:gpu-workspace",
-      gpuFinalExecutionAvailable: true,
-      ffmpegRunner: async () => ({ exitCode: 0, stdout: "ffmpeg version coordinator-gpu-test", stderr: "" }),
-      streamingFinalRenderer: async (input) => {
-        renders += 1;
-        expect(input.frameLane).toBe("gpu");
-        if (!input.transport) throw new Error("GPU coordinator requests must retain strict streamed transport.");
-        return {
-          ok: false,
-          transport: input.transport,
-          error: { code: "job_queue_timeout", message: `fresh GPU attempt ${renders} could not acquire a slot` }
-        };
-      }
-    });
+        callerId: "cut:gpu-workspace",
+        gpuFinalExecutionAvailable: true,
+        ffmpegRunner: async () => ({ exitCode: 0, stdout: "ffmpeg version coordinator-gpu-test", stderr: "" }),
+        streamingFinalRenderer: async () => {
+          directFinalCalls += 1;
+          throw new Error("segmented GPU admission must not use the direct-final renderer seam");
+        }
+      });
       const job = await sdk.submitRender({
       jobId: "sdk:gpu-fresh-source",
       packageRoot: resolve("../../fixtures/packages/lower-third"),
@@ -157,14 +151,21 @@ describe("LocalMotionSdkRenderJob", () => {
       segmented: { segmentFrames: 120, resume: true }
     });
       const source = await eventually(() => job.status(), (status) => status.state === "failed");
-      expect(source).toMatchObject({ jobId: "sdk:gpu-fresh-source", frameLane: "gpu", lane: "ffmpeg" });
-      expect(source.receiptId).toBeUndefined();
+      expect(source).toMatchObject({
+        jobId: "sdk:gpu-fresh-source", frameLane: "gpu", lane: "ffmpeg",
+        error: { code: "segmented_final_unsupported" },
+        receiptId: expect.stringMatching(/^segmented-final-failed-/u)
+      });
+      // The fixture's `Inter` text has no manifest-bound font asset, which strict GPU planning refuses.
+      expect(directFinalCalls).toBe(0);
+      // A failed receipt is terminal evidence, never a completed GPU artifact or reuse authority.
+      expect(source.evidence?.artifacts ?? []).toEqual([]);
+      expect(source).not.toHaveProperty("gpuPostRenderReuse");
       const sourceEvents = await job.events();
       expect(sourceEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "submitted", data: expect.objectContaining({ frameLane: "gpu" }) }),
       expect.objectContaining({ type: "failed", data: expect.objectContaining({ frameLane: "gpu" }) })
       ]));
-      expect(renders).toBe(0); // The managed test filesystem refuses package reads before renderer admission.
     });
   });
 

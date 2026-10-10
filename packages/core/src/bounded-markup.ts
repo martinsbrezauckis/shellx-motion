@@ -1,3 +1,5 @@
+import { closeNamePrefixes, firstCloseAfter, indexCloseNames, isAsciiLetterCode, isTagNameRestCode, isWordBoundaryAt } from "./bounded-markup-close-names";
+
 /**
  * Bounded, linear-time markup scanning primitives.
  *
@@ -7,15 +9,8 @@
  * `/<tag\b([\s\S]*?)>([\s\S]*?)<\/tag>/gi`. That shape is a denial-of-service primitive: when a
  * document opens tags it never closes, the engine re-scans the rest of the document once per
  * candidate `>` and once per candidate start, which is quadratic and — for the SVG pair scan, where
- * both the `>` and the start position are re-tried — cubic. Measured on this repository before this
- * module existed:
- *
- * | path                                            | adversarial input                     | blocked for |
- * | ----------------------------------------------- | ------------------------------------- | ----------- |
- * | `adapter-diagnostics` SVG animate scan           | 42 KB of unclosed `<path …>`          | 3.06 s      |
- * | `adapter-diagnostics` SVG animate scan           | 41 KB of unclosed `<path>`            | 68.4 s      |
- * | `source-import` fetched-HTML → Markdown cleanup  | 815 KB of unclosed `<li>`             | 14.7 s      |
- * | `adapters-html` layer element scan               | 819 KB of unclosed `data-layer-id` divs| 3.07 s     |
+ * both the `>` and the start position are re-tried — cubic. Unclosed SVG paths,
+ * fetched HTML list items and layer divs can amplify this work within accepted input sizes.
  *
  * Motion renders untrusted packages and imports fetched HTML, so those are event-loop stalls whose
  * length an input author chooses. A size cap alone does not fix them: every input above is far
@@ -23,8 +18,9 @@
  *
  * ## What these primitives guarantee
  *
- * Every scan here is a single forward pass. There is no backtracking to amplify, so cost is linear
- * in the input length regardless of shape. Repeated "is there another `</li>` after here" questions
+ * Every scan here uses bounded forward work. There is no backtracking to amplify, so work stays
+ * bounded by the input length (plus indexed lookups) regardless of shape. Repeated "is there
+ * another `</li>` after here" questions
  * go through {@link ForwardIndex}, which remembers that a needle is exhausted so a document with a
  * hundred thousand unclosed tags pays for one failed search rather than a hundred thousand.
  *
@@ -421,23 +417,6 @@ export interface MarkupAttributeTagPair {
   value: string;
 }
 
-/** `[\w:-]` — the characters a tag name may continue with in the pattern this replaces. */
-function isTagNameRestCode(code: number): boolean {
-  return isMarkupWordCharCode(code) || code === 0x3a || code === 0x2d;
-}
-
-/** `[A-Za-z]` — the characters a tag name may start with. */
-function isAsciiLetterCode(code: number): boolean {
-  return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
-}
-
-/** `\b` between `text[at - 1]` and `text[at]`, with out-of-range treated as a non-word char. */
-function isWordBoundaryAt(text: string, at: number): boolean {
-  const before = at > 0 && isMarkupWordCharCode(text.charCodeAt(at - 1));
-  const after = at < text.length && isMarkupWordCharCode(text.charCodeAt(at));
-  return before !== after;
-}
-
 /**
  * Attribute match found inside one opening tag: `\battr\s*=\s*(["'])([^"']+)\1` plus the `>` that
  * terminates the tag after it.
@@ -462,7 +441,7 @@ interface AttributeHit {
  * untrusted packages and the sibling HTML importer accepts 8 MiB, so the reachable input is two
  * orders of magnitude past those sizes.
  *
- * The scan below is a single forward pass with three memoised observations, each of which is what
+ * The scan below uses bounded forward passes and three indexed observations, each of which is what
  * the regex engine could have concluded but does not:
  *
  *   - No `>` at or after the tag name ends the whole scan. Every later `<` sits at a higher offset,
@@ -470,8 +449,9 @@ interface AttributeHit {
  *   - No attribute hit anywhere between the tag name and the first `>` skips PAST that `>`. A later
  *     `<` inside the same region has a strictly smaller candidate set, so it fails for the same
  *     reason. This is what removes the attribute-run curve.
- *   - A missing `</name>` is remembered per name by {@link ForwardIndex}, so a document with tens of
- *     thousands of unclosed tags pays for one failed search rather than one per tag.
+ *   - Exact closing names and their positions are indexed once in a compressed prefix tree. A long
+ *     `a-a-a-…` opener walks that tree once; absent prefixes are neither copied nor searched, and
+ *     an existing closer after a tag is found by binary search over its recorded positions.
  *
  * ## Fidelity
  *
@@ -494,21 +474,9 @@ interface AttributeHit {
 export function scanMarkupAttributeTagPairs(text: string, attributeName: string): MarkupAttributeTagPair[] {
   const lower = asciiLowerCase(text);
   const index = new ForwardIndex(lower);
+  const closeNames = indexCloseNames(lower);
   const needle = asciiLowerCase(attributeName);
   const pairs: MarkupAttributeTagPair[] = [];
-  // Last occurrence of `</name>` in the document, per name. A hit can only be completed by a closer
-  // that starts after the opening tag's `>`, so comparing against this answers "is there one at all"
-  // in O(1) and leaves `index.find` to be called ONLY when the answer is yes — which is what keeps
-  // the two nested backtrack levels below from multiplying into a quadratic.
-  const lastCloser = new Map<string, number>();
-  const closerEndOf = (closer: string): number => {
-    let at = lastCloser.get(closer);
-    if (at === undefined) {
-      at = lower.lastIndexOf(closer);
-      lastCloser.set(closer, at);
-    }
-    return at;
-  };
   // Viable attribute hits of the region that ends at a given `>`, in the right-to-left order the
   // greedy `[^>]*` tries them. Cached per region because every `<` before that `>` shares it.
   let regionTagEnd = -1;
@@ -537,12 +505,9 @@ export function scanMarkupAttributeTagPairs(text: string, attributeName: string)
     }
 
     let matched: MarkupAttributeTagPair | null = null;
-    for (let attrStart = runEnd; attrStart > nameStart && !matched; attrStart -= 1) {
-      if (!isWordBoundaryAt(text, attrStart)) continue;
-      const tagName = text.slice(nameStart, attrStart);
-      const closer = `</${asciiLowerCase(tagName)}>`;
-      const closerEnd = closerEndOf(closer);
-      if (closerEnd < 0) continue;
+    for (const candidate of closeNamePrefixes(lower, text, closeNames, nameStart, runEnd)) {
+      const attrStart = candidate.end;
+      const closerEnd = candidate.starts[candidate.starts.length - 1]!;
       // Two backtrack levels, resolved without walking either. `regionHits` is ordered by
       // descending `start`, so "the attribute begins at or after this name candidate" holds on a
       // PREFIX; `tagEnd` is non-increasing along the same order, so "a closer exists after this
@@ -551,16 +516,18 @@ export function scanMarkupAttributeTagPairs(text: string, attributeName: string)
       const viableFrom = firstHitWithCloser(regionHits, closerEnd);
       if (viableFrom >= hitCountFrom(regionHits, attrStart)) continue;
       const hit = regionHits[viableFrom]!;
-      const closeStart = index.find(closer, hit.tagEnd + 1);
+      const closeStart = firstCloseAfter(candidate.starts, hit.tagEnd);
       if (closeStart < 0) continue;
+      const tagName = text.slice(nameStart, attrStart);
       matched = {
         start,
-        end: closeStart + closer.length,
+        end: closeStart + tagName.length + 3,
         tagName,
         attrText: text.slice(attrStart, hit.tagEnd),
         quote: hit.quote,
         value: hit.value
       };
+      break;
     }
 
     if (matched) {

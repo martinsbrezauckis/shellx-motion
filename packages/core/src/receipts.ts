@@ -315,6 +315,8 @@ export interface RenderReceiptInput<TFrameTransport = never> {
   output: null | {
     path: string;
     sha256: string;
+    /** Exact output byte length when the renderer verifies and publishes one immutable media file. */
+    byteLength?: number;
     width: number;
     height: number;
     durationMs: number;

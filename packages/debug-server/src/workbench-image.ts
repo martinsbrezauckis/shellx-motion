@@ -17,8 +17,7 @@
  *
  * Why posters need a format split
  * -------------------------------
- * Posters shipped as hand-authored SVG mockups until the July 2026 template pack
- * replaced them with real 1920x1080 PNG renders. SVG is an active document
+ * The pack can include SVG and rendered PNG posters. SVG is an active document
  * format (script, event handlers, external references, XXE) so it needs content
  * sanitisation before it may be served; PNG/JPEG are inert containers decoded by
  * the browser's image pipeline and need the opposite treatment — a magic-byte
@@ -151,10 +150,9 @@ export function assessWorkbenchPosterPayload(
  *
  * That pattern is an outer `*` over a group whose lazy body can span several comments, so a
  * document that does NOT go on to open an `<svg>` makes the engine enumerate every way of
- * partitioning the comment run. An adversarial regression measured a clean doubling per two comments:
- * 24 comments took 146ms, 30 took 9.3s, and 32 took 37s — from 264 bytes of entirely well-formed
- * input, far under the 4 MiB poster cap. Node is single-threaded, so `GET /workbench/poster` wedged
- * the whole debug server for as long as the caller chose; four more comments buys a quarter hour.
+ * partitioning the comment run. Repeated comments make backtracking grow rapidly,
+ * even in input far under the 4 MiB poster cap. Node is single-threaded, so parsing
+ * a crafted poster could stall the whole debug server.
  *
  * The scan below reads the prologue in one forward pass: each item is a processing instruction or a
  * comment, each ends at its own first terminator, and nothing is re-examined — so there is nothing

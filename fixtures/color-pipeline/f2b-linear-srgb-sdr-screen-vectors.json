@@ -1,0 +1,34 @@
+{
+  "schema": "shellx-motion/linear-srgb-sdr-screen-vectors@1",
+  "vectors": [
+    {
+      "name": "screen-saturated-overlays",
+      "layers": [
+        { "fill": "#101820", "opacity": 1, "blendMode": "normal" },
+        { "fill": "#ff0040", "opacity": 0.4, "blendMode": "screen" },
+        { "fill": "#0066ff", "opacity": 0.45, "blendMode": "screen" }
+      ],
+      "expectedStraightSrgb": { "r": 0.6675121010318916, "g": 0.2899870026858285, "b": 0.7145989691344831, "a": 1 },
+      "gammaWrongControl": { "r": 0.43764705882352944, "g": 0.25717647058823534, "b": 0.5673062668204537, "a": 1, "minimumMaxChannelDelta": 0.22 }
+    },
+    {
+      "name": "screen-partial-alpha-control",
+      "layers": [
+        { "fill": "#0c1420", "opacity": 1, "blendMode": "normal" },
+        { "fill": "#204080", "opacity": 0.18, "blendMode": "normal" },
+        { "fill": "#ff5020", "opacity": 0.31, "blendMode": "screen" }
+      ],
+      "expectedStraightSrgb": { "r": 0.595979390313522, "g": 0.21936031557961533, "b": 0.2599467310641999, "a": 1 },
+      "gammaWrongControl": { "r": 0.35221176470588234, "g": 0.19609663975394082, "b": 0.22463886812764322, "a": 1, "minimumMaxChannelDelta": 0.24 }
+    },
+    {
+      "name": "transparent-screen-zero-alpha-control",
+      "layers": [
+        { "fill": "#305070", "opacity": 1, "blendMode": "normal" },
+        { "fill": "#ff0080", "opacity": 0, "blendMode": "screen" }
+      ],
+      "expectedStraightSrgb": { "r": 0.18823529411764706, "g": 0.3137254901960784, "b": 0.4392156862745098, "a": 1 },
+      "gammaWrongControl": { "r": 0.18823529411764706, "g": 0.3137254901960784, "b": 0.4392156862745098, "a": 1, "minimumMaxChannelDelta": 0 }
+    }
+  ]
+}

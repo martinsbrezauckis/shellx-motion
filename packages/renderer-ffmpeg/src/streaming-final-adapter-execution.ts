@@ -23,6 +23,7 @@ import type { FinalVideoFrameTransportPlan } from "./final-video-frame-transport
 import { admittedScene3dGltfPbrPreflight } from "./streaming-final-gltf-pbr.js";
 import { hasGpuScene3dGltfPbrFinalRouteMarker, resolveGpuScene3dGltfPbrFinalRoute, type GpuScene3dGltfPbrFinalRouteResolution } from "@shellx-motion/renderer-browser/internal/scene3d-gltf-pbr-final";
 import { activeGpuVideoKeyframedPlaybackRateLayer } from "./gpu-video-frame-schedule.js";
+import { revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 type StreamingTransport = Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }>;
 /**
  * The resolver is pure and runs before the outer FFmpeg governor.  The
@@ -89,7 +90,6 @@ export async function renderStreamingFinalUnpublished(input: RenderStreamingFina
   if (!encoded.ok) return encodedFailure(encoded, preliminaryPlan.transport, sourceRefusal, admittedGpuFailure, producerEvidence);
   return encodedSuccess(input, encoded, preliminaryPlan.transport, producerEvidence, effectModuleRelease);
 }
-
 async function preflightDelivery(input: RenderStreamingFinalInput): Promise<
   | { ok: true; staticPlan?: import("@shellx-motion/core").GpuSceneStaticPlan; behaviorStaticPlan?: GpuSceneBehaviorStaticPlan; effectModuleUse?: GpuEffectModuleFinalPreflight; pbrRoute?: Extract<GpuScene3dGltfPbrFinalRouteResolution, { kind: "present" }> }
   | { ok: false; failure: { code: string; message: string } }
@@ -145,7 +145,6 @@ async function preflightDelivery(input: RenderStreamingFinalInput): Promise<
   }
   return { ok: true };
 }
-
 /**
  * Pure direct-final GPU admission planning. Both public publication and the
  * unpublished renderer call this before an outer job waits; it opens no
@@ -230,6 +229,7 @@ export function admittedGpuPreflight(input: RenderStreamingFinalInput, staticPla
         if (effectModuleRelease) effectModuleRelease.lease = lease;
       }
       const hybridTopologyPreflight = directGpuHybridTopologyPreflight(staticPlan);
+      await revalidateStreamingFinalLaunch();
       const prepared = await prepareAdmittedGpuDelivery(input, staticPlan, {
         ...context,
         ...(hybridTopologyPreflight ? { hybridTopologyPreflight } : {})

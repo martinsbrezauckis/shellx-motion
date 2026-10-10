@@ -9,7 +9,7 @@
  * response-stage half, which is the only place a 3xx hop can be judged.
  *
  * Extracted from browser-redirect-guard.ts (itself extracted from index.ts) so both enforcement
- * modules stay inside the module-size ratchet in scripts/module-size-gate.mjs. Dependencies:
+ * modules stay inside the module-size ratchet in scripts/public/module-size-gate.mjs. Dependencies:
  * ./browser-network-state and the canonical-path helpers in ./browser-package-safety. Primary
  * caller: index.ts `acquireContext`, whose route handler maps the verdict onto
  * `route.continue()` / `route.abort("blockedbyclient")`.

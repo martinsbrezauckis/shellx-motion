@@ -90,9 +90,6 @@ export async function retryCoordinatedJob(
     if (stored.code === "binding_not_visible") return coordinatorFailure("job_not_visible", `Motion job ${input.jobId} belongs to another caller.`);
     return coordinatorFailure("capability_unavailable", `Connector binding for Motion job ${input.jobId} is invalid.`);
   }
-  if (!services.connectorJobReferences) {
-    return coordinatorFailure("capability_unavailable", "Generic connector retry requires the host-owned opaque reference authority.");
-  }
   const source = await coordinator.jobView().get({ jobId: input.jobId, callerId: input.callerId });
   if (!source.ok) {
     const code = source.code === "job_expired" ? "job_unknown" : source.code;
@@ -100,6 +97,24 @@ export async function retryCoordinatedJob(
   }
   if (source.job.lifecycle !== "ended" || source.job.outcome !== "failed" || source.job.error?.retryable !== true) {
     return coordinatorFailure("job_not_retryable", `Motion job ${input.jobId} is not a retryable failed run.`);
+  }
+  // Unlike process-local replay, this route can reconstruct work after a restart.  Authenticate
+  // the durable terminal event as well as the record before any reference preparation or write.
+  // `events()` verifies the exact terminal transition and record/event committed-marker parity.
+  const terminalEvents = await coordinator.events({ jobId: input.jobId, callerId: input.callerId });
+  if (!terminalEvents.ok) return coordinatorFailure("capability_unavailable", `Durable terminal event evidence for Motion job ${input.jobId} cannot authorize a retry: ${terminalEvents.message}`);
+  const terminal = terminalEvents.value.events.at(-1);
+  const eventCommitted = terminal?.type === "failed" && terminal.data?.committed === true;
+  if (terminal?.type !== "failed" || eventCommitted !== (source.job.committed === true)) {
+    return coordinatorFailure("capability_unavailable", `Durable terminal event evidence for Motion job ${input.jobId} cannot authorize a retry.`);
+  }
+  // A durable connector binding can reconstruct execution after a coordinator restart, so it
+  // must repeat Core's replay fence before it prepares a producer or writes a replacement binding.
+  if (source.job.committed === true) {
+    return coordinatorFailure("job_not_retryable", `Motion job ${input.jobId} may have published irreversible output; reconcile the failed run before any new submission.`);
+  }
+  if (!services.connectorJobReferences) {
+    return coordinatorFailure("capability_unavailable", "Generic connector retry requires the host-owned opaque reference authority.");
   }
   if (input.newJobId === input.jobId) {
     return coordinatorFailure("job_not_retryable", "A retry must use a distinct job id so its source evidence remains immutable.");
@@ -167,7 +182,7 @@ function connectorExecution(
     const execution = await executePreparedMotionConnectorJob(prepared, { callerId, references, signal });
     return execution.ok
       ? { ok: true, receiptPath: execution.receiptPath, committed: execution.committed }
-      : { ok: false, error: execution.error };
+      : { ok: false, error: execution.error, ...(execution.committed === true ? { committed: true as const } : {}) };
   };
 }
 

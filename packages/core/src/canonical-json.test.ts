@@ -39,10 +39,8 @@ describe("canonical JSON", () => {
 
   it("orders keys by code unit, which no ambient locale can move", () => {
     // "a" U+0061, "z" U+007A, "ä" U+00E4. Code-unit order is a, z, ä.
-    // A live probe of localeCompare on this machine gave a, ä, z under en-US and a, z, ä under
-    // sv-SE, so a localeCompare-sorted canonical form is machine-dependent. Asserting the EXACT
-    // code-unit string means this test fails under en-US if the comparator ever regresses to
-    // localeCompare — it is not a tautology over whatever the implementation happens to do.
+    // Locale collation can reorder these keys. Assert the exact code-unit string so
+    // this catches a regression to localeCompare on any host.
     expect(canonicalJson({ "z": 3, "ä": 2, "a": 1 })).toBe('{"a":1,"z":3,"ä":2}');
     expect(["a", "ä", "z"].sort(compareCodeUnits)).toEqual(["a", "z", "ä"]);
 
@@ -140,7 +138,7 @@ describe("canonical JSON", () => {
     // Six modules used to carry their own stable-JSON walk, three of them sorting with
     // localeCompare. They now delegate, and the assertion below is the delegation itself rather
     // than a copy of the expected bytes — if a module grows a private serializer again, this stops
-    // matching and `scripts/canonical-determinism-gate.mjs` refuses the file outright.
+    // matching and `scripts/public/canonical-determinism-gate.mjs` refuses the file outright.
     const graph: MotionProceduralGraph = {
       schema: MOTION_PROCEDURAL_SCHEMA,
       relationships: [{
@@ -192,7 +190,7 @@ describe("canonical JSON", () => {
     try {
       const src = join(root, "packages", "probe", "src");
       mkdirSync(src, { recursive: true });
-      mkdirSync(join(root, "scripts"), { recursive: true });
+      mkdirSync(join(root, "scripts", "public"), { recursive: true });
       writeFileSync(join(src, "clean.ts"), [
         'import { canonicalJson, compareCodeUnits } from "@shellx-motion/core";',
         "export const ordered = (values: string[]): string[] => [...values].sort(compareCodeUnits);",
@@ -240,7 +238,7 @@ describe("canonical JSON", () => {
  * @returns the exit status and one line per rule finding.
  */
 function runGate(root: string): { status: number; findings: string[] } {
-  const gate = resolve(__dirname, "..", "..", "..", "scripts", "canonical-determinism-gate.mjs");
+  const gate = resolve(__dirname, "..", "..", "..", "scripts", "public", "canonical-determinism-gate.mjs");
   try {
     execFileSync(process.execPath, [gate, "--root", root], { encoding: "utf8", stdio: "pipe" });
     return { status: 0, findings: [] };

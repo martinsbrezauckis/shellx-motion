@@ -278,7 +278,7 @@ describe("motion action catalog", () => {
     expect(action?.permission).toBe("read_motion");
     expect(action?.mutates).toBe(false);
     expect(action?.calls).toEqual(["motion.actions.panel"]);
-    expect(action?.verify).toContain("Action panel returns grouped actions, permission counts, prompt commands, and suggested prompt-run follow-ups.");
+    expect(action?.verify).toContain("Action panel returns grouped actions, permission counts, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run.");
   });
 
   it("finds local CLI agent health workflows from natural wording", () => {
@@ -298,7 +298,7 @@ describe("motion action catalog", () => {
     expect(action?.permission).toBe("read_motion");
     expect(action?.mutates).toBe(false);
     expect(action?.calls).toEqual(["motion.agent.panel"]);
-    expect(action?.verify).toContain("Agent panel returns default local CLI selection policy, adapter command shapes, safety guarantees, receipt coverage, and prompt follow-ups without probing or mutating packages.");
+    expect(action?.verify).toContain("Agent panel returns explicit prompt-provider selection policy, candidate source, adapter command shapes, safety guarantees, receipt coverage, and readiness/transcript follow-ups without probing or mutating packages.");
   });
 
   it("finds template media-slot replacement flows", () => {

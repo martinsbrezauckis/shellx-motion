@@ -11,6 +11,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 
 import {
+  startLinearSrgbSdrHeldStreamingFfmpegProcess,
   startStreamingFfmpegProcess,
   startStreamingFfmpegProcessWithTrustedLaunch
 } from "./streaming-process.js";
@@ -28,6 +29,28 @@ afterEach(() => {
 });
 
 describe("streaming FFmpeg process transport", () => {
+  it("maps the candidate's fixed held FFmpeg and owned MP4 descriptors without widening command input", async () => {
+    const child = fakeChild();
+    spawn.mockReturnValue(child);
+    const process = await startLinearSrgbSdrHeldStreamingFfmpegProcess({
+      command: { executable: "/proc/self/fd/3", shell: false, args: ["-y", "-f", "rawvideo", "-i", "pipe:0", "-f", "mp4", "/proc/self/fd/4"] },
+      signal: new AbortController().signal,
+      watchProcess: () => undefined,
+      reportProcessContainment: () => undefined,
+    }, { executable: "/proc/self/fd/3", shell: false, args: ["-y", "-f", "rawvideo", "-i", "pipe:0", "-f", "mp4", "/proc/self/fd/4"] }, 17, 18);
+    expect(spawn).toHaveBeenCalledWith("/proc/self/fd/3", expect.any(Array), expect.objectContaining({
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe", 17, 18],
+      detached: true,
+    }));
+    child.emit("close", 0);
+    await expect(process.end()).resolves.toEqual({ exitCode: 0, stdout: "", stderr: "" });
+
+    await expect(startLinearSrgbSdrHeldStreamingFfmpegProcess({
+      command: command(), signal: new AbortController().signal, watchProcess: () => undefined, reportProcessContainment: () => undefined,
+    }, command(), 17, 18)).rejects.toThrow("fixed descriptor operands");
+  });
+
   it("refuses shell authority before spawning", async () => {
     await expect(startStreamingFfmpegProcess({
       // Deliberately bypass FfmpegCommand's shell:false type to exercise the runtime refusal.
@@ -84,6 +107,55 @@ describe("streaming FFmpeg process transport", () => {
     child.emit("error", Object.assign(new Error("missing ffmpeg"), { code: "ENOENT" }));
     await expect(process.closed).resolves.toEqual({ exitCode: 127, stdout: "", stderr: "missing ffmpeg" });
     await expect(process.write(Buffer.from("frame"))).rejects.toThrow("exited with code 127");
+  });
+
+  it("rejects later writes with the first cached stdin error", async () => {
+    const child = fakeChild({ pid: null });
+    spawn.mockReturnValue(child);
+    const process = await startStreamingFfmpegProcess({
+      command: command(), signal: new AbortController().signal,
+      watchProcess: () => undefined, reportProcessContainment: () => undefined
+    });
+    const firstError = new Error("encoder input pipe broke");
+    child.stdin.emit("error", firstError);
+    child.stdin.emit("error", new Error("later pipe error"));
+
+    await expect(process.write(Buffer.from("frame"))).rejects.toBe(firstError);
+    child.emit("close", 1);
+    await expect(process.closed).resolves.toMatchObject({ exitCode: 1 });
+  });
+
+  it("rejects a backpressured write when the child closes before drain", async () => {
+    const child = fakeChild({ pid: null });
+    child.stdin.write = vi.fn(() => false);
+    spawn.mockReturnValue(child);
+    const process = await startStreamingFfmpegProcess({
+      command: command(), signal: new AbortController().signal,
+      watchProcess: () => undefined, reportProcessContainment: () => undefined
+    });
+
+    const pending = process.write(Buffer.from("frame"));
+    child.emit("close", 7);
+    await expect(pending).rejects.toThrow("closed before accepting a frame");
+    await expect(process.closed).resolves.toMatchObject({ exitCode: 7 });
+  });
+
+  it("rejects a backpressured write with the stdin error before drain", async () => {
+    const child = fakeChild({ pid: null });
+    child.stdin.write = vi.fn(() => false);
+    spawn.mockReturnValue(child);
+    const process = await startStreamingFfmpegProcess({
+      command: command(), signal: new AbortController().signal,
+      watchProcess: () => undefined, reportProcessContainment: () => undefined
+    });
+
+    const pending = process.write(Buffer.from("frame"));
+    const pipeError = new Error("broken pipe during backpressure");
+    child.stdin.emit("error", pipeError);
+    await expect(pending).rejects.toBe(pipeError);
+    await expect(process.write(Buffer.from("next frame"))).rejects.toBe(pipeError);
+    child.emit("close", 1);
+    await expect(process.closed).resolves.toMatchObject({ exitCode: 1 });
   });
 
   it("normalizes a synchronous missing-executable failure without exposing a live pipe", async () => {

@@ -9,12 +9,12 @@
  * Motion lost its work.
  *
  * This module is the other half: when a job ends, its outcome is written here, and it stays
- * readable until retention prunes it.
+ * readable until logical retention hides it from queries.
  *
  * Why the ids are timestamped: retention makes `job_expired` a real possibility, and the contract
  * requires it to be distinguishable from `job_unknown` because the two demand opposite responses
  * (fall back to receipts, versus stop and re-read the submission). A Motion-minted id embeds its
- * own mint time, so an id we have never seen can be compared against the prune horizon and
+ * own mint time, so an id we have never seen can be compared against the retention horizon and
  * answered exactly, without keeping an unbounded tombstone index that would defeat retention.
  * A caller-supplied id carries no such time, and is answered `job_unknown` — documented, not
  * silently approximated.
@@ -30,22 +30,22 @@
  * `LocalMotionJobGovernor` in job-governor.ts (writes) and the `motion.job.*` debug commands (read).
  */
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { defaultMotionJobLeaseRoot, defaultMotionRuntimeRoot } from "./job-lease";
 import { PrivateMotionRuntimeDirectory } from "./private-runtime-directory";
 import { motionJobOwnerKey } from "./job-id-file";
 import { compareCodeUnits } from "./canonical-json";
+import { retainedMotionJobRecordNames } from "./job-record-retention-projection";
 import type { JobOutcome, JobSkipCode } from "./generated/job-status";
 import type { MotionJobFailure } from "./job-failure";
 import type { MotionJobFrameLane } from "./job-frame-lane";
+import type { MotionJobEvidence } from "./job-evidence";
 import {
   findUnambiguousMotionJobRecord,
   hasExclusiveOwnedLegacyMotionJobRecord,
   isCurrentMotionJobRecordFile,
   listMotionJobRecordFiles,
-  pruneMotionJobRecords,
   readMotionJobRecord,
-  removeOtherMotionJobRecords,
   writeMotionJobRecord
 } from "./job-registry-storage";
 
@@ -70,6 +70,8 @@ export interface MotionJobRecord {
   /** Optional final-render rasterizer. Omitted by legacy and non-final host jobs. */
   frameLane?: MotionJobFrameLane;
   operation: string;
+  /** Host-derived immutable V1 render-plan identity, retained with the terminal outcome. */
+  planFingerprint?: string;
   /** Always "ended". Present so a record and a live lease project into one shape without a branch. */
   lifecycle: "ended";
   outcome: JobOutcome;
@@ -81,6 +83,8 @@ export interface MotionJobRecord {
   queueWaitMs: number;
   /** Present if and only if outcome is "failed". The contract's load-bearing invariant. */
   error?: MotionJobFailure;
+  /** Literal failure uncertainty: irreversible publication occurred or may have occurred. */
+  committed?: true;
   /** Present if and only if outcome is "cancelled". */
   cancellation?: { requestedBy: string; reason?: string };
   /** Present if and only if outcome is "skipped". */
@@ -92,9 +96,14 @@ export interface MotionJobRecord {
   receiptId?: string;
   /** A compact reference to producer evidence already contained by the final receipt. */
   producerEvidence?: { frameLane: MotionJobFrameLane; schema?: string };
+  /** Optional path-free V1 terminal evidence, self-verified when records are read. */
+  evidence?: MotionJobEvidence;
   /** A retry is a new run, never a mutation of the source job. */
-  lineage?: { priorJobId?: string; priorReceiptId?: string; retryAttempt?: number };
+  lineage?: MotionJobRetryLineage;
 }
+
+/** The only durable retry linkage accepted before a terminal record can be projected publicly. */
+export interface MotionJobRetryLineage { priorJobId: string; priorReceiptId?: string; retryAttempt: number; }
 
 export interface MotionJobRegistryServices {
   now?: () => number;
@@ -149,7 +158,7 @@ export function assertMotionJobId(jobId: string): string {
   return jobId;
 }
 
-/** Per-user store of finished work, pruned by age and count. */
+/** Per-user store of finished work, logically retained by age and count. */
 export class MotionJobRegistry {
   private readonly root: string;
   private readonly now: () => number;
@@ -158,7 +167,7 @@ export class MotionJobRegistry {
   private degraded = false;
 
   constructor(services: MotionJobRegistryServices = {}) {
-    this.root = services.recordRoot ?? defaultMotionJobRecordRoot();
+    this.root = resolve(services.recordRoot ?? defaultMotionJobRecordRoot());
     this.now = services.now ?? Date.now;
     this.runtime = new PrivateMotionRuntimeDirectory(this.root);
   }
@@ -168,34 +177,29 @@ export class MotionJobRegistry {
     return this.degraded;
   }
 
-  /**
-   * Persist a finished job, then prune.
-   *
-   * Pruning on write rather than on read keeps queries cheap and bounds growth at the only moment
-   * the directory actually grows.
-   */
-  async record(record: MotionJobRecord): Promise<void> {
-    if (this.degraded) return;
+  /** Persist a finished job without unlinking durable records; remains void-compatible for best-effort hosts. */
+  async record(record: MotionJobRecord): Promise<void> { await this.recordTerminalAcknowledged(record); }
+
+  /** @internal `true` only after this exact atomic terminal write; `false` when unavailable or degraded. */
+  async recordTerminalAcknowledged(record: MotionJobRecord): Promise<boolean> {
+    if (this.degraded) return false;
     try {
       await this.runtime.assertCurrent();
       await writeMotionJobRecord(this.root, record);
-    } catch {
-      this.degraded = true;
-      return;
-    }
-    // A jobId may legitimately be reused by a host that names its own jobs. Without this, the two
-    // runs would sit side by side under different end times and both answer the same lookup.
-    await removeOtherMotionJobRecords(this.root, record);
-    await this.prune();
+      await this.runtime.assertCurrent();
+      return true;
+    } catch { this.degraded = true; return false; }
   }
 
   /**
-   * Attach detail a later layer learned, without rewriting the outcome.
+   * Attach limited later detail without rewriting the outcome.
    *
    * The governor owns resources and knows how a job ended; it does not know where the receipt was
    * written, because receipts are produced above it. Rather than push receipt paths down into the
-   * resource layer, the layer that writes one amends the record afterwards. A no-op when the record
-   * is gone, which is the honest result for a job whose evidence has already been pruned.
+   * resource layer, the layer that writes one amends the record afterwards. A V1 evidence envelope
+   * fixes its warnings, so an evidenced record ignores a later warning patch while still accepting
+   * receiptPath. A no-op when the exact record is absent or an unauthenticated legacy lookup is
+   * ambiguous; logical retention does not delete a record that can still be amended.
    */
   async amend(input: {
     callerId: string;
@@ -221,10 +225,13 @@ export class MotionJobRegistry {
       : await findUnambiguousMotionJobRecord(this.root, input);
     const patch = authenticated ? input.patch : positionalPatch;
     if (!existing || !patch || (authenticated && existing.callerId !== input.callerId)) return;
+    const receiptChanged = Boolean(patch.receiptPath && patch.receiptPath !== existing.receiptPath);
+    const appendWarnings = existing.evidence === undefined && Boolean(patch.warnings?.length);
+    if (!receiptChanged && !appendWarnings) return;
     const merged: MotionJobRecord = {
       ...existing,
-      ...(patch.receiptPath ? { receiptPath: patch.receiptPath } : {}),
-      ...(patch.warnings ? { warnings: [...existing.warnings, ...patch.warnings] } : {})
+      ...(receiptChanged ? { receiptPath: patch.receiptPath! } : {}),
+      ...(appendWarnings ? { warnings: [...existing.warnings, ...patch.warnings!] } : {})
     };
     try {
       await writeMotionJobRecord(this.root, merged);
@@ -242,7 +249,9 @@ export class MotionJobRegistry {
   async read(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<
     { ok: true; record: MotionJobRecord } | { ok: false; code: "job_unknown" | "job_expired" | "job_not_visible" }
   > {
-    const record = await this.findRecord(input);
+    await this.runtime.assertCurrent();
+    const retained = await retainedMotionJobRecordNames(this.root, this.now(), JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
+    const record = await this.findRecord(input, retained);
     if (!record) {
       const mintedAtMs = motionJobIdMintedAtMs(input.jobId);
       // Only an id whose age we can actually read may be called expired.
@@ -256,11 +265,12 @@ export class MotionJobRegistry {
   /**
    * Finished work this caller may see, newest first.
    *
-   * Ordering comes from the filenames, so only the records actually returned are read. A host
-   * asking for the last twenty jobs reads twenty files, not the whole retained history.
+   * The logical retention projection validates current candidates first; output ordering then reads
+   * only records that can be returned, never physically pruning on a quiet-host query.
    */
   async list(input: { callerId: string; scope?: "own" | "all"; limit?: number }): Promise<MotionJobRecord[]> {
     await this.runtime.assertCurrent();
+    const retained = await retainedMotionJobRecordNames(this.root, this.now(), JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
     const files = (await listMotionJobRecordFiles(this.root)).sort((left, right) => right.endedAtMs - left.endedAtMs);
     const limit = Math.max(0, Math.min(input.limit ?? JOB_RECORD_RETENTION_COUNT, JOB_RECORD_RETENTION_COUNT));
     const visible: MotionJobRecord[] = [];
@@ -270,6 +280,7 @@ export class MotionJobRegistry {
       const record = await readMotionJobRecord(this.root, file.name);
       if (!record) continue;
       const current = isCurrentMotionJobRecordFile(file.name, record);
+      if (current && !retained.has(file.name)) continue;
       // Old record paths were keyed by external job id alone.  They can only be read by their
       // stored owner; `scope: all` is not an owner selector and must not turn them into a
       // cross-owner compatibility leak.
@@ -284,19 +295,19 @@ export class MotionJobRegistry {
   }
 
   /**
-   * Drop records past either retention bound.
+   * @deprecated Retention is a non-destructive logical projection applied by `read()` and `list()`.
    *
-   * Decided entirely from filenames, which is why the end time is encoded in them: pruning ran on
-   * every write, and reading every record to decide made writing a job O(retained jobs). At the
-   * 1000-record bound that was a thousand file reads per render.
-   *
-   * Age is applied first so a quiet week still expires, then count, so a busy hour still bounds the
-   * directory. Applying only one of the two leaves an unbounded case in each direction.
+   * This compatibility method only verifies that the private runtime directory is still current;
+   * it never enumerates or unlinks durable records. Any future physical cleanup needs host-only,
+   * claim-serialized authority so a stale writer cannot remove a newer terminal record.
    */
   async prune(): Promise<void> {
     if (this.degraded) return;
-    await this.runtime.assertCurrent();
-    await pruneMotionJobRecords(this.root, this.now(), JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
+    try {
+      await this.runtime.assertCurrent();
+    } catch {
+      this.degraded = true;
+    }
   }
 
   /** Internal compatibility guard for ownerless legacy event snapshots. */
@@ -312,7 +323,7 @@ export class MotionJobRegistry {
    * differ only in characters the filename encoding folds together (`a:b` and `a-b`) produce the
    * same prefix, and returning the wrong job's evidence would be worse than returning none.
    */
-  private async findRecord(input: { jobId: string; callerId: string; scope?: "own" | "all" }): Promise<MotionJobRecord | null> {
+  private async findRecord(input: { jobId: string; callerId: string; scope?: "own" | "all" }, retainedCurrent?: ReadonlySet<string>): Promise<MotionJobRecord | null> {
     await this.runtime.assertCurrent();
     const candidates = (await listMotionJobRecordFiles(this.root))
       .sort((left, right) => right.endedAtMs - left.endedAtMs || compareCodeUnits(left.name, right.name));
@@ -321,6 +332,7 @@ export class MotionJobRegistry {
       const record = await readMotionJobRecord(this.root, candidate.name);
       if (!record || record.jobId !== input.jobId) continue;
       const current = isCurrentMotionJobRecordFile(candidate.name, record);
+      if (current && retainedCurrent && !retainedCurrent.has(candidate.name)) continue;
       if (current && input.scope === "all") return record;
       if (current && record.callerId === input.callerId) return record;
       if (current) {

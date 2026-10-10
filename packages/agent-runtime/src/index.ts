@@ -25,6 +25,7 @@ import { antigravityAdapter } from "./antigravity";
 import { materializeAgentPromptFile } from "./agent-prompt-file";
 import { terminateAgentProcessTree, type AgentProcessTerminationMode } from "./agent-process-control";
 import { bindPinnedProviderIdentity, probeAgent, runPinnedPosixAgentCommand, type AgentProbeSupport } from "./agent-provider-identity";
+import { agentSelectionRequired } from "./agent-selection";
 import { revalidateNativePosixAgentCommand, type NativePosixAgentExecutableIdentity } from "./posix-agent-command";
 import { resolveNativeWindowsAgentCommand, revalidateNativeWindowsAgentCommand } from "./windows-agent-command";
 
@@ -39,6 +40,7 @@ export {
   ANTIGRAVITY_EXECUTABLE,
   ANTIGRAVITY_PRINT_FLAG
 } from "./antigravity";
+export { AGENT_SELECTION_REQUIRED_CODE } from "./agent-selection";
 
 export type AgentId = "codex" | "claude-code" | "grok" | "antigravity" | string;
 export type AgentTransport = "local-cli";
@@ -245,13 +247,15 @@ export function buildAgentRuntime(options: AgentRuntimeOptions = {}): AgentRunti
     health: async () => (await Promise.all(adapters.map((adapter) => probeAgent(adapter, runner, maxOutputBytes, agentProbeSupport))))
       .map((result) => result.health),
     runPrompt: async (input) => {
-      const adapter = adapters.find((candidate) => candidate.id === (input.agentId ?? "codex"));
+      if (!input.agentId) return agentSelectionRequired(adapters);
+
+      const adapter = adapters.find((candidate) => candidate.id === input.agentId);
       if (!adapter) {
         return {
           ok: false,
           error: {
             code: "agent_unknown",
-            message: `${input.agentId ?? "codex"} is not configured.`
+            message: `${input.agentId} is not configured.`
           }
         };
       }
@@ -399,7 +403,6 @@ export function codexCliCommand(input: AgentPromptInput): AgentCommand {
       "exec",
       "--json",
       "--sandbox", "read-only",
-      "--ask-for-approval", "never",
       "--ephemeral"
     ],
     cwd: input.cwd,

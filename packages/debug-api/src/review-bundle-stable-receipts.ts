@@ -1,16 +1,38 @@
 import {
   bindStableReviewBundleReceiptEntries,
+  readReviewBundleReceiptEntries,
   writeReviewBundle,
   type OperationReceipt,
   type ReviewBundleResult,
   type WriteReviewBundleInput
 } from "@shellx-motion/core";
 import type { StableReceiptSnapshot } from "./receipt-store-stable-reader.js";
+import { hasStableReceiptStoreCapability } from "./receipt-store-stable-reader.js";
+import { visibleReceiptEntries } from "./receipt-ownership.js";
+import { receiptAccessScope, type ReceiptOwnershipHostContext } from "./receipt-ownership-host.js";
 
 interface HostStableReceiptEntry {
   path: string;
   receipt: OperationReceipt;
   snapshot?: StableReceiptSnapshot;
+}
+
+/** Select the receipt reader at the host boundary, retaining caller scope on portable hosts. */
+export async function writeReviewBundleWithHostReceipts(
+  input: WriteReviewBundleInput,
+  context: ReceiptOwnershipHostContext & {
+    stableReceiptStorePlatform?: NodeJS.Platform;
+    stableReceiptStoreProcSelfFdUsable?: () => boolean;
+  },
+  listStableEntries: (root: string) => Promise<readonly HostStableReceiptEntry[]>
+): Promise<ReviewBundleResult> {
+  if (!input.receiptsRoot) return await writeReviewBundle(input);
+  if (hasStableReceiptStoreCapability(context.stableReceiptStorePlatform, context.stableReceiptStoreProcSelfFdUsable)) {
+    return await writeReviewBundleFromStableReceipts(input, await listStableEntries(input.receiptsRoot));
+  }
+  // Core binds the approved root and exact leaves before any visible receipt enters the bundle.
+  const entries = await readReviewBundleReceiptEntries(input.receiptsRoot, input.receiptsRootAuthority);
+  return await writeReviewBundle({ ...input, receipts: visibleReceiptEntries(entries, receiptAccessScope(context)) });
 }
 
 /**

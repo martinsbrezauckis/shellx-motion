@@ -103,6 +103,11 @@ describe("local Motion SDK package operations", () => {
 
     const packageRoot = join(root, "compiled");
     const compiled = await sdk.compile({ script: scriptedVideo(), outDir: packageRoot, createdAt: "2026-07-12T00:00:00.000Z" });
+    if (process.platform !== "linux") {
+      expect(compiled).toMatchObject({ ok: false, error: { code: "local_operation_failed", message: expect.stringContaining("Linux descriptor-relative primitive") } });
+      await expect(lstat(packageRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      return;
+    }
     expect(compiled).toMatchObject({
       ok: true,
       output: {
@@ -141,11 +146,16 @@ describe("local Motion SDK package operations", () => {
     await expect(lstat(join(outsideRoot, "compiled"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const allowed = await sdk.compile({ script: scriptedVideo(), outDir: join(approvedRoot, "compiled") });
-    expect(allowed).toMatchObject({ ok: true, output: { packageRoot: join(approvedRoot, "compiled") } });
-    await expect(readFile(join(approvedRoot, "compiled", "manifest.json"), "utf8")).resolves.toContain("pkg_script_sdk_local");
+    if (process.platform === "linux") {
+      expect(allowed).toMatchObject({ ok: true, output: { packageRoot: join(approvedRoot, "compiled") } });
+      await expect(readFile(join(approvedRoot, "compiled", "manifest.json"), "utf8")).resolves.toContain("pkg_script_sdk_local");
+    } else {
+      expect(allowed).toMatchObject({ ok: false, error: { code: "local_operation_failed", message: expect.stringContaining("Linux descriptor-relative primitive") } });
+      await expect(lstat(join(approvedRoot, "compiled"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
-  it.skipIf(process.platform === "win32")("refuses an unsafe SDK compile output parent before it creates a package", async () => {
+  it.runIf(process.platform === "linux")("refuses an unsafe SDK compile output parent before it creates a package", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-sdk-compile-unsafe-output-"));
     const unsafeParent = join(root, "unsafe");
     const outDir = join(unsafeParent, "compiled");

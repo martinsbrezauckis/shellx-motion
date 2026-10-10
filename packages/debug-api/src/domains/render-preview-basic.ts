@@ -135,7 +135,7 @@ async function gpuFrame(
         ok: false,
         error: {
           code: scene3dAnimationRefusal.code,
-          message: "Debug GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."
+          message: "Debug GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."
         },
         warnings: []
       };

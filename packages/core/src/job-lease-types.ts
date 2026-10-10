@@ -8,6 +8,8 @@ export interface MotionJobLeaseRecord {
   lane: string;
   frameLane?: MotionJobFrameLane;
   operation: string;
+  /** Host-derived immutable V1 render-plan identity, when this job was preflighted with one. */
+  planFingerprint?: string;
   callerId: string;
   visibility?: "host" | "internal";
   startedAtMs: number;

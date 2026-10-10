@@ -158,7 +158,6 @@ Success shape:
     "createdAtMs": 1785681391000,
     "startedAtMs": 1785681391004,
     "queueWaitMs": 0,
-    "pid": 48122,
     "warnings": [],
     "pollAfterMs": 2000               // absent once ended — stop polling
   } } }
@@ -168,10 +167,18 @@ Rules:
 - **Switch on `state`.** Six values: `pending`, `running`, `succeeded`, `failed`, `cancelled`,
   `skipped`. It is `outcome` once ended and `lifecycle` before that.
 - **Never send `state` as an input.** You cancel by id; you never set a state.
-- **Stop when `pollAfterMs` is absent.** That is the machine-readable "this will not change again".
+- **Stop when `pollAfterMs` is absent.** That is the machine-readable "lifecycle progress has settled" signal; a later read may still attach receipt linkage, and warnings remain fixed when V1 evidence is present.
 - **Poll no faster than `pollAfterMs`** (2000 ms by default).
-- **`cancelled` never carries `error`; `failed` always does.** So a retry policy shaped like
-  `if (job.error?.retryable) retry()` is structurally incapable of restarting work a human stopped.
+- **Treat optional fields as retained data, not a second status vocabulary.** `frameLane` and
+  `planFingerprint` may appear on live or terminal records; terminal records may retain
+  `receiptId`, `producerEvidence`, `evidence`, or retry `lineage`. `receiptPath` is deprecated
+  host-local compatibility linkage, never portable receipt/artifact authority. Their absence,
+  including on historical records, is unavailable data.
+- **Never use a process id as a job handle.** Public status intentionally has no `pid`; retain and
+  query the caller-scoped `jobId` across processes instead.
+- **`cancelled` never carries `error`; do not manufacture one for a historical `failed` record
+  that lacks retained error detail.** A retry policy shaped like `if (job.error?.retryable) retry()`
+  is structurally incapable of restarting work a human stopped.
   Please keep that shape.
 - **Preserve unknown typed failure codes.** Shared Core codes have the retry/remedy policy documented
   in `JOB_STATUS.md`. A newer capability may return or raise a bounded code an older Cut build has never

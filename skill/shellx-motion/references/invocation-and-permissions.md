@@ -18,7 +18,7 @@ exist:
 Inside a source checkout nothing puts `shellx-motion` on `PATH`, and running
 `node packages/cli/dist/main.js` does not work either: the workspace `exports` deliberately point at
 TypeScript source so the tests and smoke scripts run with no build step, so the built output resolves
-back to `.ts` files and Node refuses them. `scripts/verify-install.mjs` is the authoritative account,
+back to `.ts` files and Node refuses them. `scripts/public/verify-install.mjs` is the authoritative account,
 and `pnpm run build:verify` is the only check that exercises the installed form — it packs every
 package, installs the CLI tarball into a throwaway project, and runs `shellx-motion` there through
 both the npm and pnpm bin shims.

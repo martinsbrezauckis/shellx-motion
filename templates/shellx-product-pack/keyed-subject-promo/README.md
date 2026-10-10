@@ -8,11 +8,12 @@ package-local Inter Latin faces (SIL OFL 1.1; see
 `assets/fonts/LICENSE-Inter.txt`) and the included sample assets are
 redistribution-safe.
 
-V25-B1 accepted implementation also admits the active background video to
+V25-B1 also admits the active background video to
 `preview --lane gpu` through its host-owned, visual-only exact-time CFR provider.
 That preview binds immutable source and decoded-RGBA evidence, uses pre-reserved
 dynamic textures, and is not audio, final-video, or encoder/mux proof. Existing
-final delivery remains `render --lane ffmpeg --frame-lane gpu`. Native visual output and resource cleanup require fresh host verification.
+final delivery remains `render --lane ffmpeg --frame-lane gpu`. Verify native
+pixels, resource bounds, and cleanup on the intended host.
 
 Generated background footage:
 

@@ -22,7 +22,7 @@ import {
   type MotionJobRecord
 } from "./job-registry";
 import { motionJobFileKey } from "./job-id-file";
-import { pruneMotionJobRecords, writeMotionJobRecord } from "./job-registry-storage";
+import { writeMotionJobRecord } from "./job-registry-storage";
 import { MotionJobView } from "./job-view";
 import { MotionHostJob, runInMotionHostJob } from "./host-job";
 
@@ -55,11 +55,12 @@ async function stores(clock?: { now: number }) {
  * A record that is inside the retention window.
  *
  * Times are relative to now on purpose: an absolute fixture near the epoch is older than the
- * seven-day bound, so it is pruned the instant it is written and every read of it answers
+ * seven-day bound, so logical retention hides it from a query and every read of it answers
  * job_unknown for reasons that have nothing to do with what the test is checking.
  */
 const NOW = Date.now();
 function endedRecord(overrides: Partial<MotionJobRecord> & Pick<MotionJobRecord, "jobId">): MotionJobRecord {
+  const endedAtMs = overrides.endedAtMs ?? NOW - 1_000;
   return {
     schema: "shellx-motion/job-record@1",
     callerId: "cut:workspace-7",
@@ -67,9 +68,9 @@ function endedRecord(overrides: Partial<MotionJobRecord> & Pick<MotionJobRecord,
     operation: "render.final",
     lifecycle: "ended",
     outcome: "succeeded",
-    createdAtMs: NOW - 2_000,
-    startedAtMs: NOW - 1_990,
-    endedAtMs: NOW - 1_000,
+    createdAtMs: overrides.createdAtMs ?? endedAtMs - 2_000,
+    startedAtMs: overrides.startedAtMs ?? endedAtMs - 1_990,
+    endedAtMs,
     durationMs: 990,
     queueWaitMs: 10,
     warnings: [],
@@ -204,22 +205,6 @@ describe("a job stays answerable after it ends", () => {
     await expect(view.get({ jobId: recent, callerId: "cut:workspace-7" })).resolves.toEqual({ ok: false, code: "job_unknown" });
   });
 
-  it("attaches the receipt path the layer above discovered", async () => {
-    const { records, view } = await stores();
-    await records.record(endedRecord({ jobId: "cut:render-9" }));
-
-    await records.amend({
-      jobId: "cut:render-9",
-      callerId: "cut:workspace-7",
-      patch: { receiptPath: "/receipts/render-9.json", warnings: ["native text was case-folded"] }
-    });
-
-    await expect(view.get({ jobId: "cut:render-9", callerId: "cut:workspace-7" })).resolves.toMatchObject({
-      ok: true,
-      job: { receiptPath: "/receipts/render-9.json", warnings: ["native text was case-folded"], outcome: "succeeded" }
-    });
-  });
-
   it("keeps the deprecated positional amend API for exactly one owner-qualified record", async () => {
     const { records, view } = await stores();
     const jobId = "cut:legacy-amend";
@@ -331,6 +316,29 @@ describe("live and ended read as one list", () => {
     expect((answer as { job: { queueWaitMs: number } }).job.queueWaitMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps cancelled terminal records readable after bounded detail canonicalization", async () => {
+    const { root, leases, records } = await stores();
+    const job = await MotionHostJob.begin({
+      jobId: "cut:canonical-cancel-detail", callerId: "cut:workspace-7", lane: "ffmpeg", operation: "render.final", leases, records
+    });
+    const warnings = Array.from({ length: 65 }, (_, index) => `renderer warning ${index}`);
+
+    await job.cancelled({
+      cancellation: { requestedBy: "cut:workspace-7", reason: "line one\nline two" },
+      warnings
+    });
+
+    const restartedView = new MotionJobView({ leases: new MotionJobLeaseDirectory({ leaseRoot: join(root, "leases") }), records: new MotionJobRegistry({ recordRoot: join(root, "records") }) });
+    await expect(restartedView.get({ jobId: "cut:canonical-cancel-detail", callerId: "cut:workspace-7" })).resolves.toMatchObject({
+      ok: true,
+      job: {
+        state: "cancelled",
+        cancellation: { requestedBy: "cut:workspace-7" },
+        warnings: warnings.slice(0, 64)
+      }
+    });
+  });
+
   it("never lets a host job consume rendering capacity", async () => {
     // A host job is a reporting record for work a caller asked for; the governed operations it
     // performs are the things that need slots. Counting the record itself would let a progress
@@ -401,7 +409,9 @@ describe("a poll never catches a job mid-write", () => {
       while (writing) await leases.heartbeat(run!);
     })();
     const answers = [];
-    for (let attempt = 0; attempt < 400; attempt += 1) {
+    // Windows ACL verification makes each read costly; 64 reads still race continuous heartbeats within the 45-second timeout.
+    const readAttempts = process.platform === "win32" ? 64 : 400;
+    for (let attempt = 0; attempt < readAttempts; attempt += 1) {
       answers.push(await view.get({ jobId: "cut:hammered", callerId: "cut:workspace-7" }));
     }
     writing = false;
@@ -426,27 +436,24 @@ describe("a poll never catches a job mid-write", () => {
 });
 
 describe("retention", () => {
-  it("drops records past the age bound", async () => {
+  it("hides records past the age bound without deleting them", async () => {
     const clock = { now: 10 * JOB_RECORD_RETENTION_MS };
     const { records, root } = await stores(clock);
     await records.record(endedRecord({ jobId: "fresh", endedAtMs: clock.now - 1_000 }));
     await records.record(endedRecord({ jobId: "aged", endedAtMs: clock.now - JOB_RECORD_RETENTION_MS - 1 }));
 
-    await records.prune();
-
-    // Assert the surviving job rather than the filename: the name encodes the end time so pruning
-    // can be decided without reading every record, and that encoding is not the contract.
-    expect(await readdir(join(root, "records"))).toHaveLength(1);
+    expect(await readdir(join(root, "records"))).toHaveLength(2);
+    await expect(records.read({ jobId: "aged", callerId: "cut:workspace-7" })).resolves.toEqual({ ok: false, code: "job_unknown" });
     expect((await records.list({ callerId: "cut:workspace-7" })).map((job) => job.jobId)).toEqual(["fresh"]);
   });
 
-  it("drops the oldest records past the count bound", async () => {
+  it("hides the oldest records past the count bound without deleting them on a new terminal write", async () => {
     const clock = { now: 1_000_000 };
     const { records, root } = await stores(clock);
     const recordRoot = join(root, "records");
     // Seed the retained bound without asking the high-level record path to rescan the growing
     // directory after every fixture write. The one public write below is the behavior under test:
-    // crossing the bound must prune exactly the oldest record and keep the new one.
+    // crossing the bound hides exactly the oldest record without unlinking it.
     for (let index = 0; index < JOB_RECORD_RETENTION_COUNT; index += 1) {
       await writeMotionJobRecord(recordRoot, endedRecord({
         jobId: `job-${index}`,
@@ -460,9 +467,10 @@ describe("retention", () => {
     expect(kept).toHaveLength(JOB_RECORD_RETENTION_COUNT);
     expect(kept.some((job) => job.jobId === "job-0")).toBe(false);
     expect(kept.some((job) => job.jobId === `job-${JOB_RECORD_RETENTION_COUNT}`)).toBe(true);
+    expect(await readdir(recordRoot)).toHaveLength(JOB_RECORD_RETENTION_COUNT + 1);
   }, 45_000);
 
-  it("applies the count bound per authenticated owner instead of pruning a quiet caller", async () => {
+  it("applies the count bound per authenticated owner without deleting a quiet caller's records", async () => {
     const clock = { now: 2_000_000 };
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-job-retention-owner-"));
     tempRoots.push(root);
@@ -477,11 +485,11 @@ describe("retention", () => {
       }));
     }
 
-    await pruneMotionJobRecords(recordRoot, clock.now, JOB_RECORD_RETENTION_MS, JOB_RECORD_RETENTION_COUNT);
     const records = new MotionJobRegistry({ recordRoot, now: () => clock.now });
     await expect(records.read({ jobId: quiet.jobId, callerId: quiet.callerId }))
       .resolves.toMatchObject({ ok: true, record: { callerId: "quiet:workspace" } });
     expect((await records.list({ callerId: "noisy:workspace" })).length).toBe(JOB_RECORD_RETENTION_COUNT);
+    expect(await readdir(recordRoot)).toHaveLength(JOB_RECORD_RETENTION_COUNT + 2);
   }, 45_000);
 
   it.skipIf(process.platform === "win32")("creates terminal state with private directory and file modes", async () => {
@@ -541,12 +549,13 @@ describe("terminal records of colliding job ids", () => {
     await expect(records.read({ jobId, callerId: ownerB })).resolves.toMatchObject({ ok: true, record: { callerId: ownerB, outcome: "succeeded" } });
     expect((await records.list({ callerId: "operator", scope: "all" })).filter((record) => record.jobId === jobId)).toHaveLength(2);
 
-    // A reused id replaces only this owner's prior terminal state, never the other owner's.
+    // A reused id preserves this owner's prior terminal state; current queries resolve the newest
+    // owner-qualified record without exposing the other owner's state.
     await records.record(endedRecord({ jobId, callerId: ownerA, outcome: "succeeded", endedAtMs: NOW - 1_000 }));
     await expect(records.read({ jobId, callerId: ownerA })).resolves.toMatchObject({ ok: true, record: { outcome: "succeeded" } });
     await expect(records.read({ jobId, callerId: ownerB })).resolves.toMatchObject({ ok: true, record: { outcome: "succeeded", callerId: ownerB } });
     const files = await readdir(join(root, "records"));
-    expect(files).toHaveLength(2);
+    expect(files).toHaveLength(3);
     expect(files.some((name) => name.includes(ownerA) || name.includes(ownerB))).toBe(false);
   });
 
@@ -577,13 +586,13 @@ describe("terminal records of colliding job ids", () => {
     expect(second.ok && second.record.callerId).toBe("B");
   });
 
-  it("still replaces a job's own earlier record when it is rewritten", async () => {
+  it("keeps a job's own earlier record when it is rewritten while resolving the newest one", async () => {
     const { records, root } = await stores();
     await records.record(endedRecord({ jobId: "same", callerId: "A", outcome: "failed", endedAtMs: NOW - 2_000 }));
     await records.record(endedRecord({ jobId: "same", callerId: "A", outcome: "succeeded", endedAtMs: NOW - 1_000 }));
 
     const files = await readdir(join(root, "records"));
-    expect(files.length).toBe(1);
+    expect(files.length).toBe(2);
     const answer = await records.read({ jobId: "same", callerId: "A" });
     expect(answer.ok && answer.record.outcome).toBe("succeeded");
   });

@@ -30,10 +30,12 @@ are no HTML, canvas, scripts, fonts, images, video, audio, network origins, Cut 
 or binary assets. Its source and visual design are original project work authored in the checked-in
 recipe; no source material is copied or attributed.
 
+## Verification boundary
 
-## Accepted native boundary
-
-`segmentFrames: 90` is the accepted V25-B2 selector. Runtime qualification for this sample requires a fresh host-bound run.
+The shipped `manifest.json`, `motion.json`, and GLSL source form a self-contained sample.
+Validate this package with the CLI before rendering it. `segmentFrames: 90` selects four
+resumable ranges. Native interruption, replay, final media, and cleanup require fresh host
+verification.
 
 This accepts the one restricted-GLSL texture and surrounding declarative composition shown here.
 It does not claim arbitrary GLSL, package WebGPU, a second hybrid surface, native HTML/web/canvas

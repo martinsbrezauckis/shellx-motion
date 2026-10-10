@@ -14,6 +14,8 @@ export async function prepareAdmittedSegmentedGpuInput(input: {
   paths: SegmentedFinalPaths;
   authority: SegmentedFinalStoreAuthority | undefined;
   setAuthority: (authority: SegmentedFinalStoreAuthority) => void;
+  /** Coordinator-only execution state; direct renderer invocations stay unwrapped. */
+  coordinated?: boolean;
   job: LocalMotionJobContext;
   maxProcessTreeRssBytes: number;
   runner: FfmpegRunner;
@@ -46,6 +48,7 @@ export async function prepareAdmittedSegmentedGpuInput(input: {
       maxProcessTreeRssBytes,
       runner: input.runner,
       policy: input.request.gpuHost.policy,
+      ...(input.coordinated && authority ? { assertStoreAuthorityCurrent: async () => await authority!.assertCurrent() } : {}),
       ...(input.request.gpuHost.preflight ? { preflight: input.request.gpuHost.preflight } : {}),
       media: {
         ...(input.request.audioPath ? { audioPath: input.request.audioPath } : {}),

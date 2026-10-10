@@ -9,6 +9,7 @@ import {
   createAttestedArtifactHandle,
   createAttestedArtifactHandleReference,
   packageRenderLineageInputHashes,
+  projectAttestedArtifactHandleEvidence,
   readAttestedArtifactHandle,
   resolveArtifactFfprobeExecutable,
   verifyAttestedArtifactHandle,
@@ -31,6 +32,39 @@ const LINEAGE: PackageRenderLineage = {
 describe("attested artifact handles", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  it("projects only a frozen path-free identity after revalidating the full handle", async () => {
+    const { handle } = await createFixtureHandle();
+    const projection = projectAttestedArtifactHandleEvidence(handle);
+
+    expect(projection).toEqual({
+      schema: "shellx-motion/artifact-handle@1",
+      id: handle.id,
+      operationHash: handle.operationHash,
+      sha256: handle.sha256,
+    });
+    expect(Object.keys(projection).sort()).toEqual(["id", "operationHash", "schema", "sha256"]);
+    expect(Object.isFrozen(projection)).toBe(true);
+    expect(projection).not.toHaveProperty("rootRelativePath");
+    expect(projection).not.toHaveProperty("receipts");
+
+    expect(() => projectAttestedArtifactHandleEvidence({ ...handle, operationHash: "not-a-hash" }))
+      .toThrow("artifact operationHash");
+    expect(() => projectAttestedArtifactHandleEvidence({ ...handle, packageId: "tampered-package" }))
+      .toThrow("does not bind its identity");
+    expect(() => projectAttestedArtifactHandleEvidence({ ...handle, rootRelativePath: "../descriptor-authority.json" }))
+      .toThrow(/root-relative|parent segments/);
+    expect(() => projectAttestedArtifactHandleEvidence({ ...handle, receipts: [] }))
+      .toThrow("requires at least one receipt attestation");
+    expect(() => projectAttestedArtifactHandleEvidence({
+      ...handle,
+      receipts: [{ ...handle.receipts[0], rootRelativePath: "../descriptor-authority.json" }],
+    })).toThrow(/root-relative|parent segments/);
+    expect(() => projectAttestedArtifactHandleEvidence({
+      ...handle,
+      receipts: [{ ...handle.receipts[0], sha256: "not-a-hash" }],
+    })).toThrow("receipt sha256");
   });
 
   it("creates, writes, reads, and verifies a content-bound root-relative handle", async () => {

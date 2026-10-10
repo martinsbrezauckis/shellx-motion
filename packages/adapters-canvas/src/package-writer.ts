@@ -11,6 +11,7 @@ import {
 } from "@shellx-motion/core";
 import { CANVAS_BRIDGE_PACKAGE_SCHEMA, type CanvasMotionExport } from "./index";
 import { canvasPackageAssetEvidence } from "./package-writer-asset-evidence";
+import { assertValidCanvasMotionDocument } from "./motion-document-validation";
 import { enrichCanvasPackageReceipt } from "./package-writer-receipt-evidence";
 
 export interface WriteCanvasMotionPackageOptions {
@@ -63,6 +64,7 @@ export async function admitCanvasMotionPackage(
   options: { sourceRoot?: string; budget?: BoundedResourceBudget }
 ): Promise<CanvasMotionPackageAdmission> {
   assertCanvasBridgePackageSchema(canvasExport);
+  assertValidCanvasMotionDocument(canvasExport.motion, "package");
   const budget = options.budget ?? new BoundedResourceBudget(DEFAULT_HOST_INTERCHANGE_LIMITS, "Canvas interchange");
   return await admitCanvasAssets(canvasExport.manifest.assets, {
     sourceRoot: options.sourceRoot,
@@ -80,6 +82,7 @@ export async function writeCanvasMotionPackage(
   options: WriteCanvasMotionPackageOptions
 ): Promise<WrittenCanvasMotionPackage> {
   assertCanvasBridgePackageSchema(canvasExport);
+  assertValidCanvasMotionDocument(canvasExport.motion, "package");
   const packageDir = resolve(options.packageDir);
   const manifestRef = "manifest.json";
   const motionRef = normalizedPackagePath(canvasExport.manifest.motion);

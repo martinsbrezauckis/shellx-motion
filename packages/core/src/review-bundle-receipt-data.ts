@@ -1,52 +1,22 @@
-import { readdir, realpath } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
-import { compareCodeUnits } from "./canonical-json";
+import { basename, resolve } from "node:path";
 import { resolvePackageAsset } from "./package";
 import { loadedPackageInputHashes } from "./package-loaded-inputs";
 import { hashFile } from "./receipts";
-import { readBoundedStableFile } from "./stable-file-read";
 import {
   assertBoundFilesystemReceiptEntry,
-  bindLoadedReviewBundleReceipt,
   boundFilesystemReceipt,
-  MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
-  readReviewBundleReceipt,
-  recheckBoundFilesystemReceipt,
-  reviewReceiptRelativePath
+  recheckBoundFilesystemReceipt
 } from "./review-bundle-stable-receipts";
 import type { MotionPackage, OperationReceipt, ReceiptArtifact } from "./types";
 import type { ReviewBundleReceiptEntry } from "./review-bundle-types";
 
-export { MAX_REVIEW_BUNDLE_RECEIPT_BYTES } from "./review-bundle-stable-receipts";
-
-export async function readReviewBundleReceiptEntries(receiptsRoot: string): Promise<ReviewBundleReceiptEntry[]> {
-  const root = resolve(receiptsRoot);
-  const canonicalRoot = await realpath(root);
-  const paths = await listJsonFiles(root);
-  const entries: ReviewBundleReceiptEntry[] = [];
-  for (const path of paths) {
-    const source = await readBoundedStableFile(path, {
-      label: "Review bundle receipt",
-      maxBytes: MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
-      withinRoot: canonicalRoot,
-      captureIdentity: true
-    });
-    const receipt = readReviewBundleReceipt(JSON.parse(source.bytes.toString("utf8")));
-    if (receipt) {
-      const entry = {
-        path: source.canonicalPath,
-        relativePath: reviewReceiptRelativePath(canonicalRoot, source.canonicalPath),
-        receipt
-      } satisfies ReviewBundleReceiptEntry;
-      bindLoadedReviewBundleReceipt(entry, canonicalRoot, source);
-      entries.push(entry);
-    }
-  }
-  // Code-unit order, not localeCompare: this ordering IS the review bundle's identity. It fixes
-  // the order of `copiedArtifacts`, whose sha256 list is hashed into the receipt id below, so a
-  // locale-sensitive comparator here gave the same bundle two different ids on two machines.
-  return entries.sort((a, b) => compareCodeUnits(a.path ?? "", b.path ?? ""));
-}
+export {
+  MAX_REVIEW_BUNDLE_RECEIPT_BYTES,
+  MAX_REVIEW_BUNDLE_RECEIPT_TREE_DIRECTORIES,
+  MAX_REVIEW_BUNDLE_RECEIPT_TREE_ENTRIES,
+  readReviewBundleReceiptEntries,
+  REVIEW_BUNDLE_RECEIPT_TRAVERSAL_LIMITS
+} from "./review-bundle-receipt-traversal";
 
 export async function reviewBundleInputHashes(
   pkg: MotionPackage | undefined,
@@ -163,16 +133,6 @@ export function mediaTypeForPath(path: string): string | undefined {
   if (lower.endsWith(".json")) return "application/json";
   if (lower.endsWith(".html")) return "text/html";
   return undefined;
-}
-
-async function listJsonFiles(root: string): Promise<string[]> {
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = await Promise.all(entries.map(async (entry) => {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) return listJsonFiles(path);
-    return entry.isFile() && entry.name.endsWith(".json") ? [path] : [];
-  }));
-  return files.flat();
 }
 
 function sameLocalPath(left: string, right: string): boolean {

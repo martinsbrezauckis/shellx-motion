@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { DerivedOutputPublicationError, PublicationCommitUncertainError, type DerivedOutputPublication, type OperationReceipt } from "@shellx-motion/core";
+import { PairedOutputReceiptPublication as CorePairedOutputReceiptPublication } from "@shellx-motion/core/internal/paired-output-receipt-publication";
 import {
   PairedOutputReceiptCommitUncertainError,
   PairedOutputReceiptPublication,
@@ -18,6 +19,58 @@ function receipt(stagePath: string): OperationReceipt {
     packageId: "pkg", inputHashes: { motion: "a".repeat(64) }, createdAt: "2026-08-21T00:00:00.000Z", lane: "browser",
     output: { path: stagePath, sha256 }, warnings: []
   };
+}
+
+function strictRouteInputHashes() {
+  return {
+    motion: "a".repeat(64),
+    "linear-srgb-sdr-route": "b".repeat(64),
+    "linear-srgb-sdr-preparation": "c".repeat(64),
+    "linear-srgb-sdr-ffmpeg-contract": "d".repeat(64),
+    "linear-srgb-sdr-webgpu-producer": "e".repeat(64),
+    "linear-srgb-sdr-producer-frame": "f".repeat(64),
+    "linear-srgb-sdr-comparison-policy": "0".repeat(64),
+    "linear-srgb-sdr-execution": "1".repeat(64),
+  };
+}
+
+function strictSdrReceipt(stagePath: string): OperationReceipt {
+  const byteLength = Buffer.byteLength(bytes);
+  return {
+    ...receipt(stagePath),
+    inputHashes: strictRouteInputHashes(),
+    output: {
+      path: stagePath,
+      sha256,
+      byteLength,
+      frameTransport: {
+        schema: "shellx-motion/linear-srgb-sdr-final-transport@2",
+        privateOutputAdoption: {
+          schema: "shellx-motion/linear-srgb-sdr-final-private-output-adoption@1",
+          verifiedOutput: { sha256, byteLength },
+          privatePublicationStage: { sha256, byteLength },
+        },
+      },
+    },
+  };
+}
+
+async function strictSdrPair(value: OperationReceipt) {
+  const events: string[] = [];
+  const output = fakePublication("output", events);
+  const sidecar = fakePublication("receipt", events);
+  const acquired = [output, sidecar];
+  const pair = await PairedOutputReceiptPublication.acquire({
+    outputPath: output.outputPath,
+    receiptPath: sidecar.outputPath,
+    outputArtifact: { role: "rendered_media", mediaType: "video/mp4", primary: true },
+    receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
+    testHooks: {
+      acquirePublication: async () => acquired.shift() ?? Promise.reject(new Error("unexpected publication acquisition")),
+      writeReceiptStage: async () => { events.push("receipt.write"); },
+    },
+  });
+  return { pair, output, value, events };
 }
 
 function fakePublication(name: string, events: string[], options: {
@@ -77,6 +130,39 @@ async function staged(options: {
 }
 
 describe("paired output receipt publication (pure injection)", () => {
+  it("delegates order, cancellation, cleanup, uncertainty, collision, and secondary behavior to the exact Core owner", () => {
+    expect(PairedOutputReceiptPublication).toBe(CorePairedOutputReceiptPublication);
+  });
+
+  it.each([
+    ["is missing", (value: OperationReceipt) => { delete (value.output as Record<string, any>).frameTransport.privateOutputAdoption; }, /@2 receipt adoption is invalid/i],
+    ["has a mismatched private publication stage", (value: OperationReceipt) => { (value.output as Record<string, any>).frameTransport.privateOutputAdoption.privatePublicationStage.sha256 = "0".repeat(64); }, /@2 receipt adoption is invalid/i],
+    ["has a final output digest that differs from adoption", (value: OperationReceipt) => { (value.output as Record<string, any>).sha256 = "0".repeat(64); }, /@2 receipt adoption is invalid/i],
+  ])("refuses a strict SDR paired receipt when private-output adoption %s", async (_label, mutate, message) => {
+    const stagePath = "/private/output";
+    const value = strictSdrReceipt(stagePath);
+    mutate(value);
+    const stagedValue = await strictSdrPair(value);
+
+    await expect(stagedValue.pair.stageReceipt(value)).rejects.toThrow(message);
+    expect(stagedValue.events).toContain("output.abort");
+    expect(stagedValue.events).toContain("receipt.abort");
+  });
+
+  it.each([
+    ["is deleted", (value: OperationReceipt) => { delete (value.output as Record<string, any>).frameTransport; }],
+    ["uses a foreign schema", (value: OperationReceipt) => { (value.output as Record<string, any>).frameTransport = { schema: "shellx-motion/other-stream@1" }; }],
+    ["uses a strict lookalike schema", (value: OperationReceipt) => { (value.output as Record<string, any>).frameTransport = { schema: "shellx-motion/linear-srgb-sdr-final-transport@1-downgrade" }; }],
+  ])("refuses a route-identified strict SDR paired publication when its transport %s", async (_label, mutate) => {
+    const value = strictSdrReceipt("/private/output");
+    mutate(value);
+    const stagedValue = await strictSdrPair(value);
+
+    await expect(stagedValue.pair.stageReceipt(value)).rejects.toThrow(/complete strict route input hashes require .*transport@2/i);
+    expect(stagedValue.events).toContain("output.abort");
+    expect(stagedValue.events).toContain("receipt.abort");
+  });
+
   it("keeps true media and receipt-sidecar collisions distinct with stable vocabulary", async () => {
     const mediaCollision = new DerivedOutputPublicationError("derived_output_exists", "Final output already exists.", "/public/take.mp4");
     await expect(PairedOutputReceiptPublication.acquire({
@@ -321,9 +407,16 @@ describe("paired output receipt publication (pure injection)", () => {
     await pair.stageReceipt(value);
     let checks = 0;
 
-    await expect(pair.commit({ cancelled: () => ++checks >= 3 })).rejects.toThrow(/cancelled/i);
+    // Core samples cancellation before the receipt link, at the receipt-link latch,
+    // after the receipt commits, then after all secondary artifacts commit. Arm the
+    // fourth sample so this test exercises that final pre-primary boundary.
+    await expect(pair.commit({ cancelled: () => ++checks >= 4 })).rejects.toThrow(/cancelled/i);
+    expect(checks).toBe(4);
+    expect(events).toContain("html.publish");
     expect(events).toContain("html.revoke");
     expect(events).toContain("receipt.revoke");
+    expect(events.indexOf("html.publish")).toBeLessThan(events.indexOf("html.revoke"));
+    expect(events.indexOf("html.publish")).toBeLessThan(events.indexOf("receipt.revoke"));
     expect(events).not.toContain("output.publish");
   });
 
@@ -501,10 +594,4 @@ describe("paired output receipt publication (pure injection)", () => {
     expect(events).not.toContain("output.publish");
   });
 
-  it("rejects a receipt-only success shape when its required primary artifact is absent", () => {
-    const value = receipt("/private/output");
-    value.output = { path: "/public/output", sha256 };
-    value.artifacts = [{ role: "preview_receipt", path: "/public/receipt", status: "available" }];
-    expect(() => assertPairedReceiptAcceptance("/public/receipt", value)).toThrow(/paired CLI delivery|output artifact/i);
-  });
 });

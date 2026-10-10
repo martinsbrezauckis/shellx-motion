@@ -24,10 +24,8 @@
  * is optional precisely so an argv-carried prompt like this one is expressible;
  * this adapter leaves `stdin` unset.
  *
- * Verified against `agy` 1.1.8 and 1.1.9 during cross-host verification (the CLI self-updated
- * mid-session; both behaved identically for every flag used here). Facts that
- * are version-sensitive are called out inline so a future session re-checks
- * them with `agy --help` instead of trusting this comment.
+ * The CLI may change its flags between versions. Check version-sensitive facts
+ * with `agy --help` before changing this adapter.
  */
 
 import type { AgentAdapter, AgentCommand, AgentPromptInput } from "./index";

@@ -47,9 +47,8 @@ export async function browserPackageFingerprint(root: string): Promise<string> {
   const walk = async (directory: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
     // Code-unit order, not localeCompare: this sort fixes the order of the `path\0size\0hash`
-    // records that ARE the fingerprint string, so the ambient locale decided the fingerprint of an
-    // unchanged directory. A live probe on one machine, same tree: 1380b63d… under en-US,
-    // 70ad8f6c… under sv-SE, f4d0b7df… under tr-TR.
+    // records that ARE the fingerprint string. Locale-sensitive ordering could give an
+    // unchanged directory a different fingerprint on another host.
     entries.sort((left, right) => compareCodeUnits(left.name, right.name));
     for (const entry of entries) {
       const path = join(directory, entry.name);

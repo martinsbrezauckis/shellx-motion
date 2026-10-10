@@ -82,11 +82,8 @@ describe("connector artifact operation hashes", () => {
   });
 
   it("stamps the same operation identity regardless of the host locale", () => {
-    // Regression for a reproduced defect: `connectorArtifactOperationHash` sorted the operation's
-    // keys with `String.prototype.localeCompare`, so the identity written into every attested
-    // artifact handle depended on the ambient LC_ALL. Live probe on one machine, same input:
-    // ea2aaf72… under en_US.UTF-8 versus baf8aca2… under sv_SE.UTF-8. `inputHashes` is keyed by
-    // package-relative FILE NAMES, which is where non-ASCII keys enter in practice.
+    // Operation identity uses code-unit key ordering. Locale-dependent ordering would
+    // change the hash for package-relative file names containing non-ASCII characters.
     const plan = {
       schema: "shellx-motion/cut-import-plan@1",
       receipt: { inputHashes: { "a.png": "a".repeat(64), "ä.png": "b".repeat(64), "z.png": "c".repeat(64) } }

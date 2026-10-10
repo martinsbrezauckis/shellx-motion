@@ -287,8 +287,8 @@ describe("shellx-motion CLI", () => {
       },
       examples: expect.arrayContaining([
         "shellx-motion actions plan \"render this lower third as mp4\"",
-        "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --execute-agent-commands --receipts-root .scratch/receipts",
-        "shellx-motion prompt run \"edit title and preview\" --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
+        "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --agent claude-code --execute-agent-commands --receipts-root .scratch/receipts",
+        "shellx-motion prompt run \"edit title and preview\" --agent claude-code --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
         "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero"
       ])
     });
@@ -1430,7 +1430,7 @@ describe("shellx-motion CLI", () => {
         ]),
         promptCommands: expect.arrayContaining([
           { id: "plan", command: "motion.actions.plan", args: { request: "" } },
-          { id: "run", command: "motion.prompt.run", args: { request: "" } }
+          { id: "agentPanel", command: "motion.agent.panel", args: {} }
         ])
       }
     });
@@ -9626,27 +9626,28 @@ describe("shellx-motion CLI", () => {
         adapterCount: 4,
         localCliCount: 4,
         cliSubscriptionCount: 4,
-        defaultAgentId: "codex",
-        promptFollowUpCount: 3
+        selectionRequired: true,
+        promptFollowUpCount: 2
       },
       result: {
         ok: true,
         selectionPolicy: {
-          defaultAgentId: "codex",
+          promptCapableAgentIds: ["claude-code", "grok"],
+          candidateSource: "declared-built-in-candidates",
           selectedUnavailableFallback: "none",
-          defaultMode: "auto-local-cli"
+          defaultMode: "selection-required"
         },
         adapters: [
           expect.objectContaining({
             agentId: "codex",
-            default: true,
+            promptCapable: false,
             setup: expect.objectContaining({
               checkCommand: "codex --version",
               installHint: "Install Codex CLI and ensure codex is on PATH."
             })
           }),
-          expect.objectContaining({ agentId: "claude-code" }),
-          expect.objectContaining({ agentId: "grok" }),
+          expect.objectContaining({ agentId: "claude-code", promptCapable: true }),
+          expect.objectContaining({ agentId: "grok", promptCapable: true }),
           expect.objectContaining({
             agentId: "antigravity",
             setup: expect.objectContaining({ checkCommand: "agy --version" })
@@ -9654,7 +9655,6 @@ describe("shellx-motion CLI", () => {
         ],
         suggestedActions: [
           { id: "health", command: "motion.agent.health", args: {} },
-          { id: "run", command: "motion.prompt.run", args: { request: "" } },
           { id: "transcript", command: "motion.agent.transcript", args: { receiptsRoot: "" } }
         ]
       }
@@ -10226,7 +10226,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("runs prompts through the deterministic fake local agent", async () => {
-    const result = await runCli(["prompt", "run", "preview current package", "--package-id", "lower-third"], {
+    const result = await runCli(["prompt", "run", "preview current package", "--agent", "fake", "--package-id", "lower-third"], {
       promptRuntime: createFakePromptRuntime()
     });
 
@@ -10235,6 +10235,28 @@ describe("shellx-motion CLI", () => {
       command: "prompt.run",
       receipts: [expect.stringMatching(/^agent-/), expect.stringMatching(/^prompt-/)]
     });
+  });
+
+  it("forwards an omitted provider as an explicit selection-needed refusal", async () => {
+    let receivedAgentId: string | undefined = "unexpected";
+    const result = await runCli(["prompt", "run", "preview current package", "--package-id", "lower-third"], {
+      promptRuntime: {
+        runPrompt: async (input) => {
+          receivedAgentId = input.agentId;
+          return {
+            ok: false,
+            error: {
+              code: "agent_selection_required",
+              message: "Select a prompt-capable agent explicitly before running a prompt.",
+              detail: "Set agentId to one of: fake."
+            }
+          };
+        }
+      }
+    });
+
+    expect(receivedAgentId).toBeUndefined();
+    expect(result).toMatchObject({ ok: false, command: "prompt.run", error: { code: "agent_selection_required" } });
   });
 
   it("does not let --keep-frames consume a positional or the next option while collecting prompts", async () => {
@@ -10366,7 +10388,7 @@ describe("shellx-motion CLI", () => {
     expect(await readdir(actualRoot)).toEqual([]);
   });
 
-  it("admits direct raw retention only with a supported governed receipt store", async () => {
+  itLinux("admits direct raw retention only with a supported governed receipt store", async () => {
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-"));
     tempDirs.push(receiptsRoot);
     const createdAt = "2040-01-01T00:00:00.000Z";
@@ -10473,7 +10495,7 @@ describe("shellx-motion CLI", () => {
     expect(await readFile(receiptPath, "utf8")).not.toContain(request);
   });
 
-  it("keeps past and equal direct raw-retention deadlines rejected before runtime or receipt writes", async () => {
+  itLinux("keeps past and equal direct raw-retention deadlines rejected before runtime or receipt writes", async () => {
     const receiptsRoot = await mkdtemp(join(tmpdir(), "shellx-motion-cli-prompt-retention-deadline-"));
     tempDirs.push(receiptsRoot);
     const createdAt = "2040-01-01T00:00:00.000Z";
@@ -16447,10 +16469,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a root Canvas-to-MP4 smoke script for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-canvas-mp4-smoke.ts");
+    const scriptPath = resolve("../../scripts/public/connector-canvas-mp4-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:canvas-mp4-smoke"]).toBe("tsx scripts/connector-canvas-mp4-smoke.ts");
+    expect(packageJson.scripts["connector:canvas-mp4-smoke"]).toBe("tsx scripts/public/connector-canvas-mp4-smoke.ts");
     expect(scriptSource).toContain("connector");
     expect(scriptSource).toContain("canvas-to-mp4");
     expect(scriptSource).toContain("fixtures/canvas/shape-text-frame-selection.json");
@@ -16464,10 +16486,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a root Canvas bridge export smoke script for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-canvas-bridge-smoke.ts");
+    const scriptPath = resolve("../../scripts/public/connector-canvas-bridge-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:canvas-bridge-smoke"]).toBe("tsx scripts/connector-canvas-bridge-smoke.ts");
+    expect(packageJson.scripts["connector:canvas-bridge-smoke"]).toBe("tsx scripts/public/connector-canvas-bridge-smoke.ts");
     expect(scriptSource).toContain("SHELLX_CANVAS_ROOT");
     expect(scriptSource).toContain("canvas-bridge-export");
     expect(scriptSource).toContain("canvas-bridge-export.receipt.json");
@@ -16476,10 +16498,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a root Canvas bridge to MP4 smoke script for real Canvas export verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-canvas-bridge-mp4-smoke.ts");
+    const scriptPath = resolve("../../scripts/public/connector-canvas-bridge-mp4-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:canvas-bridge-mp4-smoke"]).toBe("tsx scripts/connector-canvas-bridge-mp4-smoke.ts");
+    expect(packageJson.scripts["connector:canvas-bridge-mp4-smoke"]).toBe("tsx scripts/public/connector-canvas-bridge-mp4-smoke.ts");
     expect(scriptSource).toContain("SHELLX_CANVAS_ROOT");
     expect(scriptSource).toContain("canvas-bridge-export");
     expect(scriptSource).toContain("canvas-to-mp4");
@@ -16493,10 +16515,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a root Script-to-Cut smoke script for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-script-cut-smoke.ts");
+    const scriptPath = resolve("../../scripts/public/connector-script-cut-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:script-cut-smoke"]).toBe("tsx scripts/connector-script-cut-smoke.ts");
+    expect(packageJson.scripts["connector:script-cut-smoke"]).toBe("tsx scripts/public/connector-script-cut-smoke.ts");
     expect(scriptSource).toContain("scripted-video@1");
     expect(scriptSource).toContain("connector");
     expect(scriptSource).toContain("script-to-cut");
@@ -16512,10 +16534,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a root Template-to-Cut rendered-media smoke script for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/connector-template-cut-render-smoke.ts");
+    const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/public/connector-template-cut-render-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:template-cut-render-smoke"]).toBe("tsx scripts/connector-template-cut-render-smoke.ts");
+    expect(packageJson.scripts["connector:template-cut-render-smoke"]).toBe("tsx scripts/public/connector-template-cut-render-smoke.ts");
     expect(scriptSource).toContain("connector");
     expect(scriptSource).toContain("template-to-cut");
     expect(scriptSource).toContain("fixtures/packages/editable-lower-third");
@@ -16533,10 +16555,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires the real Canvas-to-Cut P2B smoke as a plan-only handoff", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/connector-canvas-cut-smoke.ts");
+    const scriptPath = resolve("../../scripts/public/connector-canvas-cut-smoke.ts");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["connector:canvas-cut-smoke"]).toBe("tsx scripts/connector-canvas-cut-smoke.ts");
+    expect(packageJson.scripts["connector:canvas-cut-smoke"]).toBe("tsx scripts/public/connector-canvas-cut-smoke.ts");
     expect(scriptSource).toContain("SHELLX_CANVAS_ROOT");
     expect(scriptSource).toContain("canvas-to-cut");
     expect(scriptSource).not.toContain("--dry-run-render");
@@ -16552,9 +16574,9 @@ describe("shellx-motion CLI", () => {
 
   it("makes the fixture P2B Canvas smoke repeatable without force", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptSource = await readFile(resolve("../../scripts/connector-canvas-fixture-cut-smoke.ts"), "utf8");
+    const scriptSource = await readFile(resolve("../../scripts/public/connector-canvas-fixture-cut-smoke.ts"), "utf8");
 
-    expect(packageJson.scripts["connector:smoke"]).toBe("tsx scripts/connector-canvas-fixture-cut-smoke.ts");
+    expect(packageJson.scripts["connector:smoke"]).toBe("tsx scripts/public/connector-canvas-fixture-cut-smoke.ts");
     expect(scriptSource).toContain("assertPrivateRepoScratchPath(repoRoot, outDir)");
     expect(scriptSource).toContain("await rm(outDir, { recursive: true, force: true })");
     expect(scriptSource).toContain("canvas-to-cut");
@@ -16564,10 +16586,10 @@ describe("shellx-motion CLI", () => {
 
   it("wires a receipt-producing platform verification runner for host gates", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const scriptSource = await readFile(scriptPath, "utf8");
 
-    expect(packageJson.scripts["platform:verify"]).toBe("node scripts/platform-verify.mjs");
+    expect(packageJson.scripts["platform:verify"]).toBe("node scripts/public/platform-verify.mjs");
     expect(scriptSource).toContain("cmd.exe");
     expect(scriptSource).toContain("WINDOWS_EXECUTABLE_SUFFIXES");
     expect(scriptSource).toContain("windowsVerbatimArguments: true");
@@ -16628,10 +16650,8 @@ describe("shellx-motion CLI", () => {
       complete: false,
       status: "partial"
     });
-    // The ladder itself is NOT restated here. It used to be, and adding two commands during cross-host verification
-    // broke five tests that were only ever asserting "the list equals the list I copied". What is
-    // asserted instead are the invariants a correct ladder must satisfy, each checkable against a
-    // source the plan does not derive from — so this cannot pass by agreeing with itself.
+    // Assert ladder invariants against independent inputs rather than duplicating the
+    // command list; a copied list can agree with an incorrect plan.
     const planned = receipt.commands as Array<{ id: string; command: string[]; required: boolean; requiresEnv?: string[]; category: string; platforms?: string[] }>;
     const plannedIds = planned.map((command) => command.id);
     const requiredIds = planned.filter((command) => command.required === true).map((command) => command.id);
@@ -16704,7 +16724,7 @@ describe("shellx-motion CLI", () => {
     for (const id of plannedIds) expect(extendedIds).toContain(id);
     expect(extendedCommands.find((command) => command.id === "template-pack:proof")).toMatchObject({ platforms: ["linux"] });
 
-    // The doc is held to the plan mechanically by `scripts/platform-verification-doc-gate.mjs`
+    // The doc is held to the plan mechanically by `scripts/public/platform-verification-doc-gate.mjs`
     // (wired into `pnpm docs:check`). Asserted here too, because this is the test that ties the
     // runner, the package scripts and the published ladder together: every required command a host
     // is told to run must appear in the document a human follows.
@@ -16716,19 +16736,19 @@ describe("shellx-motion CLI", () => {
   });
 
   it("records exact local runtime, package-manager, codec binary, and encoder identities", async () => {
-    const sourceScriptPath = resolve("../../scripts/platform-verify.mjs");
+    const sourceScriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const exactRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-exact-workspace-"));
     tempDirs.push(exactRoot);
-    const scriptPath = join(exactRoot, "scripts", "platform-verify.mjs");
+    const scriptPath = join(exactRoot, "scripts", "public", "platform-verify.mjs");
     await mkdir(dirname(scriptPath), { recursive: true });
     await copyFile(sourceScriptPath, scriptPath);
-    await copyFile(resolve("../../scripts/repo-scratch.mjs"), join(exactRoot, "scripts", "repo-scratch.mjs"));
-    await copyFile(resolve("../../scripts/platform-verification-schema.mjs"), join(exactRoot, "scripts", "platform-verification-schema.mjs"));
+    await copyFile(resolve("../../scripts/public/repo-scratch.mjs"), join(exactRoot, "scripts", "public", "repo-scratch.mjs"));
+    await copyFile(resolve("../../scripts/public/platform-verification-schema.mjs"), join(exactRoot, "scripts", "public", "platform-verification-schema.mjs"));
     await mkdir(join(exactRoot, "schemas"), { recursive: true });
     await copyFile(resolve("../../schemas/platform-verification.schema.json"), join(exactRoot, "schemas", "platform-verification.schema.json"));
     await writeFile(join(exactRoot, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
     await execFile("git", ["init", "--quiet", exactRoot]);
-    await execFile("git", ["-C", exactRoot, "add", "scripts/platform-verify.mjs", "scripts/platform-verification-schema.mjs", "scripts/repo-scratch.mjs", "schemas/platform-verification.schema.json", "pnpm-lock.yaml"]);
+    await execFile("git", ["-C", exactRoot, "add", "scripts/public/platform-verify.mjs", "scripts/public/platform-verification-schema.mjs", "scripts/public/repo-scratch.mjs", "schemas/platform-verification.schema.json", "pnpm-lock.yaml"]);
     await execFile("git", ["-C", exactRoot, "-c", "user.name=ShellX Motion Test", "-c", "user.email=motion-test@localhost", "commit", "--quiet", "-m", "exact workspace fixture"]);
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
@@ -16790,7 +16810,7 @@ describe("shellx-motion CLI", () => {
     // while rendering with the ShellX-family bundled binary makes `--require-exact-toolchain` attest to a
     // binary that produced none of the media beside it. Run in the real workspace, where the
     // TypeScript resolver IS reachable.
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const { stdout } = await execFile(process.execPath, [
       scriptPath, "--", "--run", "--json", "--required-hosts", "none", "--only", "connector:canvas-cut-smoke"
     ], { cwd: resolve("../.."), maxBuffer: 32 * 1024 * 1024 });
@@ -16802,7 +16822,7 @@ describe("shellx-motion CLI", () => {
     // asserted against the resolver rather than against a hardcoded expectation, because the whole
     // defect was these two answering differently.
     const { stdout: resolverStdout } = await execFile(process.execPath, [
-      "--import", "tsx", resolve("../../scripts/motion-tool-resolution.ts")
+      "--import", "tsx", resolve("../../scripts/public/motion-tool-resolution.ts")
     ], { cwd: resolve("../..") });
     const resolved = JSON.parse(resolverStdout) as Record<string, { executable: string; source: string }>;
     expect(receipt.toolchain.ffmpeg.source).toBe(resolved.ffmpeg.source);
@@ -16815,7 +16835,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("enforces collected platform verification receipts for every required host", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-receipts-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -16867,7 +16887,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("rejects a structurally incomplete self-asserted platform receipt", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-forged-receipt-"));
     tempDirs.push(tempRoot);
     const receiptPath = await writePlatformReceipt(tempRoot, "linux");
@@ -16891,7 +16911,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("rejects duplicate command identities in a completed platform receipt", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-duplicate-command-"));
     tempDirs.push(tempRoot);
     const receiptPath = await writePlatformReceipt(tempRoot, "linux");
@@ -16911,7 +16931,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("emits an allowlisted shareable platform projection without local paths or raw output", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const { stdout } = await execFile(process.execPath, [
       scriptPath, "--", "--dry-run", "--json", "--shareable", "--required-hosts", "none",
     ], { cwd: resolve("../..") });
@@ -16932,7 +16952,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("redacts source paths and skip reasons from a shareable platform aggregate", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-shareable-aggregate-"));
     tempDirs.push(tempRoot);
     const receiptPath = await writePlatformReceipt(tempRoot, "windows");
@@ -16970,7 +16990,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("does not disclose an unreadable receipt path through the shareable aggregate", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-shareable-unreadable-"));
     tempDirs.push(tempRoot);
     const unreadablePath = join(tempRoot, "missing-private-receipt.json");
@@ -16990,7 +17010,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("rejects a forged Linux platform-inapplicable Template-to-Cut skip", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-p2a-forged-skip-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all(["linux", "windows", "macos"].map((hostId) => writePlatformReceipt(tempRoot, hostId)));
@@ -17015,7 +17035,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("can require exact and ShellX-bundled codec evidence from every collected host", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-toolchain-receipts-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17047,7 +17067,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("rejects exact-toolchain receipts without exact clean workspace identity", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-workspace-receipts-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17078,7 +17098,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("rejects exact host receipts produced from different workspace identities", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-cross-host-identity-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17115,7 +17135,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform receipt enforcement when a required host is missing", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-missing-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17143,7 +17163,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform receipt enforcement when host ids are duplicated", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-duplicate-host-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17180,7 +17200,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform receipt enforcement when a canonical host reports the wrong platform", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-mismatch-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17217,7 +17237,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform receipt enforcement for dry-run or failed host evidence", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-failed-"));
     tempDirs.push(tempRoot);
     const dryRunPaths = await Promise.all([
@@ -17259,7 +17279,7 @@ describe("shellx-motion CLI", () => {
   });
 
   itLinux("skips optional platform connector gates when required checkout env is absent", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
 
@@ -17291,7 +17311,7 @@ describe("shellx-motion CLI", () => {
   });
 
   itLinux("fails required platform connector gates when required checkout env is absent", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const env = { ...process.env };
     delete env.SHELLX_CANVAS_ROOT;
 
@@ -17320,7 +17340,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform verification when a command cannot be spawned", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const env = { ...process.env, PATH: "/tmp/shellx-motion-missing-platform-bin" };
     const expectedSpawnFailure = process.platform === "win32" ? "spawnSync cmd.exe ENOENT" : "spawnSync pnpm ENOENT";
 
@@ -17351,7 +17371,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("captures large platform command output without pipe deadlocks", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-large-output-"));
     tempDirs.push(tempRoot);
     const binDir = join(tempRoot, "bin");
@@ -17393,7 +17413,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("requires host connector command receipts when aggregating phase two connector evidence", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
     const tempRoot = await mkdtemp(join(tmpdir(), "shellx-motion-platform-required-connectors-"));
     tempDirs.push(tempRoot);
     const receiptPaths = await Promise.all([
@@ -17429,7 +17449,7 @@ describe("shellx-motion CLI", () => {
   });
 
   it("fails platform verification commands that exceed the configured timeout", async () => {
-    const scriptPath = resolve("../../scripts/platform-verify.mjs");
+    const scriptPath = resolve("../../scripts/public/platform-verify.mjs");
 
     const receipt = await execPlatformVerifierFailure([
       scriptPath,
@@ -17462,24 +17482,24 @@ describe("shellx-motion CLI", () => {
 
   it("wires package archive, Canvas package preview, evidence surfaces, modern codecs, audio, captions, alpha, GIF, JPEG, batch, deterministic browser workflow, agent-unavailable, render job lifecycle, and debug server smoke scripts for host verification", async () => {
     const packageJson = JSON.parse(await readFile(resolve("../../package.json"), "utf8")) as Record<string, any>;
-    const packageArchiveScriptPath = resolve("../../scripts/package-archive-smoke.ts");
-    const canvasPackagePreviewScriptPath = resolve("../../scripts/canvas-package-preview-smoke.ts");
-    const evidenceSurfacesScriptPath = resolve("../../scripts/evidence-surfaces-smoke.ts");
-    const agentSmokeScriptPath = resolve("../../scripts/prompt-execution-smoke.ts");
-    const agentUnavailableScriptPath = resolve("../../scripts/prompt-unavailable-smoke.ts");
-    const mp4ScriptPath = resolve("../../scripts/render-mp4-smoke.ts");
-    const modernCodecScriptPath = resolve("../../scripts/render-modern-codec-smoke.ts");
-    const webmScriptPath = resolve("../../scripts/render-webm-smoke.ts");
-    const audioScriptPath = resolve("../../scripts/render-audio-smoke.ts");
-    const captionScriptPath = resolve("../../scripts/render-caption-smoke.ts");
-    const alphaScriptPath = resolve("../../scripts/render-alpha-smoke.ts");
-    const gifScriptPath = resolve("../../scripts/render-gif-smoke.ts");
-    const jpegScriptPath = resolve("../../scripts/render-jpeg-smoke.ts");
-    const batchScriptPath = resolve("../../scripts/render-batch-smoke.ts");
-    const browserScriptPath = resolve("../../scripts/browser-workflow-smoke.ts");
-    const lifecycleScriptPath = resolve("../../scripts/render-job-lifecycle-smoke.ts");
-    const debugServerScriptPath = resolve("../../scripts/debug-server-smoke.ts");
-    const debugServerPromptScriptPath = resolve("../../scripts/debug-server-prompt-smoke.ts");
+    const packageArchiveScriptPath = resolve("../../scripts/public/package-archive-smoke.ts");
+    const canvasPackagePreviewScriptPath = resolve("../../scripts/public/canvas-package-preview-smoke.ts");
+    const evidenceSurfacesScriptPath = resolve("../../scripts/public/evidence-surfaces-smoke.ts");
+    const agentSmokeScriptPath = resolve("../../scripts/public/prompt-execution-smoke.ts");
+    const agentUnavailableScriptPath = resolve("../../scripts/public/prompt-unavailable-smoke.ts");
+    const mp4ScriptPath = resolve("../../scripts/public/render-mp4-smoke.ts");
+    const modernCodecScriptPath = resolve("../../scripts/public/render-modern-codec-smoke.ts");
+    const webmScriptPath = resolve("../../scripts/public/render-webm-smoke.ts");
+    const audioScriptPath = resolve("../../scripts/public/render-audio-smoke.ts");
+    const captionScriptPath = resolve("../../scripts/public/render-caption-smoke.ts");
+    const alphaScriptPath = resolve("../../scripts/public/render-alpha-smoke.ts");
+    const gifScriptPath = resolve("../../scripts/public/render-gif-smoke.ts");
+    const jpegScriptPath = resolve("../../scripts/public/render-jpeg-smoke.ts");
+    const batchScriptPath = resolve("../../scripts/public/render-batch-smoke.ts");
+    const browserScriptPath = resolve("../../scripts/public/browser-workflow-smoke.ts");
+    const lifecycleScriptPath = resolve("../../scripts/public/render-job-lifecycle-smoke.ts");
+    const debugServerScriptPath = resolve("../../scripts/public/debug-server-smoke.ts");
+    const debugServerPromptScriptPath = resolve("../../scripts/public/debug-server-prompt-smoke.ts");
     const packageArchiveScriptSource = await readFile(packageArchiveScriptPath, "utf8");
     const canvasPackagePreviewScriptSource = await readFile(canvasPackagePreviewScriptPath, "utf8");
     const evidenceSurfacesScriptSource = await readFile(evidenceSurfacesScriptPath, "utf8");
@@ -17499,28 +17519,28 @@ describe("shellx-motion CLI", () => {
     const debugServerScriptSource = await readFile(debugServerScriptPath, "utf8");
     const debugServerPromptScriptSource = await readFile(debugServerPromptScriptPath, "utf8");
 
-    expect(packageJson.scripts["package-archive:smoke"]).toBe("tsx scripts/package-archive-smoke.ts");
-    expect(packageJson.scripts["canvas-package-preview:smoke"]).toBe("tsx scripts/canvas-package-preview-smoke.ts");
-    expect(packageJson.scripts["evidence-surfaces:smoke"]).toBe("tsx scripts/evidence-surfaces-smoke.ts");
-    expect(packageJson.scripts["sandbox:probe"]).toBe("tsx scripts/sandbox-capability-probe.ts");
-    expect(packageJson.scripts["tracking:smoke"]).toBe("tsx scripts/tracking-analysis-smoke.ts");
-    expect(packageJson.scripts["agent:smoke"]).toBe("tsx scripts/prompt-execution-smoke.ts");
-    expect(packageJson.scripts["agent-unavailable:smoke"]).toBe("tsx scripts/prompt-unavailable-smoke.ts");
-    expect(packageJson.scripts["render-mp4:smoke"]).toBe("tsx scripts/render-mp4-smoke.ts");
-    expect(packageJson.scripts["ffmpeg-acceleration:smoke"]).toBe("tsx scripts/ffmpeg-acceleration-smoke.ts");
-    expect(packageJson.scripts["render-hevc:smoke"]).toBe("tsx scripts/render-modern-codec-smoke.ts mp4-hevc");
-    expect(packageJson.scripts["render-av1:smoke"]).toBe("tsx scripts/render-modern-codec-smoke.ts webm-av1");
-    expect(packageJson.scripts["render-webm:smoke"]).toBe("tsx scripts/render-webm-smoke.ts");
-    expect(packageJson.scripts["render-audio:smoke"]).toBe("tsx scripts/render-audio-smoke.ts");
-    expect(packageJson.scripts["render-caption:smoke"]).toBe("tsx scripts/render-caption-smoke.ts");
-    expect(packageJson.scripts["render-alpha:smoke"]).toBe("tsx scripts/render-alpha-smoke.ts");
-    expect(packageJson.scripts["render-gif:smoke"]).toBe("tsx scripts/render-gif-smoke.ts");
-    expect(packageJson.scripts["render-jpeg:smoke"]).toBe("tsx scripts/render-jpeg-smoke.ts");
-    expect(packageJson.scripts["render-batch:smoke"]).toBe("tsx scripts/render-batch-smoke.ts");
-    expect(packageJson.scripts["browser:capture-smoke"]).toBe("tsx scripts/browser-workflow-smoke.ts");
-    expect(packageJson.scripts["render-job-lifecycle:smoke"]).toBe("tsx scripts/render-job-lifecycle-smoke.ts");
-    expect(packageJson.scripts["debug-server:smoke"]).toBe("tsx scripts/debug-server-smoke.ts");
-    expect(packageJson.scripts["debug-server-prompt:smoke"]).toBe("tsx scripts/debug-server-prompt-smoke.ts");
+    expect(packageJson.scripts["package-archive:smoke"]).toBe("tsx scripts/public/package-archive-smoke.ts");
+    expect(packageJson.scripts["canvas-package-preview:smoke"]).toBe("tsx scripts/public/canvas-package-preview-smoke.ts");
+    expect(packageJson.scripts["evidence-surfaces:smoke"]).toBe("tsx scripts/public/evidence-surfaces-smoke.ts");
+    expect(packageJson.scripts["sandbox:probe"]).toBe("tsx scripts/public/sandbox-capability-probe.ts");
+    expect(packageJson.scripts["tracking:smoke"]).toBe("tsx scripts/public/tracking-analysis-smoke.ts");
+    expect(packageJson.scripts["agent:smoke"]).toBe("tsx scripts/public/prompt-execution-smoke.ts");
+    expect(packageJson.scripts["agent-unavailable:smoke"]).toBe("tsx scripts/public/prompt-unavailable-smoke.ts");
+    expect(packageJson.scripts["render-mp4:smoke"]).toBe("tsx scripts/public/render-mp4-smoke.ts");
+    expect(packageJson.scripts["ffmpeg-acceleration:smoke"]).toBe("tsx scripts/public/ffmpeg-acceleration-smoke.ts");
+    expect(packageJson.scripts["render-hevc:smoke"]).toBe("tsx scripts/public/render-modern-codec-smoke.ts mp4-hevc");
+    expect(packageJson.scripts["render-av1:smoke"]).toBe("tsx scripts/public/render-modern-codec-smoke.ts webm-av1");
+    expect(packageJson.scripts["render-webm:smoke"]).toBe("tsx scripts/public/render-webm-smoke.ts");
+    expect(packageJson.scripts["render-audio:smoke"]).toBe("tsx scripts/public/render-audio-smoke.ts");
+    expect(packageJson.scripts["render-caption:smoke"]).toBe("tsx scripts/public/render-caption-smoke.ts");
+    expect(packageJson.scripts["render-alpha:smoke"]).toBe("tsx scripts/public/render-alpha-smoke.ts");
+    expect(packageJson.scripts["render-gif:smoke"]).toBe("tsx scripts/public/render-gif-smoke.ts");
+    expect(packageJson.scripts["render-jpeg:smoke"]).toBe("tsx scripts/public/render-jpeg-smoke.ts");
+    expect(packageJson.scripts["render-batch:smoke"]).toBe("tsx scripts/public/render-batch-smoke.ts");
+    expect(packageJson.scripts["browser:capture-smoke"]).toBe("tsx scripts/public/browser-workflow-smoke.ts");
+    expect(packageJson.scripts["render-job-lifecycle:smoke"]).toBe("tsx scripts/public/render-job-lifecycle-smoke.ts");
+    expect(packageJson.scripts["debug-server:smoke"]).toBe("tsx scripts/public/debug-server-smoke.ts");
+    expect(packageJson.scripts["debug-server-prompt:smoke"]).toBe("tsx scripts/public/debug-server-prompt-smoke.ts");
     expect(packageArchiveScriptSource).toContain("package-archive");
     expect(packageArchiveScriptSource).toContain("package-extract");
     expect(packageArchiveScriptSource).toContain("roundTripPackageRoot");

@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/prompt",
-  "version": "0.2.66",
+  "version": "0.2.67",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -21,10 +21,10 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build.mjs --package @shellx-motion/prompt",
+    "build": "node ../../scripts/public/build.mjs --package @shellx-motion/prompt",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests --testTimeout=45000",
-    "smoke": "tsx ../../scripts/prompt-smoke.ts"
+    "smoke": "tsx ../../scripts/public/prompt-smoke.ts"
   },
   "dependencies": {
     "@shellx-motion/actions": "workspace:*",

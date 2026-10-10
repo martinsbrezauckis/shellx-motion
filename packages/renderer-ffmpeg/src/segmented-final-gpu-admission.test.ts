@@ -9,6 +9,7 @@ import { planRenderSegments } from "./segmented-final-internal/render-segment-pl
 import { deriveSegmentedFinalPaths } from "./segmented-final-internal/segmented-final-adapter-store.js";
 import { renderSegmentedFinal } from "./segmented-final-internal/segmented-final-adapter.js";
 import { renderSegmentedFinal as renderPublicSegmentedFinal } from "./segmented-final.js";
+import { withStreamingFinalLaunchRevalidation } from "./streaming-final-lineage-revalidation.js";
 import type { RenderSegmentGpuHybridIdentity, RenderSegmentGpuHybridRangeProducerEvidence, RenderSegmentGpuStandardIdentity, RenderSegmentGpuRangeProducerEvidence } from "./segmented-final-internal/render-segment-store-types.js";
 
 const state = vi.hoisted(() => ({
@@ -19,6 +20,8 @@ const state = vi.hoisted(() => ({
   expectedStoreRoot: "",
   hostCleanupComplete: false,
   failHostAfterCleanup: false,
+  hostAuthorityChecks: 0,
+  failHostAuthorityCheck: false,
   identitySalt: "stable",
   hybrid: false
 }));
@@ -40,7 +43,9 @@ vi.mock("./segmented-final-internal/segmented-final-store-authority.js", async (
       state.expectedStoreRoot = paths.storeRoot;
       return new this();
     }
-    async assertCurrent() {}
+    async assertCurrent() {
+      if (state.failHostAuthorityCheck) throw new Error("resumed durable store changed before closed GPU host verdict");
+    }
     async assertStoreCurrent() {}
     async discardEmptyStore() {}
     async resumeGpuMaxProcessTreeRssBytes() { return 512 * 1024 * 1024; }
@@ -52,9 +57,14 @@ vi.mock("./segmented-final-gpu-host.js", () => ({
   prepareAdmittedSegmentedGpuHost: async (input: {
     packageContentSha256: string;
     timeline: { frameCount: number; durationMs: number; fps: number; width: number; height: number };
+    assertStoreAuthorityCurrent?: () => Promise<void>;
   }) => {
     const firstStoreWasAbsent = await lstat(state.expectedStoreRoot).then(() => false, (error: NodeJS.ErrnoException) => error.code === "ENOENT");
     state.calls.push({ packageContentSha256: input.packageContentSha256, firstStoreWasAbsent });
+    if (input.assertStoreAuthorityCurrent) {
+      state.hostAuthorityChecks += 1;
+      await input.assertStoreAuthorityCurrent();
+    }
     if (state.failHostAfterCleanup) {
       state.hostCleanupComplete = true;
       throw new Error("controlled closed host verdict cleanup failure");
@@ -120,12 +130,14 @@ afterEach(async () => {
   state.expectedStoreRoot = "";
   state.hostCleanupComplete = false;
   state.failHostAfterCleanup = false;
+  state.hostAuthorityChecks = 0;
+  state.failHostAuthorityCheck = false;
   state.identitySalt = "stable";
   state.hybrid = false;
 });
 
 describe("GPU segmented admitted host", () => {
-  it("creates its identity before a new store, resumes only the verified prefix, and requires the exact host identity", async () => {
+  it("keeps direct create/resume host admission on its historical no-hook path", async () => {
     const root = await mkdtemp(join(process.cwd(), ".tmp-gpu-segmented-admission-"));
     roots.push(root);
     const packageRoot = join(root, "package");
@@ -142,6 +154,7 @@ describe("GPU segmented admitted host", () => {
     expect(initial).toMatchObject({ ok: false, error: { code: "segment_producer_failed", evidence: { phase: "spool" } } });
     expect(state.calls).toHaveLength(1);
     expect(state.calls[0]?.firstStoreWasAbsent).toBe(true);
+    expect(state.hostAuthorityChecks).toBe(0);
     expect(state.rendered).toEqual([0, 1]);
     expect(state.releases).toBe(1);
 
@@ -150,6 +163,7 @@ describe("GPU segmented admitted host", () => {
     if (!resumed.ok) throw resumed.error;
     expect(state.calls).toHaveLength(2);
     expect(state.calls.map((call) => call.packageContentSha256)).toEqual([state.calls[0]?.packageContentSha256, state.calls[0]?.packageContentSha256]);
+    expect(state.hostAuthorityChecks).toBe(0);
     expect(state.rendered).toEqual([0, 1, 1]);
     expect(resumed.transport).toMatchObject({
       resume: { verifiedPrefixSegments: 1, newlyCompletedSegments: 1 },
@@ -189,6 +203,29 @@ describe("GPU segmented admitted host", () => {
     expect(resumed).toMatchObject({ ok: false, error: { code: "segment_store_failed", evidence: { phase: "spool" } } });
     expect(state.rendered).toEqual([0, 1]);
     await expect(lstat(paths.storeRoot)).resolves.toBeDefined();
+  });
+
+  it("threads resumed store authority into the coordinated pre-store GPU host verdict", async () => {
+    const root = await fixtureRoot("resume-host-authority-drift");
+    const packageRoot = join(root, "package");
+    const outputPath = join(root, "result.mp4");
+    state.expectedStoreRoot = deriveSegmentedFinalPaths(outputPath, packageRoot).storeRoot;
+
+    const initial = await run({ packageRoot, outputPath, intent: "create" });
+    expect(initial).toMatchObject({ ok: false, error: { code: "segment_producer_failed" } });
+    expect(state.hostAuthorityChecks).toBe(0);
+    state.failHostAuthorityCheck = true;
+    state.failRange = undefined;
+
+    const resumed = await withStreamingFinalLaunchRevalidation(
+      async () => undefined,
+      async () => await run({ packageRoot, outputPath, intent: "resume" })
+    );
+    expect(resumed).toMatchObject({ ok: false, error: { code: "segmented_final_failed", evidence: { phase: "preflight" } } });
+    if (resumed.ok) throw new Error("Expected the resumed GPU host verdict to refuse authority drift.");
+    expect(resumed.error.primaryCause).toMatchObject({ message: "resumed durable store changed before closed GPU host verdict" });
+    expect(state.hostAuthorityChecks).toBe(1);
+    expect(state.rendered).toEqual([0, 1]);
   });
 
   it("carries an injected admitted GPU host through the public wrapper, outer governor, create/resume, and receipt transport", async () => {

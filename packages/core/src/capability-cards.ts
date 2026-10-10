@@ -184,7 +184,7 @@ export const RENDERER_CAPABILITY_CARDS: RendererCapabilityCard[] = [
       "slower than native previews",
       "one Chromium session is reused for a whole frame sequence, so peak resident memory grows with FRAME COUNT and is multiplied by effects.motionBlur.samples, not bounded by the cost of a single frame",
       "the WebGL features on this card (environment.rain/water/snow/fog, particles.seeded, camera.depth) are budget-bound at delivery length: doctor reports adaptive maxProcessTreeRssBytes, a job aborts with job_rss_limit_exceeded above it, and a measured 450-frame 1920x1080 render carrying two environment layers with 3-sample motion blur peaked at 5.07 GiB",
-      "final browser delivery preflights the full materialised frame sequence before allocation and records its resolved admission budget, conservative estimate and retention cardinality in dry-run/receipt evidence; it is not a streamed producer-to-encoder pipeline",
+      "browser final video uses the deterministic frame-transport planner: its default is bounded streamed producer-to-FFmpeg delivery, while explicit frame retention, captured browser workflows, exact-source quality comparisons, streaming-quality capacity, or an injected renderer select materialized frames; the selected plan is recorded in dry-run/receipt evidence",
       "manifest-bound font provenance, loading, and fallback evidence are proven; this card does not claim a Motion complex-shaping conformance fixture"
     ],
     typography: {

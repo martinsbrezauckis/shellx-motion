@@ -33,13 +33,9 @@ export const MAX_PNG_COMPRESSION_LEVEL = 9;
  * that exist only as FFmpeg encoder input and are re-decoded away. PNG is
  * lossless at every level, so the decoded pixels (and thus the final video) are identical to level 9.
  *
- * Level 1 vs 3 tradeoff (measured on a 1920x1080 mixed-content frame, node zlib): level 1 encodes in
- * ~21.5 ms producing 1.47 MiB; level 3 in ~28.3 ms producing 1.37 MiB; level 9 in ~93.2 ms producing
- * 1.28 MiB. Encode CPU is the flagged cost, and these frames are written then immediately consumed by
- * FFmpeg, so file size barely matters. Level 1 gives the fastest encode (~4.3x faster than level 9,
- * ~1.3x faster than level 3) for only ~7% larger transient files — the right pick for encoder-input
- * frames. The separate sequence-hash re-read pass is addressed by sampling rather than by
- * trading encode speed for a marginally smaller file here.)
+ * These frames are written and immediately consumed by FFmpeg, so encode CPU matters more than
+ * modest differences in transient file size. Level 1 favors fast encoder input. The separate
+ * sequence-hash re-read pass is addressed by sampling.
  */
 export const INTERMEDIATE_FRAME_PNG_COMPRESSION_LEVEL = 1;
 

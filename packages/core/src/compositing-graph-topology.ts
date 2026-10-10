@@ -5,6 +5,7 @@ import type {
   MotionCompositingNodeType,
   MotionCompositingResourceEstimate,
 } from "./compositing-graph-types";
+import { MAX_COMPOSITING_DERIVED_LAYERS } from "./compositing-graph-types";
 import {
   allowOnlyFields,
   graphIssue,
@@ -151,6 +152,34 @@ export function estimateCompositingGraph(
       Math.min(nodes.size, sourceCount + maxFanOut + 3),
     ),
   };
+}
+
+/** Each binary port copies its input value, even when both ports reference the same node. */
+export function validateCompositingDerivedLayers(
+  order: string[],
+  types: CompositingNodeTypeMap,
+  incoming: CompositingIncomingMap,
+  issues: MotionCompositingIssue[],
+): void {
+  const layerCounts = new Map<string, number>();
+  for (const id of order) {
+    const type = types.get(id);
+    const inputs = incoming.get(id);
+    const count = type === "source" ? 1
+      : type === "blend" || type === "matte"
+        ? (layerCounts.get(inputs?.get(type === "blend" ? "background" : "matte") ?? "") ?? 0)
+          + (layerCounts.get(inputs?.get(type === "blend" ? "foreground" : "input") ?? "") ?? 0)
+        : layerCounts.get(inputs?.get("input") ?? "") ?? 0;
+    if (count > MAX_COMPOSITING_DERIVED_LAYERS) {
+      issues.push(graphIssue(
+        `/compositing/nodes/${id}`,
+        "graph.layer_budget",
+        `derived layer count exceeds ${MAX_COMPOSITING_DERIVED_LAYERS}`,
+      ));
+      return;
+    }
+    layerCounts.set(id, count);
+  }
 }
 
 function validateEdge(

@@ -3,20 +3,13 @@
  *
  * ROLE
  * ----
- * `createFakePromptRuntime` used to live in `src/index.ts` and was therefore an export of the
- * published `@shellx-motion/prompt` package, and the thing `--fake` on the CLI constructed. A
- * That violated the tool-provenance invariant: `prompt run … --fake` returned
- * `{"ok":true,…,"receipts":["agent-…","prompt-…"]}` — bytes indistinguishable from a real agent
- * run — without any agent executing, and neither `--help` nor the public docs mentioned the mode.
- * Manufactured evidence that wears production's trust shape is worse than an undocumented feature:
- * a host or an agent can present it as proof of work.
- *
- * The fix is placement, not deletion. Tests still need a runtime that does not shell out to a real
- * subscription CLI, so the constructor moved here: `*.test-support.ts` is this repo's non-shipping
- * source convention (`scripts/source-modules.mjs`), which means `scripts/build.mjs` never emits it,
- * `scripts/packed-files-gate.mjs` fails if it ever appears in a tarball, and
- * `scripts/shipping-imports-gate.mjs` fails if a shipping module imports it. A fake is now reachable
- * only by code that imports test scaffolding on purpose.
+ * Tests need a runtime that does not shell out to a subscription CLI. Keep this constructor in
+ * `*.test-support.ts`, this repo's non-shipping
+ * source convention (`scripts/public/source-modules.mjs`), which means `scripts/public/build.mjs` never emits it,
+ * `scripts/public/packed-files-gate.mjs` fails if it ever appears in a tarball, and
+ * `scripts/public/shipping-imports-gate.mjs` fails if a shipping module imports it. A fake is now reachable
+ * only by code that imports test scaffolding on purpose. Production receipts require a real
+ * agent execution path.
  *
  * The workspace `exports` map adds a `./test-support` subpath so sibling packages' suites can reach
  * it; `publishConfig.exports` deliberately does not carry that subpath, so the published package
@@ -26,7 +19,7 @@
  * the package's own public types.
  *
  * PRIMARY CALLERS: `packages/prompt/src/index.test.ts`, `packages/debug-api/src/index.test.ts`,
- * `packages/cli/src/main.test-support.ts`, and `scripts/prompt-smoke.ts` (a dev script, outside
+ * `packages/cli/src/main.test-support.ts`, and `scripts/public/prompt-smoke.ts` (a dev script, outside
  * every package's `src/`).
  */
 import { createHash } from "node:crypto";

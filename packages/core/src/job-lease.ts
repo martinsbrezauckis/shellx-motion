@@ -47,6 +47,7 @@ import {
 import { visibleMotionJobLease, visibleMotionJobLeases } from "./job-lease-visibility";
 import type { MotionJobFrameLane } from "./job-frame-lane";
 import type { MotionJobLeaseRecord } from "./job-lease-types";
+import { sha256 } from "./lifecycle-envelope-validation";
 
 export type { MotionJobLeaseRun } from "./job-lease-run-storage";
 export type { MotionJobLeaseRecord } from "./job-lease-types";
@@ -161,6 +162,8 @@ export class MotionJobLeaseDirectory {
     lane: string;
     frameLane?: MotionJobFrameLane;
     operation: string;
+    /** Immutable host-derived render-plan identity, published with the first live lease only. */
+    planFingerprint?: string;
     callerId?: string;
     visibility?: "host" | "internal";
     admitted?: boolean;
@@ -185,8 +188,15 @@ export class MotionJobLeaseDirectory {
       // promotion must not recreate a run that has already ended.
       if (input.run && (!existing || existing.jobId !== input.jobId || existing.runNonce !== run.runNonce)) return null;
       const carried = existing?.jobId === input.jobId ? existing : null;
+      const requestedPlanFingerprint = input.planFingerprint === undefined
+        ? undefined
+        : sha256(input.planFingerprint, "Job lease planFingerprint");
+      // A run's plan is fixed when it becomes visible.  Promotion/cancellation may preserve it,
+      // never add or replace it after the first announcement.
+      if (carried && requestedPlanFingerprint !== undefined && requestedPlanFingerprint !== carried.planFingerprint) return null;
       const startedAtMs = carried?.startedAtMs ?? now;
       const admittedAtMs = carried?.admittedAtMs ?? now;
+      const planFingerprint = carried?.planFingerprint ?? requestedPlanFingerprint;
       const record: MotionJobLeaseRecord = {
         schema: "shellx-motion/job-lease@1",
         jobId: input.jobId,
@@ -195,6 +205,7 @@ export class MotionJobLeaseDirectory {
         lane: input.lane,
         ...(input.frameLane ? { frameLane: input.frameLane } : {}),
         operation: input.operation,
+        ...(planFingerprint ? { planFingerprint } : {}),
         callerId: input.callerId ?? UNATTRIBUTED_CALLER_ID,
         visibility: input.visibility ?? "internal",
         startedAtMs,

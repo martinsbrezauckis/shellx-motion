@@ -61,7 +61,7 @@ describe("scene3dAnimation@1 Browser refusal", () => {
     await preview.close();
     await expect(renderMotionGpuPreview(pkg, { outDir: "/not-opened-scene3d-animation-gpu-one-shot", sessionOptions: { openRuntime: async () => { opens += 1; throw new Error("GPU runtime must not open"); } } })).resolves.toMatchObject({ ok: false, error: { code: "gpu_unsupported_feature" } });
     await expect(resolveGpuEffectModuleStaticPlanForUse(pkg.motion, undefined)).resolves.toMatchObject({ ok: false, failure: { code: "gpu_unsupported_feature" } });
-    // O6 descriptor/static admission is now ahead of every manifest read, including the static
+    // scene3d animation descriptor/static admission is now ahead of every manifest read, including the static
     // glTF/PBR marker. No loaded-input hash, resource, descriptor getter, or runtime work follows.
     expect({ descriptorReads, manifestReads, resourceReads, opens, preparations }).toEqual({ descriptorReads: 0, manifestReads: 0, resourceReads: 0, opens: 0, preparations: 0 });
     Object.defineProperty(pkg, "manifest", { enumerable: true, get() { throw new Error("unsupported Scene3D refusal must not hash the manifest"); } });

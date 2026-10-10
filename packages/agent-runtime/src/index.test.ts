@@ -57,8 +57,7 @@ describe("local CLI agent runtime", () => {
       shell: false
     });
     expect(command.args).toEqual([
-      "exec", "--json", "--sandbox", "read-only", "--ask-for-approval", "never",
-      "--ephemeral"
+      "exec", "--json", "--sandbox", "read-only", "--ephemeral"
     ]);
     expect(command.stdin).toBe("preview current package");
   });

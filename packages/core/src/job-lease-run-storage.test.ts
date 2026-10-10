@@ -40,7 +40,8 @@ describe("persisted job lease boundary", () => {
       { ...validLease(), visibility: "everyone" },
       { ...validLease(), admitted: "yes" },
       { ...validLease(), cancelRequested: null },
-      { ...validLease(), cancelRequested: { requestedBy: "caller-a", requestedAtMs: -1 } }
+      { ...validLease(), cancelRequested: { requestedBy: "caller-a", requestedAtMs: -1 } },
+      { ...validLease(), planFingerprint: "not-a-sha256" }
     ];
 
     for (const [index, record] of invalidRecords.entries()) {
@@ -48,6 +49,16 @@ describe("persisted job lease boundary", () => {
       await writeFile(path, JSON.stringify(record));
       expect(await readMotionJobLeaseRecord(path, "unattributed")).toBeNull();
     }
+  });
+
+  it("retains only a valid optional V1 plan fingerprint", async () => {
+    const path = await leasePath();
+    const planFingerprint = "a".repeat(64);
+    await writeFile(path, JSON.stringify({ ...validLease(), planFingerprint }));
+
+    await expect(readMotionJobLeaseRecord(path, "unattributed")).resolves.toEqual({
+      ...validLease(), callerId: "unattributed", planFingerprint
+    });
   });
 });
 

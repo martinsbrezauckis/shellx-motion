@@ -8,15 +8,45 @@ import { renderStreamingFinalUnpublished } from "./streaming-final-adapter-execu
 import type { RenderStreamingFinalInput, RenderStreamingFinalResult } from "./streaming-final-adapter-types.js";
 import { planLinearSrgbSdrFinalRender, preflightLinearSrgbSdrFinalRender, renderLinearSrgbSdrFinalUnpublished } from "./linear-srgb-sdr-final-public.js";
 import { claimLinearSrgbSdrFinalPreparation } from "./linear-srgb-sdr-final-adapter.js";
+import {
+  isStreamingFinalLineageRevalidationFailure,
+  withStreamingFinalLaunchRevalidation,
+} from "./streaming-final-lineage-revalidation.js";
+
+/** Internal coordinator-only lifecycle hooks; never populated from a render request. */
+interface CoordinatedStreamingFinalHooks {
+  revalidateLineage?: () => Promise<void>;
+}
 
 /** Public streamed-final adapter: validates public shape, reserves output publication, then executes one staged render. */
-export async function renderStreamingFinal(input: RenderStreamingFinalInput): Promise<RenderStreamingFinalResult> {
+export async function renderStreamingFinal(
+  input: RenderStreamingFinalInput,
+  hooks: CoordinatedStreamingFinalHooks = {},
+): Promise<RenderStreamingFinalResult> {
+  try {
+    return await withStreamingFinalLaunchRevalidation(
+      hooks.revalidateLineage,
+      async () => await renderStreamingFinalWithHooks(input, hooks),
+    );
+  } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) {
+      const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
+      return { ok: false, transport: transport.ok ? transport.plan : transport.transport, error: { code: "render_failed", message: error.message } };
+    }
+    throw error;
+  }
+}
+
+async function renderStreamingFinalWithHooks(
+  input: RenderStreamingFinalInput,
+  hooks: CoordinatedStreamingFinalHooks,
+): Promise<RenderStreamingFinalResult> {
   const strict = await preflightLinearSrgbSdrFinalRender(input);
   if (strict.kind === "refused") {
     const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
     return { ok: false, transport: transport.ok ? transport.plan : transport.transport, error: strict.error };
   }
-  if (strict.kind === "strict") return await renderStrict(input, strict.preparation);
+  if (strict.kind === "strict") return await renderStrict(input, strict.preparation, hooks);
   const colorPipelineRefusal = colorPipelinePreallocationRefusal(input.pkg.motion, `ffmpeg-${input.frameLane}`);
   if (colorPipelineRefusal) {
     const transport = resolveStreamingFinalTransport({ transport: input.transport, keepFrames: input.keepFrames, capturedBrowserWorkflow: Boolean(input.toolPolicy?.browser?.workflow), qualityManifest: input.qualityManifest, quality: input.quality, injectedFrameRenderer: input.toolPolicy?.injectedFrameRenderer === true });
@@ -61,6 +91,8 @@ export async function renderStreamingFinal(input: RenderStreamingFinalInput): Pr
     const gpuPreflight = await preflightGpuFinalDelivery(input);
     if (!gpuPreflight.ok) return { ok: false, transport: planned.transport, error: gpuPreflight.failure };
   }
+  const revalidation = await revalidateCoordinatedLineage(hooks.revalidateLineage);
+  if (revalidation) return { ok: false, transport: planned.transport, error: revalidation };
   try {
     const publication = input.outputPublication ?? await acquireDerivedOutputPublication({ outputPath: input.outputPath, kind: "file", force: input.force === true });
     let published = false;
@@ -83,11 +115,16 @@ export async function renderStreamingFinal(input: RenderStreamingFinalInput): Pr
       if (!published && !handedToPair) await publication.abort();
     }
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) return { ok: false, transport: planned.transport, error: { code: "render_failed", message: error.message } };
     return { ok: false, transport: planned.transport, error: streamingPublicationFailure(error) };
   }
 }
 
-async function renderStrict(input: RenderStreamingFinalInput, preparation: import("./linear-srgb-sdr-final-adapter.js").LinearSrgbSdrFinalPreparation): Promise<RenderStreamingFinalResult> {
+async function renderStrict(
+  input: RenderStreamingFinalInput,
+  preparation: import("./linear-srgb-sdr-final-adapter.js").LinearSrgbSdrFinalPreparation,
+  hooks: CoordinatedStreamingFinalHooks,
+): Promise<RenderStreamingFinalResult> {
   const transport = { delivery: "streamed" as const, reason: "stream_default" as const };
   try {
     claimLinearSrgbSdrFinalPreparation(input.pkg.motion, preparation);
@@ -98,6 +135,8 @@ async function renderStrict(input: RenderStreamingFinalInput, preparation: impor
   if (currentPlan.kind !== "strict") {
     return { ok: false, transport, error: currentPlan.kind === "refused" ? currentPlan.error : { code: "linear_srgb_sdr_final_unsupported", message: "Strict linear-sRGB SDR input changed before output reservation." } };
   }
+  const revalidation = await revalidateCoordinatedLineage(hooks.revalidateLineage);
+  if (revalidation) return { ok: false, transport, error: revalidation };
   try {
     const publication = input.outputPublication ?? await acquireDerivedOutputPublication({ outputPath: input.outputPath, kind: "file", force: input.force === true });
     let published = false;
@@ -119,6 +158,17 @@ async function renderStrict(input: RenderStreamingFinalInput, preparation: impor
       if (!published && !handedToPair) await publication.abort();
     }
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) return { ok: false, transport, error: { code: "render_failed", message: error.message } };
     return { ok: false, transport, error: streamingPublicationFailure(error) };
+  }
+}
+
+async function revalidateCoordinatedLineage(revalidate: CoordinatedStreamingFinalHooks["revalidateLineage"]): Promise<{ code: "render_failed"; message: string } | undefined> {
+  if (!revalidate) return undefined;
+  try {
+    await revalidate();
+    return undefined;
+  } catch (error) {
+    return { code: "render_failed", message: error instanceof Error ? error.message : "Coordinated render package lineage could not be revalidated." };
   }
 }

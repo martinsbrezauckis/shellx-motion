@@ -10,9 +10,8 @@ The test subject is `signal-footage`. It begins at 480 ms and lasts 5600 ms; its
 trimmed to the half-open 720..1620 ms interval, loops, and runs at 1.25x. The exact forward,
 backward, and random playhead contract is in [SCRUB_TRACE.md](SCRUB_TRACE.md). This is a source
 fixture for deterministic request and cache qualification. V25-B1 source implementation can admit
-it only through the host-owned visual-only provider; the fixture alone is not evidence that a qualified Linux GPU-host
-native run has succeeded, decoded-frame/cache/texture high-water evidence has been retained, or
-human visual acceptance has occurred.
+it only through the host-owned visual-only provider; the fixture alone does not establish native
+pixels, resource bounds, cleanup, or visual quality on the current host.
 
 ## Package-local asset closure
 
@@ -30,4 +29,5 @@ recipe. The recipe pins both origin and digest:
 The atmosphere video is the already-tracked silent source asset, not a rendered proof. Its
 original generated-asset receipt is
 `templates/shellx-product-pack/keyed-subject-promo/receipts/generated-background.receipt.json`.
-The shipped package contains its referenced visual assets.
+The package includes its source assets and canonical `manifest.json` and `motion.json`.
+No code or visual material is imported from a researched repository.

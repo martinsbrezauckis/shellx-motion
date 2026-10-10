@@ -492,7 +492,7 @@ describe("visual-regression baseline: shifted frames must fail the delivery prof
  * header reach an allocation:
  *
  *   1. the IDAT byte stream, whose inflated size is not bounded by the file's size (zlib reaches
- *      ~1029:1 on a run of zeros, measured on this Node — a 65 KB IDAT inflates to 64 MiB);
+ *      roughly 1029:1 on a run of zeros — a small IDAT can inflate to tens of MiB);
  *   2. the IHDR `width`/`height`, two UInt32BE fields that sized `Buffer.alloc(width * height * 4)`
  *      before anything checked them.
  *
@@ -507,7 +507,7 @@ describe("visual-regression baseline: shifted frames must fail the delivery prof
  *     a 3 GB `ulimit -v`, and as an OOM without one). A tiny IDAT does not make a huge header safe.
  *
  * The bomb fixtures are BUILT HERE from zlib rather than committed as bytes: this repository refuses
- * raw binary in source (`scripts/no-nul-bytes.mjs`), and a bomb is far more legible as the two
+ * raw binary in source (`scripts/public/no-nul-bytes.mjs`), and a bomb is far more legible as the two
  * numbers that make it one than as a base64 blob.
  */
 describe("PNG decompression-bomb refusal in the quality decoder", () => {

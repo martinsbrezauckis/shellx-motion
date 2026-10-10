@@ -67,10 +67,15 @@ describe("canvas frame-selection published schema contract", () => {
       { label: "brand missing tokens", mutate: (doc) => { delete doc.brand.tokens; } },
       { label: "frame missing width", mutate: (doc) => { delete doc.frames[0].width; } },
       { label: "frame width not a number", mutate: (doc) => { doc.frames[0].width = "1080"; } },
+      { label: "frame width fractional", mutate: (doc) => { doc.frames[0].width = 1.5; } },
+      { label: "frame height non-positive", mutate: (doc) => { doc.frames[0].height = 0; } },
+      { label: "frame fps non-positive", mutate: (doc) => { doc.frames[0].fps = 0; } },
       { label: "layer missing kind", mutate: (doc) => { delete doc.frames[0].layers[0].kind; } },
       { label: "layer kind no lane renders", mutate: (doc) => { doc.frames[0].layers[0].kind = "rect"; } },
       { label: "layer kind unknown entirely", mutate: (doc) => { doc.frames[0].layers[0].kind = "plugin-widget"; } },
       { label: "layer missing startMs", mutate: (doc) => { delete doc.frames[0].layers[0].startMs; } },
+      { label: "layer start before timeline", mutate: (doc) => { doc.frames[0].layers[0].startMs = -1; } },
+      { label: "layer duration non-positive", mutate: (doc) => { doc.frames[0].layers[0].durationMs = 0; } },
       { label: "imageEditorOutput missing sha256", mutate: (doc) => { delete doc.imageEditorOutputs[0].sha256; } }
     ];
 
@@ -80,6 +85,18 @@ describe("canvas frame-selection published schema contract", () => {
       expect(schemaAccepts(schema, doc), `${label}: schema should reject`).toBe(false);
       expect(parserAccepts(doc), `${label}: parser should reject`).toBe(false);
     }
+  });
+
+  it("accepts odd positive Canvas and image-editor dimensions", () => {
+    const schema = loadSchema();
+    const doc = readJson(resolve(fixturesDir, "frame-selection.json")) as any;
+    doc.frames[0].width = 1081;
+    doc.frames[0].height = 1919;
+    doc.imageEditorOutputs[0].width = 921;
+    doc.imageEditorOutputs[0].height = 1021;
+
+    expect(schemaAccepts(schema, doc)).toBe(true);
+    expect(parserAccepts(doc)).toBe(true);
   });
 
   it("pins the schema's required field lists to the parser's enforced fields", () => {

@@ -4,7 +4,7 @@
  * Source: schemas/job-status.json
  * Regenerate: pnpm docs:job-status   ·   Verify: pnpm docs:check
  *
- * The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.
+ * The single authored definition of how Motion reports observable job state. The V1 status view carries the callerId, lifecycle/outcome projection, timestamps, warnings, and only fields that the live lease or terminal record actually retains; it never exposes host process identity or invents queue position, ETA, progress, workers, bytes, artifact lists, or receipt lists. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.
  */
 
 /** Answers 'can this still change on its own?'. Three values. This set is frozen: adding to it is a breaking change. */
@@ -20,7 +20,7 @@ export type JobState = "pending" | "running" | "succeeded" | "failed" | "cancell
 export type JobQueryErrorCode = "job_unknown" | "job_expired" | "job_not_visible";
 
 /** Why a job failed. Retryability is a property of the code, declared once, not per throw site. */
-export type JobErrorCode = "job_queue_timeout" | "job_deadline_exceeded" | "job_rss_limit_exceeded" | "job_scratch_budget_failed" | "job_queue_full" | "job_abandoned" | "job_scratch_path_unsafe" | "job_input_budget_exceeded" | "unsupported_preset" | "capability_unavailable" | "invalid_args" | "unsafe_input_path" | "derived_output_busy" | "derived_output_exists" | "derived_output_stage_invalid" | "output_dir_not_empty" | "frame_lane_refused" | "quality_gate_failed" | "cache_integrity_failed" | "cache_busy" | "segment_store_busy" | "segment_checkpoint_invalid" | "segment_source_changed" | "segmented_final_unsupported" | "segmented_final_failed";
+export type JobErrorCode = "job_queue_timeout" | "job_deadline_exceeded" | "job_rss_limit_exceeded" | "job_scratch_budget_failed" | "job_queue_full" | "job_scratch_path_unsafe" | "job_input_budget_exceeded" | "unsupported_preset" | "capability_unavailable" | "invalid_args" | "unsafe_input_path" | "derived_output_busy" | "derived_output_exists" | "derived_output_stage_invalid" | "output_dir_not_empty" | "frame_lane_refused" | "quality_gate_failed" | "cache_integrity_failed" | "cache_busy" | "segment_store_busy" | "segment_checkpoint_invalid" | "segment_source_changed" | "segmented_final_unsupported" | "segmented_final_failed";
 
 /** What a caller should do about a non-retryable failure. */
 export type JobRemedyKind = "change_input" | "free_resources" | "wait" | "grant_permission" | "none";
@@ -28,8 +28,6 @@ export type JobRemedyKind = "change_input" | "free_resources" | "wait" | "grant_
 /** Why a unit of work was deliberately not attempted. */
 export type JobSkipCode = "already_satisfied" | "precondition_unmet" | "batch_halted" | "dependency_failed";
 
-/** Coarse phase within a running job, for progress reporting only. Never a state. */
-export type JobStage = "preparing" | "encoding" | "verifying" | "writing" | "launching" | "loading" | "drawing" | "closing" | "expanding" | "rendering" | "attesting";
 
 export const JOB_LIFECYCLES: readonly JobLifecycle[] = Object.freeze(["pending", "running", "ended"]);
 export const JOB_OUTCOMES: readonly JobOutcome[] = Object.freeze(["succeeded", "failed", "cancelled", "skipped"]);
@@ -39,14 +37,13 @@ export const JOB_STATES: readonly JobState[] = Object.freeze(["pending", "runnin
 export const NON_TERMINAL_JOB_STATES: readonly JobState[] = Object.freeze(["pending", "running"]);
 
 const TERMINAL_LIFECYCLES: ReadonlySet<string> = new Set(["ended"]);
-const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set(["job_queue_timeout", "job_deadline_exceeded", "job_rss_limit_exceeded", "job_scratch_budget_failed", "job_queue_full", "job_abandoned", "derived_output_busy", "cache_busy", "segment_store_busy", "segmented_final_failed"]);
+const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set(["job_queue_timeout", "job_deadline_exceeded", "job_rss_limit_exceeded", "job_scratch_budget_failed", "job_queue_full", "derived_output_busy", "cache_busy", "segment_store_busy", "segmented_final_failed"]);
 const REMEDY_BY_ERROR_CODE: Readonly<Record<JobErrorCode, JobRemedyKind>> = Object.freeze({
   "job_queue_timeout": "wait",
   "job_deadline_exceeded": "change_input",
   "job_rss_limit_exceeded": "free_resources",
   "job_scratch_budget_failed": "free_resources",
   "job_queue_full": "wait",
-  "job_abandoned": "none",
   "job_scratch_path_unsafe": "change_input",
   "job_input_budget_exceeded": "change_input",
   "unsupported_preset": "change_input",
@@ -74,12 +71,12 @@ const OUTCOME_BY_RECEIPT_STATUS: Readonly<Record<string, JobOutcome>> = Object.f
   "not_run": "skipped"
 });
 
-/** True while the job can still change on its own; false once it has ended. */
+/** True while the lifecycle can still transition; false once it has ended. */
 export function isJobInFlight(state: string): state is JobState {
   return (NON_TERMINAL_JOB_STATES as readonly string[]).includes(state);
 }
 
-/** True when the job will not change again on its own. */
+/** True when lifecycle and outcome are terminal; permitted terminal metadata may still be amended. */
 export function isTerminalLifecycle(lifecycle: JobLifecycle): boolean {
   return TERMINAL_LIFECYCLES.has(lifecycle);
 }
@@ -127,88 +124,127 @@ export const RESERVED_NON_RECEIPT_STATUS_WORDS: readonly string[] = Object.freez
 export const JOB_STATUS_CONTRACT = Object.freeze({
   "schema": "shellx-motion/job-status-contract@1",
   "title": "ShellX Motion job status contract",
-  "summary": "The single authored definition of how Motion reports what is happening with work an agent requested. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.",
+  "summary": "The single authored definition of how Motion reports observable job state. The V1 status view carries the callerId, lifecycle/outcome projection, timestamps, warnings, and only fields that the live lease or terminal record actually retains; it never exposes host process identity or invents queue position, ETA, progress, workers, bytes, artifact lists, or receipt lists. Every state vocabulary, shared core error code and agent-facing description in the CLI, SDK, Debug API, MCP transport and documentation is generated from this file. Capability-owned future error codes follow the bounded preservation policy in this contract instead of being rewritten as a shared core code.",
   "designPrinciple": "A state earns its existence only if it changes what the caller does next. Anything that changes only latency or detail is a field, not a state.",
   "axes": {
     "lifecycle": "Answers 'can this still change on its own?'. Three values. This set is frozen: adding to it is a breaking change.",
     "outcome": "Answers 'how did it end?'. Present if and only if lifecycle is 'ended', null otherwise.",
     "state": "A derived projection: lifecycle === 'ended' ? outcome : lifecycle. Generated, never authored, and never accepted as an input. You cancel by jobId; you never set a state."
   },
+  "optionalFields": [{"name":"frameLane","lifecycle":["pending","running","ended"],"meaning":"The selected final-video rasterizer, when this route retained one. It is absent for non-final and historical records that did not store a frame lane."},{"name":"planFingerprint","lifecycle":["pending","running","ended"],"meaning":"The immutable V1 render-plan fingerprint, when this job was preflighted and retained with one. Its absence, including on historical records, means unavailable plan identity."},{"name":"startedAtMs","lifecycle":["ended"],"meaning":"The first governed-operation admission time on a terminal record. It is absent when the terminal job never reached admission. It is always present while lifecycle is running."},{"name":"error","lifecycle":["ended"],"outcomes":["failed"],"meaning":"Typed failure detail when the terminal failed record retained it. Historical failed records may lack it; status never manufactures an error object."},{"name":"committed","lifecycle":["ended"],"outcomes":["failed"],"meaning":"Literal true only when irreversible publication occurred or may have occurred. It is failure uncertainty, not successful artifact evidence and never deletion authority; it overrides retryable as a stop-and-reconcile fact. Historical omission remains unavailable data."},{"name":"cancellation","lifecycle":["ended"],"outcomes":["cancelled"],"meaning":"Accepted cancellation detail from a cancelled terminal record, when retained. It is distinct from live cancelRequested intent."},{"name":"skip","lifecycle":["ended"],"outcomes":["skipped"],"meaning":"The reason a terminal record was deliberately skipped, when retained."},{"name":"receiptPath","lifecycle":["ended"],"deprecated":true,"meaning":"Deprecated host-local compatibility linkage: a non-empty string of at most 4096 Unicode code points with no C0 or DEL control character. It may be amended after terminal settlement, is not portable receipt or artifact authority, and must never be used to infer success or to open a local path on another host."},{"name":"receiptId","lifecycle":["ended"],"meaning":"An exact final receipt id when the terminal operation retained one, including when no host-local receiptPath exists."},{"name":"producerEvidence","lifecycle":["ended"],"meaning":"The compact frame-lane and optional producer-schema link retained from an exact final receipt, when present. It is not an artifact list or generic output authority."},{"name":"evidence","lifecycle":["ended"],"meaning":"The optional path-free, validated V1 terminal evidence envelope. It is unavailable for live jobs and historical terminal records that did not retain one."},{"name":"lineage","lifecycle":["ended"],"meaning":"The immutable prior-job/prior-receipt retry lineage when this terminal run was explicitly created as a retry. It is absent for ordinary and historical jobs."}],
+  "notPublicFields": [{"name":"pid","meaning":"A live lease's host process identity is internal admission and liveness state. Public job status never exposes it; callers use jobId and callerId across processes."}],
   "lifecycle": [
     {
       "name": "pending",
       "terminal": false,
-      "meaning": "Motion has accepted the request, validated its arguments, minted a jobId, and is waiting for a concurrency slot. No process has been spawned and no bytes have been written.",
+      "meaning": "Motion accepted the request and is waiting for a concurrency slot. No governed operation belonging to this job has been admitted. This state makes no claim about a worker process, produced bytes, queue position, queue ETA, or progress.",
       "agentAction": "wait",
-      "agentGuidance": "Keep waiting. To tell the user how long, read queue.position and queue.aheadEstimatedMs. A cancel here is free and immediate.",
+      "agentGuidance": "Keep waiting and poll no faster than pollAfterMs. Do not estimate a queue position or completion time. cancelRequested may report accepted cancellation intent, but outcome remains null until a terminal record is written.",
       "guaranteed": [
+        "schema",
         "jobId",
+        "callerId",
+        "lane",
         "operation",
-        "caller",
-        "createdAt",
-        "truth",
-        "queue",
-        "cancelRequested"
+        "lifecycle",
+        "outcome",
+        "state",
+        "createdAtMs",
+        "cancelRequested",
+        "warnings",
+        "pollAfterMs"
       ],
       "absent": [
-        "startedAt",
-        "progress",
+        "startedAtMs",
+        "queueWaitMs",
+        "endedAtMs",
+        "durationMs",
         "error",
-        "endedAt",
-        "artifacts"
+        "committed",
+        "cancellation",
+        "skip",
+        "receiptPath",
+        "receiptId",
+        "producerEvidence",
+        "evidence",
+        "lineage",
+        "pid"
       ],
       "notToBeConfusedWith": [
         {
           "state": "running",
-          "because": "In pending nothing is being produced, so a user-facing 'rendering...' message is a lie. Say 'waiting for a slot (3 ahead)' instead."
+          "because": "pending means no governed operation has been admitted. It is truthful to say the request is waiting, but not to claim rendering, a worker, bytes, a position, or an ETA."
         }
       ]
     },
     {
       "name": "running",
       "terminal": false,
-      "meaning": "The job was admitted, resources are committed, and at least one worker process has been spawned and is being monitored by the governor.",
+      "meaning": "At least one governed operation belonging to the job was admitted. startedAtMs records that admission; queueWaitMs is the observed wait from acceptance to admission. This state does not expose a worker, byte count, stage, percentage, or ETA.",
       "agentAction": "wait",
-      "agentGuidance": "Keep waiting, and answer 'how long' from progress. Poll no faster than pollAfterMs. Check progress.updatedAt for staleness: if now minus progress.updatedAt exceeds three times progress.heartbeatMs, tell the user 'no progress for N seconds' rather than 'still working'.",
+      "agentGuidance": "Keep waiting and poll no faster than pollAfterMs. Report only that an admitted governed operation is running; do not derive progress, an ETA, or producer activity from repeated status reads.",
       "guaranteed": [
+        "schema",
         "jobId",
+        "callerId",
+        "lane",
         "operation",
-        "caller",
-        "createdAt",
-        "truth",
+        "lifecycle",
+        "outcome",
+        "state",
+        "createdAtMs",
+        "startedAtMs",
+        "queueWaitMs",
         "cancelRequested",
-        "startedAt",
-        "progress"
+        "warnings",
+        "pollAfterMs"
       ],
       "absent": [
-        "outcome",
+        "endedAtMs",
+        "durationMs",
         "error",
-        "endedAt"
+        "committed",
+        "cancellation",
+        "skip",
+        "receiptPath",
+        "receiptId",
+        "producerEvidence",
+        "evidence",
+        "lineage",
+        "pid"
       ],
       "notToBeConfusedWith": [
         {
           "state": "pending",
-          "because": "running means bytes are being produced; pending means a slot is being waited for."
+          "because": "running means a governed operation was admitted; pending means the request is still waiting for one. Neither state promises a worker, bytes, progress, or an ETA."
         }
       ]
     },
     {
       "name": "ended",
       "terminal": true,
-      "meaning": "The job will not change again. Read outcome to learn how it ended.",
+      "meaning": "The terminal lifecycle and outcome will not change again. A later layer may attach receipt linkage without reopening the job. A retained V1 evidence envelope fixes its warnings; only a terminal record without V1 evidence may retain a later warning attachment. Read outcome to learn how the coordinator execution settled. endedAtMs, durationMs, and queueWaitMs are retained status timing, not progress evidence.",
       "agentAction": "read_outcome",
-      "agentGuidance": "Branch on outcome. Never infer success from the presence of an artifact path.",
+      "agentGuidance": "Stop polling for lifecycle progress because pollAfterMs is absent, not because every status field is frozen. Branch on outcome. A later read may attach receipt linkage without changing lifecycle or outcome. A retained V1 evidence envelope fixes its terminal warnings; warning attachment is only possible when V1 evidence is absent. planFingerprint is optional and identifies the V1 plan only when retained; evidence is optional and returned only from a validated terminal V1 record. Their absence, including on historical records, is unavailable data, not a failure.",
       "guaranteed": [
+        "schema",
         "jobId",
+        "callerId",
+        "lane",
         "operation",
-        "caller",
-        "createdAt",
-        "truth",
+        "lifecycle",
         "outcome",
-        "endedAt"
+        "state",
+        "createdAtMs",
+        "endedAtMs",
+        "durationMs",
+        "queueWaitMs",
+        "cancelRequested",
+        "warnings"
       ],
       "absent": [
-        "queue"
+        "pollAfterMs",
+        "pid"
       ],
       "notToBeConfusedWith": []
     }
@@ -216,64 +252,62 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
   "outcomes": [
     {
       "name": "succeeded",
-      "meaning": "The work completed and every declared output was produced, hashed and attested. warnings may be non-empty: a warned success is still a success.",
+      "meaning": "The coordinator execution settled successfully. warnings may be non-empty: a warned success is still a success. This outcome is not a universal claim that every declared output was produced, hashed, or attested.",
       "agentAction": "report_success",
-      "agentGuidance": "Stop and report success, handing back artifacts[].path. If warnings is non-empty, surface it: the artifact exists but something about it was not what was asked for.",
+      "agentGuidance": "Stop and report the settled outcome and any warnings. Do not infer a root-level artifact or receipt collection from status. If optional terminal evidence is present, treat it as the bounded V1 evidence envelope, not as a generic output authority.",
       "guaranteed": [
-        "endedAt",
+        "endedAtMs",
         "durationMs",
-        "artifacts",
-        "receipts",
+        "queueWaitMs",
         "warnings"
       ],
-      "absent": [
-        "error"
-      ],
+      "absent": [],
       "notToBeConfusedWith": [
         {
           "state": "failed",
-          "because": "A non-empty artifacts array does not imply success: a failed encode can leave a truncated file behind. Switch on outcome, never on the presence of a path."
+          "because": "failed is a different terminal outcome. Switch on outcome; neither status surface invents a root-level artifact or receipt collection."
         },
         {
           "state": "receipt status 'passed'",
-          "because": "Job outcome and receipt status are different axes. A job can succeed while carrying a receipt whose status is 'warning'."
+          "because": "The historical receipt-status compatibility mapping is a different axis. It does not make succeeded a universal artifact-attestation claim."
         }
       ]
     },
     {
       "name": "failed",
-      "meaning": "The job was admitted or started, and stopped for a reason that was neither a cancellation request nor a deliberate skip.",
+      "meaning": "The coordinator execution settled unsuccessfully for a reason that was neither a cancellation request nor a deliberate skip.",
       "agentAction": "branch_on_retryable",
-      "agentGuidance": "Read error.retryable. When true, retry after error.retryAfterMs if present. When false, use error.remedy to change approach, or error.message to explain to the user why this cannot work.",
+      "agentGuidance": "If committed is true, stop and reconcile before any retry even when error.retryable is true; it means publication occurred or may have occurred, not that an artifact succeeded, and grants no deletion authority. Otherwise, if error is present, branch on error.retryable and optional retryAfterMs; otherwise report only the settled failed outcome. Status never manufactures either field for historical records.",
       "guaranteed": [
-        "endedAt",
+        "endedAtMs",
         "durationMs",
-        "error"
+        "queueWaitMs",
+        "warnings"
       ],
       "absent": [],
       "notToBeConfusedWith": [
         {
           "state": "cancelled",
-          "because": "failed always carries error; cancelled never does. An agent may auto-retry a failed job. Auto-retrying a cancelled one overrides a human's explicit instruction."
+          "because": "A host-produced failed record carries failure detail when available; a cancelled record represents accepted cancellation. Do not auto-retry a cancelled outcome."
         }
       ]
     },
     {
       "name": "cancelled",
-      "meaning": "A cancel request was accepted and the work stopped. It may have stopped from pending, in which case nothing ran, or from running, in which case partial output may exist.",
+      "meaning": "A cancel request was accepted and the coordinator execution settled cancelled. It may have settled before admission or after a governed operation had been admitted.",
       "agentAction": "stop_and_explain",
-      "agentGuidance": "Stop and explain. Do not auto-retry. Surface cancellation.reason and cancellation.requestedBy to the user, and ask before restarting.",
+      "agentGuidance": "Stop and explain. Do not auto-retry. If cancellation is present, surface cancellation.reason and cancellation.requestedBy; ask before starting a new job.",
       "guaranteed": [
-        "endedAt",
-        "cancellation"
+        "endedAtMs",
+        "durationMs",
+        "queueWaitMs",
+        "warnings"
       ],
-      "absent": [
-        "error"
-      ],
+      "absent": [],
       "notToBeConfusedWith": [
         {
           "state": "failed",
-          "because": "The absence of error is the load-bearing invariant of this contract. An agent whose retry policy is 'if (job.error?.retryable) retry()' must be structurally incapable of restarting something a human stopped."
+          "because": "cancelled is an explicit terminal outcome. A retry policy must branch on outcome and never restart it automatically."
         },
         {
           "state": "skipped",
@@ -283,22 +317,20 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
     },
     {
       "name": "skipped",
-      "meaning": "Motion decided this unit of work should not run, and that decision was correct.",
+      "meaning": "Motion decided this unit of work should not run, and that decision was correct. If startedAtMs is absent, it is the machine-checkable proof that no governed operation was admitted.",
       "agentAction": "report_neutrally",
-      "agentGuidance": "Stop and report neutrally. This is not a problem and must not be reported as one. For already_satisfied the artifact from the prior run is referenced in artifacts, so the user's request is satisfied.",
+      "agentGuidance": "Stop and report neutrally. This is not a problem and must not be reported as one. Do not infer prior output authority from status.",
       "guaranteed": [
-        "endedAt",
-        "skip"
+        "endedAtMs",
+        "durationMs",
+        "queueWaitMs",
+        "warnings"
       ],
-      "absent": [
-        "error",
-        "startedAt",
-        "durationMs"
-      ],
+      "absent": [],
       "notToBeConfusedWith": [
         {
           "state": "failed",
-          "because": "A resumed batch of 100 rows where 97 were already done reports 97 skipped and 3 succeeded. Reporting those 97 as failures is how a working resume looks broken. startedAt being absent is the machine-checkable proof that nothing ran."
+          "because": "skipped is a neutral terminal outcome, not a failure. When startedAtMs is absent, it proves that no governed operation was admitted."
         }
       ]
     }
@@ -306,13 +338,13 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
   "queryErrors": [
     {
       "code": "job_unknown",
-      "meaning": "No record, and no receipt carrying this jobId. Almost always a typo or a query against the wrong machine.",
+      "meaning": "No visible live lease or readable terminal record matches this jobId. It is commonly a typo, a wrong caller, or a query against the wrong machine.",
       "agentGuidance": "Stop. Do not report this as a failed job. Ask the user, or re-read the submission response for the real jobId."
     },
     {
       "code": "job_expired",
-      "meaning": "The record existed but was pruned by retention. The receipt may still resolve.",
-      "agentGuidance": "Fall back to the receipt index. If that is also gone, report that the evidence is no longer retained."
+      "meaning": "A Motion-minted jobId is older than terminal-record retention and no record is readable. This is an age-based retained-state classification, not proof that a particular record once existed.",
+      "agentGuidance": "Stop polling this status route. Ask the owning host for any separately retained evidence rather than claiming the job record is available."
     },
     {
       "code": "job_not_visible",
@@ -320,7 +352,7 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
       "agentGuidance": "Re-query as the owning caller, or ask the host. Deliberately distinct from job_unknown: an agent told 'unknown' for a job that exists will conclude Motion lost it."
     }
   ],
-  "errorCodes": [{"code":"job_queue_timeout","retryable":true,"remedy":"wait","meaning":"The job waited for a concurrency slot longer than its queue deadline allowed."},{"code":"job_deadline_exceeded","retryable":true,"remedy":"change_input","meaning":"The job ran longer than its deadline. Retrying an unchanged job will usually hit the same deadline; a smaller job will not."},{"code":"job_rss_limit_exceeded","retryable":true,"remedy":"free_resources","meaning":"The worker's resident memory crossed the governor's ceiling and it was stopped to protect the machine."},{"code":"job_scratch_budget_failed","retryable":true,"remedy":"free_resources","meaning":"Scratch space for intermediate frames could not be reserved."},{"code":"job_queue_full","retryable":true,"remedy":"wait","meaning":"The queue was at capacity when the job was submitted, so it was never admitted."},{"code":"job_abandoned","retryable":true,"remedy":"none","meaning":"The process that owned this job disappeared without writing a terminal record. Recorded by the reaper, not by the worker."},{"code":"job_scratch_path_unsafe","retryable":false,"remedy":"change_input","meaning":"The requested scratch location resolved outside the permitted roots."},{"code":"job_input_budget_exceeded","retryable":false,"remedy":"change_input","meaning":"The declared inputs exceed what this host will admit; retrying identical inputs cannot help."},{"code":"unsupported_preset","retryable":false,"remedy":"change_input","meaning":"The requested export preset does not exist on this build."},{"code":"capability_unavailable","retryable":false,"remedy":"grant_permission","meaning":"The operation needs a capability this caller's permission tier does not carry."},{"code":"invalid_args","retryable":false,"remedy":"change_input","meaning":"The request did not satisfy the command's argument contract."},{"code":"unsafe_input_path","retryable":false,"remedy":"change_input","meaning":"A final audio input was not a regular package-local WAV, FLAC, MP3, Ogg, or Opus file; M4A/MP4/MOV/Matroska/WebM and reference-capable inputs are refused before FFmpeg starts."},{"code":"derived_output_busy","retryable":true,"remedy":"wait","meaning":"Another final render holds the exact output path's private publication reservation."},{"code":"derived_output_exists","retryable":false,"remedy":"change_input","meaning":"The requested final path already exists; it was preserved rather than overwritten."},{"code":"derived_output_stage_invalid","retryable":false,"remedy":"change_input","meaning":"Private staged output changed or contained an unexpected file before publication."},{"code":"output_dir_not_empty","retryable":false,"remedy":"change_input","meaning":"The output directory already holds files, and overwriting was not requested."},{"code":"frame_lane_refused","retryable":false,"remedy":"change_input","meaning":"The chosen frame lane cannot draw this package faithfully; a different lane can."},{"code":"quality_gate_failed","retryable":false,"remedy":"change_input","meaning":"The delivered artifact did not satisfy the quality manifest it was rendered against."},{"code":"cache_integrity_failed","retryable":false,"remedy":"change_input","meaning":"An opt-in attested-reuse output, descriptor, receipt, or current input did not prove the exact requested identity, so Motion refused to overwrite or rerender it."},{"code":"cache_busy","retryable":true,"remedy":"wait","meaning":"An exact opt-in attested-reuse fill holds its root-local exclusive lock. A stale lock needs host inspection; Motion never breaks it automatically."},{"code":"segment_store_busy","retryable":true,"remedy":"wait","meaning":"Another durable segmented render owns the checkpoint store deterministically derived from this output path. Motion never breaks this lock automatically."},{"code":"segment_checkpoint_invalid","retryable":false,"remedy":"change_input","meaning":"A retained segmented checkpoint, source fingerprint, concat proof, or no-clobber publication proof was invalid, so Motion did not publish the requested output."},{"code":"segment_source_changed","retryable":false,"remedy":"change_input","meaning":"The package changed while durable segmented checkpoints were being produced. Start a fresh render from stable package bytes."},{"code":"segmented_final_unsupported","retryable":false,"remedy":"change_input","meaning":"The selected segmented delivery mode does not support this renderer, preset, workflow, script, or quality contract."},{"code":"segmented_final_failed","retryable":true,"remedy":"wait","meaning":"Segmented delivery stopped without a completed no-clobber publication. Only verified checkpoints, if any, remain for an explicit resume."}],
+  "errorCodes": [{"code":"job_queue_timeout","retryable":true,"remedy":"wait","meaning":"The job waited for a concurrency slot longer than its queue deadline allowed."},{"code":"job_deadline_exceeded","retryable":true,"remedy":"change_input","meaning":"The job ran longer than its deadline. Retrying an unchanged job will usually hit the same deadline; a smaller job will not."},{"code":"job_rss_limit_exceeded","retryable":true,"remedy":"free_resources","meaning":"The worker's resident memory crossed the governor's ceiling and it was stopped to protect the machine."},{"code":"job_scratch_budget_failed","retryable":true,"remedy":"free_resources","meaning":"Scratch space for intermediate frames could not be reserved."},{"code":"job_queue_full","retryable":true,"remedy":"wait","meaning":"The queue was at capacity when the job was submitted, so it was never admitted."},{"code":"job_scratch_path_unsafe","retryable":false,"remedy":"change_input","meaning":"The requested scratch location resolved outside the permitted roots."},{"code":"job_input_budget_exceeded","retryable":false,"remedy":"change_input","meaning":"The declared inputs exceed what this host will admit; retrying identical inputs cannot help."},{"code":"unsupported_preset","retryable":false,"remedy":"change_input","meaning":"The requested export preset does not exist on this build."},{"code":"capability_unavailable","retryable":false,"remedy":"grant_permission","meaning":"The operation needs a capability this caller's permission tier does not carry."},{"code":"invalid_args","retryable":false,"remedy":"change_input","meaning":"The request did not satisfy the command's argument contract."},{"code":"unsafe_input_path","retryable":false,"remedy":"change_input","meaning":"A final audio input was not a regular package-local WAV, FLAC, MP3, Ogg, or Opus file; M4A/MP4/MOV/Matroska/WebM and reference-capable inputs are refused before FFmpeg starts."},{"code":"derived_output_busy","retryable":true,"remedy":"wait","meaning":"Another final render holds the exact output path's private publication reservation."},{"code":"derived_output_exists","retryable":false,"remedy":"change_input","meaning":"The requested final path already exists; it was preserved rather than overwritten."},{"code":"derived_output_stage_invalid","retryable":false,"remedy":"change_input","meaning":"Private staged output changed or contained an unexpected file before publication."},{"code":"output_dir_not_empty","retryable":false,"remedy":"change_input","meaning":"The output directory already holds files, and overwriting was not requested."},{"code":"frame_lane_refused","retryable":false,"remedy":"change_input","meaning":"The chosen frame lane cannot draw this package faithfully; a different lane can."},{"code":"quality_gate_failed","retryable":false,"remedy":"change_input","meaning":"The delivered artifact did not satisfy the quality manifest it was rendered against."},{"code":"cache_integrity_failed","retryable":false,"remedy":"change_input","meaning":"An opt-in attested-reuse output, descriptor, receipt, or current input did not prove the exact requested identity, so Motion refused to overwrite or rerender it."},{"code":"cache_busy","retryable":true,"remedy":"wait","meaning":"An exact opt-in attested-reuse fill holds its root-local exclusive lock. A stale lock needs host inspection; Motion never breaks it automatically."},{"code":"segment_store_busy","retryable":true,"remedy":"wait","meaning":"Another durable segmented render owns the checkpoint store deterministically derived from this output path. Motion never breaks this lock automatically."},{"code":"segment_checkpoint_invalid","retryable":false,"remedy":"change_input","meaning":"A retained segmented checkpoint, source fingerprint, concat proof, or no-clobber publication proof was invalid, so Motion did not publish the requested output."},{"code":"segment_source_changed","retryable":false,"remedy":"change_input","meaning":"The package changed while durable segmented checkpoints were being produced. Start a fresh render from stable package bytes."},{"code":"segmented_final_unsupported","retryable":false,"remedy":"change_input","meaning":"The selected segmented delivery mode does not support this renderer, preset, workflow, script, or quality contract."},{"code":"segmented_final_failed","retryable":true,"remedy":"wait","meaning":"Segmented delivery stopped without a completed no-clobber publication. Only verified checkpoints, if any, remain for an explicit resume."}],
   "unknownErrorCodes": {
     "policy": "preserve",
     "pattern": "^[a-z][a-z0-9_.:-]{0,95}$",
@@ -368,40 +400,16 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
       "meaning": "Work this unit depends on did not succeed, so attempting this one would be pointless."
     }
   ],
-  "stages": {
-    "ffmpeg": [
-      "preparing",
-      "encoding",
-      "verifying",
-      "writing"
-    ],
-    "browser": [
-      "launching",
-      "loading",
-      "drawing",
-      "closing"
-    ],
-    "native": [
-      "loading",
-      "drawing",
-      "writing"
-    ],
-    "batch": [
-      "expanding",
-      "rendering",
-      "attesting"
-    ]
-  },
   "receiptMapping": [
     {
       "receiptStatus": "passed",
       "contributesTo": "succeeded",
-      "because": "The operation produced what it declared."
+      "because": "A historical passed receipt maps to the compatible successful outcome; it does not create a current job-status record or universally attest every output."
     },
     {
       "receiptStatus": "warning",
       "contributesTo": "succeeded",
-      "because": "A warned success is still a success. The warning travels in warnings[], not in the outcome."
+      "because": "A historical warned receipt maps to the compatible successful outcome; warnings remain explicit and this mapping does not create current status evidence."
     },
     {
       "receiptStatus": "failed",
@@ -466,8 +474,8 @@ export const JOB_STATUS_CONTRACT = Object.freeze({
     },
     {
       "question": "How long are terminal job records retained?",
-      "ruling": "7 days or 1000 jobs, whichever binds first, then pruned to receipts only.",
-      "because": "Retention is what makes job_expired distinguishable from job_unknown. The contract needs a number more than it needs a particular number.",
+      "ruling": "7 days or 1000 jobs, whichever binds first, then no longer returned by the terminal job-record status route.",
+      "because": "Retention bounds the terminal record store and makes job_expired distinguishable from job_unknown. Separately retained evidence is outside this status contract.",
       "status": "provisional-pending-maintainer"
     }
   ]

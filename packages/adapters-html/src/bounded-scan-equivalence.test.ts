@@ -1,17 +1,8 @@
 /**
- * Differential proof for the two bounded scans that shipped WITHOUT an equivalence oracle.
- *
- * The bounded-scan rewrite replaced seven regexes and initially proved only five of them equivalent.
- * An independent differential fuzz over
- * 85,000 documents found zero mismatches on those five. Two shipped with correctness resting
- * entirely on a prose argument: `hasExternalStylesheetLink()` and `scanCssFunctions()`.
- * The first drives emitted lossiness receipts, so a wrong answer changes what an import CLAIMS about
- * itself, which is the worst kind of quiet defect.
- *
- * A prose argument is a hypothesis. These tests run the retired regex beside the replacement over
- * generated adversarial input and require identical answers. Inputs stay small on purpose: the
- * ORACLE is the quadratic thing here (800 KB of `<link` took it 31 s), so fuzzing it at scale would
- * hang the suite rather than test anything.
+ * Compare bounded scans with the retired regex behavior on generated adversarial input.
+ * `hasExternalStylesheetLink()` affects emitted lossiness receipts, and
+ * `scanCssFunctions()` must preserve the accepted parse shape.
+ * Keep inputs small because the regex oracles can take quadratic time.
  */
 import { describe, expect, it } from "vitest";
 import { __boundedScanTestAccess } from "./index";

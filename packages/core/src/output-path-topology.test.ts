@@ -73,6 +73,23 @@ describe("output directory reservations", () => {
     await expect(reservation.assertCurrent()).rejects.toThrow(/exclusive child authority/i);
   });
 
+  it.skipIf(process.platform === "win32")("preserves exclusive-child revalidation when private retained authority also requires it", async () => {
+    const root = await workspace();
+    const store = join(root, "private-retained-store");
+    await mkdir(store, { mode: 0o700 });
+    const anchor = await createTrustedWorkspaceAnchor(root);
+    await withTrustedWorkspaceAnchor(anchor, async () => {
+      const reservation = await OutputDirectoryReservation.acquire(store, {
+        allowExistingContents: true,
+        requirePrivate: true,
+        requireExclusiveChildAuthority: true
+      });
+      await chmod(store, 0o1777);
+
+      await expect(reservation.assertCurrent()).rejects.toThrow(/private POSIX directory|exclusive child authority/i);
+    });
+  });
+
   it("refuses a pre-seeded create leaf instead of adopting a create-race winner", async () => {
     const root = await scratch();
     const store = join(root, "segments");

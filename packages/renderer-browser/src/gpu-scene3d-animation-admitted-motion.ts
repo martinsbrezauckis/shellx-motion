@@ -34,7 +34,7 @@ export function refreshGpuScene3DAnimationAdmittedMotion(
     : { ok: false, message: "GPU scene3d animation preview lost its re-admitted Core Motion authority." };
 }
 
-/** Scene3DAnimation publication freshness binds the original package manifest and a freshly admitted Motion tree. */
+/** scene3d animation publication freshness binds the original package manifest and a freshly admitted Motion tree. */
 export function gpuScene3DAnimationPackageSnapshotFreshness(
   pkg: MotionPackage,
   snapshot: GpuPreviewPackageSnapshot | undefined,

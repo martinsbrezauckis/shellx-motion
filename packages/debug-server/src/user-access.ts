@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -132,30 +132,20 @@ export async function writeMotionMcpBridgeDiscovery(
   await securePrivateFile(paths.mcpBridgeDiscoveryFile);
 }
 
-/** A stopped older server must never remove a newer listener's discovery record. */
+/**
+ * Retire one listener without deleting the shared discovery pathname.
+ *
+ * A pathname unlink cannot atomically mean "delete only if these bytes still belong to me": an
+ * older server can validate its record, a newer server can publish over it, and the older process
+ * can then unlink the newer record. Retaining the last per-start record closes that race. It is
+ * inert after its listener stops because the bridge requires the matching listener HMAC proof
+ * before it sends the credential or any MCP request; the next listener overwrites it on start.
+ */
 export async function clearMotionMcpBridgeDiscovery(
-  paths: MotionUserAccessPaths,
+  _paths: MotionUserAccessPaths,
   expected: MotionMcpBridgeDiscovery
 ): Promise<void> {
-  let raw: string;
-  try {
-    const metadata = await lstat(paths.mcpBridgeDiscoveryFile);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) return;
-    raw = await readFile(paths.mcpBridgeDiscoveryFile, "utf8");
-  } catch (error) {
-    if (isMissingFileError(error)) return;
-    throw error;
-  }
-  let current: MotionMcpBridgeDiscovery;
-  try {
-    current = parseMcpBridgeDiscovery(raw);
-  } catch {
-    // A malformed/replaced record is not ours to delete. The bridge treats it as unavailable.
-    return;
-  }
-  if (current.port === expected.port && secureTokenEqual(current.credential, expected.credential)) {
-    await rm(paths.mcpBridgeDiscoveryFile, { force: true });
-  }
+  assertMcpBridgeDiscovery(expected);
 }
 
 export async function writeEphemeralCapabilityFile(capabilityToken: string): Promise<{ tokenRoot: string; tokenFile: string }> {
@@ -247,21 +237,6 @@ function assertMcpBridgeDiscovery(value: MotionMcpBridgeDiscovery): void {
     throw new Error("Motion MCP bridge discovery requires a bound TCP port.");
   }
   assertCapabilityToken(value.credential);
-}
-
-function parseMcpBridgeDiscovery(raw: string): MotionMcpBridgeDiscovery {
-  const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Motion MCP bridge discovery is invalid.");
-  }
-  const value = parsed as Partial<MotionMcpBridgeDiscovery>;
-  const discovery: MotionMcpBridgeDiscovery = { port: value.port as number, credential: value.credential as string };
-  assertMcpBridgeDiscovery(discovery);
-  return discovery;
-}
-
-function secureTokenEqual(actual: string, expected: string): boolean {
-  return actual.length === expected.length && timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 
 async function securePrivateDirectory(path: string): Promise<void> {

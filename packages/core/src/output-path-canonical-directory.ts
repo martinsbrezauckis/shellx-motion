@@ -1,12 +1,14 @@
-import { lstat, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { assertWindowsOutputDirectoryAuthorities, WindowsOutputAclError } from "./windows-output-acl";
 import { OutputPathTopologyError } from "./output-path-topology-error";
+import { heldOutputDirectoryAllowsPath, heldOutputDirectoryState } from "./output-path-held-directory-authority";
 
-export type CanonicalDirectoryRequest = { path: string; requiresChildWrite: boolean };
+export type CanonicalDirectoryRequest = { path: string; requiresChildWrite: boolean; heldDirectoryAuthority?: unknown };
 
-export async function canonicalDirectory(path: string, options: { requiresChildWrite: boolean }) {
-  return (await canonicalDirectories([{ path, requiresChildWrite: options.requiresChildWrite }]))[0]!;
+export async function canonicalDirectory(path: string, options: { requiresChildWrite: boolean; heldDirectoryAuthority?: unknown }) {
+  return (await canonicalDirectories([{ path, requiresChildWrite: options.requiresChildWrite, heldDirectoryAuthority: options.heldDirectoryAuthority }]))[0]!;
 }
 
 /** Preserve POSIX's per-directory checks while batching a Windows route into one raw-DACL query. */
@@ -34,7 +36,7 @@ export async function collectEntireExistingRoute(root: string, parentPath: strin
 
 async function canonicalDirectories(requests: readonly CanonicalDirectoryRequest[]) {
   const before = [];
-  for (const request of requests) before.push(await captureCanonicalDirectory(request.path));
+  for (const request of requests) before.push(await captureCanonicalDirectory(request.path, request.heldDirectoryAuthority));
   try {
     await assertWindowsOutputDirectoryAuthorities(requests);
   } catch (error) {
@@ -45,7 +47,7 @@ async function canonicalDirectories(requests: readonly CanonicalDirectoryRequest
   const after = [];
   for (let index = 0; index < requests.length; index += 1) {
     const request = requests[index]!;
-    const facts = await captureCanonicalDirectory(request.path);
+    const facts = await captureCanonicalDirectory(request.path, request.heldDirectoryAuthority);
     const original = before[index]!;
     if (Number(facts.dev) !== Number(original.dev) || Number(facts.ino) !== Number(original.ino)) {
       throw new OutputPathTopologyError("Output parent changed while its authority was inspected.", request.path);
@@ -55,7 +57,23 @@ async function canonicalDirectories(requests: readonly CanonicalDirectoryRequest
   return after;
 }
 
-async function captureCanonicalDirectory(path: string) {
+async function captureCanonicalDirectory(path: string, heldDirectoryAuthority: unknown) {
+  const held = heldOutputDirectoryState(heldDirectoryAuthority);
+  if (held && heldOutputDirectoryAllowsPath(heldDirectoryAuthority, path)) {
+    await held.assertCurrent();
+    const rootDescriptor = path === held.rootPath;
+    const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | (rootDescriptor ? 0 : constants.O_NOFOLLOW));
+    try {
+      const facts = await handle.stat();
+      if (!facts.isDirectory() || facts.isSymbolicLink()) {
+        throw new OutputPathTopologyError("Output parent descriptor capability is not a directory.", path);
+      }
+      await held.assertCurrent();
+      return facts;
+    } finally {
+      await handle.close();
+    }
+  }
   const facts = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     throw new OutputPathTopologyError(`Output parent could not be inspected safely (${error.code ?? "unknown error"}).`, path);
   });

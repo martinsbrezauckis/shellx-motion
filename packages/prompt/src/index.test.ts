@@ -2348,8 +2348,7 @@ describe("raw prompt retention lifecycle", () => {
   }
 
   it("regression: a receipt read after deleteAfter must not yield the raw request", async () => {
-    // The original finding: resolvePromptRetention validated the deadline, nothing consumed it,
-    // so a reader after the promised deletion date still received the full raw prompt.
+    // An expired retention deadline must redact a persisted raw request on read.
     const persisted = await persistedRetainedReceipt();
     expect(persisted.output.rawRequest).toBe(RAW_REQUEST);
 

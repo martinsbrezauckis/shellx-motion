@@ -20,6 +20,7 @@
     "v25Batch": "V25-B2",
     "sourceAssetPolicy": "original-declarative-json-and-restricted-glsl-no-binaries",
     "hybridSurface": "one-isolated-restricted-glsl-texture",
-    "segmentFrames": 90
+    "segmentFrames": 90,
+    "verification": "native-render-and-replay-required"
   }
 }

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const mainPath = fileURLToPath(new URL("./main.ts", import.meta.url));
+const strictTerminalPath = fileURLToPath(new URL("./strict-linear-srgb-sdr-terminal.ts", import.meta.url));
 const receiptPath = fileURLToPath(new URL("./render-receipt-file.ts", import.meta.url));
 const capturePath = fileURLToPath(new URL("./browser-capture-command.ts", import.meta.url));
 const recordingPath = fileURLToPath(new URL("./browser-capture-recording.ts", import.meta.url));
@@ -27,6 +28,7 @@ function branch(source: string, start: string, end: string): string {
 describe("CLI public-delivery publication inventory", () => {
   it("reserves every success artifact before its renderer can publish and keeps browser evidence private", async () => {
     const source = await readFile(mainPath, "utf8");
+    const strictTerminal = await readFile(strictTerminalPath, "utf8");
     const receiptPublication = await readFile(receiptPath, "utf8");
     const preview = branch(source, "async function previewCommand", "async function renderCommand");
     const render = branch(source, "async function renderCommand", "function retainedBatchQualityManifestFor");
@@ -60,8 +62,7 @@ describe("CLI public-delivery publication inventory", () => {
       ["if (lane === \"native\")", "if (lane !== \"ffmpeg\")", "PairedOutputReceiptPublication.acquire"],
       ["if (stillFramePreset)", "if (imageSequencePreset)", "PairedOutputReceiptPublication.acquire"],
       ["if (imageSequencePreset)", "const ffmpegPreset", "prepareImageSequencePublication(resolvedOutputPath, forceOutput)"],
-      ["if (segmented !== undefined)", "const retainedBatchQualityManifest", "PairedOutputReceiptPublication.acquire"],
-      ["if (frameTransport.delivery === \"streamed\")", "if (frameLane === \"gpu\")", "PairedOutputReceiptPublication.acquire"]
+      ["if (segmented !== undefined)", "const retainedBatchQualityManifest", "PairedOutputReceiptPublication.acquire"]
     ] as const) {
       const route = branch(render, start, end);
       expect(route).toContain(required);
@@ -72,6 +73,13 @@ describe("CLI public-delivery publication inventory", () => {
       }
     }
     expect(renderDeliverySupport).toContain('acquireDerivedOutputPublication({ outputPath, kind: "directory", replaceEmptyDirectory: true })');
+
+    const streamedFinal = branch(render, "if (frameTransport.delivery === \"streamed\")", "if (frameLane === \"gpu\")");
+    expect(streamedFinal).toContain("runStrictLinearSrgbSdrTerminal");
+    expect(strictTerminal).toContain("PairedOutputReceiptPublication.acquire");
+    expect(strictTerminal).toContain('pairedPublicationUncertaintyFields(error, "renderCommitUncertain")');
+    expect(strictTerminal).toContain("commitPreparedRenderCatalog");
+    expect(strictTerminal).toContain("render_catalog_update_failed");
 
     expect(branch(source, "let materializedPublication: PairedOutputReceiptPublication | undefined;", "async function qualityCheckRenderManifest"))
       .toContain("PairedOutputReceiptPublication.acquire");
@@ -86,8 +94,7 @@ describe("CLI public-delivery publication inventory", () => {
     expect(receiptPublication).not.toContain("upsertBrowserWorkflowCatalog");
     for (const [start, end] of [
       ["if (stillFramePreset)", "if (imageSequencePreset)"],
-      ["if (imageSequencePreset)", "const ffmpegPreset"],
-      ["if (frameTransport.delivery === \"streamed\")", "if (frameLane === \"gpu\")"]
+      ["if (imageSequencePreset)", "const ffmpegPreset"]
     ] as const) {
       const route = branch(render, start, end);
       expect(route).toContain("commitPreparedRenderCatalog");
@@ -141,7 +148,8 @@ describe("CLI public-delivery publication inventory", () => {
     expect(branch(nativePreviewFrame, "export interface NativePreviewFrameInput", "export async function renderNativePreviewFrame"))
       .not.toContain("privateOutputPublication?: DerivedOutputPublication");
     expect(nativeRenderer).toContain("resolveNativePrivateOutputPublication(input)");
-    expect(browserRenderer).toContain("publishBrowserOutput(artifactPath, Buffer.from(preparedHtml), privateArtifactPublication)");
+    // Browser frames now publish captured PNG bytes through the same private output authority.
+    expect(browserRenderer).toContain("publishBrowserOutput(outputPath, capturedPng, privateOutputPublication)");
     expect(browserOutputPublication).toContain("writeVerifiedBoundedFile");
     expect(browserOutputPublication).toContain("strictChildPath(stagePath, requestedPath)");
     expect(browserOutputPublication).toContain("publication.writePrivateFile");

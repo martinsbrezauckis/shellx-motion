@@ -47,8 +47,8 @@
     },
     "agentToolBoundaries": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 8,
+      "maxItems": 8,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/agentToolBoundary" }
     },

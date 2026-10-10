@@ -277,10 +277,7 @@ export async function runMotionPrompt(input: RunMotionPromptInput): Promise<Moti
   };
 }
 
-// `createFakePromptRuntime` used to live here and was therefore an export of the published package.
-// A prompt run driven by it returns real receipts over a stubbed agent transcript, which is exactly
-// the shape production success has — so it belonged in test scaffolding, not on the public surface
-// It now lives in `./index.test-support`, which the build never emits.
+// Test-only prompt runtimes live in `./index.test-support`, outside the emitted package surface.
 
 function createAgentPrompt(request: string, plan: MotionActionPlan): string {
   return [

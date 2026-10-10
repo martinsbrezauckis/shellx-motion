@@ -168,7 +168,7 @@ import { buildUpdateView, normalizeApplyState, normalizeCachedUpdateState, norma
       state: "verified",
       tools: rows,
       note: blocked.length === 0
-        ? "Every external tool Motion needs is present: preview, final encode and quality checks all work."
+        ? "Required tools for preview, final encode and quality checks are available."
         : `Unavailable here: ${blocked
           .map((operation) => `${operation.operation} (needs ${(Array.isArray(operation.blockedBy) ? operation.blockedBy : []).join(", ")})`)
           .join("; ")}.`

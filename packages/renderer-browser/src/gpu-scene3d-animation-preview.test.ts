@@ -10,9 +10,9 @@ import { verifyGpuScene3dAnimationPreviewReceiptEvidence } from "./gpu-preview-o
 import type { GpuFrameRenderSessionOpenResult } from "./gpu-frame-renderer";
 import type { GpuRuntimeEvidence } from "./gpu-runtime-types";
 
-describe("O6 Browser GPU scene3d animation preview", () => {
+describe("Browser GPU scene3d animation preview", () => {
   it("renders through the Core wrapper and receipts exact limits plus terminal cleanup", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-preview-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-preview-"));
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication").mockImplementation(async ({ outputPath }) => ({
       stagingPath: `${outputPath}.staging`,
       async verifyFile() { const bytes = await readFile(`${outputPath}.staging`); return { sha256: createHash("sha256").update(bytes).digest("hex") }; },
@@ -61,7 +61,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("binds cancellation before resource preparation, runtime open, output, or receipt publication", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-cancel-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-cancel-"));
     const controller = new AbortController();
     controller.abort();
     let resources = 0, opened = 0;
@@ -79,8 +79,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("refuses O6 from the public reusable-session factory before resources, runtime, or output work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-reusable-refusal-"));
+  it("refuses scene3d animation from the public reusable-session factory before resources, runtime, or output work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-reusable-refusal-"));
     let resources = 0, opened = 0;
     try {
       for (const createSession of [createGpuPreviewSession, createGpuPointsPreviewSession]) {
@@ -98,8 +98,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("keeps the historical points one-shot alias outside the O6 authority before any observable work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-points-alias-refusal-"));
+  it("keeps the historical points one-shot alias outside the scene3d animation authority before any observable work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-points-alias-refusal-"));
     const pkg = scenePackage(root);
     let descriptorReads = 0, manifestReads = 0, rootReads = 0, resources = 0, opened = 0;
     const manifest = pkg.manifest, packageRoot = pkg.root;
@@ -132,8 +132,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("refuses an accessor package motion field through the points alias before O6 detection", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-points-alias-motion-accessor-"));
+  it("refuses an accessor package motion field through the points alias before scene3d animation detection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-points-alias-motion-accessor-"));
     const pkg = scenePackage(root);
     const motion = pkg.motion;
     let motionReads = 0, resources = 0, opened = 0;
@@ -164,8 +164,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("keeps ordinary non-O6 points alias output and plan parity with the direct entry point", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-points-alias-parity-"));
+  it("keeps ordinary non-scene3d-animation points alias output and plan parity with the direct entry point", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-points-alias-parity-"));
     const pkg = scenePackage(root);
     delete pkg.motion.scene3dAnimation;
     let directPlan: unknown, aliasPlan: unknown;
@@ -198,8 +198,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("refuses non-empty O6 package manifest assets before hashing, resources, runtime, or output work", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-manifest-assets-refusal-"));
+  it("refuses non-empty scene3d animation package manifest assets before hashing, resources, runtime, or output work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-manifest-assets-refusal-"));
     const pkg = scenePackage(root);
     pkg.manifest.assets.push("unexpected.png");
     let rootReads = 0, resources = 0, opened = 0;
@@ -224,8 +224,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("treats hostile O6 manifest and manifest-assets accessors as asset-bearing without evaluating either", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-hostile-manifest-assets-"));
+  it("treats hostile scene3d animation manifest and manifest-assets accessors as asset-bearing without evaluating either", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-hostile-manifest-assets-"));
     try {
       for (const kind of ["manifest", "assets"] as const) {
         const pkg = scenePackage(root);
@@ -256,8 +256,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("refuses hostile O6 PBR marker paths without evaluating manifest.data, adapter, or marker accessors", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-hostile-pbr-marker-"));
+  it("refuses hostile scene3d animation PBR marker paths without evaluating manifest.data, adapter, or marker accessors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-hostile-pbr-marker-"));
     try {
       for (const kind of ["data", "adapter", "marker"] as const) {
         const pkg = scenePackage(root);
@@ -299,8 +299,8 @@ describe("O6 Browser GPU scene3d animation preview", () => {
     }
   });
 
-  it("refuses O6 procedural and compositing root authority before document assets, layers, package work, or output", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-root-authority-refusal-"));
+  it("refuses scene3d animation procedural and compositing root authority before document assets, layers, package work, or output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-root-authority-refusal-"));
     try {
       for (const authority of ["relationships", "compositing"] as const) {
         const pkg = scenePackage(root);
@@ -331,7 +331,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("refuses cancellation delivered by the completed draw before it can stage or publish output", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-post-render-cancel-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-post-render-cancel-"));
     const controller = new AbortController();
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication");
     let closed = 0;
@@ -354,7 +354,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("refuses a package mutation during draw before output publication or receipt construction", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-stale-draw-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-stale-draw-"));
     const pkg = scenePackage(root);
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication");
     let closed = 0;
@@ -369,7 +369,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
       expect(result).toMatchObject({ ok: false, error: { code: "gpu_resource_refused", message: expect.stringContaining("snapshot is stale") } });
       expect(publication).not.toHaveBeenCalled();
       expect(closed).toBe(1);
-      await expect(stat(join(root, "out", "pkg_o6_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(root, "out", "pkg_scene3d_animation_scene-gpu-500.png"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       publication.mockRestore();
       await rm(root, { recursive: true, force: true });
@@ -377,7 +377,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("refuses a manifest mutation between static wrapper resolution and loaded-input hashing", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-stale-prehash-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-stale-prehash-"));
     const pkg = scenePackage(root);
     let resources = 0, opened = 0;
     try {
@@ -402,7 +402,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("aborts verified staging when the package changes before the irreversible publish commit", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-stale-staging-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-stale-staging-"));
     const stagingPath = join(root, "frame.staging");
     const outputPath = join(root, "out", "frame.png");
     const pkg = scenePackage(root);
@@ -436,7 +436,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("aborts staged output and returns no success when one-shot cleanup fails", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-cleanup-failure-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-cleanup-failure-"));
     const stagingPath = join(root, "frame.staging");
     const outputPath = join(root, "out", "frame.png");
     let aborts = 0, publishes = 0, closes = 0;
@@ -470,7 +470,7 @@ describe("O6 Browser GPU scene3d animation preview", () => {
   });
 
   it("aborts staged output when receipt construction fails before the terminal publication", async () => {
-    const root = await mkdtemp(join(tmpdir(), "shellx-motion-o6-receipt-failure-"));
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-scene3d_animation-receipt-failure-"));
     const stagingPath = join(root, "frame.staging"), outputPath = join(root, "out", "frame.png");
     let aborts = 0, publishes = 0;
     const publication = vi.spyOn(core, "acquireDerivedOutputPublication").mockImplementation(async () => ({
@@ -524,9 +524,9 @@ describe("O6 Browser GPU scene3d animation preview", () => {
 function scenePackage(root: string): MotionPackage {
   return {
     root,
-    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_o6_scene", name: "O6 scene", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
+    manifest: { schema: "shellx-motion/package-manifest@1", id: "pkg_scene3d_animation_scene", name: "Scene3D animation scene", motion: "motion.json", assets: [], sourceApp: "test", compatibility: { lanes: ["gpu"], hosts: ["motion"] } },
     motion: {
-      schema: "shellx-motion/motion@1", id: "motion_o6_scene", name: "O6 scene", durationMs: 1_000, fps: 30, width: 16, height: 8,
+      schema: "shellx-motion/motion@1", id: "motion_scene3d_animation_scene", name: "Scene3D animation scene", durationMs: 1_000, fps: 30, width: 16, height: 8,
       assets: [], provenance: { sourceApp: "test", createdBy: "test" },
       layers: [{
         id: "world", type: "scene3d", startMs: 0, durationMs: 1_000,

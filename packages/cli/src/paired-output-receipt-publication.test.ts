@@ -8,7 +8,7 @@ import { PairedOutputReceiptPublication, verifyPairedReceiptOutput, type PairedO
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-// This suite exercises the filesystem boundary only with explicit Node 24 fixture admission.
+// Real filesystem publication requires an explicit fixture root and Node 24.
 const publicationFixtureRoot = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_ROOT;
 const describeQualifiedLinuxGpuPublication = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_FIXTURE === "1" && process.versions.node.startsWith("24.") && publicationFixtureRoot ? describe : describe.skip;
 

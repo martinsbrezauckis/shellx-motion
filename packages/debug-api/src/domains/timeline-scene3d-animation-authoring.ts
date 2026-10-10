@@ -131,7 +131,7 @@ function commit(
     outputFacts: scene3dAnimationFacts,
     resultFacts: scene3dAnimationFacts,
     visibleFacts: scene3dAnimationFacts,
-    // O6 made one direct renderer-browser PNG route renderable, but this generic Debug surface
+    // scene3d animation made one direct renderer-browser PNG route renderable, but this generic Debug surface
     // remains refused. Keep the COW receipt warning (and therefore its warning status) tied to
     // that actual caller limitation rather than incorrectly calling the package unrenderable.
     receiptWarnings: (mutation) => renderWarnings(renderTruth(mutation.motion)),
@@ -177,7 +177,7 @@ function renderTruth(motion: MotionDocument) {
   return {
     renderLanesFor: Core.renderLanesFor(motion),
     unrenderablePackageRefusal: Core.unrenderablePackageRefusal(motion),
-    // `renderLanesFor` includes O6's sole direct renderer-browser PNG route. It is deliberately
+    // `renderLanesFor` includes scene3d animation's sole direct renderer-browser PNG route. It is deliberately
     // separate from this generic Debug preview, which still uses the legacy GPU static planner.
     genericDebugGpuPreviewRefusal: Core.motionScene3DAnimationLaneRefusal(motion, "gpu-static") ?? null,
   };
@@ -185,7 +185,7 @@ function renderTruth(motion: MotionDocument) {
 
 function renderWarnings(render: ReturnType<typeof renderTruth>): string[] {
   return render.genericDebugGpuPreviewRefusal
-    ? ["Debug GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."]
+    ? ["Debug GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."]
     : render.unrenderablePackageRefusal ? [render.unrenderablePackageRefusal.message]
       : [];
 }

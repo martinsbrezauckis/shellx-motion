@@ -77,5 +77,5 @@ result. `docs/public/receipts-and-trust.md` explains what each receipt proves.
   `schemas/debug.json` or `docs/public/DEBUG_API_COMMANDS.md` fails `pnpm run docs:check`.
 - Run `pnpm run docs:check` and `pnpm test` before claiming a change works. A passing
   build is not evidence that behavior is correct.
-- Public documentation lives in `docs/public/`. Nothing outside the export allowlist in
-  `scripts/public-export-manifest.json` reaches the published repository.
+- Public documentation lives in `docs/public/`. Keep its examples and links runnable
+  from this published source tree, and check them with `pnpm run docs:check`.

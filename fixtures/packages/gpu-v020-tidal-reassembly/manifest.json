@@ -6,13 +6,8 @@
   "assets": [],
   "sourceApp": "shellx-motion",
   "compatibility": {
-    "lanes": [
-      "gpu",
-      "ffmpeg"
-    ],
-    "hosts": [
-      "motion"
-    ]
+    "lanes": ["gpu", "ffmpeg"],
+    "hosts": ["motion"]
   },
   "workflow": "v020-particle-field-v2-sample",
   "metadata": {

@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { renderMotionGpuPointsPreview } from "./gpu-points-preview.js";
 
 describe("GPU points preview compatibility export", () => {
-  it("retains the direct-only O6 refusal after compatibility implementation split", async () => {
+  it("retains the direct-only scene3d animation refusal after compatibility implementation split", async () => {
     const result = await renderMotionGpuPointsPreview({
       root: "/unopened-package",
-      manifest: { id: "compat_o6" },
+      manifest: { id: "compat_scene3d_animation" },
       motion: {
         schema: "shellx-motion/motion@1",
-        id: "motion_compat_o6",
+        id: "motion_compat_scene3d_animation",
         name: "compat",
         durationMs: 100,
         fps: 24,

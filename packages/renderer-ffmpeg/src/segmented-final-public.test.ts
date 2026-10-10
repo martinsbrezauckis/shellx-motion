@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MotionPackage } from "@shellx-motion/core";
+import type { MotionDocument, MotionPackage, PackageManifest } from "@shellx-motion/core";
 import { renderSegmentedFinal } from "./index.js";
 
 describe("public segmented final delivery", () => {
@@ -31,6 +31,26 @@ describe("public segmented final delivery", () => {
         evidence: { phase: "preflight" }
       })
     });
+  });
+
+  it("refuses odd H.264 geometry before segment-store or producer admission", async () => {
+    for (const [width, height] of [[1_919, 1_080], [1_920, 1_079]] as const) {
+      const result = await renderSegmentedFinal({
+        pkg: oddH264Package(width, height),
+        frameLane: "native",
+        outputPath: "/tmp/never-created-odd-segmented.mp4",
+        segmented: { segmentFrames: 1 }
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "segmented_final_unsupported",
+          retryable: false,
+          message: expect.stringContaining("even canvas dimensions"),
+          evidence: { phase: "preflight" }
+        }
+      });
+    }
   });
 
   it("refuses an accessor-backed input package field without invoking it", async () => {
@@ -128,3 +148,15 @@ describe("public segmented final delivery", () => {
     expect(motionReads).toBe(0);
   });
 });
+
+function oddH264Package(width: number, height: number): MotionPackage {
+  const manifest: PackageManifest = {
+    schema: "shellx-motion/package-manifest@1", id: "odd-segmented-h264", name: "odd segmented h264", motion: "motion.json", assets: [],
+    sourceApp: "shellx-motion", compatibility: { lanes: ["native", "ffmpeg"], hosts: ["motion"] }
+  };
+  const motion: MotionDocument = {
+    schema: "shellx-motion/motion@1", id: "odd-segmented-h264", name: "odd segmented h264", durationMs: 1_000, fps: 1, width, height,
+    background: "#000000", layers: [], assets: [], provenance: { sourceApp: "test", createdBy: "test" }
+  };
+  return { root: "/tmp/odd-segmented-h264", manifest, motion };
+}

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shellx-motion/render-plan@1",
+  "$comment": "Closed, path-free, preflighted final-video identity. It is not an execution request or output authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "operation", "package", "motion", "lineage", "output", "quality", "requested", "runtime", "compatibility", "fingerprint"],
+  "properties": {
+    "schema": { "const": "shellx-motion/render-plan@1" },
+    "operation": { "const": "render.final" },
+    "package": { "$ref": "#/$defs/package" },
+    "motion": { "$ref": "#/$defs/motion" },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "output": { "$ref": "#/$defs/output" },
+    "quality": { "$ref": "#/$defs/quality" },
+    "requested": { "$ref": "#/$defs/requested" },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "fingerprint": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "pathFreeOpaqueText": { "type": "string", "pattern": "^(?![~/\\\\])(?![A-Za-z]:)(?![hH][tT][tT][pP][sS]?:|[fF][iI][lL][eE]:|[dD][aA][tT][aA]:|[bB][lL][oO][bB]:)(?!.*[\\\\/])(?!.*(?:[aA][pP][iI][_-]?[kK][eE][yY]|[sS][eE][cC][rR][eE][tT]|[pP][aA][sS][sS][wW][oO][rR][dD]|[cC][rR][eE][dD][eE][nN][tT][iI][aA][lL]|[aA][uU][tT][hH][oO][rR][iI][zZ][aA][tT][iI][oO][nN]|[bB][eE][aA][rR][eE][rR]|[cC][oO][oO][kK][iI][eE]|[pP][rR][iI][vV][aA][tT][eE][_-]?[kK][eE][yY]))[^\\u0000-\\u001F\\u007F]+$" },
+    "opaqueId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifestSha256"],
+      "properties": { "id": { "allOf": [{ "$ref": "#/$defs/opaqueId" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] }, "manifestSha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "documentSha256"],
+      "properties": { "id": { "allOf": [{ "$ref": "#/$defs/opaqueId" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] }, "documentSha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "lineage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema", "manifestSha256", "motionSha256"],
+          "properties": {
+            "schema": { "const": "shellx-motion/package-render-lineage@1" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "motionSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema", "manifestSha256", "motionSha256", "adapterId", "sourceSha256", "normalizedSourceSha256", "loweringReceiptSha256"],
+          "properties": {
+            "schema": { "const": "shellx-motion/package-render-lineage@1" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "motionSha256": { "$ref": "#/$defs/sha256" },
+            "adapterId": { "const": "adapter.gltf" },
+            "sourceSha256": { "$ref": "#/$defs/sha256" },
+            "normalizedSourceSha256": { "$ref": "#/$defs/sha256" },
+            "loweringReceiptSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preset", "mediaRole", "intentSha256"],
+      "properties": {
+        "preset": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9-]{0,63}$" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] },
+        "mediaRole": { "const": "final-video" },
+        "intentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "const": "none" } }
+    },
+    "segmented": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segmentFrames", "resume"],
+      "properties": {
+        "segmentFrames": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "resume": { "type": "boolean" }
+      }
+    },
+    "requested": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lane", "frameLane", "delivery", "segmented", "fallback"],
+          "properties": {
+            "lane": { "const": "ffmpeg" },
+            "frameLane": { "enum": ["browser", "native", "gpu"] },
+            "delivery": { "const": "streamed" },
+            "segmented": { "const": null },
+            "fallback": { "const": "none" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lane", "frameLane", "delivery", "segmented", "fallback"],
+          "properties": {
+            "lane": { "const": "ffmpeg" },
+            "frameLane": { "enum": ["browser", "native", "gpu"] },
+            "delivery": { "const": "segmented" },
+            "segmented": { "$ref": "#/$defs/segmented" },
+            "fallback": { "const": "none" }
+          }
+        }
+      ]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "routeFingerprint", "presetFingerprint", "capabilityFingerprint"],
+      "properties": {
+        "engine": { "allOf": [{ "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$" }, { "$ref": "#/$defs/pathFreeOpaqueText" }] },
+        "routeFingerprint": { "$ref": "#/$defs/sha256" },
+        "presetFingerprint": { "$ref": "#/$defs/sha256" },
+        "capabilityFingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "state"],
+      "properties": { "version": { "const": 1 }, "state": { "const": "current" } }
+    }
+  }
+}

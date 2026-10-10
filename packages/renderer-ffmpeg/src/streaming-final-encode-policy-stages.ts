@@ -64,6 +64,7 @@ import {
   summarizeEncoderProbe,
   validateDeliveredOutput
 } from "./streaming-final-encode-policy-helpers.js";
+import { isStreamingFinalLineageRevalidationFailure } from "./streaming-final-lineage-revalidation.js";
 /**
  * Resolve final-video policy facts without creating an FFmpeg governor job or producing frames.
  * The supplied runner is explicit so callers that already hold an admission choose its tool runner.
@@ -175,6 +176,7 @@ export async function prepareStreamingFinalEncodePolicy(input: {
       }
     };
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
     await releaseStreamingFinalMediaSnapshots(mediaSnapshots);
     return preparationFailure(error instanceof FfmpegMediaInputRefusal ? error.code : "streaming_command_invalid", error instanceof Error ? error.message : String(error));
   }
@@ -221,6 +223,7 @@ export async function finalizeStreamingFinalEncodePolicy(
   try {
     observedMedia = await probeMedia(policyInput.outputPath, { runner, inputRoots: [dirname(policyInput.outputPath)] });
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
     return postEncodeFailure("output_evidence_failed", error, {
       path: policyInput.outputPath,
       status: "unverified",

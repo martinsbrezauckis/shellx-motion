@@ -2,7 +2,7 @@
  * A deliberately SKIPPED platform command must not sink an otherwise passing host.
  *
  * Role: pins `motion.platform.verification.panel` to the vocabulary
- * `scripts/platform-verify.mjs` actually writes. That script records a host whose FFmpeg does not
+ * `scripts/public/platform-verify.mjs` actually writes. That script records a host whose FFmpeg does not
  * advertise a modern encoder as:
  *
  *     status: "skipped", skipKind: "capability-absent"
@@ -123,7 +123,7 @@ describe("platform verification panel", () => {
     expect(summary?.skippedCommandCount).toBe(0);
   });
 
-  it("rejects an unrecognised command status rather than treating it as platform evidence", async () => {
+  it.runIf(process.platform === "linux")("rejects an unrecognised command status rather than treating it as platform evidence", async () => {
     const receipt = hostReceiptWithCapabilitySkip();
     const commands = receipt.commands as Array<Record<string, unknown>>;
     const hevcIndex = commands.findIndex((command) => command.id === "render-hevc:smoke");
@@ -135,7 +135,7 @@ describe("platform verification panel", () => {
     expect(panel.missingHosts).toEqual(["linux"]);
   });
 
-  it("rejects a schema-valid receipt whose required command ladder is incomplete", async () => {
+  it.runIf(process.platform === "linux")("rejects a schema-valid receipt whose required command ladder is incomplete", async () => {
     const receipt = hostReceiptWithCapabilitySkip();
     const commands = receipt.commands as Array<Record<string, unknown>>;
     receipt.commands = [commands[0]];
@@ -149,7 +149,7 @@ describe("platform verification panel", () => {
     expect(panel.failedHosts).toEqual(["linux"]);
   });
 
-  it("rejects a schema-valid receipt whose command id carries forged argv", async () => {
+  it.runIf(process.platform === "linux")("rejects a schema-valid receipt whose command id carries forged argv", async () => {
     const receipt = hostReceiptWithCapabilitySkip();
     const commands = receipt.commands as Array<Record<string, unknown>>;
     commands[0] = { ...commands[0], command: ["pnpm", "run", "not-the-declared-command"] };

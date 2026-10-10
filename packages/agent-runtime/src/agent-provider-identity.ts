@@ -1,6 +1,6 @@
 import { childEnvironment } from "@shellx-motion/core";
 
-import { prepareNativePosixAgentCommand, resolveNativePosixAgentCommand } from "./posix-agent-command";
+import { assertPinnedPosixProviderLaunchSupported, prepareNativePosixAgentCommand, resolveNativePosixAgentCommand } from "./posix-agent-command";
 import type {
   AgentAdapter,
   AgentCommand,
@@ -113,5 +113,6 @@ export async function runPinnedPosixAgentCommand(command: AgentCommand, runner: 
 
 async function resolvePinnedProviderIdentity(adapter: AgentAdapter, command: AgentCommand): Promise<AgentCommand> {
   if (!adapter.pinProviderIdentity || process.platform === "win32") return command;
+  assertPinnedPosixProviderLaunchSupported();
   return resolveNativePosixAgentCommand(command, childEnvironment({ extra: command.env }));
 }

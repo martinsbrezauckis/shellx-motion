@@ -10,7 +10,7 @@
  */
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { motionJobFileKey } from "./job-id-file";
 import {
@@ -20,6 +20,7 @@ import {
   MotionJobLeaseDirectory,
   UNATTRIBUTED_CALLER_ID
 } from "./job-lease";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
@@ -489,5 +490,34 @@ describe("announce preserves request time across promotion", () => {
     expect(answer.lease.startedAtMs).toBe(1_000);
     expect(answer.lease.admittedAtMs).toBe(6_000);
     expect((answer.lease.admittedAtMs ?? 0) - answer.lease.startedAtMs).toBe(5_000);
+  });
+
+  it("preserves a host plan through promotion and refuses a replacement", async () => {
+    const root = await leaseRoot();
+    await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(dirname(root)), async () => {
+      const leases = new MotionJobLeaseDirectory({ leaseRoot: root });
+      const firstPlan = "a".repeat(64);
+      const replacementPlan = "b".repeat(64);
+      const run = await leases.announce({
+        jobId: "q-plan", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", planFingerprint: firstPlan
+      });
+      expect(run).not.toBeNull();
+
+      await leases.announce({
+        jobId: "q-plan", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", admitted: true,
+        planFingerprint: firstPlan, run: run!
+      });
+      await expect(leases.readVisibleLease({ jobId: "q-plan", callerId: "A" })).resolves.toMatchObject({
+        ok: true, lease: { planFingerprint: firstPlan, admitted: true }
+      });
+
+      await expect(leases.announce({
+        jobId: "q-plan", lane: "ffmpeg", operation: "render.final", callerId: "A", visibility: "host", admitted: true,
+        planFingerprint: replacementPlan, run: run!
+      })).resolves.toBeNull();
+      await expect(leases.readVisibleLease({ jobId: "q-plan", callerId: "A" })).resolves.toMatchObject({
+        ok: true, lease: { planFingerprint: firstPlan }
+      });
+    });
   });
 });

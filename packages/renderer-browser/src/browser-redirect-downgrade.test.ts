@@ -2,8 +2,7 @@
  * browser-redirect-downgrade.test.ts — regression coverage for the browser lane's
  * HTTPS->HTTP redirect-downgrade refusal and per-hop redirect revalidation.
  *
- * Previously observed failure mode, fixed before 0.1.0: browser redirect authorization did not track or
- * reject an HTTPS-to-HTTP scheme downgrade. Investigating the fix exposed the deeper mechanism:
+ * Browser redirect authorization must reject HTTPS-to-HTTP downgrades. The routing mechanism matters:
  * Playwright only routes the FIRST request of a redirect chain — it auto-continues every
  * subsequent hop at the CDP layer — so the route handler's origin check never ran for redirect
  * hops at all, contradicting SECURITY.md's "redirects are revalidated, and HTTPS downgrade is
@@ -14,7 +13,7 @@
  *
  * 1. PRIMARY — `authorizeBrowserRedirectHop`, called by the response-stage CDP guard when a 3xx
  *    is paused, before the follow-up request exists. Unit tests drive it directly, including the
- *    exact approved-HTTPS -> approved-HTTP transition from the finding (a real HTTPS hop cannot
+ *    exact approved-HTTPS -> approved-HTTP transition (a real HTTPS hop cannot
  *    be staged against the plain-HTTP local servers a test suite can run).
  * 2. DEFENSE IN DEPTH — `authorizeBrowserRouteRequest`, the route handler's decision function,
  *    which walks `redirectedFrom()` chains so the policy also holds if a future Playwright ever

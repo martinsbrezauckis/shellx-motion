@@ -59,7 +59,7 @@ export async function writePlatformReceipt(
 
 function requiredCommands(): Promise<RequiredCommandPlan[]> {
   requiredCommandsPromise ??= (async () => {
-    const { stdout } = await execFile(process.execPath, [resolve("../../scripts/platform-verify.mjs"), "--dry-run", "--json"], {
+    const { stdout } = await execFile(process.execPath, [resolve("../../scripts/public/platform-verify.mjs"), "--dry-run", "--json"], {
       cwd: resolve("../.."), maxBuffer: 32 * 1024 * 1024
     });
     const plan = JSON.parse(stdout) as { commands?: Array<{ id?: unknown; command?: unknown; required?: unknown; platforms?: unknown }> };

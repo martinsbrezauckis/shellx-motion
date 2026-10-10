@@ -23,7 +23,7 @@ import { dispatchTimelineStructuralCommand } from "./timeline-structural-dispatc
 const atomicCOW = hasAtomicCOWAuthority(tmpdir()) ? it : it.skip;
 const topologyRefusal = hasAtomicCOWAuthority(tmpdir()) ? it.skip : it;
 
-describe("timeline scene3d animation Debug boundary", () => {
+describe("timeline Scene3D animation Debug boundary", () => {
   it("registers exactly the closed six-command family and parses no generic property route", () => {
     expect(readTimelineScene3DAnimationIntent(TIMELINE_SCENE3D_ANIMATION_COMMANDS.inspect, { packageRoot: "/package" }))
       .toEqual({ ok: true, intent: { kind: "inspect", packageRoot: "/package" } });
@@ -128,9 +128,9 @@ describe("timeline scene3d animation Debug boundary", () => {
             genericDebugGpuPreviewRefusal: expect.objectContaining({ code: "motion_scene3d_animation_unavailable", lane: "gpu-static" }),
           },
         },
-        warnings: ["Debug GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."],
+        warnings: ["Debug GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."],
       });
-      expect(result.warnings).toEqual(["Debug GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."]);
+      expect(result.warnings).toEqual(["Debug GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API."]);
       expect(result.result).toHaveProperty("hostReceiptPath");
       expect(await readFile(join(source, "motion.json"))).toEqual(sourceBytes);
     } finally { await rm(evidenceRoot, { recursive: true, force: true }); }

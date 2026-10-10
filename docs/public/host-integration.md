@@ -245,7 +245,7 @@ render; you see one job. A `motion.job.list` will never show you `ffmpeg.version
     "lifecycle": "running", "outcome": null, "state": "running",
     "lane": "browser", "operation": "render.final",
     "createdAtMs": 1785681391000, "startedAtMs": 1785681391004,
-    "queueWaitMs": 4, "pid": 48122,
+    "queueWaitMs": 4,
     "warnings": [], "pollAfterMs": 2000 } } }
 ```
 
@@ -611,7 +611,7 @@ the narrow roots for its current local operation.
   a custom host does not inject one; this is safe but entries will not survive a host restart as
   authenticated hits. Long-lived in-process SDK hosts may retain and reuse the opaque authority
   from `LocalMotionSdkOptions.attestedRenderReuseProducerAuthority`; key bytes are never request data.
-- `serverInfo.version` reports `0.2.66` — the same string as the CLI banner (`shellx-motion
+- `serverInfo.version` reports `0.2.67` — the same string as the CLI banner (`shellx-motion
   --version`), `GET /health` (`engineVersion`), `GET /debug/contracts`, and the local SDK
   capability contract (`sdkVersion`). One engine build reports one version on every surface; that
   is what the Engine Room update check compares against the GitHub release feed.

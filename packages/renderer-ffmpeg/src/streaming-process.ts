@@ -79,6 +79,28 @@ export const startStreamingFfmpegProcess: StreamingFfmpegProcessFactory = async 
 };
 
 /**
+ * Private Linux-only encoder sibling for the one-slot strict-SDR candidate. The descriptor table
+ * is fixed by this function: stdin at 0, held FFmpeg at 3, and the owned O_EXCL MP4 at 4. No
+ * request, command, or public factory can supply descriptor numbers.
+ */
+export async function startLinearSrgbSdrHeldStreamingFfmpegProcess(
+  input: StartStreamingFfmpegProcessInput,
+  command: FfmpegCommand,
+  ffmpegFd: number,
+  outputFd: number,
+): Promise<StreamingFfmpegProcess> {
+  if (process.platform !== "linux" || !Number.isInteger(ffmpegFd) || ffmpegFd < 3 || !Number.isInteger(outputFd) || outputFd < 3) {
+    throw new Error("Strict SDR held-media streaming is unavailable on this host.");
+  }
+  if (command.shell !== false || command.executable !== "/proc/self/fd/3" || !command.args.includes("/proc/self/fd/4")) {
+    throw new Error("Strict SDR held-media encoder did not retain its fixed descriptor operands.");
+  }
+  const mode = "unix-process-group" as const;
+  input.reportProcessContainment(portableFfmpegContainmentEvidence(mode));
+  return spawnStreamingFfmpegProcessWithHeldMediaDescriptors(input, command, mode, ffmpegFd, outputFd);
+}
+
+/**
  * Internal-only shared pipe transport for a launch that has already been constructed by trusted
  * host code. It preserves the normal timeout/process-tree containment behavior while ensuring a
  * caller can replace the executable and complete environment without a shell.
@@ -108,12 +130,35 @@ export function spawnStreamingFfmpegProcess(
   launch: TrustedStreamingFfmpegLaunch,
   mode: FfmpegProcessTerminationMode
 ): StreamingFfmpegProcess {
+  return spawnStreamingFfmpegProcessInternal(input, launch, mode);
+}
+
+function spawnStreamingFfmpegProcessWithHeldMediaDescriptors(
+  input: StartStreamingFfmpegProcessInput,
+  command: FfmpegCommand,
+  mode: FfmpegProcessTerminationMode,
+  ffmpegFd: number,
+  outputFd: number,
+): StreamingFfmpegProcess {
+  return spawnStreamingFfmpegProcessInternal(input, {
+    executable: "/proc/self/fd/3",
+    args: command.args,
+    env: childEnvironment(),
+  }, mode, [ffmpegFd, outputFd]);
+}
+
+function spawnStreamingFfmpegProcessInternal(
+  input: StartStreamingFfmpegProcessInput,
+  launch: TrustedStreamingFfmpegLaunch,
+  mode: FfmpegProcessTerminationMode,
+  heldDescriptors?: readonly [number, number],
+): StreamingFfmpegProcess {
   let child;
   try {
     child = spawn(launch.executable, launch.args, {
       env: launch.env,
       shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: heldDescriptors ? ["pipe", "pipe", "pipe", ...heldDescriptors] : ["pipe", "pipe", "pipe"],
       detached: mode === "unix-process-group",
       windowsHide: true
     });
@@ -168,11 +213,14 @@ export function spawnStreamingFfmpegProcess(
     ? input.signal.reason
     : new Error("FFmpeg streaming job cancelled."));
 
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { stdout = appendFfmpegProcessOutput(stdout, chunk); });
-  child.stderr.on("data", (chunk) => { stderr = appendFfmpegProcessOutput(stderr, chunk); });
-  child.stdin.on("error", (error) => { stdinError ??= error; });
+  const stdin = child.stdin!;
+  const stdoutPipe = child.stdout!;
+  const stderrPipe = child.stderr!;
+  stdoutPipe.setEncoding("utf8");
+  stderrPipe.setEncoding("utf8");
+  stdoutPipe.on("data", (chunk) => { stdout = appendFfmpegProcessOutput(stdout, chunk); });
+  stderrPipe.on("data", (chunk) => { stderr = appendFfmpegProcessOutput(stderr, chunk); });
+  stdin.on("error", (error) => { stdinError ??= error; });
   child.on("error", (error: NodeJS.ErrnoException) => {
     settleAfterContainedGroupExit({ exitCode: error.code === "ENOENT" ? 127 : 1, stdout, stderr: appendFfmpegProcessOutput(stderr, error.message) });
   });
@@ -193,28 +241,28 @@ export function spawnStreamingFfmpegProcess(
     async write(frame) {
       if (settled) throw encoderClosedError(settled);
       if (stdinError) throw stdinError;
-      const accepted = child.stdin.write(frame);
-      const bufferedInputBytes = child.stdin.writableLength;
-      const inputHighWaterMarkBytes = child.stdin.writableHighWaterMark;
+      const accepted = stdin.write(frame);
+      const bufferedInputBytes = stdin.writableLength;
+      const inputHighWaterMarkBytes = stdin.writableHighWaterMark;
       if (accepted) return { backpressured: false, bufferedInputBytes, inputHighWaterMarkBytes };
       await new Promise<void>((resolveDrain, rejectDrain) => {
         const cleanup = () => {
-          child.stdin.removeListener("drain", onDrain);
+          stdin.removeListener("drain", onDrain);
           child.removeListener("close", onClose);
-          child.stdin.removeListener("error", onError);
+          stdin.removeListener("error", onError);
         };
         const onDrain = () => { cleanup(); resolveDrain(); };
         const onClose = () => { cleanup(); rejectDrain(encoderClosedError(settled)); };
         const onError = (error: Error) => { cleanup(); rejectDrain(error); };
-        child.stdin.once("drain", onDrain);
+        stdin.once("drain", onDrain);
         child.once("close", onClose);
-        child.stdin.once("error", onError);
+        stdin.once("error", onError);
       });
       if (settled) throw encoderClosedError(settled);
       return { backpressured: true, bufferedInputBytes, inputHighWaterMarkBytes };
     },
     async end() {
-      if (!settled) child.stdin.end();
+      if (!settled) stdin.end();
       return closed;
     },
     async abort(reason) {

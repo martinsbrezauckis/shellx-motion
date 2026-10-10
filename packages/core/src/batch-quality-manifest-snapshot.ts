@@ -12,9 +12,26 @@ import {
 } from "./stable-file-read";
 
 const MAX_QUALITY_INPUT_BYTES = 4 * 1024 * 1024;
+const MAX_QUALITY_MATERIALIZED_BYTES = MAX_QUALITY_INPUT_BYTES;
 const MAX_QUALITY_BASELINES = 64;
 const MAX_QUALITY_AGGREGATE_BYTES = 64 * 1024 * 1024;
 export const MAX_BATCH_QUALITY_REQUEST_BYTES = 256 * 1024 * 1024;
+
+/** Charges retained, expanded manifests across all rows in one batch request. */
+export class BatchQualityDerivedBudget {
+  private bytes = 0;
+
+  constructor(readonly maxBytes = MAX_BATCH_QUALITY_REQUEST_BYTES) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Batch quality derived byte limit is invalid.");
+  }
+
+  remaining(): number { return this.maxBytes - this.bytes; }
+
+  reserve(bytes: number): void {
+    if (bytes > this.remaining()) throw new Error(`Batch quality materialized manifests exceed the ${this.maxBytes}-byte aggregate limit.`);
+    this.bytes += bytes;
+  }
+}
 
 export function createBatchQualityRequestBudget(): BoundedResourceBudget {
   return new BoundedResourceBudget({
@@ -90,6 +107,7 @@ export async function prepareBatchQualityManifestSnapshot(input: {
   sourcePath: string;
   context: BatchQualityManifestContext;
   requestBudget?: BoundedResourceBudget;
+  derivedBudget?: BatchQualityDerivedBudget;
   interpolate?: boolean;
 }): Promise<PreparedBatchQualityManifestSnapshot> {
   const sourcePath = resolve(input.sourcePath);
@@ -107,7 +125,13 @@ export async function prepareBatchQualityManifestSnapshot(input: {
     withinRoot: sourceRoot,
   });
   const parsed = parseManifest(source.bytes);
-  const materialized = input.interpolate === false ? parsed : interpolateValue(parsed, {
+  const remaining = input.derivedBudget?.remaining();
+  const aggregateBound = remaining !== undefined && remaining < MAX_QUALITY_MATERIALIZED_BYTES;
+  const limit = Math.min(MAX_QUALITY_MATERIALIZED_BYTES, remaining ?? MAX_QUALITY_MATERIALIZED_BYTES);
+  const materialization = new ManifestMaterializationBudget(limit, aggregateBound
+    ? `Batch quality materialized manifests exceed the ${input.derivedBudget!.maxBytes}-byte aggregate limit before expansion or hashing.`
+    : `Batch quality materialized manifest exceeds its ${MAX_QUALITY_MATERIALIZED_BYTES}-byte serialized JSON limit before expansion or hashing.`);
+  const materialized = interpolateValue(parsed, input.interpolate === false ? null : {
     ...input.context.values,
     rowId: input.context.rowId,
     rowIndex: input.context.rowIndex,
@@ -116,12 +140,13 @@ export async function prepareBatchQualityManifestSnapshot(input: {
     packageId: input.context.packageId,
     packageDir: input.context.packageDir,
     outputPath: input.context.outputPath,
-  });
+  }, materialization);
   const manifest = objectRecord(materialized);
   if (!manifest || manifest.schema !== "shellx-motion/quality-manifest@1"
     || !Array.isArray(manifest.samples) || manifest.samples.length === 0) {
     throw new Error("Batch quality manifest must be a non-empty shellx-motion/quality-manifest@1 samples array.");
   }
+  input.derivedBudget?.reserve(materialization.bytes);
 
   const baselines: BatchQualityBaselineSnapshot[] = [];
   for (let sampleIndex = 0; sampleIndex < manifest.samples.length; sampleIndex += 1) {
@@ -213,17 +238,76 @@ function parseManifest(bytes: Buffer): unknown {
   }
 }
 
-function interpolateValue(value: unknown, context: Record<string, unknown>): unknown {
+function interpolateValue(value: unknown, context: Record<string, unknown> | null, budget: ManifestMaterializationBudget): unknown {
   if (typeof value === "string") {
-    return value.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, key: string) => {
-      const replacement = context[key];
-      if (replacement === undefined || replacement === null) return "";
-      return typeof replacement === "string" ? replacement : JSON.stringify(replacement);
-    });
+    if (!context) { budget.reserve(Buffer.byteLength(JSON.stringify(value), "utf8")); return value; }
+    const pattern = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+    const parts: string[] = [];
+    const counter = new JsonStringByteCounter();
+    let cursor = 0;
+    for (let match = pattern.exec(value); match; match = pattern.exec(value)) {
+      const literal = value.slice(cursor, match.index);
+      counter.append(literal); parts.push(literal);
+      const replacement = context[match[1]];
+      const text = replacement === undefined || replacement === null ? "" :
+        typeof replacement === "string" ? replacement : JSON.stringify(replacement);
+      counter.append(text); parts.push(text);
+      budget.assertCanReserve(counter.bytes + 2);
+      cursor = match.index + match[0].length;
+    }
+    const tail = value.slice(cursor);
+    counter.append(tail); parts.push(tail);
+    budget.reserve(counter.finish() + 2);
+    return parts.join("");
   }
-  if (Array.isArray(value)) return value.map((entry) => interpolateValue(entry, context));
+  if (Array.isArray(value)) {
+    budget.reserve(2 + Math.max(0, value.length - 1));
+    return value.map((entry) => interpolateValue(entry, context, budget));
+  }
   const record = objectRecord(value);
-  return record ? Object.fromEntries(Object.entries(record).map(([key, entry]) => [key, interpolateValue(entry, context)])) : value;
+  if (record) {
+    const entries = Object.entries(record);
+    budget.reserve(2 + Math.max(0, entries.length - 1));
+    return Object.fromEntries(entries.map(([key, entry]) => {
+      budget.reserve(Buffer.byteLength(JSON.stringify(key), "utf8") + 1);
+      return [key, interpolateValue(entry, context, budget)];
+    }));
+  }
+  budget.reserve(Buffer.byteLength(JSON.stringify(value), "utf8"));
+  return value;
+}
+
+class ManifestMaterializationBudget {
+  bytes = 0;
+  constructor(private readonly limit: number, private readonly error: string) {}
+  assertCanReserve(bytes: number): void {
+    if (this.bytes + bytes > this.limit) throw new Error(this.error);
+  }
+  reserve(bytes: number): void { this.assertCanReserve(bytes); this.bytes += bytes; }
+}
+
+/** Count JSON string bytes across fragments, including escaping and split surrogate pairs. */
+class JsonStringByteCounter {
+  bytes = 0;
+  private highSurrogate = false;
+  append(part: string): void {
+    for (let index = 0; index < part.length; index += 1) {
+      const code = part.charCodeAt(index);
+      if (this.highSurrogate) {
+        this.bytes += code >= 0xdc00 && code <= 0xdfff ? 4 : 6;
+        this.highSurrogate = false;
+        if (code >= 0xdc00 && code <= 0xdfff) continue;
+      }
+      if (code >= 0xd800 && code <= 0xdbff) { this.highSurrogate = true; continue; }
+      if (code >= 0xdc00 && code <= 0xdfff) this.bytes += 6;
+      else if (code === 34 || code === 92 || code === 8 || code === 9 || code === 10 || code === 12 || code === 13) this.bytes += 2;
+      else if (code < 32) this.bytes += 6;
+      else if (code < 128) this.bytes += 1;
+      else if (code < 2048) this.bytes += 2;
+      else this.bytes += 3;
+    }
+  }
+  finish(): number { return this.bytes + (this.highSurrogate ? 6 : 0); }
 }
 
 async function publishOrVerify(path: string, bytes: Buffer, root: string, label: string, sha256: string): Promise<StableFileReadResult> {

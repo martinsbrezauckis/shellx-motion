@@ -8,7 +8,8 @@ import { publishBrowserOutput } from "./browser-output-publication.js";
 const roots: string[] = [];
 afterEach(async () => await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))));
 
-// Directory publication identity and symbolic-link checks require an explicit Node 24 fixture.
+// Directory publication identity and symbolic-link behavior require an
+// explicit fixture root and Node 24.
 const publicationFixtureRoot = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_ROOT;
 const describeQualifiedLinuxGpuPublication = process.env.MOTION_QUALIFIED_LINUX_GPU_PUBLICATION_FIXTURE === "1" && process.versions.node.startsWith("24.") && publicationFixtureRoot ? describe : describe.skip;
 

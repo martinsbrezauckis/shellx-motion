@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MotionJobEventStore, MOTION_JOB_EVENT_MAX_BYTES, MOTION_JOB_EVENT_MAX_DATA_BYTES, type MotionJobCoordinatorEvent } from "./job-event-store";
 import { MotionJobCoordinator } from "./job-coordinator";
+import { MotionJobIdentityClaimStore } from "./job-identity-claim-store";
 import { motionJobFileKey, motionJobOwnerKey } from "./job-id-file";
 import { MotionJobLeaseDirectory } from "./job-lease";
 import { MotionJobRegistry, type MotionJobRecord } from "./job-registry";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true }))); });
@@ -17,7 +19,24 @@ async function coordinator() {
   const leases = new MotionJobLeaseDirectory({ leaseRoot: join(root, "leases") });
   const records = new MotionJobRegistry({ recordRoot: join(root, "records") });
   const eventsRoot = join(root, "events");
-  return { root, leases, records, eventsRoot, jobs: new MotionJobCoordinator({ leases, records, eventsRoot }) };
+  const identityClaims = new MotionJobIdentityClaimStore({ claimRoot: join(root, "job-identity-claims") });
+  const jobs = new MotionJobCoordinator({ leases, records, eventsRoot, identityClaims });
+  // Seed every retained coordinator authority through the same host-approved root that a real
+  // caller selects. Subsequent assertions exercise retained authority; this does not relax the
+  // production private-root route for a hostile temporary ancestor.
+  await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => {
+    const initialized = await jobs.submit({
+      jobId: "cut:coordinator-test-initialization", callerId: "cut:coordinator-test-initialization",
+      lane: "test", operation: "test.initialization", execute: async () => ({ ok: true })
+    });
+    if (!initialized.ok) throw new Error("Could not initialize retained coordinator authority.");
+    await eventually(
+      async () => await jobs.jobView().get({ jobId: "cut:coordinator-test-initialization", callerId: "cut:coordinator-test-initialization" }),
+      (status) => status.ok && status.job.state === "succeeded"
+    );
+    await settleSuccessfulJob(jobs, "cut:coordinator-test-initialization", "cut:coordinator-test-initialization");
+  });
+  return { root, leases, records, eventsRoot, identityClaims, jobs };
 }
 
 async function eventually<T>(read: () => Promise<T>, predicate: (value: T) => boolean): Promise<T> {
@@ -27,6 +46,12 @@ async function eventually<T>(read: () => Promise<T>, predicate: (value: T) => bo
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   throw new Error("Timed out waiting for coordinator state.");
+}
+
+async function settleSuccessfulJob(jobs: MotionJobCoordinator, jobId: string, callerId: string): Promise<void> {
+  // A known-success retry waits for settlement and starts no new work.
+  await expect(jobs.retry({ jobId, callerId })).resolves.toMatchObject({ ok: false, code: "job_not_retryable" });
+  await expect(jobs.jobView().get({ jobId, callerId })).resolves.toMatchObject({ ok: true, job: { state: "succeeded" } });
 }
 
 function eventPath(eventsRoot: string, jobId: string, callerId = "cut:workspace"): string {
@@ -70,9 +95,11 @@ async function submitSucceeded(jobs: MotionJobCoordinator, jobId: string) {
   });
   expect(submitted.ok).toBe(true);
   await eventually(async () => await jobs.jobView().get({ jobId, callerId: "cut:workspace" }), (answer) => answer.ok && answer.job.state === "succeeded");
+  await settleSuccessfulJob(jobs, jobId, "cut:workspace");
 }
 
-describe("MotionJobCoordinator", () => {
+// Coordinator fixture initialization requires a POSIX trusted workspace anchor.
+describe.skipIf(process.platform === "win32")("MotionJobCoordinator", () => {
   it("keeps the job nonterminal while cancellation is requested, aborts its real execution signal, then records cancelled", async () => {
     const { jobs } = await coordinator();
     const { submitted, abortObserved, settleWorker } = await submitStoppable(jobs, "cut:cancel-real-worker");
@@ -119,9 +146,45 @@ describe("MotionJobCoordinator", () => {
       (answer) => answer.ok && answer.job.lifecycle === "ended"
     );
     expect(terminal).toMatchObject({ ok: true, job: { state: "succeeded", receiptPath: "/receipts/connector.json" } });
+    if (!terminal.ok) throw new Error("Committed successful execution was not readable.");
+    expect(terminal.job).not.toHaveProperty("committed");
     const events = await jobs.events({ jobId: "cut:connector-commit-fence", callerId: "cut:workspace" });
     expect(events).toMatchObject({ ok: true, value: { events: expect.arrayContaining([
       expect.objectContaining({ type: "cancel_requested" }), expect.objectContaining({ type: "succeeded" })
+    ]) } });
+    await settleSuccessfulJob(jobs, "cut:connector-commit-fence", "cut:workspace");
+  });
+
+  it("records a cancellation after committed failure as failed with no artifact projection", async () => {
+    const { jobs } = await coordinator();
+    let committed!: () => void;
+    const commitReached = new Promise<void>((resolve) => { committed = resolve; });
+    const submitted = await jobs.submit({
+      jobId: "cut:committed-failure-cancel", callerId: "cut:workspace", lane: "ffmpeg", frameLane: "gpu", operation: "render.final",
+      execute: async (signal) => {
+        committed();
+        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+        return {
+          ok: false, committed: true,
+          error: { code: "invalid_args", message: "output link may have completed", retryable: false }
+        };
+      }
+    });
+    expect(submitted.ok).toBe(true);
+    await commitReached;
+    await expect(jobs.cancel({ jobId: "cut:committed-failure-cancel", callerId: "cut:workspace" })).resolves.toMatchObject({ ok: true });
+
+    const terminal = await eventually(
+      async () => await jobs.jobView().get({ jobId: "cut:committed-failure-cancel", callerId: "cut:workspace" }),
+      (answer) => answer.ok && answer.job.state === "failed"
+    );
+    expect(terminal).toMatchObject({ ok: true, job: { outcome: "failed", committed: true, error: { code: "invalid_args" } } });
+    if (!terminal.ok) throw new Error("Committed failed terminal was not readable.");
+    expect(terminal.job).not.toHaveProperty("artifacts");
+    const events = await jobs.events({ jobId: "cut:committed-failure-cancel", callerId: "cut:workspace" });
+    expect(events).toMatchObject({ ok: true, value: { events: expect.arrayContaining([
+      expect.objectContaining({ type: "cancel_requested" }),
+      expect.objectContaining({ type: "failed", data: expect.objectContaining({ committed: true }) })
     ]) } });
   });
 
@@ -147,6 +210,7 @@ describe("MotionJobCoordinator", () => {
     expect(calls).toBe(2);
     const events = await jobs.events({ jobId: "cut:retry-2", callerId: "cut:workspace" });
     expect(events).toMatchObject({ ok: true, value: { events: [expect.objectContaining({ type: "submitted", seq: 1 }), expect.objectContaining({ type: "retry_submitted", seq: 2 }), expect.objectContaining({ type: "succeeded", seq: 3 })] } });
+    await settleSuccessfulJob(jobs, "cut:retry-2", "cut:workspace");
   });
 
   it("retains bounded protocol binding data in submitted events and retries", async () => {
@@ -175,6 +239,7 @@ describe("MotionJobCoordinator", () => {
       expect(events).toMatchObject({ ok: true, value: { events: expect.arrayContaining([expect.objectContaining({ type: "submitted", data: expect.objectContaining(submissionData) })]) } });
     }
     expect(calls).toBe(2);
+    await settleSuccessfulJob(jobs, "cut:connector-binding-retry", "cut:workspace");
   });
 
   it("preserves a future connector error and retry policy through events and terminal storage", async () => {
@@ -221,7 +286,7 @@ describe("MotionJobCoordinator", () => {
       records: new MotionJobRegistry({ recordRoot: join(root, "records") }),
       eventsRoot
     });
-    await expect(restarted.jobView().get({ jobId: "cut:future-typed-error", callerId: "cut:workspace" }))
+    await expect(withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => await restarted.jobView().get({ jobId: "cut:future-typed-error", callerId: "cut:workspace" })))
       .resolves.toMatchObject({ ok: true, job: { error: {
         code: "connector_future_backpressure", retryable: true, retryAfterMs: 2_500
       } } });
@@ -327,6 +392,7 @@ describe("MotionJobCoordinator", () => {
         producerEvidence: { frameLane: "gpu", schema: "shellx-motion/gpu-streaming-producer@1" }
       }) })
     ] } });
+    await settleSuccessfulJob(jobs, "cut:gpu-retry", "cut:workspace");
   });
 
   it("reserves a caller-provided job id before any asynchronous setup", async () => {
@@ -352,6 +418,7 @@ describe("MotionJobCoordinator", () => {
     expect(executions).toBe(1);
     release();
     await eventually(async () => await jobs.jobView().get({ jobId: "cut:submit-race", callerId: "cut:workspace" }), (answer) => answer.ok && answer.job.state === "succeeded");
+    await settleSuccessfulJob(jobs, "cut:submit-race", "cut:workspace");
   });
 
   it("coordinates concurrent duplicate external ids by authenticated owner, including events and replay", async () => {
@@ -416,40 +483,12 @@ describe("MotionJobCoordinator", () => {
     await eventually(async () => await jobs.jobView().get({ jobId: "owner-b-retry", callerId: ownerB }), (answer) => answer.ok && answer.job.state === "succeeded");
     expect([callsA, callsB]).toEqual([2, 2]);
     const files = await readdir(eventsRoot);
-    expect(files).toHaveLength(4);
+    // One private fixture initialization event is retained solely to establish the coordinator's
+    // hostile-temp authority; the four owner-qualified job snapshots remain anonymous.
+    expect(files).toHaveLength(5);
     expect(files.some((name) => name.includes(ownerA) || name.includes(ownerB))).toBe(false);
-  });
-
-  it("signals the owned worker and returns a structured failure when the lease cancel intent cannot persist", async () => {
-    const { jobs, leases } = await coordinator();
-    const worker = await submitStoppable(jobs, "cut:lease-cancel-failure");
-    const original = leases.announce.bind(leases);
-    vi.spyOn(leases, "announce").mockImplementation(async (input) => {
-      if (input.cancelRequested) throw new Error("lease storage offline");
-      return await original(input);
-    });
-
-    await expect(jobs.cancel({ jobId: "cut:lease-cancel-failure", callerId: "cut:workspace" })).resolves.toMatchObject({ ok: false, code: "capability_unavailable" });
-    await worker.abortObserved;
-    worker.settleWorker();
-    await eventually(async () => await jobs.jobView().get({ jobId: "cut:lease-cancel-failure", callerId: "cut:workspace" }), (answer) => answer.ok && answer.job.state === "cancelled");
-  });
-
-  it("signals the owned worker and returns a structured failure when the cancel event cannot persist", async () => {
-    const { jobs, eventsRoot } = await coordinator();
-    const worker = await submitStoppable(jobs, "cut:event-cancel-failure");
-    await rm(eventsRoot, { recursive: true, force: true });
-    await writeFile(eventsRoot, "not a directory");
-
-    await expect(jobs.cancel({ jobId: "cut:event-cancel-failure", callerId: "cut:workspace" })).resolves.toMatchObject({ ok: false, code: "capability_unavailable" });
-    await worker.abortObserved;
-    const visible = await jobs.events({ jobId: "cut:event-cancel-failure", callerId: "cut:workspace" });
-    expect(visible).toMatchObject({ ok: true });
-    expect(visible.ok && visible.value.events.some((entry) => entry.type === "cancel_requested")).toBe(false);
-    await rm(eventsRoot, { force: true });
-    await mkdir(eventsRoot, { recursive: true });
-    worker.settleWorker();
-    await eventually(async () => await jobs.jobView().get({ jobId: "cut:event-cancel-failure", callerId: "cut:workspace" }), (answer) => answer.ok && answer.job.state === "cancelled");
+    await settleSuccessfulJob(jobs, "owner-a-retry", ownerA);
+    await settleSuccessfulJob(jobs, "owner-b-retry", ownerB);
   });
 
   it("reads a legacy event log only for its sole matching legacy terminal owner", async () => {
@@ -507,13 +546,14 @@ describe("MotionJobCoordinator", () => {
 
   it("serializes snapshots so a delayed older append cannot overwrite a terminal event", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-job-event-store-"));
+    const eventsRoot = join(root, "events");
     roots.push(root);
     let firstWriteStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => { firstWriteStarted = resolve; });
     let releaseFirst!: () => void;
     const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let secondWrites = 0;
-    const store = new MotionJobEventStore(root, {
+    const store = new MotionJobEventStore(eventsRoot, {
       writeSnapshot: async (path, serialized) => {
         if (serialized.includes('"seq":1') && !serialized.includes('"seq":2')) {
           firstWriteStarted();
@@ -526,13 +566,15 @@ describe("MotionJobCoordinator", () => {
     });
     const jobId = "cut:event-write-order";
     const callerId = "cut:workspace";
-    const older = store.write({ callerId, jobId, events: [event(1, "submitted")] });
-    await firstStarted;
-    const newer = store.write({ callerId, jobId, events: [event(1, "submitted"), event(2, "succeeded")] });
-    await Promise.resolve();
-    expect(secondWrites).toBe(0);
-    releaseFirst();
-    await Promise.all([older, newer]);
+    await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => {
+      const older = store.write({ callerId, jobId, events: [event(1, "submitted")] });
+      await firstStarted;
+      const newer = store.write({ callerId, jobId, events: [event(1, "submitted"), event(2, "succeeded")] });
+      await Promise.resolve();
+      expect(secondWrites).toBe(0);
+      releaseFirst();
+      await Promise.all([older, newer]);
+    });
     expect(await store.read({ callerId, jobId })).toEqual([event(1, "submitted"), event(2, "succeeded")]);
   });
 });

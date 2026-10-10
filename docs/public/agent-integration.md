@@ -29,13 +29,23 @@ smaller typed surfaces. Pick the one that fits your host without assuming univer
   command returns a structured JSON envelope. This is the default path for
   configured local CLI agents.
 
-  Agent health is deliberately separate from prompt-context admission. A
-  provider is invoked only when its adapter explicitly declares a
-  `prompt-only` context; omitted or filesystem-read-capable adapters return
-  `agent_context_unbounded` before their prompt command is probed or spawned.
-  The source CLI admits prompt execution only for adapters with an exact
-  disable-all-tools contract. Adapters that retain filesystem-read context
-  remain visible through `agent health`, but prompt execution is refused.
+  Agent health is deliberately separate from prompt-context admission. Motion's
+  built-in local CLI runtime requires an explicit prompt provider: use
+  `--agent <agent-id>` with `shellx-motion prompt run`, or set `agentId` on
+  `motion.prompt.run`. Get the ID from `agent health` or `motion.agent.panel`;
+  choose one reported as prompt-capable. An omitted built-in selection returns
+  `agent_selection_required` before a provider is probed or spawned and names
+  the configured prompt-only choices; the built-in runtime never picks a
+  healthy provider or falls back. An embedding host that injects its own
+  runtime owns its adapter-selection contract. A built-in provider is invoked
+  only when its adapter explicitly declares a `prompt-only` context.
+  Filesystem-read-capable adapters remain visible through `agent health` but
+  return `agent_context_unbounded` when selected for a built-in prompt.
+
+  Workbench **Connections** configures the local MCP/Debug transport and its
+  host authority. It does not select a local CLI prompt provider; use the
+  explicit `--agent` or `agentId` choice above after checking readiness with
+  `shellx-motion agent health --adapter <agent-id>`.
 
   There is no `motion.screenshot`. It was removed: Motion is a headless engine
   with no panel of its own, so the command could only relay a request to the host

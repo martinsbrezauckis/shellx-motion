@@ -4,7 +4,9 @@ import { colorPipelineRenderPlan } from "./color-pipeline";
 import { GPU_CAPABILITY, matchRendererCapability } from "./capabilities";
 import {
   admitLinearSrgbSdrFinalMotion,
+  composeGammaWrongEncodedLayers,
   composeGammaWrongEncodedSourceOver,
+  composeLinearSrgbLayers,
   composeLinearSrgbSourceOver,
   interpolateGammaWrongEncodedGradientStops,
   linearSrgbGradientPosition,
@@ -34,6 +36,15 @@ interface GradientRampFixture {
     samples: Array<{ localX: number; localY: number; expectedStraightSrgb: Rgba; gammaWrongControl: Rgba & { minimumMaxChannelDelta: number } }>;
   }>;
 }
+interface ScreenVectorFixture {
+  schema: "shellx-motion/linear-srgb-sdr-screen-vectors@1";
+  vectors: Array<{
+    name: string;
+    layers: Array<{ fill: string; opacity: number; blendMode: "normal" | "screen" }>;
+    expectedStraightSrgb: Rgba;
+    gammaWrongControl: Rgba & { minimumMaxChannelDelta: number };
+  }>;
+}
 
 const REQUEST: LinearSrgbSdrFinalRouteRequest = Object.freeze({
   target: "final",
@@ -51,8 +62,16 @@ async function catalogSample(): Promise<MotionDocument> {
   return JSON.parse(await readFile(new URL("../../../fixtures/packages/linear-srgb-sdr-final/motion.json", import.meta.url), "utf8")) as MotionDocument;
 }
 
+async function screenCatalogSample(): Promise<MotionDocument> {
+  return JSON.parse(await readFile(new URL("../../../fixtures/packages/linear-srgb-sdr-f2b-screen/motion.json", import.meta.url), "utf8")) as MotionDocument;
+}
+
 async function gradientRamps(): Promise<GradientRampFixture> {
   return JSON.parse(await readFile(new URL("../../../fixtures/color-pipeline/f2a-linear-srgb-sdr-gradient-ramps.json", import.meta.url), "utf8")) as GradientRampFixture;
+}
+
+async function screenVectors(): Promise<ScreenVectorFixture> {
+  return JSON.parse(await readFile(new URL("../../../fixtures/color-pipeline/f2b-linear-srgb-sdr-screen-vectors.json", import.meta.url), "utf8")) as ScreenVectorFixture;
 }
 
 function motion(overrides: Partial<MotionDocument> = {}): MotionDocument {
@@ -78,8 +97,8 @@ function staticMotion(overrides: Partial<MotionDocument> = {}): MotionDocument {
   return { ...document, layers: document.layers.map((layer) => ({ ...layer, durationMs: document.durationMs })) };
 }
 
-function rect(id: string, values: { x?: number; y?: number; width?: number; height?: number; fill?: string; opacity?: number } = {}): MotionLayer {
-  const { x = 0, y = 0, width = 10, height = 10, fill = "#ffffff", opacity } = values;
+function rect(id: string, values: { x?: number; y?: number; width?: number; height?: number; fill?: string; opacity?: number; blendMode?: "normal" | "screen" } = {}): MotionLayer {
+  const { x = 0, y = 0, width = 10, height = 10, fill = "#ffffff", opacity, blendMode } = values;
   return {
     id,
     type: "shape",
@@ -88,6 +107,7 @@ function rect(id: string, values: { x?: number; y?: number; width?: number; heig
     durationMs: 1000,
     fill,
     ...(opacity === undefined ? {} : { opacity }),
+    ...(blendMode === undefined ? {} : { blendMode }),
     transform: { x, y, width, height },
   };
 }
@@ -182,6 +202,17 @@ describe("strict linear-srgb-sdr final route", () => {
     ]);
   });
 
+  it("keeps the checked F2b sample on the exact normal-plus-screen strict route", async () => {
+    const sample = await screenCatalogSample();
+    const route = admitted(sample);
+    expect(route.canvas).toMatchObject({ width: 1280, height: 720, durationMs: 2000, fps: 30 });
+    expect(route.admission.composition).toBe("normal-and-screen-document-order");
+    expect(route.rects.map((rect) => [rect.id, rect.blendMode ?? "normal"])).toEqual([
+      ["stage", "normal"], ["cyan_base", "normal"], ["warm_screen", "screen"], ["normal_gradient", "normal"], ["screen_gradient", "screen"],
+    ]);
+    expect(colorPipelineRenderPlan(sample).strictRequirements?.features).toContain("blend.screen.linear-light-premultiplied");
+  });
+
   it("refuses every lane, delivery, target, and preset deviation before later route work", () => {
     for (const request of [
       { ...REQUEST, target: "preview" }, { ...REQUEST, frameLane: "browser" }, { ...REQUEST, delivery: "materialized" },
@@ -227,6 +258,20 @@ describe("strict linear-srgb-sdr final route", () => {
     expect(oneFrameOver).toMatchObject({ ok: false, refusal: { message: expect.stringContaining("36000 frames") } });
     expectRefusal(staticMotion({ fps: 1_000_000, durationMs: 1_000 }));
     expectRefusal(staticMotion({ fps: 1, durationMs: 36_000_001 }));
+  });
+
+  it("refuses odd H.264 canvas geometry before strict GPU or output admission", () => {
+    for (const [width, height] of [[1_919, 1_080], [1_920, 1_079]] as const) {
+      const result = resolveLinearSrgbSdrFinalRoute(staticMotion({ width, height }), REQUEST);
+      expect(result).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "linear_srgb_sdr_final_unsupported",
+          message: expect.stringContaining("even canvas dimensions")
+        }
+      });
+    }
+    expect(admitted(staticMotion({ width: 1_920, height: 1_080 })).canvas).toMatchObject({ width: 1_920, height: 1_080 });
   });
 
   it("refuses assets, timeline authority, non-rect layers, aliases, transforms, styles, and out-of-bounds geometry", () => {
@@ -277,6 +322,23 @@ describe("strict linear-srgb-sdr final route", () => {
     expect(colorPipelineRenderPlan(motion({ layers: [linear, radial] })).admission).toBe("strict-route-available");
   });
 
+  it("admits document-ordered normal plus screen rectangles while preserving normal-only route identity", () => {
+    const normal = admitted(motion({ layers: [rect("normal", { fill: "#224466", opacity: 0.4 })] }));
+    const screen = admitted(motion({ layers: [
+      rect("normal", { fill: "#224466", opacity: 0.4 }),
+      rect("screen", { fill: "#ff8040", opacity: 0.35, blendMode: "screen" }),
+    ] }));
+    expect(normal.admission.composition).toBe("normal-source-over-document-order");
+    expect(normal.rects[0]).not.toHaveProperty("blendMode");
+    expect(screen).toMatchObject({
+      admission: { composition: "normal-and-screen-document-order" },
+      rects: [
+        { id: "normal", opacity: 0.4 },
+        { id: "screen", opacity: 0.35, blendMode: "screen" },
+      ],
+    });
+  });
+
   it("fails closed for every non-F2a gradient spelling, animation, paint mix, stop ambiguity, or non-rect route extension", () => {
     const valid: Extract<GradientRampFixture["ramps"][number]["gradient"], { type: "linear" }> = { type: "linear", angle: 90, stops: [{ offset: 0, color: "#000000" }, { offset: 1, color: "#ffffff" }] };
     const cases: MotionLayer[] = [
@@ -292,6 +354,13 @@ describe("strict linear-srgb-sdr final route", () => {
       { ...gradientRect("wrong-shape", valid), shape: "ellipse" },
     ];
     for (const layer of cases) expectRefusal(motion({ layers: [layer] }));
+  });
+
+  it("refuses all blend modes except the normalized normal spelling and F2b screen", () => {
+    expect(admitted(motion({ layers: [rect("normal", { blendMode: "normal" })] })).rects[0]).not.toHaveProperty("blendMode");
+    for (const blendMode of ["multiply", "overlay", "lighten", "screen ", "Screen"]) {
+      expectRefusal(motion({ layers: [{ ...rect("unsupported"), blendMode } as never] }));
+    }
   });
 
   it("matches isolated F2a linear-light gradient ramps and rejects encoded-domain controls", async () => {
@@ -331,6 +400,26 @@ describe("strict linear-srgb-sdr final route", () => {
       }
       const maxDelta = Math.max(...(["r", "g", "b"] as const).map((channel) => Math.abs(actual[channel] - wrong[channel])));
       expect(maxDelta, `${vector.name} must fail an encoded-domain source-over implementation`).toBeGreaterThanOrEqual(vector.gammaWrongControl.minimumMaxChannelDelta);
+    }
+  });
+
+  it("matches isolated F2b premultiplied linear-light screen vectors, partial-alpha controls, and gamma-wrong controls", async () => {
+    const fixture = await screenVectors();
+    expect(fixture.schema).toBe("shellx-motion/linear-srgb-sdr-screen-vectors@1");
+    for (const vector of fixture.vectors) {
+      const layers = vector.layers.map((layer) => {
+        const parsed = parseCanonicalSrgbHex(layer.fill);
+        if (!parsed) throw new Error(`fixture ${vector.name} has a non-canonical fill`);
+        return { r: parsed.r, g: parsed.g, b: parsed.b, a: layer.opacity, blendMode: layer.blendMode } as const;
+      });
+      const actual = composeLinearSrgbLayers(layers);
+      const wrong = composeGammaWrongEncodedLayers(layers);
+      for (const channel of ["r", "g", "b", "a"] as const) {
+        expect(actual[channel], `${vector.name}:${channel}`).toBeCloseTo(vector.expectedStraightSrgb[channel], 12);
+        expect(wrong[channel], `${vector.name}:gamma-wrong:${channel}`).toBeCloseTo(vector.gammaWrongControl[channel], 12);
+      }
+      const maxDelta = Math.max(...(["r", "g", "b"] as const).map((channel) => Math.abs(actual[channel] - wrong[channel])));
+      expect(maxDelta, `${vector.name} must distinguish linear-light screen from encoded-domain screen when its control requires it`).toBeGreaterThanOrEqual(vector.gammaWrongControl.minimumMaxChannelDelta);
     }
   });
 });

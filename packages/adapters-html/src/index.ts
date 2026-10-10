@@ -32,7 +32,6 @@ import {
   readString,
   scanCssFunctions
 } from "./html-snippet-shared.js";
-
 export type {
   HtmlSnippetExportOptions,
   HtmlSnippetExportResult,
@@ -78,6 +77,7 @@ export async function writeHtmlSnippetExport(options: HtmlSnippetExportOptions):
         width: pkg.motion.width,
         height: pkg.motion.height,
         durationMs: pkg.motion.durationMs,
+        fps: pkg.motion.fps,
         layerCount: pkg.motion.layers.length,
         exportedLayerCount,
         lossiness: { unsupported: lossiness }
@@ -153,6 +153,7 @@ async function renderHtmlSnippet(pkg: MotionPackage): Promise<{ html: string; ex
       `    data-composition-id="${escapeAttr(pkg.motion.id)}"`,
       "    data-start=\"0\"",
       `    data-duration="${numberAttr(pkg.motion.durationMs)}"`,
+      `    data-fps="${numberAttr(pkg.motion.fps)}"`,
       `    style="width: ${cssNumber(pkg.motion.width)}px; height: ${cssNumber(pkg.motion.height)}px; background: ${background};">`
     ].join("\n"),
     ...exported,

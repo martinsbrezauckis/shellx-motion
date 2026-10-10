@@ -19,6 +19,7 @@ import {
 import type { PreparedAdmittedGpuDelivery } from "./streaming-final-gpu.js";
 import type { SegmentedGpuHostPolicy } from "./segmented-final-gpu-host-types.js";
 import type { RenderSegmentGpuContainmentProfile, RenderSegmentGpuHostVerdict } from "./segmented-final-internal/render-segment-store-types.js";
+import { revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 
 const HOST_VERDICT_SCHEMA = "shellx-motion/gpu-segmented-host-verdict@1" as const;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -30,11 +31,15 @@ export async function createClosedSegmentedGpuHostVerdict(input: {
   job: LocalMotionJobContext;
   maxProcessTreeRssBytes: number;
   policy?: SegmentedGpuHostPolicy;
+  /** Private resumed-store assertion; create-new verdicts have no store yet. */
+  assertStoreAuthorityCurrent?: () => Promise<void>;
   hybridPreparation?: GpuSegmentedHybridPreparation;
 }): Promise<{ verdict: RenderSegmentGpuHostVerdict; hybridAdmission?: GpuSegmentedHybridAdmission }> {
   const openRuntime = input.policy?.openRuntime
     ?? ((images: Parameters<typeof createGpuFrameRenderSession>[0], fonts: Parameters<typeof createGpuFrameRenderSession>[1], options: Parameters<typeof createGpuFrameRenderSession>[2]) => createGpuFrameRenderSession(images, fonts, options));
   input.job.reportSandbox({ schema: "shellx-motion/runtime-sandbox@1", provider: "chromium", status: "requested", scope: "browser-process" });
+  if (input.assertStoreAuthorityCurrent) await input.assertStoreAuthorityCurrent();
+  await revalidateStreamingFinalLaunch();
   const opened = await openRuntime(input.resources.resources.sessionImages, input.resources.resources.sessionFonts, {
     finalBrowser: { scratchRoot: input.job.scratchRoot, maxProcessTreeRssBytes: input.maxProcessTreeRssBytes, signal: input.job.signal },
     browserLocation: input.location,

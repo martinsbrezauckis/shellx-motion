@@ -80,7 +80,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "read_motion",
     mutates: false,
     calls: ["motion.actions.panel"],
-    verify: ["Action panel returns grouped actions, permission counts, prompt commands, and suggested prompt-run follow-ups."],
+    verify: ["Action panel returns grouped actions, permission counts, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run."],
     surfaces: ["prompt"]
   },
   {
@@ -135,7 +135,7 @@ export const ACTIONS: MotionAction[] = [
     permission: "read_motion",
     mutates: false,
     calls: ["motion.agent.panel"],
-    verify: ["Agent panel returns default local CLI selection policy, adapter command shapes, safety guarantees, receipt coverage, and prompt follow-ups without probing or mutating packages."],
+    verify: ["Agent panel returns explicit prompt-provider selection policy, candidate source, adapter command shapes, safety guarantees, receipt coverage, and readiness/transcript follow-ups without probing or mutating packages."],
     surfaces: ["prompt"]
   },
   {
@@ -2692,9 +2692,9 @@ function verificationForCalls(calls: string[]): string[] {
     }
     if (call === "motion.prompt.cancel") verify.add("Prompt cancel receipt references the target prompt job and prompt queue marks it cancelled.");
     if (call === "motion.prompt.retry") verify.add("Prompt retry receipt references the source prompt job and exposes queued prompt-job handoff metadata.");
-    if (call === "motion.actions.panel") verify.add("Action panel returns grouped actions, permission counts, prompt commands, and suggested prompt-run follow-ups.");
+    if (call === "motion.actions.panel") verify.add("Action panel returns grouped actions, permission counts, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run.");
     if (call === "motion.capabilities.panel") verify.add("Capability panel returns grouped lane cards, support badges, package fit, recommended lane, and follow-up match/export actions.");
-    if (call === "motion.agent.panel") verify.add("Agent panel returns default local CLI selection policy, adapter command shapes, safety guarantees, receipt coverage, and prompt follow-ups without probing or mutating packages.");
+    if (call === "motion.agent.panel") verify.add("Agent panel returns explicit prompt-provider selection policy, candidate source, adapter command shapes, safety guarantees, receipt coverage, and readiness/transcript follow-ups without probing or mutating packages.");
     if (call === "motion.agent.health") verify.add("Agent health returns local CLI subscription adapter readiness, transport, billing mode, and unavailable reasons without mutating packages.");
     if (call === "motion.agent.snapshot") verify.add("Agent snapshot returns a bounded path-free package, action, receipt, warning, and own-job summary without creating a receipt or mutating Motion.");
     if (call === "motion.packages.browse") verify.add("Package browser returns package cards, template availability, asset counts, brand provenance, and skipped-package warnings.");

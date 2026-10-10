@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe("enforced untrusted FFmpeg parser launch planning", () => {
-  // The planner and its real proof are Linux/Bubblewrap-only. Windows has neither POSIX ownership
+  // The planner is Linux/Bubblewrap-only. Windows has neither POSIX ownership
   // and execute bits nor the mount namespace this mock plan is designed to inspect.
   it.skipIf(process.platform === "win32")(
     "pins Node plus the fixed shim and gives an untrusted parser only a private staging root",

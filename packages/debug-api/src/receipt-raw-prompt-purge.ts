@@ -2,16 +2,14 @@
  * Enforce the raw-prompt deletion deadline a receipt promised, at the moment it is read.
  *
  * `retainRawRequest` lets a user keep the literal prompt text in a receipt and records a
- * `deleteAfter` timestamp. Nothing ever consumed that timestamp, so the software stated a deletion
- * deadline and then kept the prompt indefinitely — a false guarantee. Enforcement lives at the read
+ * `deleteAfter` timestamp. Enforcement lives at the read
  * choke point because that is what makes the promise true for every caller at once:
  * `motion.receipts.read`, list, transcript and the prompt queue all arrive through the two receipt
  * readers in `index.ts`. The redacted read is what a caller sees; the persist-back is the purge.
  *
- * WHAT GETS WRITTEN BACK, AND WHY IT IS THE PARSED ORIGINAL. The first version of this persisted
- * `readOperationReceipt`'s PROJECTION — a normalized view carrying only the fields the debug API
- * consumes. A `read_motion` READ therefore destroyed every field the normalizer does not model
- * (a detached `signature`, `parentReceiptId`, any vendor extension) and INVENTED one, because the
+ * WHAT GETS WRITTEN BACK, AND WHY IT IS THE PARSED ORIGINAL. Persisting
+ * `readOperationReceipt`'s projection would drop fields the debug API does not model
+ * (a detached `signature`, `parentReceiptId`, any vendor extension) and add one, because the
  * normalizer merges `output.artifacts` into a top-level `artifacts` array for its callers. A purge
  * is a deletion of one key; anything else is the read path quietly rewriting other people's
  * evidence. Prompt/render controls bind their input hash to the stable reader's admitted byte

@@ -3230,7 +3230,7 @@ describe("export preset single-source consistency", () => {
 
 // Probed hardware encoders become real, probe-gated
 // candidates with a deliberate rate-control mapping, a software override, and automatic
-// software fallback. These tests mock the probe / runner so no GPU is required (WSL has none).
+// software fallback. These tests mock the probe and runner so GPU hardware is not required.
 describe("hardware encode selection, override and fallback", () => {
   const hwTempDirs: string[] = [];
   afterEach(async () => {
@@ -3563,16 +3563,9 @@ describe("hardware encode selection, override and fallback", () => {
 });
 
 /**
- * Coverage for the delivered-colour readback (`output.color.observed` + its honest warning).
- *
- * The defect this closes was measured during cross-host verification: a Windows FFmpeg 8.x build delivered HEVC and
- * AV1 files carrying only `color_space` and `color_range`, while Motion's receipt asserted the full
- * `sdr-bt709` profile — primaries and transfer included. Nothing in Motion noticed, because the
- * receipt's colour block was a copy of the preset's intent rather than an observation of the file.
- *
- * The stubs below reproduce that exact ffprobe shape, which is the point: the Linux host these tests
- * run on cannot produce the broken file, so the grading logic is proven against the real reading
- * taken off the test host instead of against a host accident.
+ * Coverage for delivered-colour readback (`output.color.observed`) and its warning.
+ * An ffprobe result may report matrix and range without primaries or transfer.
+ * The receipt must describe those observed fields instead of repeating preset intent.
  */
 describe("delivered colour readback", () => {
   const colourTempDirs: string[] = [];
@@ -3652,11 +3645,10 @@ describe("delivered colour readback", () => {
     expect(colourWarnings(result.receipt.warnings)).toEqual([]);
   });
 
-  it("warns, and says exactly what is missing, for the Windows FFmpeg 8.x shape", async () => {
+  it("warns, and says exactly what is missing, when ffprobe reports only matrix and range", async () => {
     const outDir = await colourScratch("windows");
     const outputPath = join(outDir, "windows.mp4");
-    // Verbatim shape measured on the test host: matrix and range survive, primaries and transfer
-    // do not. Those are exactly the two the filter chain's colour negotiation does NOT carry.
+    // Matrix and range are present; primaries and transfer are absent from this probe result.
     const { runner } = runnerWithProbe(outputPath, probeStdout({ color_space: "bt709", color_range: "tv" }));
 
     const result = await encodeImageSequence({
@@ -3795,13 +3787,11 @@ describe("delivered colour readback", () => {
   it("tags colour on the FRAME, identically for every encoder, with no encoder-specific arguments", () => {
     // The defect: on newer FFmpeg the encoder takes its colour properties from the filtergraph
     // output frame, so `-color_primaries` / `-color_trc` are ignored and the delivered HEVC and AV1
-    // lost transfer and primaries while the receipt still declared sdr-bt709. Rig-measured on
-    // Windows / ffmpeg N-125773: `scale` alone carried only matrix and range.
+    // can omit transfer and primaries while the receipt still declares sdr-bt709.
     //
     // `setparams` fixes it on the frame, so it applies to every codec at once. An earlier version
-    // also passed `-x265-params`; re-measuring on the same rig showed `setparams` alone produces all
-    // four tags, so the encoder-specific argument was removed. This test asserts the property that
-    // removal bought: ONE mechanism, applied uniformly. `-x265-params` cannot be passed to nvenc or
+    // also passed `-x265-params`. This test asserts one uniform frame-tagging mechanism;
+    // `-x265-params` cannot be passed to nvenc or
     // SVT-AV1, so its presence had made software and hardware HEVC signal colour differently.
     const FRAME_TAGGING = "scale=in_range=full:out_range=tv:out_color_matrix=bt709,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv";
 

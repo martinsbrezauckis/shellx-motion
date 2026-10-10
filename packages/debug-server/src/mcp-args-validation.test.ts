@@ -5,13 +5,13 @@
  * server, a real `POST /rpc`, a real `tools/call` — because the defect being pinned was invisible
  * from the inside: `tools/list` published a JSON Schema per tool and `tools/call` never executed it.
  *
- * Two behaviours were observed live before this suite existed, at commit e3f3eb4:
+ * These two requests must produce distinct errors:
  *
  *   motion_render_final, args {}                          -> "motion.render.final requires packageRoot."
  *   motion_render_final, args { packageRoot: 5, ... }      -> "motion.render.final requires packageRoot."
  *
- * The same sentence for two different mistakes. An agent that sent a number could not learn that it
- * had sent a number, so it re-sent the number. `distinguishes a wrong type from a missing argument`
+ * The same sentence for two different mistakes would hide the type error from the caller.
+ * `distinguishes a wrong type from a missing argument`
  * below is the test that fails if that ever comes back; the others cover the rest of the schema
  * (unknown property, enum, and a valid call that must still run).
  */
@@ -75,7 +75,7 @@ describe("the argument schema an MCP tool advertises is the one it enforces", ()
   it("names a wrong-type argument by both the expected and the received type", async () => {
     const { callTool } = await mcpClient("render_motion");
 
-    // The exact call from the regression: numeric paths where the schema declares strings.
+    // Numeric paths where the schema declares strings must report a type error.
     const { payload } = await callTool("motion_render_final", { args: { packageRoot: 5, outputPath: 7 } });
 
     expect(payload.ok).toBe(false);
@@ -97,9 +97,7 @@ describe("the argument schema an MCP tool advertises is the one it enforces", ()
   }, 45_000);
 
   it("distinguishes a wrong type from a missing argument", async () => {
-    // THE regression this file exists for. Before the fix both calls answered
-    // "motion.render.final requires packageRoot." — byte-identical — so an agent had no way to tell
-    // "you forgot it" from "you sent a number", and looped on the same wrong value.
+    // A missing packageRoot and a numeric packageRoot must produce distinguishable errors.
     const { callTool } = await mcpClient("render_motion");
 
     const missing = await callTool("motion_render_final", { args: { outputPath: "/tmp/out.mp4" } });

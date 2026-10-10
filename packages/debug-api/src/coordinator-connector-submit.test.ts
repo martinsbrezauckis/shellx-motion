@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MotionConnectorJobBindingJournal, MotionJobCoordinator, MotionJobLeaseDirectory, MotionJobRegistry, motionCapabilityCatalog } from "@shellx-motion/core";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { retryCoordinatedJob, submitCoordinatedConnector } from "./coordinator-connector-submit-handler";
 
 const roots: string[] = [];
@@ -14,6 +15,10 @@ function coordinatorAt(root: string): MotionJobCoordinator {
     records: new MotionJobRegistry({ recordRoot: join(root, "records") }),
     eventsRoot: join(root, "events")
   });
+}
+
+async function inCoordinatorWorkspace<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  return await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), operation);
 }
 
 async function coordinator(): Promise<{ jobs: MotionJobCoordinator; bindings: MotionConnectorJobBindingJournal; root: string }> {
@@ -50,10 +55,10 @@ async function eventually<T>(read: () => Promise<T>, predicate: (value: T) => bo
 
 describe.runIf(process.platform === "linux")("generic coordinator connector submission", () => {
   it("submits one descriptor-bound job and cancels while its opaque input is resolving", async () => {
-    const { jobs, bindings } = await coordinator();
+    const { jobs, bindings, root } = await coordinator();
     let resolutions = 0;
     const resolvedFor: string[] = [];
-    const submitted = await submitCoordinatedConnector(request("cut:generic-cancel"), {
+    const submitted = await inCoordinatorWorkspace(root, async () => await submitCoordinatedConnector(request("cut:generic-cancel"), {
       jobTrackingDisabled: false,
       callerId: "cut:workspace",
       connectorJobReferences: {
@@ -69,18 +74,18 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
       connectorJobBindingJournal: bindings,
       coordinator: () => jobs,
       unhandled: (error) => ({ ok: false, error: { code: "unhandled", message: String(error) }, warnings: [] })
-    });
+    }));
     expect(submitted).toMatchObject({ ok: true, result: { jobId: "cut:generic-cancel", binding: { capabilityId: "connector.template-to-cut@1", descriptorRevision: 2 } } });
     await eventually(async () => resolutions, (count) => count === 1);
     expect(resolvedFor).toEqual(["cut:workspace"]);
-    await expect(jobs.cancel({ jobId: "cut:generic-cancel", callerId: "other:workspace" })).resolves.toMatchObject({ ok: false, code: "job_not_visible" });
-    await expect(jobs.cancel({ jobId: "cut:generic-cancel", callerId: "cut:workspace", reason: "operator stop" })).resolves.toMatchObject({ ok: true });
+    await expect(inCoordinatorWorkspace(root, async () => await jobs.cancel({ jobId: "cut:generic-cancel", callerId: "other:workspace" }))).resolves.toMatchObject({ ok: false, code: "job_not_visible" });
+    await expect(inCoordinatorWorkspace(root, async () => await jobs.cancel({ jobId: "cut:generic-cancel", callerId: "cut:workspace", reason: "operator stop" }))).resolves.toMatchObject({ ok: true });
     const terminal = await eventually(
-      async () => await jobs.jobView().get({ jobId: "cut:generic-cancel", callerId: "cut:workspace" }),
+      async () => await inCoordinatorWorkspace(root, async () => await jobs.jobView().get({ jobId: "cut:generic-cancel", callerId: "cut:workspace" })),
       (answer) => answer.ok && answer.job.state === "cancelled"
     );
     expect(terminal).toMatchObject({ ok: true, job: { lane: "connector", operation: "connector.template-to-cut@1", state: "cancelled" } });
-    const events = await jobs.events({ jobId: "cut:generic-cancel", callerId: "cut:workspace" });
+    const events = await inCoordinatorWorkspace(root, async () => await jobs.events({ jobId: "cut:generic-cancel", callerId: "cut:workspace" }));
     expect(events).toMatchObject({ ok: true, value: { events: expect.arrayContaining([
       expect.objectContaining({ type: "submitted", data: expect.objectContaining({
         capabilityId: "connector.template-to-cut@1", descriptorRevision: 2, requestSchemaId: "shellx-motion/connector-request/template-to-cut@1"
@@ -131,15 +136,15 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
       catalogFingerprint: catalog.fingerprint,
       request: submittedRequest.request
     })).resolves.toMatchObject({ ok: true, replayed: false });
-    await expect(first.submit({
+    await expect(inCoordinatorWorkspace(root, async () => await first.submit({
       jobId: submittedRequest.jobId,
       callerId: "cut:workspace",
       lane: "connector",
       operation: submittedRequest.capabilityId,
       execute: async () => ({ ok: false, error: { code: "job_queue_timeout", message: "capacity busy", retryable: true } })
-    })).resolves.toMatchObject({ ok: true });
+    }))).resolves.toMatchObject({ ok: true });
     await eventually(
-      async () => await first.jobView().get({ jobId: submittedRequest.jobId, callerId: "cut:workspace" }),
+      async () => await inCoordinatorWorkspace(root, async () => await first.jobView().get({ jobId: submittedRequest.jobId, callerId: "cut:workspace" })),
       (answer) => answer.ok && answer.job.state === "failed"
     );
 
@@ -147,7 +152,7 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
     let resolutions = 0;
     const resolvedFor: string[] = [];
     expect(resolutions).toBe(0);
-    await expect(retryCoordinatedJob({
+    await expect(inCoordinatorWorkspace(root, async () => await retryCoordinatedJob({
       jobId: submittedRequest.jobId,
       callerId: "cut:workspace",
       newJobId: "cut:restart-retry"
@@ -161,19 +166,81 @@ describe.runIf(process.platform === "linux")("generic coordinator connector subm
         }
       },
       coordinator: () => restarted
-    })).resolves.toMatchObject({ ok: true, value: { jobId: "cut:restart-retry", priorJobId: "cut:restart-source" } });
+    }))).resolves.toMatchObject({ ok: true, value: { jobId: "cut:restart-retry", priorJobId: "cut:restart-source" } });
     await eventually(async () => resolutions, (count) => count === 2);
     expect(resolvedFor).toEqual(["cut:workspace", "cut:workspace"]);
     await expect(bindings.read({ jobId: "cut:restart-retry", callerId: "cut:workspace" }))
       .resolves.toMatchObject({ ok: true, binding: { request: submittedRequest.request } });
     await eventually(
-      async () => await restarted.jobView().get({ jobId: "cut:restart-retry", callerId: "cut:workspace" }),
+      async () => await inCoordinatorWorkspace(root, async () => await restarted.jobView().get({ jobId: "cut:restart-retry", callerId: "cut:workspace" })),
       (answer) => answer.ok && answer.job.lifecycle === "ended"
     );
-    const events = await restarted.events({ jobId: "cut:restart-retry", callerId: "cut:workspace" });
+    const events = await inCoordinatorWorkspace(root, async () => await restarted.events({ jobId: "cut:restart-retry", callerId: "cut:workspace" }));
     expect(events).toMatchObject({ ok: true, value: { events: expect.arrayContaining([
       expect.objectContaining({ type: "retry_submitted", data: { priorJobId: "cut:restart-source", retryAttempt: 1 } })
     ]) } });
+  });
+
+  it("refuses a committed terminal event paired with a historical marker-absent record before reconstruction", async () => {
+    const { jobs: first, bindings, root } = await coordinator();
+    const submittedRequest = request("cut:committed-restart-source");
+    const catalog = motionCapabilityCatalog();
+    await expect(bindings.write({
+      jobId: submittedRequest.jobId,
+      callerId: "cut:workspace",
+      capabilityId: submittedRequest.capabilityId,
+      descriptorRevision: submittedRequest.descriptorRevision,
+      descriptorFingerprint: submittedRequest.descriptorFingerprint,
+      requestSchemaId: submittedRequest.requestSchemaId,
+      catalogFingerprint: catalog.fingerprint,
+      request: submittedRequest.request
+    })).resolves.toMatchObject({ ok: true, replayed: false });
+    let sourceExecutions = 0;
+    await expect(inCoordinatorWorkspace(root, async () => await first.submit({
+      jobId: submittedRequest.jobId,
+      callerId: "cut:workspace",
+      lane: "connector",
+      operation: submittedRequest.capabilityId,
+      execute: async () => {
+        sourceExecutions += 1;
+        return { ok: false, committed: true, error: { code: "job_queue_timeout", message: "output publication may have completed", retryable: true } };
+      }
+    }))).resolves.toMatchObject({ ok: true });
+    await eventually(
+      async () => await inCoordinatorWorkspace(root, async () => await first.jobView().get({ jobId: submittedRequest.jobId, callerId: "cut:workspace" })),
+      (answer) => answer.ok && answer.job.state === "failed"
+    );
+    expect(sourceExecutions).toBe(1);
+    const recordNames = await readdir(join(root, "records"));
+    expect(recordNames).toHaveLength(1);
+    const recordPath = join(root, "records", recordNames[0]!);
+    const historicalRecord = JSON.parse(await readFile(recordPath, "utf8")) as Record<string, unknown>;
+    expect(historicalRecord.committed).toBe(true);
+    delete historicalRecord.committed;
+    await writeFile(recordPath, `${JSON.stringify(historicalRecord)}\n`, "utf8");
+
+    const restarted = coordinatorAt(root);
+    const replacementBindingWrite = vi.spyOn(bindings, "write");
+    const replacementSubmit = vi.spyOn(restarted, "submit");
+    let resolutions = 0;
+    await expect(inCoordinatorWorkspace(root, async () => await retryCoordinatedJob({
+      jobId: submittedRequest.jobId,
+      callerId: "cut:workspace",
+      newJobId: "cut:committed-restart-retry"
+    }, {
+      connectorJobBindingJournal: bindings,
+      connectorJobReferences: { async resolvePath() { resolutions += 1; return "/must-not-resolve"; } },
+      coordinator: () => restarted
+    }))).resolves.toMatchObject({ ok: false, code: "capability_unavailable" });
+
+    expect(sourceExecutions).toBe(1);
+    expect(resolutions).toBe(0);
+    expect(replacementBindingWrite).not.toHaveBeenCalled();
+    expect(replacementSubmit).not.toHaveBeenCalled();
+    await expect(bindings.read({ jobId: "cut:committed-restart-retry", callerId: "cut:workspace" }))
+      .resolves.toMatchObject({ ok: false, code: "binding_unknown" });
+    await expect(inCoordinatorWorkspace(root, async () => await restarted.jobView().get({ jobId: "cut:committed-restart-retry", callerId: "cut:workspace" })))
+      .resolves.toMatchObject({ ok: false, code: "job_unknown" });
   });
 });
 

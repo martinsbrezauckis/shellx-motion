@@ -62,10 +62,15 @@ export function buildReceipts(entries: AgentSnapshotReceiptEntry[], complete: bo
 export function buildJobs(jobs: MotionJobStatus[], complete: boolean, text: TextProjector, truncation: SnapshotTruncation): MotionAgentSnapshot["jobs"] {
   const recent = jobs.slice(0, MAX_AGENT_SNAPSHOT_JOBS).map((job) => ({
     id: text(job.jobId, MAX_AGENT_SNAPSHOT_ID_SCALARS), state: job.state, lifecycle: job.lifecycle, operation: text(job.operation, MAX_AGENT_SNAPSHOT_OPERATION_SCALARS), lane: text(job.lane, 64),
-    ...(job.outcome ? { outcome: job.outcome } : {}), createdAtMs: finiteNonNegativeInteger(job.createdAtMs), ...(job.pollAfterMs !== undefined ? { pollAfterMs: finiteNonNegativeInteger(job.pollAfterMs) } : {}), warningCount: Array.isArray(job.warnings) ? job.warnings.length : 0
+    ...(job.outcome ? { outcome: job.outcome } : {}), ...(committedFailure(job) ? { committed: true as const } : {}), createdAtMs: finiteNonNegativeInteger(job.createdAtMs), ...(job.pollAfterMs !== undefined ? { pollAfterMs: finiteNonNegativeInteger(job.pollAfterMs) } : {}), warningCount: Array.isArray(job.warnings) ? job.warnings.length : 0
   }));
   truncation.jobRows = { omitted: Math.max(0, jobs.length - recent.length), exact: complete };
   return { count: jobs.length, countExact: complete, recent };
+}
+
+/** Compact projection repeats the public failed-only marker invariant at this hostile source boundary. */
+function committedFailure(job: MotionJobStatus): boolean {
+  return job.lifecycle === "ended" && job.outcome === "failed" && job.state === "failed" && job.committed === true;
 }
 
 export function motionFacts(pkg: MotionPackage): MotionAgentSnapshot["state"]["motion"] {

@@ -272,9 +272,8 @@ describe("telling a host what this machine is missing", () => {
 
 describe("the cold start an agent needs to begin at all", () => {
   it("creates a package from nothing, and the created package validates", async () => {
-    // An outside agent given only the docs and these tools could not start: every authoring command
-    // edits an existing package, and every route that made one was an importer. It recovered only
-    // because an unrelated fixture happened to be in the machine's temp directory.
+    // Package creation must be available as a first step: editing commands require an
+    // existing package, and importers require existing source material.
     // write_local: creating a package writes files, and the tier gate correctly refuses it below that.
     const { tool } = await jobServer({ callerId: "cut:workspace-7", grantedTier: "write_local" });
     const root = await testRoot("shellx-motion-cold-start-");

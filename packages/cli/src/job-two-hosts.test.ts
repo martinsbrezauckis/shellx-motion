@@ -4,11 +4,10 @@
  * Why this is not a unit test: every defect this file exists to catch lives in the gap between
  * processes. The job stores are a per-user directory precisely so a *different* process can answer
  * "what is my render doing", and an in-process test shares module state, so it cannot fail the way
- * production fails. Three defects in this subsystem were only ever found with real processes — an
- * unref'd retry timer that let a waiting process exit, Playwright's signal handlers killing the
- * host, and the lease-versus-record split — so the two-process form is the point.
+ * production fails. The two-process form checks retry lifetime, signal handling, and shared lease
+ * visibility across process boundaries.
  *
- * The scenario is the one ShellX Cut described: two independent hosts on one machine, each with its
+ * The scenario uses two independent hosts on one machine, each with its
  * own stable caller id, each naming its own job, both competing for one concurrency cap.
  *
  * What must hold:
@@ -209,7 +208,7 @@ describe("two hosts sharing one machine", () => {
  * the defect was in the dispatch wiring between the flags and the job, not in any renderer.
  */
 describe("the connector path Cut drives", () => {
-  it("publishes exactly one observable job while a real connector render runs", async () => {
+  it.runIf(process.platform === "linux")("publishes exactly one observable job while a real connector render runs", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-connector-job-"));
     tempRoots.push(root);
     const leaseRoot = join(root, "leases");

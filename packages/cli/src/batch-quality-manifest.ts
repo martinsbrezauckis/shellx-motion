@@ -1,4 +1,6 @@
 export {
+  BatchQualityDerivedBudget,
+  createBatchQualityRequestBudget,
   prepareBatchQualityManifestSnapshot,
   publishBatchQualityManifestSnapshot,
   batchQualityInputEvidence,

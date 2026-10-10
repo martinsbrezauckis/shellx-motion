@@ -72,8 +72,24 @@ export async function launchPrecontainedGpuBrowser(executable: string, context: 
     closed = true;
     const errors: unknown[] = [];
     let containedTreeTerminated = true;
-    try { await browser?.close(); } catch (error) { errors.push(error); }
-    try { if (child && processInfo) await terminateContainedBrowser(child, processInfo, platform, services.killProcessGroup, ownedUnixProcessGroup); } catch (error) { containedTreeTerminated = false; errors.push(error); }
+    const attachedBrowser = browser;
+    // A Browser returned by connectOverCDP owns only the Playwright transport:
+    // browser.close() disconnects from the running direct Chromium process. Ask
+    // the browser itself to exit before severing that transport, but use the
+    // retained containment handle—not a CDP acknowledgement—as the cleanup
+    // fact. Chromium can close the target before responding to Browser.close.
+    if (attachedBrowser) {
+      await requestGracefulBrowserClose(attachedBrowser);
+      const transportClose = await settleWithin(() => attachedBrowser.close(), shutdownTimeoutMs);
+      if (transportClose.status === "rejected") errors.push(transportClose.error);
+      else if (transportClose.status === "timed-out") errors.push(new Error("GPU final Playwright transport close exceeded its bounded shutdown deadline."));
+    }
+    try {
+      if (child && processInfo) {
+        const orderlyExit = attachedBrowser !== undefined && await waitForOrderlyContainedBrowserExit(child, processInfo, platform, ownedUnixProcessGroup);
+        if (!orderlyExit) await terminateContainedBrowser(child, processInfo, platform, services.killProcessGroup, ownedUnixProcessGroup);
+      }
+    } catch (error) { containedTreeTerminated = false; errors.push(error); }
     try { if (plan) await cleanupPlan(plan); } catch (error) { errors.push(error); }
     // A survivor can still own files in this profile. Retain it rather than
     // reporting cleanup while its process group remains unconfirmed.
@@ -106,7 +122,9 @@ export async function launchPrecontainedGpuBrowser(executable: string, context: 
     browser = await (services.connectOverCDP ?? ((url) => chromium.connectOverCDP(url)))(endpoint);
     return { browser, browserProcess: processInfo, close };
   } catch (error) {
-    await close().catch(() => undefined);
+    try { await close(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "GPU final browser launch and cleanup failed.");
+    }
     throw error;
   }
 }
@@ -148,6 +166,55 @@ async function removeProfileRoot(profile: string): Promise<void> {
   throw last instanceof Error ? last : new Error("GPU final browser profile cleanup failed.");
 }
 
+/**
+ * Browser.close() for a Chromium connection made with connectOverCDP closes the
+ * Playwright transport. This bounded protocol request asks Chromium to perform
+ * its own profile cleanup first. A timeout or target-close rejection is
+ * deliberately inconclusive: the retained child/group handle decides whether
+ * orderly shutdown actually completed.
+ */
+async function requestGracefulBrowserClose(browser: Browser): Promise<void> {
+  await settleWithin(() => browser.newBrowserCDPSession().then(async (session) => {
+    await session.send("Browser.close");
+  }), shutdownTimeoutMs);
+}
+
+/** Wait for the contained launch handle only after the in-band close request. */
+async function waitForOrderlyContainedBrowserExit(
+  child: ChildProcess,
+  browser: GpuBrowserProcess,
+  platform: NodeJS.Platform,
+  ownedUnixProcessGroup: OwnedUnixProcessGroup | undefined
+): Promise<boolean> {
+  if (browser.containment?.mode === "unix-process-group" && (platform === "linux" || platform === "darwin")) {
+    return ownedUnixProcessGroup ? await ownedUnixProcessGroup.waitForExit(shutdownTimeoutMs) : false;
+  }
+  await waitForExit(child, shutdownTimeoutMs);
+  return exited(child);
+}
+
+/** Settles a close request within the lifecycle bound without leaving rejections unobserved. */
+type BoundedOperationResult =
+  | { readonly status: "fulfilled" }
+  | { readonly status: "rejected"; readonly error: unknown }
+  | { readonly status: "timed-out" };
+
+async function settleWithin(operation: () => Promise<unknown>, timeoutMs: number): Promise<BoundedOperationResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled: Promise<BoundedOperationResult> = Promise.resolve().then(operation).then(
+    (): BoundedOperationResult => ({ status: "fulfilled" }),
+    (error: unknown): BoundedOperationResult => ({ status: "rejected", error })
+  );
+  const timedOut = new Promise<BoundedOperationResult>((resolveTimeout) => {
+    timer = setTimeout(() => resolveTimeout({ status: "timed-out" }), timeoutMs);
+  });
+  try {
+    return await Promise.race([settled, timedOut]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Terminate only the exact pre-contained tree; POSIX receives a negative PGID, never a broad signal. */
 export async function terminateContainedBrowser(
   child: ChildProcess,
@@ -183,6 +250,7 @@ export async function terminateContainedBrowser(
   try { child.kill(); } catch { /* The Job launcher may already have exited. */ }
   await waitForExit(child, shutdownTimeoutMs);
   if (!exited(child)) { try { child.kill("SIGKILL"); } catch { /* Exit checked below. */ } await waitForExit(child, shutdownTimeoutMs); }
+  if (!exited(child)) throw new Error("GPU final could not confirm contained Windows browser cleanup.");
 }
 
 function isSafeProfilePath(value: string): boolean { return typeof value === "string" && value.length > 1 && resolve(value) === value; }

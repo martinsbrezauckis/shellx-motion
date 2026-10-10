@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveLinearSrgbSdrFinalRoute, type LinearSrgbSdrFinalRoute } from "@shellx-motion/core/internal/linear-srgb-sdr-final";
+import { LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE, LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER, LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE } from "@shellx-motion/renderer-browser/internal/linear-srgb-sdr-final";
 import type { LinearSrgbSdrFinalWebGpuFrame, LinearSrgbSdrFinalWebGpuProducerEvidence } from "@shellx-motion/renderer-browser/internal/linear-srgb-sdr-final";
 import type { FfmpegCommand, FfmpegRunner } from "./index.js";
 import {
@@ -12,6 +13,7 @@ import {
   prepareLinearSrgbSdrFinalForTest,
   type LinearSrgbSdrFinalJob,
 } from "./linear-srgb-sdr-final-adapter.js";
+import { withStreamingFinalLaunchRevalidation } from "./streaming-final-lineage-revalidation.js";
 import type { StreamingFfmpegProcess, StreamingFfmpegProcessFactory } from "./streaming-process.js";
 
 const roots: string[] = [];
@@ -50,6 +52,52 @@ describe("strict linear-sRGB SDR adapter", () => {
     expect(containmentReports).toBe(1);
   });
 
+  it("stops strict FFmpeg preparation before the next external probe launch", async () => {
+    const events: string[] = [];
+    let fences = 0;
+
+    await expect(withStreamingFinalLaunchRevalidation(async () => {
+      fences += 1;
+      if (fences === 2) throw new Error("stable lineage changed before strict FFprobe preparation");
+    }, async () => await prepareLinearSrgbSdrFinalForTest(motion(), preflightRunner(events)))).rejects
+      .toThrow("stable lineage changed before strict FFprobe preparation");
+
+    expect(fences).toBe(2);
+    expect(events).toEqual(["ffmpeg-version"]);
+  });
+
+  it("keeps a wrapped FFprobe fence refusal terminal instead of translating it to tool readiness", async () => {
+    const events: string[] = [];
+    let fences = 0;
+
+    await expect(withStreamingFinalLaunchRevalidation(async () => {
+      if (++fences >= 3) throw new Error("stable lineage changed during strict FFprobe preparation");
+    }, async () => await prepareLinearSrgbSdrFinalForTest(motion(), preflightRunner(events)))).rejects
+      .toThrow("stable lineage changed during strict FFprobe preparation");
+
+    expect(fences).toBe(4);
+    expect(events).toEqual(["ffmpeg-version"]);
+  });
+
+  it("stops strict final readback before inverse decode after the encoder and FFprobe settle", async () => {
+    const prepared = await prepareLinearSrgbSdrFinalForTest(motion(), preflightRunner([]));
+    claimLinearSrgbSdrFinalPreparation(motion(), prepared);
+    const root = await scratch(), events: string[] = [];
+    let fences = 0;
+
+    await expect(withStreamingFinalLaunchRevalidation(async () => {
+      fences += 1;
+      if (fences === 4) throw new Error("stable lineage changed before strict inverse decode");
+    }, async () => await executeLinearSrgbSdrFinalForTest({
+      preparation: prepared, outputPath: join(root, "work.mp4"), decodedPath: join(root, "decoded.rgba"), job: job(root)
+    }, services({ source: opaqueFrame(), events })))).rejects.toThrow("stable lineage changed before strict inverse decode");
+
+    expect(fences).toBe(4);
+    expect(events).toEqual(["gpu-produce", "encode-start", "encode-write", "encode-write", "encode-end", "probe-start", "probe-end"]);
+    await expect(readFile(join(root, "work.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(root, "decoded.rgba"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses a stale preparation before producer or output allocation", async () => {
     const prepared = await prepareLinearSrgbSdrFinalForTest(motion(), preflightRunner([]));
     const events: string[] = [];
@@ -77,6 +125,38 @@ describe("strict linear-sRGB SDR adapter", () => {
     expect(events).toEqual(["gpu-produce"]);
   });
 
+  it("binds F2b screen producer identity through decoded delivery comparison and terminal cleanup", async () => {
+    const sourceMotion = motion(true);
+    const prepared = await prepareLinearSrgbSdrFinalForTest(sourceMotion, preflightRunner([]));
+    claimLinearSrgbSdrFinalPreparation(sourceMotion, prepared);
+    const root = await scratch(), events: string[] = [];
+    const result = await executeLinearSrgbSdrFinalForTest({ preparation: prepared, outputPath: join(root, "screen.mp4"), decodedPath: join(root, "screen.rgba"), job: job(root) }, services({ source: opaqueFrame(), events, motion: sourceMotion }));
+    expect(result).toMatchObject({
+      ok: true,
+      evidence: {
+        routeFingerprint: prepared.route.fingerprint,
+        producer: {
+          screenPipeline: { schema: "shellx-motion/linear-srgb-sdr-final-f2b-screen-webgpu-pipeline@1", composition: "premultiplied-linear-srgb-screen" },
+          cleanup: { state: "complete", resourcesReleased: true, pageClosed: true, runtimeClosed: true },
+        },
+        comparison: { accepted: true, alpha: { mismatchedPixelCount: 0 } },
+        cleanup: { decodedFrameRemoved: true, browserTerminal: true },
+      },
+    });
+    await expect(readFile(join(root, "screen.rgba"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a screen route with missing exact screen-pipeline receipt evidence before encoding", async () => {
+    const sourceMotion = motion(true);
+    const prepared = await prepareLinearSrgbSdrFinalForTest(sourceMotion, preflightRunner([]));
+    claimLinearSrgbSdrFinalPreparation(sourceMotion, prepared);
+    const root = await scratch(), events: string[] = [];
+    const result = await executeLinearSrgbSdrFinalForTest({ preparation: prepared, outputPath: join(root, "screen.mp4"), decodedPath: join(root, "screen.rgba"), job: job(root) }, services({ source: opaqueFrame(), events, motion: sourceMotion, omitScreenPipeline: true }));
+    expect(result).toMatchObject({ ok: false, code: "linear_srgb_sdr_final_refused" });
+    expect(events).toEqual(["gpu-produce"]);
+    await expect(readFile(join(root, "screen.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses artifact paths outside the admitted job scratch root", async () => {
     const prepared = await prepareLinearSrgbSdrFinalForTest(motion(), preflightRunner([]));
     claimLinearSrgbSdrFinalPreparation(motion(), prepared);
@@ -97,16 +177,21 @@ describe("strict linear-sRGB SDR adapter", () => {
   });
 });
 
-function motion() {
+function motion(screen = false) {
   return {
     schema: "shellx-motion/motion@1" as const, id: "strict-sdr", name: "strict SDR", durationMs: 1_000, fps: 2, width: 2, height: 2, background: "#101820",
     colorPipeline: { schema: "shellx-motion/color-pipeline@1" as const, intent: "linear-srgb-sdr@1" as const }, assets: [], provenance: { sourceApp: "test", createdBy: "strict-adapter-test" },
-    layers: [{ id: "rect", type: "shape" as const, shape: "rect" as const, startMs: 0, durationMs: 1_000, fill: "#ff0040", opacity: 0.4, transform: { x: 0, y: 0, width: 1, height: 1 } }],
+    layers: screen
+      ? [
+        { id: "base", type: "shape" as const, shape: "rect" as const, startMs: 0, durationMs: 1_000, fill: "#204080", opacity: 0.18, transform: { x: 0, y: 0, width: 1, height: 1 } },
+        { id: "screen", type: "shape" as const, shape: "rect" as const, startMs: 0, durationMs: 1_000, fill: "#ff5020", opacity: 0.31, blendMode: "screen" as const, transform: { x: 0, y: 0, width: 1, height: 1 } },
+      ]
+      : [{ id: "rect", type: "shape" as const, shape: "rect" as const, startMs: 0, durationMs: 1_000, fill: "#ff0040", opacity: 0.4, transform: { x: 0, y: 0, width: 1, height: 1 } }],
   };
 }
 
-function route(): LinearSrgbSdrFinalRoute {
-  const result = resolveLinearSrgbSdrFinalRoute(motion(), { target: "final", frameLane: "gpu", delivery: "streamed", finalLane: "ffmpeg", preset: "mp4-h264" });
+function route(source = motion()): LinearSrgbSdrFinalRoute {
+  const result = resolveLinearSrgbSdrFinalRoute(source, { target: "final", frameLane: "gpu", delivery: "streamed", finalLane: "ffmpeg", preset: "mp4-h264" });
   if (!result.ok) throw new Error(result.refusal.message);
   return result.route;
 }
@@ -118,9 +203,9 @@ function preflightRunner(events: string[]): FfmpegRunner {
   };
 }
 
-function services(input: { source: Buffer; decoded?: Buffer; events: string[] }) {
-  const admittedRoute = route();
-  const evidence = producerEvidence(admittedRoute, input.source);
+function services(input: { source: Buffer; decoded?: Buffer; events: string[]; motion?: ReturnType<typeof motion>; omitScreenPipeline?: boolean }) {
+  const admittedRoute = route(input.motion);
+  const evidence = producerEvidence(admittedRoute, input.source, input.omitScreenPipeline);
   return {
     createProducer: () => ({ ok: true as const, producer: {
       get evidence() { return evidence; },
@@ -156,10 +241,12 @@ function frame(current: LinearSrgbSdrFinalRoute, rgba8Srgb: Buffer): LinearSrgbS
   return { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-frame@1", routeFingerprint: current.fingerprint, documentFingerprint: current.documentFingerprint, width: 2, height: 2, bytesPerRow: 8, rgba8SrgbSha256: sha256(rgba8Srgb), rgba8Srgb };
 }
 
-function producerEvidence(current: LinearSrgbSdrFinalRoute, source: Buffer): LinearSrgbSdrFinalWebGpuProducerEvidence {
+function producerEvidence(current: LinearSrgbSdrFinalRoute, source: Buffer, omitScreenPipeline = false): LinearSrgbSdrFinalWebGpuProducerEvidence {
+  const screen = current.rects.some((rect) => rect.blendMode === "screen");
   return {
     schema: "shellx-motion/linear-srgb-sdr-final-webgpu-producer@1", routeFingerprint: current.fingerprint, documentFingerprint: current.documentFingerprint,
-    pipeline: { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-pipeline@1", implementationSha256: "a".repeat(64), workingTarget: "rgba16float", publicationTarget: "rgba8unorm", publicationUsage: "COPY_SRC", composition: "premultiplied-linear-srgb-normal-source-over", frameBoundary: "straight-srgb-rgba8" },
+    pipeline: { schema: "shellx-motion/linear-srgb-sdr-final-webgpu-pipeline@1", implementationSha256: LINEAR_SRGB_SDR_FINAL_WEBGPU_PIPELINE.implementationSha256, workingTarget: "rgba16float", publicationTarget: "rgba8unorm", publicationUsage: "COPY_SRC", composition: "premultiplied-linear-srgb-normal-source-over", frameBoundary: "straight-srgb-rgba8", publicationDither: LINEAR_SRGB_SDR_FINAL_PUBLICATION_DITHER },
+    ...(screen && !omitScreenPipeline ? { screenPipeline: { schema: "shellx-motion/linear-srgb-sdr-final-f2b-screen-webgpu-pipeline@1" as const, implementationSha256: LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PIPELINE.implementationSha256, workingTarget: "rgba16float" as const, publicationTarget: "rgba8unorm" as const, publicationUsage: "COPY_SRC" as const, composition: "premultiplied-linear-srgb-screen" as const, frameBoundary: "straight-srgb-rgba8" as const } } : {}),
     runtime: null, readback: { bytesPerRow: 256, paddedByteLength: 512, tightByteLength: 16, mapOperations: 1, mappedBufferUnmapped: true, mappedBufferDestroyed: true }, retainedFrame: { bytes: 16, sha256: sha256(source) }, cleanup: { state: "complete", resourcesReleased: true, pageClosed: true, runtimeClosed: true }, fingerprint: "b".repeat(64),
   };
 }

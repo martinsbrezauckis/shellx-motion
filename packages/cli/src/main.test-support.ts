@@ -31,8 +31,8 @@ export { createFakePromptRuntime } from "@shellx-motion/prompt/test-support";
  * This is the former `fakeAgentRuntime()`/`fakeAdapter()` pair from `main.ts`, where `--adapter
  * fake` could reach it: the shipped binary reported a ready `shellx-motion-fake-agent` that no user
  * could install, in the same JSON a real probe produces. It lives here so
- * only a caller that imports test scaffolding on purpose can build one — `scripts/build.mjs` never
- * emits `*.test-support.ts`, and `scripts/shipping-imports-gate.mjs` fails if shipping code
+ * only a caller that imports test scaffolding on purpose can build one — `scripts/public/build.mjs` never
+ * emits `*.test-support.ts`, and `scripts/public/shipping-imports-gate.mjs` fails if shipping code
  * imports it.
  *
  * The probe answers for `shellx-motion-fake-agent` and reports exit 127 ("unavailable") for

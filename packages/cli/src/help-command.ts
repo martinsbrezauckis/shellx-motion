@@ -59,8 +59,8 @@ export function helpCommand(): CliResult {
       },
       {
         name: "prompt",
-        usage: "shellx-motion prompt run <request> [--retain-raw-prompt --raw-prompt-delete-after <ISO> --raw-prompt-purpose debugging|user_requested_replay]",
-        purpose: "Route prompts through the local agent/action receipt contract."
+        usage: "shellx-motion prompt run <request> --agent claude-code|grok [--retain-raw-prompt --raw-prompt-delete-after <ISO> --raw-prompt-purpose debugging|user_requested_replay]",
+        purpose: "Route prompts through the local agent/action receipt contract. Select a prompt-only local CLI provider explicitly; no provider fallback runs."
       },
       {
         name: "preview",
@@ -161,8 +161,8 @@ export function helpCommand(): CliResult {
     examples: [
       "shellx-motion actions plan \"render this lower third as mp4\"",
       "shellx-motion debug state --package fixtures/packages/lower-third",
-      "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --execute-agent-commands --receipts-root .scratch/receipts",
-      "shellx-motion prompt run \"edit title and preview\" --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
+      "shellx-motion debug prompt-run --tier edit_motion --trusted-local-tier --request \"edit title and preview\" --agent claude-code --execute-agent-commands --receipts-root .scratch/receipts",
+      "shellx-motion prompt run \"edit title and preview\" --agent claude-code --tier edit_motion --trusted-local-tier --execute-agent-commands --receipts-root .scratch/receipts",
       "shellx-motion connector canvas-to-cut fixtures/canvas/shape-text-frame-selection.json --out .scratch/connectors/canvas-story-hero",
       "shellx-motion render-batch fixtures/packages/batch-card --out .scratch/batch-card-real"
     ]

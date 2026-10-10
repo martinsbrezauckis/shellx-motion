@@ -1,56 +1,17 @@
 /**
- * platform-requirements.ts — ONE answer to "can this machine render?", for every surface.
+ * Shared platform readiness for CLI, Debug API, SDK and Workbench callers.
  *
- * ROLE
- * ----
- * Motion shells out to FFmpeg to encode and to FFprobe to inspect what it encoded. Neither ships
- * with Motion. Before this module the question "is this machine ready?" had three incompatible
- * answers (the readiness-parity invariant):
+ * Motion uses external FFmpeg for encoding and FFprobe for delivered-media inspection.
+ * A result distinguishes a successful probe (`ok`) from an available capability
+ * (`satisfied`). Missing or broken tools can therefore be reported without claiming
+ * that the probe itself failed.
  *
- *   - `shellx-motion doctor --json` returned `{ ok:false, checks, missingCount }` with no `satisfied`;
- *   - `motion.platform.requirements` returned `ok:true` with `result.satisfied:false`;
- *   - the published Cut integration spec promised both returned the same `satisfied` structure.
+ * Readiness is scoped to an operation. Preview may need no external tool, final
+ * encoding needs FFmpeg, and quality readback needs FFprobe. Route-specific needs,
+ * such as Chromium for the browser frame lane, come from `platform-operations.ts`.
  *
- * And all three modelled only FFmpeg. Nothing could distinguish "FFmpeg absent" from "FFmpeg
- * present but broken", and nothing modelled FFprobe at all — even though published rendering docs
- * say Motion resolves it and uses it for validation evidence. A host could not tell a user "preview
- * and native rendering work, final encode does not", because that state had no representation.
- *
- * This module is the single source. CLI, MCP/debug API, SDK/hosts, skill examples and the workbench
- * all read {@link MotionPlatformRequirements} produced by {@link checkMotionPlatformRequirements};
- * none of them decides anything for itself.
- *
- * THE TWO BOOLEANS ARE DIFFERENT QUESTIONS
- * ----------------------------------------
- *   `ok`        — did the PROBE run? A transport/execution fact. False only when Motion could not
- *                 even ask (which this local probe cannot fail at, so it is true here and exists so
- *                 a remote host's envelope keeps the same meaning).
- *   `satisfied` — is the CAPABILITY present? False when a required tool is missing or broken.
- *
- * Conflating them is what produced the three answers above: `shellx-motion doctor` used `ok` to mean
- * `satisfied`, so a successful report of a missing binary looked like a failed command.
- *
- * OPERATIONS, NOT A SINGLE VERDICT
- * --------------------------------
- * "Ready" depends on what you intend to do. `preview.frame` needs nothing external; `render.final`
- * needs FFmpeg; `quality.check` needs FFprobe to read back what was produced. An agent asks about
- * the operation it is about to attempt, and gets an answer scoped to it — which is how a host can
- * truthfully say "authoring and preview work, final encode does not" instead of one red light.
- *
- * A REQUIREMENT CAN BE LANE-DEPENDENT
- * -----------------------------------
- * Not every tool an operation needs is needed by every route through it: `render.final` needs
- * FFmpeg whatever happens, but it needs Chromium only for the DEFAULT `--frame-lane browser`.
- * `platform-operations.ts` owns that model and the reasoning behind it; this module projects its
- * answers into the shared result. Read that header before changing what `satisfied` means.
- *
- * DEPENDENCIES / CALLERS
- * ----------------------
- * Depends on `platform-operations.ts` (which operation needs what, by route), `tool-requirements.ts`
- * (per-tool prose and install guidance) and the probes/resolvers in `index.ts`, which are injected
- * as parameters so this module never imports its own package's entry point. Primary callers:
- * `shellx-motion doctor` (CLI), `motion.platform.requirements` (debug API + MCP), the SDK platform
- * client, and the workbench render dialog.
+ * Tool descriptions and installation guidance come from `tool-requirements.ts`.
+ * Probes are injected so this module does not import its own package entry point.
  */
 import {
   defaultMotionHostRenderCapacity,

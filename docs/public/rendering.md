@@ -157,7 +157,9 @@ eviction/deduplication and high-water facts, stable-texture metrics, and the exp
 `audio-not-rasterized` / `final-not-attested`.
 
 This is visual-only preview. It makes no audio, final-video staging, encoding, or mux claim, and
-does not alter the existing GPU final delivery path described below. Native pixel and resource qualification requires fresh host evidence.
+does not alter the existing GPU final delivery path described below. Source checks cover exact
+playhead mapping, stable textures, bounded cache use, and cleanup. Run native verification on the
+intended host before treating those checks as hardware behavior.
 
 Fixed rain, water, snow, and fog environments may use their authored 2..8-sample motion blur. The
 GPU compiler lowers one exact-time environment draw per shutter sample, keeps scene and effect-mask
@@ -188,8 +190,9 @@ installed entry, normalized parameters, application sequence, resource high-wate
 released lease into their evidence. Module plus active video, hybrid capture, or GPU reuse currently
 refuses instead of opening a second execution/resource path.
 
-Native execution of this governed intrinsic requires fresh host verification; it does not
-turn Motion packages into a general plugin or user-shader runtime.
+The `Second Take` sample exercises the fixed governed intrinsic. Source checks do not establish
+installed module execution, native pixels, final encoding, or cleanup on a new host. The module
+contract does not turn Motion packages into a general plugin or user-shader runtime.
 
 One GPU final can additionally contain either one strict data-only package HTML surface or one
 restricted-GLSL shader surface. Data-only HTML allows no script, active URL, interaction, temporal
@@ -229,10 +232,13 @@ filtering, blending, and internal alpha behaviour remain Chromium-managed.
 
 The closed, source-generated [color pipeline contract](COLOR_PIPELINE.md) records the
 explicit legacy compatibility intent and one exact `linear-srgb-sdr@1` final route. That
-route is limited to a static opaque background plus bounded rectangles with normal
-source-over. Each rectangle is either one canonical flat fill or an F2a static linear/radial
-gradient with 2–16 canonical opaque stops interpolated in linear light; gradient keyframes and
-every other shape/style remain refused. The route is rendered in a premultiplied linear-sRGB WebGPU target, explicitly encoded
+route is limited to a static opaque background plus bounded rectangles with document-ordered
+normal source-over and F2b `screen` composition only. Each rectangle is either one canonical flat
+fill or an F2a static linear/radial gradient with 2–16 canonical opaque stops interpolated in
+linear light; gradient keyframes, other blend modes, blur/glow, and every other shape/style remain
+refused. Its H.264 canvas requires positive even dimensions within 1920 × 1080; incompatible
+geometry is refused before GPU or output allocation. The route is rendered in a premultiplied
+linear-sRGB WebGPU target, explicitly encoded
 to a straight-sRGB frame boundary, converted to limited BT.709 H.264 by the fixed
 FFmpeg contract, and inverse-decoded for mandatory frame comparison before publication.
 All other strict features, lanes, outputs, transports, audio, and fallbacks are refused.
@@ -599,8 +605,9 @@ and the expected range schedule before opening the store. Each range must publis
 pixel ledger and cleanup evidence; source/runtime/policy/range changes, missing cleanup, a second
 hybrid source, scripts, remote input, or time-capable HTML refuse before checkpoint publication.
 
-The restricted-GLSL branch requires fresh native interruption, replay, and delivery verification. This is not cross-host performance evidence, and
-the strict HTML aliases have source/integration rather than native visual qualification.
+The restricted-GLSL branch supports resumed ranges with frozen source, capture plan, range ledger,
+and cleanup identities. Verify interruption, resume, replay, and delivered bytes on the intended
+host. Strict HTML aliases have source/integration coverage rather than native visual qualification.
 
 Stills and image sequences keep their distinct output paths. Ordinary streaming
 and segmented delivery are separate modes: ordinary streaming has no durable
@@ -720,34 +727,17 @@ complexity of one frame.
 
 `doctor --json` and `motion.platform.requirements` expose that exact process-wide capacity snapshot.
 The same snapshot selects point-cloud tiers: portable 8,192; elevated 16,384; dense 32,768; maximum
-65,536 points/layer. State-record and canonical-payload limits scale with the tier. A 64 GiB host
-with 48 GiB free, 16 logical CPUs, and the default two concurrent jobs resolves about 17.5 GiB/job
-and the maximum point tier. A weaker host refuses an oversized package before browser launch or
-native raster allocation; it never silently truncates the cloud.
+65,536 points/layer. State-record and canonical-payload limits scale with the tier. A host
+refuses an oversized package before browser launch or native raster allocation; it never
+silently truncates the cloud.
 
-Measured on one host (WSL2, Chromium 151, 1920×1080, 30 fps, reading
-`resources.peakProcessTreeRssBytes` from the returned receipt) — the absolute
-numbers are that machine's, the shape is the transferable part:
-
-| Scene | Frames | Peak process-tree RSS |
-|---|---|---|
-| text + shapes, no WebGL | 120 | 1.15 GiB |
-| one rain environment + 3-sample motion blur | 180 | 2.83 GiB |
-| the same package extended to 15 s | 450 | 4.40 GiB |
-| rain + snow, motion blur removed | 450 | 2.65 GiB |
-| rain + snow with 3-sample motion blur | 450 | 5.07 GiB |
-| the 15 s rain package at `quality: "preview"` | 450 | 4.03 GiB |
-
-So a 15-second 1080p30 piece with two environment layers and motion blur sits at
-roughly 84% of the default ceiling with nothing left for a third environment or a
-longer cut. Reduce the frame count per job first (render in segments and
-concatenate) — it is the only lever measured to move peak memory proportionally.
-Removing `effects.motionBlur.samples` is the next largest. Lowering
-`environment.quality` from `cinematic` to `preview` halves the shader's effective
-depth layers and is recorded in the receipt, but moved peak memory only ~8% in the
-measurement above, so do not rely on it to rescue a render. Raising the ceiling is
-a host-operator decision; note that `maxConcurrentJobs` defaults to 2, so two jobs
-can each reach it on the same machine.
+Plan capacity against the resolved budget on the render host. Segment a long piece to reduce
+the frame count per job, reduce `effects.motionBlur.samples` where the look permits it, and
+avoid overlapping environment layers that the composition does not need. Lowering
+`environment.quality` from `cinematic` to `preview` reduces shader depth layers and is recorded
+in the receipt, but its effect on peak process memory depends on the scene and host. Raising the
+ceiling is a host-operator decision; `maxConcurrentJobs` defaults to 2, so concurrent jobs share
+the machine's capacity.
 
 Every render receipt carries `resources.peakProcessTreeRssBytes` next to
 `resources.policy.maxProcessTreeRssBytes`. Render a short prefix, read the ratio,
@@ -816,7 +806,12 @@ finish even if that reporting storage later degrades. Coordinator submission is 
 does **not** start an accepted coordinator worker until its `submitted` event (and a retry's
 `retry_submitted` event) is durable. If later event persistence fails, event reads fail closed; a
 cancellation still signals the owned worker but returns typed persistence failure rather than a
-false acknowledgement.
+false acknowledgement. Cancellation arriving after terminal settlement starts waits for that
+settlement and returns the existing terminal-control refusal without appending another event.
+The public `motion.job.cancel` reason is optional; when supplied it must contain 1–512 Unicode
+characters with no ASCII control characters (U+0000–U+001F or U+007F). Invalid reasons are refused before the job is signalled.
+Durable job records and their compact evidence retain up to 64 bounded warnings under one shared
+contract.
 
 A job reports `lifecycle` `pending` → `running` → `ended`, an `outcome` of
 `succeeded` / `failed` / `cancelled` / `skipped` once ended, and `pollAfterMs`

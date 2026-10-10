@@ -10,10 +10,13 @@ export type { LinearSrgbSdrFinalMotionAdmission } from "./linear-srgb-sdr-final-
 
 export {
   composeGammaWrongEncodedSourceOver,
+  composeGammaWrongEncodedLayers,
+  composeLinearSrgbLayers,
   composeLinearSrgbSourceOver,
   decodeSrgbChannel,
   encodeLinearSrgbChannel,
   linearSourceOver,
+  linearScreen,
   linearSrgbGradientPosition,
   interpolateGammaWrongEncodedGradientStops,
   interpolateLinearSrgbGradientStops,
@@ -24,6 +27,8 @@ export {
   type CanonicalSrgbHex,
   type LinearSrgbSdrGradient,
   type LinearSrgbSdrGradientStop,
+  type LinearSrgbSdrBlendMode,
+  type LinearSrgbSdrCompositingLayer,
   type LinearSrgbSdrPremultipliedRgba,
   type LinearSrgbSdrStraightRgba,
 } from "./linear-srgb-sdr-final-math";
@@ -51,6 +56,8 @@ interface LinearSrgbSdrFinalRectBase {
   readonly height: number;
   /** The strict route's sole source-alpha spelling: top-level layer.opacity, defaulting to one. */
   readonly opacity: number;
+  /** Omitted for normal so the established normal-only route keeps its fingerprint. */
+  readonly blendMode?: "screen";
 }
 
 export type LinearSrgbSdrFinalRect =
@@ -66,7 +73,7 @@ export interface LinearSrgbSdrFinalRoute {
     readonly delivery: "streamed";
     readonly finalLane: "ffmpeg";
     readonly preset: "mp4-h264";
-    readonly composition: "normal-source-over-document-order";
+    readonly composition: "normal-source-over-document-order" | "normal-and-screen-document-order";
     readonly working: "premultiplied-linear-srgb-rgba16float";
     readonly frameBoundary: "straight-srgb-rgba8";
   };
@@ -126,6 +133,9 @@ function resolveAdmittedLinearSrgbSdrFinalRoute(motion: MotionDocument): LinearS
     || !positiveSafeInteger(root.durationMs) || !positiveFinite(root.fps)) {
     return refused(`The strict linear-sRGB SDR final route requires positive canvas dimensions up to ${LINEAR_SRGB_SDR_FINAL_MAX_WIDTH}x${LINEAR_SRGB_SDR_FINAL_MAX_HEIGHT}, duration, and fps.`);
   }
+  if (root.width % 2 !== 0 || root.height % 2 !== 0) {
+    return refused("The strict linear-sRGB SDR final route requires even canvas dimensions for mp4-h264 yuv420p delivery.");
+  }
   const budgetError = motionDocumentBudgetError({ width: root.width, height: root.height, fps: root.fps, durationMs: root.durationMs });
   if (budgetError) return refused(`The strict linear-sRGB SDR final route refuses this document before GPU/output allocation: ${budgetError}`);
   const background = parseCanonicalSrgbHex(root.background);
@@ -148,7 +158,9 @@ function resolveAdmittedLinearSrgbSdrFinalRoute(motion: MotionDocument): LinearS
     delivery: "streamed" as const,
     finalLane: "ffmpeg" as const,
     preset: "mp4-h264" as const,
-    composition: "normal-source-over-document-order" as const,
+    composition: rects.some((rect) => rect.blendMode === "screen")
+      ? "normal-and-screen-document-order" as const
+      : "normal-source-over-document-order" as const,
     working: "premultiplied-linear-srgb-rgba16float" as const,
     frameBoundary: "straight-srgb-rgba8" as const,
   };
@@ -171,7 +183,7 @@ function parseRect(value: unknown, index: number, canvasWidth: number, canvasHei
   if (!identifier(layer.id) || ids.has(layer.id)) return fail(`${label} requires one unique bounded rectangle id.`);
   if (layer.type !== "shape" || layer.shape !== "rect") return fail(`${label} must be a shape rect; groups and every non-rect layer are refused.`);
   if (layer.startMs !== 0 || layer.durationMs !== durationMs) return fail(`${label} must be visible for the complete static document duration.`);
-  if (layer.blendMode !== undefined && layer.blendMode !== "normal") return fail(`${label} supports normal ordered source-over only.`);
+  if (layer.blendMode !== undefined && layer.blendMode !== "normal" && layer.blendMode !== "screen") return fail(`${label} supports only normal source-over or F2b screen composition.`);
   const hasFill = Object.hasOwn(layer, "fill"), hasGradient = Object.hasOwn(layer, "gradient");
   if (hasFill === hasGradient) return fail(`${label} requires exactly one lower-case #rrggbb fill or one admitted F2a gradient; mixed paint, alpha colours, and aliases are refused.`);
   const paint = hasFill ? parseCanonicalSrgbHex(layer.fill) : parseGradient(layer.gradient);
@@ -184,7 +196,7 @@ function parseRect(value: unknown, index: number, canvasWidth: number, canvasHei
     || transform.x < 0 || transform.y < 0 || transform.x + transform.width > canvasWidth || transform.y + transform.height > canvasHeight) {
     return fail(`${label} rectangle must use positive integer geometry contained by the canvas.`);
   }
-  const base = { id: layer.id, x: transform.x, y: transform.y, width: transform.width, height: transform.height, opacity };
+  const base = { id: layer.id, x: transform.x, y: transform.y, width: transform.width, height: transform.height, opacity, ...(layer.blendMode === "screen" ? { blendMode: "screen" as const } : {}) };
   return { ok: true, rect: hasFill ? { ...base, fill: paint as CanonicalSrgbHex } : { ...base, gradient: paint as LinearSrgbSdrGradient } };
 }
 

@@ -65,6 +65,8 @@ export async function prepareAdmittedSegmentedGpuHost(input: {
   maxProcessTreeRssBytes: number;
   runner: FfmpegRunner;
   policy?: SegmentedGpuHostPolicy;
+  /** A resumed store already exists before its pre-store host verdict. */
+  assertStoreAuthorityCurrent?: () => Promise<void>;
   /** Already-pure static resolution; it deliberately holds no live lease. */
   preflight?: SegmentedGpuStaticPreflight;
   media?: Pick<
@@ -186,6 +188,7 @@ export async function prepareAdmittedSegmentedGpuHost(input: {
       job: input.job,
       maxProcessTreeRssBytes: input.maxProcessTreeRssBytes,
       policy: input.policy,
+      ...(input.assertStoreAuthorityCurrent ? { assertStoreAuthorityCurrent: input.assertStoreAuthorityCurrent } : {}),
       hybridPreparation
     });
     const verdict = hostIdentity.verdict;

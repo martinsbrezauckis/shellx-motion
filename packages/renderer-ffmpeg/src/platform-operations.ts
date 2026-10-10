@@ -130,10 +130,9 @@ const OPERATION_REQUIREMENTS: Record<MotionRequirementOperation, MotionOperation
       alternative: {
         flag: "--frame-lane native",
         avoids: ["chromium"],
-        // Verified on a machine with no browser: `render --frame-lane native` delivers an MP4 for a
-        // package the native lane can draw, and refuses `native_text_not_deliverable` for one it
-        // cannot. Both are real, and which one a caller gets depends on their document — so the
-        // route is offered, and the condition is stated rather than discovered at render time.
+        // The native lane can deliver supported packages without Chromium and refuses unsupported
+        // text with `native_text_not_deliverable`. Its availability depends on package content, so
+        // the route advertises that condition before rendering.
         packageDependent: true,
         tradeoff: "The native rasterizer draws the frames instead of a browser. It is a narrow lane:"
           + " a fixed uppercase block-glyph set and no font rasterizer, so a DELIVERY render refuses"

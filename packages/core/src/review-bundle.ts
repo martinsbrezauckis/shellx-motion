@@ -67,6 +67,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     ...selectedRootAuthorities,
     ...(input.artifactRootAuthorities ?? [])
   ];
+  const receiptsRootAuthority = selectedRoots.find((entry) => entry.label === "receiptsRoot")?.authority;
   await assertSelectedReviewRoots(selectedRoots);
   await assertReviewRootAuthorities(retainedRootAuthorities);
   const pkg = input.packageRoot ? await loadMotionPackage(input.packageRoot) : undefined;
@@ -80,7 +81,7 @@ export async function writeReviewBundle(input: WriteReviewBundleInput): Promise<
     const packageId = pkg?.manifest.id ?? "workspace";
     const createdAt = input.createdAt ?? new Date().toISOString();
     const receiptEntries = exactReviewBundleReceiptEntries(
-      input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot) : [])
+      input.receipts ?? (input.receiptsRoot ? await readReviewBundleReceiptEntries(input.receiptsRoot, receiptsRootAuthority) : [])
     );
     await assertSelectedReviewRoots(selectedRoots);
     await assertReviewRootAuthorities(retainedRootAuthorities);

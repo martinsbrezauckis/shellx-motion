@@ -1,0 +1,12 @@
+{
+  "schema": "shellx-motion/package-manifest@1",
+  "id": "pkg_linear_srgb_sdr_f2b_screen",
+  "name": "Linear sRGB SDR F2b Screen",
+  "motion": "motion.json",
+  "assets": [],
+  "sourceApp": "shellx-motion",
+  "compatibility": {
+    "lanes": ["gpu"],
+    "hosts": ["motion"]
+  }
+}

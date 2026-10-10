@@ -3,10 +3,11 @@ import type { GpuPageSessionOpenOutput } from "./gpu-page-session-types";
 
 export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_INPUT_SCHEMA = "shellx-motion/linear-srgb-sdr-final-webgpu-page-input@1" as const;
 export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_READBACK_SCHEMA = "shellx-motion/linear-srgb-sdr-final-webgpu-page-readback@1" as const;
-export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_EXPECTED_SHADER_SOURCE_SHA256 = "4de3d29cb4189b49925c645e8b527d91e068bf2eab5a049ce622504f261cb557";
-export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_EXPECTED_PIPELINE_SHA256 = "34101b2e2a9a33f7cd4376c2c39de5eb92f70f289e89b26dd10a1d5e542f2a96";
-export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PAGE_EXPECTED_SHADER_SOURCE_SHA256 = "3440978026f404ff2fb4f51d0934f141ed95782108cf41b877c461ec40e21c4c";
-export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PAGE_EXPECTED_PIPELINE_SHA256 = "c15c8f0c5803f910dec809b9c8c4f1fb5453e6aa5516b2a733a2cccd7163308f";
+export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_EXPECTED_SHADER_SOURCE_SHA256 = "156efd31ca9d7070f68638ac5b68123793a2f77372f191f0ab19f375f4afd924";
+export const LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_EXPECTED_PIPELINE_SHA256 = "8c3c00b2f504d734271dfb00bb5ca5fb6df0066e43d5c7dc60602163b90e2b3b";
+export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PAGE_EXPECTED_SHADER_SOURCE_SHA256 = "76d087d7368948ecb670e9e7f99910a1b15f83e52880f23bd7f6a4d189c682aa";
+export const LINEAR_SRGB_SDR_FINAL_F2A_GRADIENT_WEBGPU_PAGE_EXPECTED_PIPELINE_SHA256 = "3ee0875016ddd32cd1a94796b17b1acf2146d857846e8f8b2364ad889551939c";
+export const LINEAR_SRGB_SDR_FINAL_F2B_SCREEN_WEBGPU_PAGE_EXPECTED_PIPELINE_SHA256 = "3f2211df797dcbfedc09746fa3daf2d3f204f9998762f872afc358a19dd9c09a";
 
 export interface LinearSrgbSdrFinalWebGpuPageInput {
   readonly schema: typeof LINEAR_SRGB_SDR_FINAL_WEBGPU_PAGE_INPUT_SCHEMA;
@@ -18,7 +19,7 @@ export interface LinearSrgbSdrFinalWebGpuPageInput {
   readonly encodeWgsl: string;
   readonly canvas: { readonly width: number; readonly height: number; readonly background: { readonly hex: string; readonly r: number; readonly g: number; readonly b: number } };
   readonly rects: readonly (
-    | { readonly id: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly fill: { readonly hex: string; readonly r: number; readonly g: number; readonly b: number }; readonly opacity: number }
+    | { readonly id: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly fill: { readonly hex: string; readonly r: number; readonly g: number; readonly b: number }; readonly opacity: number; readonly blendMode?: "screen" }
     | {
       readonly id: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number;
       readonly gradient: (
@@ -26,11 +27,14 @@ export interface LinearSrgbSdrFinalWebGpuPageInput {
         | { readonly type: "radial"; readonly centerX: number; readonly centerY: number; readonly stops: readonly { readonly offset: number; readonly color: { readonly hex: string; readonly r: number; readonly g: number; readonly b: number } }[] }
       );
       readonly opacity: number;
+      readonly blendMode?: "screen";
     }
   )[];
   readonly gradientPipelineImplementationSha256?: string;
   readonly gradientShaderSourceSha256?: string;
   readonly gradientWgsl?: string;
+  /** Present only when an admitted F2b screen rectangle requires the alternate fixed blend state. */
+  readonly screenPipelineImplementationSha256?: string;
 }
 
 export interface LinearSrgbSdrFinalWebGpuPageReadbackInput {
@@ -99,48 +103,62 @@ export async function prepareLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFi
     popErrorScope(): Promise<unknown>;
     queue: { writeBuffer(buffer: Buffer, offset: number, data: ArrayBuffer): void };
   };
-  type Draw = { kind: "flat" | "gradient"; group: BindGroup };
-  type Resources = { routeFingerprint: string; documentFingerprint: string; working: Texture; publication: Texture; uniform: Buffer; gradientUniform?: Buffer; composite: Pipeline; gradientComposite?: Pipeline; encode: Pipeline; draws: readonly Draw[]; encodeGroup: BindGroup; width: number; height: number; paddedBytesPerRow: number; tightByteLength: number; paddedByteLength: number; gpuBytes: number; rendered: boolean };
+  type BlendMode = "normal" | "screen";
+  type Draw = { kind: "flat" | "gradient"; blendMode: BlendMode; group: BindGroup };
+  type Resources = { routeFingerprint: string; documentFingerprint: string; working: Texture; publication: Texture; ditherMask: Texture; uniform: Buffer; gradientUniform?: Buffer; composite: Pipeline; gradientComposite?: Pipeline; screenComposite?: Pipeline; screenGradientComposite?: Pipeline; encode: Pipeline; draws: readonly Draw[]; encodeGroup: BindGroup; width: number; height: number; paddedBytesPerRow: number; tightByteLength: number; paddedByteLength: number; gpuBytes: number; rendered: boolean };
   type State = { device?: Device; limits?: { maxTextureDimension2D: number; maxBufferSize: number }; lost?: boolean; resources?: Resources };
   const browser = globalThis as unknown as { GPUTextureUsage?: Record<string, number>; GPUBufferUsage?: Record<string, number>; __shellxMotionLinearSrgbSdrFinalWebGpuV1?: State };
   const state = browser.__shellxMotionLinearSrgbSdrFinalWebGpuV1, usage = browser.GPUTextureUsage, bufferUsage = browser.GPUBufferUsage;
   if (!state?.device || !state.limits || !usage || !bufferUsage || state.resources || state.lost || typeof state.device.pushErrorScope !== "function" || typeof state.device.popErrorScope !== "function") return fail(state?.lost ? "gpu_device_lost" : "gpu_resource_refused", "The isolated linear-sRGB SDR final page has no available device resources or validation scopes.");
   if (!validInput(input) || input.canvas.width > state.limits.maxTextureDimension2D || input.canvas.height > state.limits.maxTextureDimension2D) return fail("gpu_resource_refused", "The isolated linear-sRGB SDR final page rejected its bounded route input before resource allocation.");
   const usesGradients = input.rects.some((rect) => "gradient" in rect);
+  const usesScreen = input.rects.some((rect) => rect.blendMode === "screen");
+  const usesNormalGradients = input.rects.some((rect) => "gradient" in rect && rect.blendMode !== "screen");
+  const usesScreenGradients = input.rects.some((rect) => "gradient" in rect && rect.blendMode === "screen");
   let exactShader = false;
   try { exactShader = await exactShaderSource(input); } catch { exactShader = false; }
   let exactGradientShader = !usesGradients;
   if (usesGradients) try { exactGradientShader = await exactGradientShaderSource(input); } catch { exactGradientShader = false; }
-  if (input.pipelineImplementationSha256 !== "34101b2e2a9a33f7cd4376c2c39de5eb92f70f289e89b26dd10a1d5e542f2a96" || input.shaderSourceSha256 !== "4de3d29cb4189b49925c645e8b527d91e068bf2eab5a049ce622504f261cb557" || !exactShader || (usesGradients && (input.gradientPipelineImplementationSha256 !== "c15c8f0c5803f910dec809b9c8c4f1fb5453e6aa5516b2a733a2cccd7163308f" || input.gradientShaderSourceSha256 !== "3440978026f404ff2fb4f51d0934f141ed95782108cf41b877c461ec40e21c4c" || !exactGradientShader))) return fail("gpu_resource_refused", "The isolated linear-sRGB SDR final page rejected an unbound shader or pipeline identity before resource allocation.");
+  if (input.pipelineImplementationSha256 !== "8c3c00b2f504d734271dfb00bb5ca5fb6df0066e43d5c7dc60602163b90e2b3b" || input.shaderSourceSha256 !== "156efd31ca9d7070f68638ac5b68123793a2f77372f191f0ab19f375f4afd924" || !exactShader || (usesGradients && (input.gradientPipelineImplementationSha256 !== "3ee0875016ddd32cd1a94796b17b1acf2146d857846e8f8b2364ad889551939c" || input.gradientShaderSourceSha256 !== "76d087d7368948ecb670e9e7f99910a1b15f83e52880f23bd7f6a4d189c682aa" || !exactGradientShader)) || (usesScreen && input.screenPipelineImplementationSha256 !== "3f2211df797dcbfedc09746fa3daf2d3f204f9998762f872afc358a19dd9c09a")) return fail("gpu_resource_refused", "The isolated linear-sRGB SDR final page rejected an unbound shader or pipeline identity before resource allocation.");
   const paddedBytesPerRow = Math.ceil(input.canvas.width * 4 / ALIGNMENT) * ALIGNMENT;
   const tightByteLength = input.canvas.width * input.canvas.height * 4;
   const paddedByteLength = paddedBytesPerRow * input.canvas.height;
   const flatLayerCount = 1 + input.rects.filter((rect) => "fill" in rect).length, gradientLayerCount = input.rects.length - flatLayerCount + 1;
   const uniformBytes = flatLayerCount * UNIFORM_STRIDE, gradientUniformBytes = gradientLayerCount * GRADIENT_UNIFORM_STRIDE;
-  const gpuBytes = input.canvas.width * input.canvas.height * 12 + uniformBytes + gradientUniformBytes;
+  // rgba16float working + rgba8 publication + r8 visible-gradient normal/screen coverage.
+  const gpuBytes = input.canvas.width * input.canvas.height * 13 + uniformBytes + gradientUniformBytes;
   if (!Number.isSafeInteger(tightByteLength) || !Number.isSafeInteger(paddedByteLength) || paddedByteLength > MAX_WIDTH * MAX_HEIGHT * 4 || paddedByteLength > state.limits.maxBufferSize || uniformBytes > state.limits.maxBufferSize || gradientUniformBytes > state.limits.maxBufferSize) return fail("gpu_limits_exceeded", "The isolated linear-sRGB SDR final page refused its bounded texture or readback size.");
   if (![usage.RENDER_ATTACHMENT, usage.TEXTURE_BINDING, usage.COPY_SRC, bufferUsage.UNIFORM, bufferUsage.COPY_DST].every((value) => typeof value === "number")) return fail("gpu_resource_refused", "The WebGPU implementation did not expose the required isolated producer usages.");
-  let working: Texture | undefined, publication: Texture | undefined, uniform: Buffer | undefined, gradientUniform: Buffer | undefined, scopeOpen = false;
+  let working: Texture | undefined, publication: Texture | undefined, ditherMask: Texture | undefined, uniform: Buffer | undefined, gradientUniform: Buffer | undefined, scopeOpen = false;
   try {
     state.device.pushErrorScope("validation"); scopeOpen = true;
     const compositeModule = state.device.createShaderModule({ code: input.compositeWgsl });
     const encodeModule = state.device.createShaderModule({ code: input.encodeWgsl });
-    const composite = state.device.createRenderPipeline({ layout: "auto", vertex: { module: compositeModule, entryPoint: "vertexMain" }, fragment: { module: compositeModule, entryPoint: "compositeMain", targets: [{ format: "rgba16float", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } }] }, primitive: { topology: "triangle-list" } });
-    const gradientComposite = usesGradients ? state.device.createRenderPipeline({ layout: "auto", vertex: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "vertexMain" }, fragment: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "gradientMain", targets: [{ format: "rgba16float", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } }] }, primitive: { topology: "triangle-list" } }) : undefined;
+    const normalWorkingTarget = { format: "rgba16float", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } } as const;
+    const screenWorkingTarget = { format: "rgba16float", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } } as const;
+    const normalFlatCoverage = { format: "r8unorm", blend: { color: { srcFactor: "zero", dstFactor: "one-minus-src", operation: "add" }, alpha: { srcFactor: "zero", dstFactor: "one-minus-src", operation: "add" } } } as const;
+    const normalGradientCoverage = { format: "r8unorm", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src", operation: "add" } } } as const;
+    const screenFlatCoverage = { format: "r8unorm", blend: { color: { srcFactor: "zero", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "zero", dstFactor: "one-minus-src-alpha", operation: "add" } } } as const;
+    const screenGradientCoverage = { format: "r8unorm", blend: { color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } } as const;
+    const composite = state.device.createRenderPipeline({ layout: "auto", vertex: { module: compositeModule, entryPoint: "vertexMain" }, fragment: { module: compositeModule, entryPoint: "compositeMain", targets: [normalWorkingTarget, normalFlatCoverage] }, primitive: { topology: "triangle-list" } });
+    const screenComposite = usesScreen ? state.device.createRenderPipeline({ layout: "auto", vertex: { module: compositeModule, entryPoint: "vertexMain" }, fragment: { module: compositeModule, entryPoint: "compositeMain", targets: [screenWorkingTarget, screenFlatCoverage] }, primitive: { topology: "triangle-list" } }) : undefined;
+    const gradientComposite = usesNormalGradients ? state.device.createRenderPipeline({ layout: "auto", vertex: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "vertexMain" }, fragment: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "gradientMain", targets: [normalWorkingTarget, normalGradientCoverage] }, primitive: { topology: "triangle-list" } }) : undefined;
+    const screenGradientComposite = usesScreenGradients ? state.device.createRenderPipeline({ layout: "auto", vertex: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "vertexMain" }, fragment: { module: state.device.createShaderModule({ code: input.gradientWgsl! }), entryPoint: "gradientMain", targets: [screenWorkingTarget, screenGradientCoverage] }, primitive: { topology: "triangle-list" } }) : undefined;
     const encode = state.device.createRenderPipeline({ layout: "auto", vertex: { module: encodeModule, entryPoint: "vertexMain" }, fragment: { module: encodeModule, entryPoint: "encodeMain", targets: [{ format: "rgba8unorm" }] }, primitive: { topology: "triangle-list" } });
     working = state.device.createTexture({ size: { width: input.canvas.width, height: input.canvas.height, depthOrArrayLayers: 1 }, format: "rgba16float", usage: usage.RENDER_ATTACHMENT | usage.TEXTURE_BINDING });
     publication = state.device.createTexture({ size: { width: input.canvas.width, height: input.canvas.height, depthOrArrayLayers: 1 }, format: "rgba8unorm", usage: usage.RENDER_ATTACHMENT | usage.COPY_SRC });
+    ditherMask = state.device.createTexture({ size: { width: input.canvas.width, height: input.canvas.height, depthOrArrayLayers: 1 }, format: "r8unorm", usage: usage.RENDER_ATTACHMENT | usage.TEXTURE_BINDING });
     uniform = state.device.createBuffer({ size: uniformBytes, usage: bufferUsage.UNIFORM | bufferUsage.COPY_DST });
     if (usesGradients) gradientUniform = state.device.createBuffer({ size: gradientUniformBytes, usage: bufferUsage.UNIFORM | bufferUsage.COPY_DST });
-    if (typeof working.createView !== "function" || typeof working.destroy !== "function" || typeof publication.createView !== "function" || typeof publication.destroy !== "function" || typeof uniform.destroy !== "function" || (usesGradients && typeof gradientUniform?.destroy !== "function")) throw new Error("terminal resource destruction");
+    if (typeof working.createView !== "function" || typeof working.destroy !== "function" || typeof publication.createView !== "function" || typeof publication.destroy !== "function" || typeof ditherMask.createView !== "function" || typeof ditherMask.destroy !== "function" || typeof uniform.destroy !== "function" || (usesGradients && typeof gradientUniform?.destroy !== "function")) throw new Error("terminal resource destruction");
     const uniformData = new Float32Array(uniformBytes / 4);
-    const flatLayers = [{ x: 0, y: 0, width: input.canvas.width, height: input.canvas.height, fill: input.canvas.background, opacity: 1 }, ...input.rects.filter((rect) => "fill" in rect)];
+    const flatLayers = [{ x: 0, y: 0, width: input.canvas.width, height: input.canvas.height, fill: input.canvas.background, opacity: 1, blendMode: "normal" as const }, ...input.rects.filter((rect) => "fill" in rect)];
     for (let index = 0; index < flatLayers.length; index += 1) {
       const layer = flatLayers[index]!;
       uniformData.set([layer.fill.r, layer.fill.g, layer.fill.b, layer.opacity, layer.x, layer.y, layer.width, layer.height], index * (UNIFORM_STRIDE / 4));
     }
     state.device.queue.writeBuffer(uniform, 0, uniformData.buffer);
-    const flatGroups = flatLayers.map((_, index) => state.device!.createBindGroup({ layout: composite.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniform!, offset: index * UNIFORM_STRIDE, size: 32 } }] }));
+    const flatGroups = flatLayers.map((layer, index) => state.device!.createBindGroup({ layout: (layer.blendMode === "screen" ? screenComposite! : composite).getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniform!, offset: index * UNIFORM_STRIDE, size: 32 } }] }));
     const gradientGroups: BindGroup[] = [];
     if (usesGradients) {
       const gradientData = new Float32Array(gradientUniformBytes / 4);
@@ -149,47 +167,49 @@ export async function prepareLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFi
         const layer = gradients[index]!, offset = index * (GRADIENT_UNIFORM_STRIDE / 4), gradient = layer.gradient;
         gradientData.set([gradient.type === "linear" ? 1 : 2, layer.opacity, gradient.type === "linear" ? gradient.angleDeg * Math.PI / 180 : 0, gradient.stops.length], offset);
         gradientData.set([layer.x, layer.y, layer.width, layer.height], offset + 4);
-        gradientData.set([gradient.type === "radial" ? gradient.centerX : 0.5, gradient.type === "radial" ? gradient.centerY : 0.5], offset + 8);
+        gradientData.set([gradient.type === "radial" ? gradient.centerX : 0.5, gradient.type === "radial" ? gradient.centerY : 0.5, layer.blendMode === "screen" ? 1 : 0], offset + 8);
         for (let stopIndex = 0; stopIndex < gradient.stops.length; stopIndex += 1) {
           const stop = gradient.stops[stopIndex]!;
           gradientData[offset + 12 + stopIndex] = stop.offset;
           gradientData.set([stop.color.r, stop.color.g, stop.color.b, 1], offset + 28 + stopIndex * 4);
         }
-        gradientGroups.push(state.device.createBindGroup({ layout: gradientComposite!.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: gradientUniform!, offset: index * GRADIENT_UNIFORM_STRIDE, size: GRADIENT_UNIFORM_STRIDE } }] }));
+        gradientGroups.push(state.device.createBindGroup({ layout: (layer.blendMode === "screen" ? screenGradientComposite! : gradientComposite!).getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: gradientUniform!, offset: index * GRADIENT_UNIFORM_STRIDE, size: GRADIENT_UNIFORM_STRIDE } }] }));
       }
       state.device.queue.writeBuffer(gradientUniform!, 0, gradientData.buffer);
     }
-    const draws: Draw[] = [{ kind: "flat", group: flatGroups[0]! }];
+    const draws: Draw[] = [{ kind: "flat", blendMode: "normal", group: flatGroups[0]! }];
     let flatIndex = 1, gradientIndex = 0;
     for (const rect of input.rects) {
-      if ("fill" in rect) draws.push({ kind: "flat", group: flatGroups[flatIndex++]! });
-      else draws.push({ kind: "gradient", group: gradientGroups[gradientIndex++]! });
+      if ("fill" in rect) draws.push({ kind: "flat", blendMode: rect.blendMode === "screen" ? "screen" : "normal", group: flatGroups[flatIndex++]! });
+      else draws.push({ kind: "gradient", blendMode: rect.blendMode === "screen" ? "screen" : "normal", group: gradientGroups[gradientIndex++]! });
     }
-    const encodeGroup = state.device.createBindGroup({ layout: encode.getBindGroupLayout(0), entries: [{ binding: 0, resource: working.createView() }] });
+    const encodeGroup = state.device.createBindGroup({ layout: encode.getBindGroupLayout(0), entries: [{ binding: 0, resource: working.createView() }, { binding: 1, resource: ditherMask.createView() }] });
     const validation = await state.device.popErrorScope(); scopeOpen = false;
     if (validation) throw new Error("pipeline validation");
-    state.resources = { routeFingerprint: input.routeFingerprint, documentFingerprint: input.documentFingerprint, working, publication, uniform, ...(gradientUniform ? { gradientUniform } : {}), composite, ...(gradientComposite ? { gradientComposite } : {}), encode, draws, encodeGroup, width: input.canvas.width, height: input.canvas.height, paddedBytesPerRow, tightByteLength, paddedByteLength, gpuBytes, rendered: false };
+    state.resources = { routeFingerprint: input.routeFingerprint, documentFingerprint: input.documentFingerprint, working, publication, ditherMask, uniform, ...(gradientUniform ? { gradientUniform } : {}), composite, ...(screenComposite ? { screenComposite } : {}), ...(gradientComposite ? { gradientComposite } : {}), ...(screenGradientComposite ? { screenGradientComposite } : {}), encode, draws, encodeGroup, width: input.canvas.width, height: input.canvas.height, paddedBytesPerRow, tightByteLength, paddedByteLength, gpuBytes, rendered: false };
     return { ok: true };
   } catch {
     if (scopeOpen) try { await state.device.popErrorScope(); } catch { /* resource release remains mandatory */ }
-    for (const resource of [working, publication, uniform, gradientUniform]) try { resource?.destroy(); } catch { /* every resource remains attempted */ }
+    for (const resource of [working, publication, ditherMask, uniform, gradientUniform]) try { resource?.destroy(); } catch { /* every resource remains attempted */ }
     return fail("gpu_render_failed", "The isolated linear-sRGB SDR final producer could not create its fixed pipelines or resources.");
   }
   function validInput(value: unknown): value is LinearSrgbSdrFinalWebGpuPageInput {
     if (!record(value) || value.schema !== "shellx-motion/linear-srgb-sdr-final-webgpu-page-input@1" || !hash(value.routeFingerprint) || !hash(value.documentFingerprint) || !hash(value.pipelineImplementationSha256) || !hash(value.shaderSourceSha256) || typeof value.compositeWgsl !== "string" || value.compositeWgsl.length < 1 || value.compositeWgsl.length > 16_384 || typeof value.encodeWgsl !== "string" || value.encodeWgsl.length < 1 || value.encodeWgsl.length > 16_384 || !Array.isArray(value.rects) || value.rects.length > MAX_RECTS) return false;
     const gradients = value.rects.some((rect) => record(rect) && Object.hasOwn(rect, "gradient"));
-    if (!sameKeys(value, gradients ? ["schema", "routeFingerprint", "documentFingerprint", "pipelineImplementationSha256", "shaderSourceSha256", "compositeWgsl", "encodeWgsl", "canvas", "rects", "gradientPipelineImplementationSha256", "gradientShaderSourceSha256", "gradientWgsl"] : ["schema", "routeFingerprint", "documentFingerprint", "pipelineImplementationSha256", "shaderSourceSha256", "compositeWgsl", "encodeWgsl", "canvas", "rects"]) || (gradients && (!hash(value.gradientPipelineImplementationSha256) || !hash(value.gradientShaderSourceSha256) || typeof value.gradientWgsl !== "string" || value.gradientWgsl.length < 1 || value.gradientWgsl.length > 16_384))) return false;
+    const screen = value.rects.some((rect) => record(rect) && rect.blendMode === "screen");
+    const keys = ["schema", "routeFingerprint", "documentFingerprint", "pipelineImplementationSha256", "shaderSourceSha256", "compositeWgsl", "encodeWgsl", "canvas", "rects", ...(gradients ? ["gradientPipelineImplementationSha256", "gradientShaderSourceSha256", "gradientWgsl"] : []), ...(screen ? ["screenPipelineImplementationSha256"] : [])];
+    if (!sameKeys(value, keys) || (gradients && (!hash(value.gradientPipelineImplementationSha256) || !hash(value.gradientShaderSourceSha256) || typeof value.gradientWgsl !== "string" || value.gradientWgsl.length < 1 || value.gradientWgsl.length > 16_384)) || (screen && !hash(value.screenPipelineImplementationSha256))) return false;
     const currentCanvas = value.canvas;
     if (!canvas(currentCanvas)) return false;
     const ids = new Set<string>();
     return value.rects.every((rect) => rectangle(rect, currentCanvas, ids) && !ids.has(rect.id) && (ids.add(rect.id), true)) && (!gradients || value.rects.some((rect) => record(rect) && Object.hasOwn(rect, "gradient")));
   }
   function canvas(value: unknown): value is LinearSrgbSdrFinalWebGpuPageInput["canvas"] { return record(value) && sameKeys(value, ["width", "height", "background"]) && integer(value.width, 1, MAX_WIDTH) && integer(value.height, 1, MAX_HEIGHT) && color(value.background); }
-  function rectangle(value: unknown, current: LinearSrgbSdrFinalWebGpuPageInput["canvas"], ids: ReadonlySet<string>): value is LinearSrgbSdrFinalWebGpuPageInput["rects"][number] { if (!record(value) || typeof value.id !== "string" || !/^[a-z][a-z0-9_-]{0,127}$/u.test(value.id) || ids.has(value.id) || !integer(value.x, 0, current.width - 1) || !integer(value.y, 0, current.height - 1) || !integer(value.width, 1, current.width) || !integer(value.height, 1, current.height) || value.x + value.width > current.width || value.y + value.height > current.height || !finite(value.opacity, 0, 1)) return false; return (sameKeys(value, ["id", "x", "y", "width", "height", "fill", "opacity"]) && color(value.fill)) || (sameKeys(value, ["id", "x", "y", "width", "height", "gradient", "opacity"]) && gradient(value.gradient)); }
+  function rectangle(value: unknown, current: LinearSrgbSdrFinalWebGpuPageInput["canvas"], ids: ReadonlySet<string>): value is LinearSrgbSdrFinalWebGpuPageInput["rects"][number] { if (!record(value) || typeof value.id !== "string" || !/^[a-z][a-z0-9_-]{0,127}$/u.test(value.id) || ids.has(value.id) || !integer(value.x, 0, current.width - 1) || !integer(value.y, 0, current.height - 1) || !integer(value.width, 1, current.width) || !integer(value.height, 1, current.height) || value.x + value.width > current.width || value.y + value.height > current.height || !finite(value.opacity, 0, 1) || (value.blendMode !== undefined && value.blendMode !== "screen")) return false; const base = ["id", "x", "y", "width", "height", "opacity", ...(value.blendMode === "screen" ? ["blendMode"] : [])]; return (sameKeys(value, [...base, "fill"]) && color(value.fill)) || (sameKeys(value, [...base, "gradient"]) && gradient(value.gradient)); }
   function gradient(value: unknown): boolean { if (!record(value) || !Array.isArray(value.stops) || value.stops.length < 2 || value.stops.length > MAX_STOPS) return false; const linear = value.type === "linear" && sameKeys(value, ["type", "angleDeg", "stops"]) && finite(value.angleDeg, 0, 360), radial = value.type === "radial" && sameKeys(value, ["type", "centerX", "centerY", "stops"]) && finite(value.centerX, 0, 1) && finite(value.centerY, 0, 1); if (!linear && !radial) return false; let prior = -1; for (const stop of value.stops) { if (!record(stop) || !sameKeys(stop, ["offset", "color"]) || !finite(stop.offset, 0, 1) || stop.offset <= prior || !color(stop.color)) return false; prior = stop.offset; } return value.stops[0]?.offset === 0 && value.stops.at(-1)?.offset === 1; }
   function color(value: unknown): value is { readonly hex: string; readonly r: number; readonly g: number; readonly b: number } { return record(value) && sameKeys(value, ["hex", "r", "g", "b"]) && typeof value.hex === "string" && /^#[0-9a-f]{6}$/u.test(value.hex) && finite(value.r, 0, 1) && finite(value.g, 0, 1) && finite(value.b, 0, 1); }
-  async function exactShaderSource(value: LinearSrgbSdrFinalWebGpuPageInput): Promise<boolean> { const crypto = globalThis.crypto?.subtle; if (!crypto || typeof TextEncoder !== "function") return false; const canonical = `{"compositeWgsl":${JSON.stringify(value.compositeWgsl)},"encodeWgsl":${JSON.stringify(value.encodeWgsl)}}`; const digest = new Uint8Array(await crypto.digest("SHA-256", new TextEncoder().encode(canonical))); const actual = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""); return actual === value.shaderSourceSha256 && actual === "4de3d29cb4189b49925c645e8b527d91e068bf2eab5a049ce622504f261cb557"; }
-  async function exactGradientShaderSource(value: LinearSrgbSdrFinalWebGpuPageInput): Promise<boolean> { const crypto = globalThis.crypto?.subtle; if (!crypto || typeof TextEncoder !== "function" || typeof value.gradientWgsl !== "string") return false; const canonical = `{"gradientWgsl":${JSON.stringify(value.gradientWgsl)}}`; const digest = new Uint8Array(await crypto.digest("SHA-256", new TextEncoder().encode(canonical))); const actual = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""); return actual === value.gradientShaderSourceSha256 && actual === "3440978026f404ff2fb4f51d0934f141ed95782108cf41b877c461ec40e21c4c"; }
+  async function exactShaderSource(value: LinearSrgbSdrFinalWebGpuPageInput): Promise<boolean> { const crypto = globalThis.crypto?.subtle; if (!crypto || typeof TextEncoder !== "function") return false; const canonical = `{"compositeWgsl":${JSON.stringify(value.compositeWgsl)},"encodeWgsl":${JSON.stringify(value.encodeWgsl)}}`; const digest = new Uint8Array(await crypto.digest("SHA-256", new TextEncoder().encode(canonical))); const actual = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""); return actual === value.shaderSourceSha256 && actual === "156efd31ca9d7070f68638ac5b68123793a2f77372f191f0ab19f375f4afd924"; }
+  async function exactGradientShaderSource(value: LinearSrgbSdrFinalWebGpuPageInput): Promise<boolean> { const crypto = globalThis.crypto?.subtle; if (!crypto || typeof TextEncoder !== "function" || typeof value.gradientWgsl !== "string") return false; const canonical = `{"gradientWgsl":${JSON.stringify(value.gradientWgsl)}}`; const digest = new Uint8Array(await crypto.digest("SHA-256", new TextEncoder().encode(canonical))); const actual = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""); return actual === value.gradientShaderSourceSha256 && actual === "76d087d7368948ecb670e9e7f99910a1b15f83e52880f23bd7f6a4d189c682aa"; }
   function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
   function sameKeys(value: Record<string, unknown>, expected: readonly string[]): boolean { const actual = Object.keys(value).sort(), wanted = [...expected].sort(); return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]); }
   function hash(value: unknown): value is string { return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value); }
@@ -198,20 +218,22 @@ export async function prepareLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFi
   function fail(code: GpuRuntimeFailure["code"], message: string): Failure { return { ok: false, failure: { code, message } }; }
 }
 
-/** Draws the static document in normal source-over order, then publishes a separate encoded texture. */
+/** Draws the static document in admitted normal/source-over and F2b screen order, then publishes a separate encoded texture. */
 export async function renderLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFinalWebGpuPageReadbackInput): Promise<Success | Failure> {
   type Texture = { createView(): unknown };
   type Pass = { setPipeline(value: unknown): void; setBindGroup(index: number, value: unknown): void; draw(vertices: number): void; end(): void };
-  type Resources = { routeFingerprint: string; documentFingerprint: string; working: Texture; publication: Texture; composite: unknown; gradientComposite?: unknown; encode: unknown; draws: readonly { kind: "flat" | "gradient"; group: unknown }[]; encodeGroup: unknown; rendered: boolean };
+  type Resources = { routeFingerprint: string; documentFingerprint: string; working: Texture; publication: Texture; ditherMask: Texture; composite: unknown; screenComposite?: unknown; gradientComposite?: unknown; screenGradientComposite?: unknown; encode: unknown; draws: readonly { kind: "flat" | "gradient"; blendMode: "normal" | "screen"; group: unknown }[]; encodeGroup: unknown; rendered: boolean };
   type State = { device?: { createCommandEncoder(): { beginRenderPass(value: unknown): Pass; finish(): unknown }; queue: { submit(commands: readonly unknown[]): void; onSubmittedWorkDone?(): Promise<void> } }; resources?: Resources; lost?: boolean };
   const state = (globalThis as unknown as { __shellxMotionLinearSrgbSdrFinalWebGpuV1?: State }).__shellxMotionLinearSrgbSdrFinalWebGpuV1, resources = state?.resources;
   if (!state?.device || !resources || !valid(input, resources)) return fail("gpu_resource_refused", "The isolated linear-sRGB SDR final page rejected a render without matching prepared resources.");
   if (state.lost) return fail("gpu_device_lost", "The isolated linear-sRGB SDR final GPU device was lost before rendering.");
   try {
     const encoder = state.device.createCommandEncoder();
-    const composite = encoder.beginRenderPass({ colorAttachments: [{ view: resources.working.createView(), clearValue: [0, 0, 0, 0], loadOp: "clear", storeOp: "store" }] });
+    const composite = encoder.beginRenderPass({ colorAttachments: [{ view: resources.working.createView(), clearValue: [0, 0, 0, 0], loadOp: "clear", storeOp: "store" }, { view: resources.ditherMask.createView(), clearValue: [0, 0, 0, 0], loadOp: "clear", storeOp: "store" }] });
     for (const draw of resources.draws) {
-      composite.setPipeline(draw.kind === "flat" ? resources.composite : resources.gradientComposite!);
+      composite.setPipeline(draw.kind === "flat"
+        ? (draw.blendMode === "screen" ? resources.screenComposite! : resources.composite)
+        : (draw.blendMode === "screen" ? resources.screenGradientComposite! : resources.gradientComposite!));
       composite.setBindGroup(0, draw.group);
       composite.draw(3);
     }
@@ -266,11 +288,11 @@ export async function readLinearSrgbSdrFinalWebGpuPage(input: LinearSrgbSdrFinal
 
 /** Releases the route-private textures and uniform buffer before closing the device. */
 export function releaseLinearSrgbSdrFinalWebGpuPage(): { readonly hadResources: boolean; readonly releasedGpuBytes: number; readonly remainingGpuBytes: 0; readonly releaseFailed: boolean } {
-  type Resources = { working: { destroy?(): void }; publication: { destroy?(): void }; uniform: { destroy?(): void }; gradientUniform?: { destroy?(): void }; gpuBytes: number };
+  type Resources = { working: { destroy?(): void }; publication: { destroy?(): void }; ditherMask: { destroy?(): void }; uniform: { destroy?(): void }; gradientUniform?: { destroy?(): void }; gpuBytes: number };
   const state = (globalThis as unknown as { __shellxMotionLinearSrgbSdrFinalWebGpuV1?: { resources?: Resources } }).__shellxMotionLinearSrgbSdrFinalWebGpuV1, resources = state?.resources;
   if (!resources) return { hadResources: false, releasedGpuBytes: 0, remainingGpuBytes: 0, releaseFailed: false };
   let releaseFailed = false;
-  for (const resource of [resources.working, resources.publication, resources.uniform, resources.gradientUniform]) {
+  for (const resource of [resources.working, resources.publication, resources.ditherMask, resources.uniform, resources.gradientUniform]) {
     if (!resource) continue;
     if (typeof resource.destroy !== "function") { releaseFailed = true; continue; }
     try { resource.destroy(); } catch { releaseFailed = true; }
@@ -281,14 +303,14 @@ export function releaseLinearSrgbSdrFinalWebGpuPage(): { readonly hadResources: 
 
 /** Final page close force-releases only on an interrupted caller path and always destroys the device. */
 export function closeLinearSrgbSdrFinalWebGpuPage(): { readonly deviceDestroyed: boolean; readonly forcedResourceRelease: boolean; readonly releaseFailed: boolean } {
-  type Resources = { working?: { destroy?(): void }; publication?: { destroy?(): void }; uniform?: { destroy?(): void }; gradientUniform?: { destroy?(): void } };
+  type Resources = { working?: { destroy?(): void }; publication?: { destroy?(): void }; ditherMask?: { destroy?(): void }; uniform?: { destroy?(): void }; gradientUniform?: { destroy?(): void } };
   const browser = globalThis as unknown as { __shellxMotionLinearSrgbSdrFinalWebGpuV1?: { device?: { destroy?(): void }; resources?: Resources } }, state = browser.__shellxMotionLinearSrgbSdrFinalWebGpuV1;
   delete browser.__shellxMotionLinearSrgbSdrFinalWebGpuV1;
   if (!state) return { deviceDestroyed: false, forcedResourceRelease: false, releaseFailed: false };
   let forcedResourceRelease = false, releaseFailed = false, deviceDestroyed = false;
   if (state?.resources) {
     forcedResourceRelease = true;
-    for (const resource of [state.resources.working, state.resources.publication, state.resources.uniform, state.resources.gradientUniform]) {
+    for (const resource of [state.resources.working, state.resources.publication, state.resources.ditherMask, state.resources.uniform, state.resources.gradientUniform]) {
       if (!resource) continue;
       if (typeof resource?.destroy !== "function") { releaseFailed = true; continue; }
       try { resource.destroy(); } catch { releaseFailed = true; }

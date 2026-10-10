@@ -11,6 +11,7 @@ import {
   motionCapabilityCatalog,
   motionJobFailure,
   motionJobFailureFromException,
+  isPublicationCommitUncertain,
   prepareGenericConnectorRequest,
   type ConnectorCapabilityDescriptor,
   type GenericConnectorRequestPreparation,
@@ -73,6 +74,8 @@ export type MotionConnectorJobExecutionResult =
       ok: false;
       binding: PreparedMotionConnectorJob;
       error: MotionJobFailure;
+      /** The authenticated connector publication may have completed; Core must reconcile. */
+      committed?: true;
     };
 
 type RegisteredExecutor = (
@@ -178,11 +181,12 @@ export async function executePreparedMotionConnectorJob(
     const result = await EXECUTORS[rebound.capabilityId]!(rebound, services);
     const record = resultRecord(result);
     if (record.ok !== true) {
-      const nested = resultRecord(record.error);
+      const terminal = connectorTerminalFailure(record.error);
       return {
         ok: false,
         binding: rebound,
-        error: connectorTerminalFailure(nested)
+        error: terminal.error,
+        ...(terminal.committed ? { committed: true } : {})
       };
     }
     if (typeof record.receiptPath !== "string" || !isAbsolute(record.receiptPath)) {
@@ -243,21 +247,25 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 function failure(prepared: PreparedMotionConnectorJob, error: unknown): MotionConnectorJobExecutionResult {
-  return { ok: false, binding: prepared, error: connectorTerminalFailure(error) };
+  const terminal = connectorTerminalFailure(error);
+  return { ok: false, binding: prepared, error: terminal.error, ...(terminal.committed ? { committed: true } : {}) };
 }
 
-function connectorTerminalFailure(error: unknown): MotionJobFailure {
+function connectorTerminalFailure(error: unknown): Readonly<{ error: MotionJobFailure; committed?: true }> {
   const fallback = {
     code: "connector_failed",
     message: "Connector job failed."
   } as const;
   const typed = motionJobFailureFromException(error, fallback);
-  return motionJobFailure({
-    code: typed.code,
-    retryable: typed.retryable,
-    ...(typed.remedy ? { remedy: typed.remedy } : {}),
-    ...(typed.retryAfterMs !== undefined ? { retryAfterMs: typed.retryAfterMs } : {})
-  }, fallback);
+  return {
+    error: motionJobFailure({
+      code: typed.code,
+      retryable: typed.retryable,
+      ...(typed.remedy ? { remedy: typed.remedy } : {}),
+      ...(typed.retryAfterMs !== undefined ? { retryAfterMs: typed.retryAfterMs } : {})
+    }, fallback),
+    ...(isPublicationCommitUncertain(error) ? { committed: true as const } : {})
+  };
 }
 
 function resultRecord(value: unknown): Record<string, unknown> {

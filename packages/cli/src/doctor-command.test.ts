@@ -183,8 +183,7 @@ describe("motion doctor", () => {
 
 describe("CLI and MCP agree on the same machine", () => {
   it("returns byte-identical readiness results", async () => {
-    // Both probe the real binaries on this machine — the point is that they cannot differ, whatever
-    // this machine happens to have.
+    // Both surfaces must report the same current tool readiness.
     const cli = await doctorCommand(["--json"]) as Record<string, any>;
     const mcp = await dispatchDebugCommand("motion.platform.requirements", {}, { tier: "read_motion" }) as Record<string, any>;
 

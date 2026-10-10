@@ -27,6 +27,7 @@ import {
   type CanvasLayer,
   type JsonRecord
 } from "./fixture-parse";
+import { assertValidCanvasMotionDocument } from "./motion-document-validation";
 
 export * from "./package-writer";
 export * from "./fixture-contract";
@@ -141,6 +142,7 @@ export function convertCanvasFrameToMotionPackage(input: unknown, options: Conve
       ...(includeAllFrames ? { workflow: "canvas-page" } : {})
     }
   };
+  assertValidCanvasMotionDocument(motion, "conversion");
 
   const manifest: PackageManifest = {
     schema: "shellx-motion/package-manifest@1",

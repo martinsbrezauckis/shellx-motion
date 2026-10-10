@@ -22,7 +22,7 @@ export default defineConfig({
       "packages/sdk/src/local.test.ts"
     ],
     testNamePattern: /analytic particle|bounded particles|particle payloads|particle fields|particle field/i,
-    setupFiles: ["./scripts/vitest-setup-job-stores.ts"],
+    setupFiles: ["./scripts/public/vitest-setup-job-stores.ts"],
     fileParallelism: false,
     minWorkers: 1,
     maxWorkers: 1,

@@ -18,6 +18,7 @@ import {
   buildCompositingTopology,
   compositingTopologicalOrder,
   estimateCompositingGraph,
+  validateCompositingDerivedLayers,
   validateCompositingReachability,
   validateCompositingSources,
 } from "./compositing-graph-topology";
@@ -84,6 +85,7 @@ export function validateMotionCompositingGraph(
   if (outputs[0]) {
     validateCompositingReachability(outputs[0], nodeById, topology.incoming, issues);
   }
+  validateCompositingDerivedLayers(order, nodeTypes, topology.incoming, issues);
 
   const estimate = estimateCompositingGraph(
     order,

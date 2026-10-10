@@ -1,14 +1,14 @@
 /**
- * The two Debug API surfaces that were telling an author its animation existed when it did not.
+ * Debug API validation and easing panels must distinguish stored from readable keyframes.
  *
- * `motion.package.validate` once answered `valid: true` for a package storing keyframes as `{ t, v }`.
- * It now stops at structural stage one, while the timeline panel separately explains why those
+ * `motion.package.validate` must reject a package storing keyframes as `{ t, v }`
+ * at structural stage one, while the timeline panel separately explains why those
  * keyframes cannot animate. Validation must not imply semantic/renderability work after structural
  * failure.
  *
- * `motion.timeline.easing.panel` is the keyframe panel's twin (fixed in fcd41d8): it mapped every
- * stored entry through, so it sorted on a NaN comparator, emitted `atMs: undefined` usage refs, and
- * reported `keyframeUsage: 309` for a package whose keyframes animate nothing.
+ * `motion.timeline.easing.panel` must omit unreadable entries from its usage refs and count
+ * them separately. Mapping stored entries through would sort on a NaN comparator, emit
+ * `atMs: undefined` refs, and report usage for keyframes that animate nothing.
  *
  * Both directions are pinned in each case: the broken package is refused/flagged with the correct
  * form named, and a correctly authored package produces exactly the reading it produced before.

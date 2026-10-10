@@ -7,7 +7,7 @@
  * `browser-redirect-guard.ts` decides CDP response-stage redirect hops). Extracted from
  * browser-redirect-guard.ts when the guard grew popup suppression and document-downgrade rules —
  * keeping the shared types here is what lets both enforcement modules stay inside the module-size
- * ratchet in scripts/module-size-gate.mjs without raising a cap.
+ * ratchet in scripts/public/module-size-gate.mjs without raising a cap.
  *
  * Dependencies: none. Primary callers: browser-route-policy.ts, browser-redirect-guard.ts, and
  * index.ts (which constructs one state per frame and turns it into receipt warnings).

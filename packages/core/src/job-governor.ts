@@ -7,7 +7,12 @@ import { lstat, mkdir, readFile, realpath, statfs } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { defaultMotionHostRenderCapacity, resolveMotionHostRenderCapacity, type MotionHostRenderCapacity } from "./host-render-capacity";
+import {
+  localMotionJobPolicyFromEnvironment,
+  type LocalMotionJobPolicy,
+} from "./local-motion-job-policy";
+export { localMotionJobPolicyFromEnvironment } from "./local-motion-job-policy";
+export type { LocalMotionJobPolicy } from "./local-motion-job-policy";
 import {
   validateRuntimeSandboxEvidence,
   type LocalMotionRuntimeSandboxEvidence,
@@ -61,17 +66,6 @@ const MAX_DOCUMENT_FPS = 120;
 
 /** Expensive local execution families governed by one workstation-wide policy. */
 export type LocalMotionJobLane = "ffmpeg" | "browser" | "gpu" | "native" | "batch" | "connector" | "agent" | "analysis" | "quality" | "other";
-
-export interface LocalMotionJobPolicy {
-  maxConcurrentJobs: number;
-  maxQueueDepth: number;
-  maxQueueWaitMs: number;
-  maxWallClockMs: number;
-  minFreeScratchBytes: number;
-  scratchReservationBytes: number;
-  maxProcessTreeRssBytes: number;
-  rssPollIntervalMs: number;
-}
 
 export interface LocalMotionJobRequest {
   lane: LocalMotionJobLane;
@@ -318,10 +312,6 @@ export class LocalMotionJobGovernor {
       this.releaseSlot();
       throw error;
     }
-    // The moment real capacity is held, the host job that asked for this work stops waiting and
-    // starts working. Without this the wrapper reports "running" from the outset, so a caller shows
-    // "rendering..." over a queue — the exact confusion the pending/running split exists to prevent.
-    await currentMotionHostJob()?.markRunning();
     const requestedScratchRoot = resolve(request.scratchRoot);
     let admittedScratchRoot = requestedScratchRoot;
     let reserved = false;
@@ -349,6 +339,10 @@ export class LocalMotionJobGovernor {
     if (request.signal?.aborted) relayAbort();
 
     try {
+      // The moment real capacity is held, the host job that asked for this work stops waiting and
+      // starts working. Keep this inside the slot-release finally: an onRunning persistence guard
+      // may reject, and that must not strand the in-process capacity slot it already acquired.
+      await currentMotionHostJob()?.markRunning();
       let freeBytes: number;
       try {
         admittedScratchRoot = await (this.services.prepareScratchRoot ?? prepareLocalMotionScratchRoot)(requestedScratchRoot);
@@ -703,24 +697,6 @@ export function motionDocumentBudgetError(document: {
   return undefined;
 }
 
-export function localMotionJobPolicyFromEnvironment(
-  env: NodeJS.ProcessEnv = process.env,
-  hostCapacity: MotionHostRenderCapacity = env === process.env
-    ? defaultMotionHostRenderCapacity
-    : resolveMotionHostRenderCapacity({ env }),
-): LocalMotionJobPolicy {
-  return {
-    maxConcurrentJobs: hostCapacity.jobs.maxConcurrentJobs,
-    maxQueueDepth: boundedEnvInteger(env.SHELLX_MOTION_MAX_QUEUE_DEPTH, 64, 0, 1_024),
-    maxQueueWaitMs: boundedEnvInteger(env.SHELLX_MOTION_MAX_QUEUE_WAIT_MS, 5 * 60_000, 100, 60 * 60_000),
-    maxWallClockMs: boundedEnvInteger(env.SHELLX_MOTION_MAX_JOB_MS, 30 * 60_000, 100, 24 * 60 * 60_000),
-    minFreeScratchBytes: boundedEnvInteger(env.SHELLX_MOTION_MIN_FREE_SCRATCH_BYTES, 256 * MIB, 0, 16 * 1024 * GIB),
-    scratchReservationBytes: boundedEnvInteger(env.SHELLX_MOTION_SCRATCH_RESERVATION_BYTES, 64 * MIB, 0, 16 * 1024 * GIB),
-    maxProcessTreeRssBytes: hostCapacity.jobs.maxProcessTreeRssBytes,
-    rssPollIntervalMs: boundedEnvInteger(env.SHELLX_MOTION_RSS_POLL_MS, 1_000, 25, 60_000),
-  };
-}
-
 export async function freeScratchBytes(scratchRoot: string): Promise<number> {
   const facts = await statfs(scratchRoot, { bigint: true });
   return safeBigIntToNumber(facts.bavail * facts.bsize);
@@ -911,13 +887,6 @@ function validateLocalMotionJobPolicy(policy: LocalMotionJobPolicy): void {
     const value = policy[key];
     if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`Motion local job policy ${key} must be an integer from ${min} to ${max}.`);
   }
-}
-
-function boundedEnvInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < min || value > max) return fallback;
-  return value;
 }
 
 function boundedOperation(value: string): string {

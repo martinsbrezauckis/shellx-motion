@@ -41,7 +41,7 @@ export interface GpuScene3DAnimationPreviewLimits {
   maxFrameWorkUnits: number;
 }
 
-/** One exact O6 capability-card contract, shared with the Browser receipt verifier. */
+/** One exact scene3d animation capability-card contract, shared with the Browser receipt verifier. */
 export const GPU_SCENE3D_ANIMATION_PREVIEW_LIMITS: GpuScene3DAnimationPreviewLimits = Object.freeze({
   target: "preview",
   output: "png-frame",
@@ -87,12 +87,12 @@ export type GpuScene3DAnimationFramePlanResult = { ok: true; plan: GpuScene3DAni
 type AuthorizedStaticPlan = Readonly<{ motion: MotionDocument; documentFingerprint: string; animationStaticFingerprint: string; targetLayerIds: readonly string[] }>;
 const authorizedStaticPlans = new WeakMap<object, AuthorizedStaticPlan>();
 
-/** Internal Browser bridge to the exact frozen document admitted with this opaque O6 wrapper. */
+/** Internal Browser bridge to the exact frozen document admitted with this opaque scene3d animation wrapper. */
 export function gpuScene3DAnimationAdmittedMotion(staticPlan: GpuScene3DAnimationStaticPlan): MotionDocument | undefined {
   return authorizedStaticPlans.get(staticPlan as unknown as object)?.motion;
 }
 /**
- * Preflights the sole O6 route before package-resource work. It admits only root scene3d data
+ * Preflights the sole scene3d animation route before package-resource work. It admits only root scene3d data
  * with no declared asset or companion-layer authority; every other renderer lane remains refused.
  */
 export function compileGpuScene3DAnimationStaticPlan(

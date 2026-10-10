@@ -9,6 +9,7 @@
 import { lstat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { hashFile } from "./receipts";
+import { assertStrictLinearSrgbSdrFinalReceipt } from "./strict-linear-srgb-sdr-receipt";
 import type { OperationReceipt } from "./types";
 
 const PAIRED_OUTPUT_RECEIPT_SCHEMA = "shellx-motion/paired-output-receipt@1";
@@ -30,10 +31,12 @@ export async function verifyPairedReceiptOutputIfMarked(receiptPath: string, rec
 
 /** Verify a receipt explicitly claimed as a paired CLI delivery. */
 export async function verifyPairedReceiptOutput(receiptPath: string, receipt: OperationReceipt): Promise<void> {
-  const { outputPath, sha256, secondaryArtifactHashes } = assertPairedReceiptAcceptance(receiptPath, receipt);
-  if (await hashRegularFile(outputPath) !== sha256) throw new Error("Paired receipt output SHA-256 does not match the public artifact.");
+  const { outputPath, sha256, byteLength, secondaryArtifactHashes } = assertPairedReceiptAcceptance(receiptPath, receipt);
+  const output = await hashRegularFile(outputPath);
+  if (output.sha256 !== sha256) throw new Error("Paired receipt output SHA-256 does not match the public artifact.");
+  if (byteLength !== undefined && output.byteLength !== byteLength) throw new Error("Paired receipt output byte length does not match the public artifact.");
   await Promise.all(Object.entries(secondaryArtifactHashes).map(async ([path, expected]) => {
-    if (await hashRegularFile(path) !== expected) throw new Error("Paired receipt secondary artifact SHA-256 does not match the public evidence.");
+    if ((await hashRegularFile(path)).sha256 !== expected) throw new Error("Paired receipt secondary artifact SHA-256 does not match the public evidence.");
   }));
 }
 
@@ -41,10 +44,13 @@ export async function verifyPairedReceiptOutput(receiptPath: string, receipt: Op
 export function assertPairedReceiptAcceptance(receiptPath: string, receipt: OperationReceipt): {
   outputPath: string;
   sha256: string;
+  /** Fresh strict-SDR @2 receipts bind their public output byte length as well as its SHA-256. */
+  byteLength?: number;
   secondaryArtifactHashes: Record<string, string>;
 } {
   if (!isPairedOutputReceipt(receiptPath, receipt)) throw new Error("Receipt is not marked as a paired CLI delivery.");
   const output = plainRecord(receipt.output);
+  const strictSdr = assertStrictLinearSrgbSdrFinalReceipt(receipt);
   const outputPath = typeof output?.path === "string" ? resolve(output.path) : undefined;
   const sha256 = typeof output?.sha256 === "string" ? output.sha256 : undefined;
   if (!outputPath || !/^[a-f0-9]{64}$/.test(sha256 ?? "")) throw new Error("Paired receipt does not bind a final output path and SHA-256.");
@@ -62,7 +68,12 @@ export function assertPairedReceiptAcceptance(receiptPath: string, receipt: Oper
       throw new Error("Paired receipt secondary artifact binding is invalid.");
     }
   }
-  return { outputPath, sha256: sha256!, secondaryArtifactHashes: pairedSecondaryArtifactHashes as Record<string, string> };
+  return {
+    outputPath,
+    sha256: sha256!,
+    ...(strictSdr.kind === "strict-v2" ? { byteLength: strictSdr.adoption.verifiedOutput.byteLength } : {}),
+    secondaryArtifactHashes: pairedSecondaryArtifactHashes as Record<string, string>
+  };
 }
 
 export function markPairedOutputReceipt(receipt: OperationReceipt, receiptPath: string): void {
@@ -79,10 +90,15 @@ function hasPairedOutputReceiptMarker(receipt: OperationReceipt): boolean {
   return output !== undefined && Object.hasOwn(output, "pairedOutputReceiptPublication");
 }
 
-async function hashRegularFile(path: string): Promise<string> {
-  const facts = await lstat(path);
-  if (!facts.isFile() || facts.isSymbolicLink()) throw new Error("Paired receipt artifact must remain a regular non-symlink file.");
-  return await hashFile(path);
+async function hashRegularFile(path: string): Promise<{ sha256: string; byteLength: number }> {
+  const before = await lstat(path);
+  if (!before.isFile() || before.isSymbolicLink()) throw new Error("Paired receipt artifact must remain a regular non-symlink file.");
+  const sha256 = await hashFile(path);
+  const after = await lstat(path);
+  if (!after.isFile() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size) {
+    throw new Error("Paired receipt artifact changed while its public identity was verified.");
+  }
+  return { sha256, byteLength: after.size };
 }
 
 function plainRecord(value: unknown): Record<string, unknown> | undefined {

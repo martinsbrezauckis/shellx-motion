@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import {
   captureOutputDirectoryIdentity,
@@ -11,6 +11,7 @@ import {
   createPrivateDirectoryStage,
   createPrivateFileAnchor,
   createPrivateFileStage,
+  assertRegularFileIdentity,
   removeExactPrivateDirectory,
   stableRegularFile,
   type PrivateFileAnchor
@@ -40,8 +41,11 @@ export interface DerivedOutputPublicationPreparation {
 export async function prepareDerivedOutputPublication(input: DerivedOutputPublicationInput): Promise<DerivedOutputPublicationPreparation> {
   const outputPath = resolve(input.outputPath);
   let topology: OutputPathTopology;
+  let stage: { path: string; identity: OutputPathIdentity } | undefined;
+  let stageAnchor: PrivateFileAnchor | undefined;
+  let destinationAnchor: PrivateFileAnchor | undefined;
   try {
-    topology = await OutputPathTopology.acquire(outputPath);
+    topology = await OutputPathTopology.acquire(outputPath, { heldDirectoryAuthority: input.internalHeldDirectoryAuthority });
   } catch (error) {
     throw unsafeParentError(outputPath, error);
   }
@@ -52,7 +56,7 @@ export async function prepareDerivedOutputPublication(input: DerivedOutputPublic
   try {
     await topology.assertCurrent();
     await mkdir(lockPath, { mode: 0o700 });
-    lockIdentity = await captureOutputDirectoryIdentity(lockPath, "Final output reservation", { private: true });
+    lockIdentity = await captureOutputDirectoryIdentity(lockPath, "Final output reservation", { private: true, heldDirectoryAuthority: input.internalHeldDirectoryAuthority });
   } catch (error: any) {
     if (error?.code === "EEXIST") {
       throw new DerivedOutputPublicationError(
@@ -71,17 +75,17 @@ export async function prepareDerivedOutputPublication(input: DerivedOutputPublic
     }
     const destinationIdentity = await assertDestination(input.kind, outputPath, input.force === true, replaceEmptyDirectory);
     await topology.assertCurrent();
-    const stage = input.kind === "file"
-      ? await createPrivateFileStage(lockPath, fingerprint, extname(outputPath))
+    stage = input.kind === "file"
+      ? await createPrivateFileStage(lockPath, fingerprint, extname(outputPath), input.internalPrivateFileMaxBytes)
       : await createPrivateDirectoryStage(lockPath, fingerprint);
-    const stageAnchor = input.kind === "file"
-      ? await createPrivateFileAnchor(lockPath, "stage-anchor", stage.path, stage.identity)
+    stageAnchor = input.kind === "file"
+      ? await createPrivateFileAnchor(lockPath, "stage-anchor", stage.path, stage.identity, input.internalPrivateFileMaxBytes)
       : undefined;
     const stageLinkCount = stageAnchor
-      ? (await stableRegularFile(stage.path, "Final output staging file", stage.identity)).nlink
+      ? (await stableRegularFile(stage.path, "Final output staging file", stage.identity, input.internalPrivateFileMaxBytes)).nlink
       : undefined;
-    const destinationAnchor = destinationIdentity.kind === "file"
-      ? await createPrivateFileAnchor(lockPath, "destination-anchor", outputPath, destinationIdentity)
+    destinationAnchor = destinationIdentity.kind === "file"
+      ? await createPrivateFileAnchor(lockPath, "destination-anchor", outputPath, destinationIdentity, input.internalPrivateFileMaxBytes)
       : undefined;
     return {
       outputPath,
@@ -100,7 +104,22 @@ export async function prepareDerivedOutputPublication(input: DerivedOutputPublic
       destinationAnchor
     };
   } catch (error) {
-    await removeExactPrivateDirectory(topology, lockPath, lockIdentity).catch(() => undefined);
+    try {
+      // Reverse-order transactional rollback: only unlink leaves whose captured inode still
+      // matches.  A replacement is preserved and reported busy rather than poisoning retries.
+      for (const leaf of [destinationAnchor, stageAnchor].filter((value): value is PrivateFileAnchor => Boolean(value))) {
+        await assertRegularFileIdentity(leaf.path, "Final output rollback identity anchor", leaf.identity);
+        await unlink(leaf.path);
+      }
+      if (stage && input.kind === "file") {
+        await assertRegularFileIdentity(stage.path, "Final output rollback stage", stage.identity);
+        await unlink(stage.path);
+      }
+      await removeExactPrivateDirectory(topology, lockPath, lockIdentity, input.internalHeldDirectoryAuthority);
+    } catch {
+      // Do not silently leave an identity-bound lock that makes a later owner permanently busy.
+      throw new DerivedOutputPublicationError("derived_output_busy", "Final output reservation cleanup could not prove removal; retained recovery evidence was preserved.", outputPath);
+    }
     throw error;
   }
 }

@@ -22,7 +22,7 @@ export default defineConfig({
       "packages/cli/src/color-alpha-contract.test.ts",
       "packages/sdk/src/color-alpha-contract.test.ts"
     ],
-    setupFiles: ["./scripts/vitest-setup-job-stores.ts"],
+    setupFiles: ["./scripts/public/vitest-setup-job-stores.ts"],
     fileParallelism: false,
     minWorkers: 1,
     maxWorkers: 1,

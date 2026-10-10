@@ -17,6 +17,8 @@ import {
   type SegmentedFinalToolPolicy
 } from "@shellx-motion/renderer-ffmpeg";
 import type { MotionDebugResult } from "../command-registry.js";
+import { coordinatedLineageRevalidationFailure, type CoordinatedLineageRevalidation } from "./coordinated-lineage-revalidation.js";
+import { normalizePublicationUncertainty } from "../publication-uncertainty.js";
 
 export interface SegmentedFinalDebugContext {
   ffmpegRunner?: FfmpegRunner;
@@ -45,8 +47,10 @@ export async function runSegmentedFinalDebugRender(input: {
   context: SegmentedFinalDebugContext;
   dryRun: boolean;
   persistReceipt(receiptsRoot: string, receipt: OperationReceipt, actor?: ReceiptActor): Promise<string>;
+  /** Coordinator-only source guard; never caller request data. */
+  revalidateLineage?: CoordinatedLineageRevalidation;
 }): Promise<MotionDebugResult> {
-  const { pkg, lineage, outputPath, frameLane, preset, segmented, quality, receiptsRoot, warnings, context, dryRun, persistReceipt } = input;
+  const { pkg, lineage, outputPath, frameLane, preset, segmented, quality, receiptsRoot, warnings, context, dryRun, persistReceipt, revalidateLineage } = input;
   if (dryRun) {
     return {
       ok: true,
@@ -61,15 +65,21 @@ export async function runSegmentedFinalDebugRender(input: {
   }
   const missingGpuModuleAuthority = await missingGpuModuleAuthorityFailure(pkg, frameLane, context.gpuEffectModuleUseAuthority);
   if (missingGpuModuleAuthority) return { ok: false, error: missingGpuModuleAuthority, warnings: [] };
-  const outputGuard = await prepareOutputFile(outputPath, { force: false });
-  if (!outputGuard.ok) return { ok: false, error: outputGuard.error, warnings };
+  const beforeHealth = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforeHealth) return { ok: false, error: beforeHealth, warnings: [] };
   const health = await checkFfmpeg({ runner: context.ffmpegRunner });
   if (!health.ok) return { ok: false, error: health.error, warnings: [] };
+  const beforePreparation = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforePreparation) return { ok: false, error: beforePreparation, warnings: [] };
+  const outputGuard = await prepareOutputFile(outputPath, { force: false });
+  if (!outputGuard.ok) return { ok: false, error: outputGuard.error, warnings };
+  const beforeOutputDirectory = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (beforeOutputDirectory) return { ok: false, error: beforeOutputDirectory, warnings: [] };
   await mkdir(dirname(outputPath), { recursive: true });
 
   const audioTracks = resolvePackageAudioInputs(pkg);
   const audioMaster = packageAudioEncodeInput(pkg).audioMaster;
-  const rendered = await (context.segmentedFinalRenderer ?? renderSegmentedFinal)({
+  const renderInput: RenderSegmentedFinalInput = {
     pkg, frameLane, outputPath, preset, segmented,
     ...(audioTracks.length === 1 ? { audio: audioTracks[0] } : {}),
     ...(audioTracks.length > 1 ? { audioTracks } : {}),
@@ -80,8 +90,15 @@ export async function runSegmentedFinalDebugRender(input: {
     ...(context.scratchRoot ? { scratchRoot: context.scratchRoot } : {}),
     ...(context.callerId ? { callerId: context.callerId } : {}),
     toolPolicy: segmentedFinalToolPolicy(context, frameLane, health.version)
-  });
+  };
+  const rendered = context.segmentedFinalRenderer
+    ? await runInjectedSegmentedFinal(context.segmentedFinalRenderer, renderInput, revalidateLineage)
+    : await renderSegmentedFinal(renderInput, { revalidateLineage });
   if (!rendered.ok) {
+    // `rendered.error` is the renderer's closed public failure union. Preserve its typed
+    // post-publication uncertainty at the Debug producer boundary so the coordinator can stop
+    // and reconcile; this is not inferred from an output path or receipt presence.
+    const uncertainty = normalizePublicationUncertainty(rendered.error);
     const receipt = createRenderReceipt({
       id: `segmented-final-failed-${hashBuffer(Buffer.from(`${pkg.manifest.id}\n${outputPath}\n${rendered.error.code}`)).slice(0, 16)}`,
       packageId: pkg.manifest.id,
@@ -96,10 +113,15 @@ export async function runSegmentedFinalDebugRender(input: {
     return {
       ok: false,
       receiptId: receipt.id,
-      error: { code: rendered.error.code, message: rendered.error.message, detail: { retryable: rendered.error.retryable, segmented: rendered.error.evidence } },
+      error: {
+        code: rendered.error.code,
+        message: rendered.error.message,
+        detail: { retryable: rendered.error.retryable, segmented: rendered.error.evidence, ...(uncertainty ?? {}) }
+      },
       result: {
         lane: "ffmpeg", frameLane, preset, packageId: pkg.manifest.id, outputPath,
-        receipt, ...(receiptPath ? { receiptPath } : {}), segmented: { segmentFrames: segmented.segmentFrames, resume: segmented.resume === true, store: "derived-from-output" }
+        receipt, ...(receiptPath ? { receiptPath } : {}), segmented: { segmentFrames: segmented.segmentFrames, resume: segmented.resume === true, store: "derived-from-output" },
+        ...(uncertainty ?? {})
       },
       warnings
     };
@@ -120,6 +142,27 @@ export async function runSegmentedFinalDebugRender(input: {
     },
     warnings: rendered.receipt.warnings
   };
+}
+
+/** Preserve the legacy one-argument injected seam; its fence belongs to Debug immediately before use. */
+async function runInjectedSegmentedFinal(
+  renderer: NonNullable<SegmentedFinalDebugContext["segmentedFinalRenderer"]>,
+  input: RenderSegmentedFinalInput,
+  revalidateLineage: CoordinatedLineageRevalidation | undefined,
+): Promise<Awaited<ReturnType<typeof renderSegmentedFinal>>> {
+  const failure = await coordinatedLineageRevalidationFailure(revalidateLineage);
+  if (failure) {
+    return {
+      ok: false,
+      error: {
+        code: failure.code,
+        message: failure.message,
+        retryable: false,
+        evidence: { phase: "preflight" }
+      }
+    };
+  }
+  return await renderer(input);
 }
 
 /** Same central Debug host projection for durable segments; no wire field can alter it. */

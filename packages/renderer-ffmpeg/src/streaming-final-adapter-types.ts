@@ -10,6 +10,12 @@ import type {
   OperationReceipt,
   PublicationCommitUncertainEvidence
 } from "@shellx-motion/core";
+import {
+  LINEAR_SRGB_SDR_FINAL_LEGACY_TRANSPORT_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PRIVATE_OUTPUT_ADOPTION_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA,
+} from "@shellx-motion/core";
+import type { StrictLinearSrgbSdrFinalPrivateOutputAdoption } from "@shellx-motion/core";
 import type {
   BrowserCaptureWorkflow,
   BrowserNetworkAccessOptions,
@@ -189,9 +195,17 @@ export interface StreamingFinalFrameTransportEvidence {
   encoderHandoff: StreamingFinalEncoderHandoffEvidence;
 }
 
-/** Exact strict linear-light producer-to-delivery proof; generic GPU evidence is intentionally absent. */
-export interface LinearSrgbSdrFinalFrameTransportEvidence {
-  readonly schema: "shellx-motion/linear-srgb-sdr-final-transport@1";
+export {
+  LINEAR_SRGB_SDR_FINAL_LEGACY_TRANSPORT_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PRIVATE_OUTPUT_ADOPTION_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA,
+} from "@shellx-motion/core";
+
+export type LinearSrgbSdrFinalPrivateOutputAdoption = StrictLinearSrgbSdrFinalPrivateOutputAdoption;
+
+/** Historical readable strict transport. It remains non-qualifying for fresh strict-proof verification. */
+export interface LegacyLinearSrgbSdrFinalFrameTransportEvidence {
+  readonly schema: typeof LINEAR_SRGB_SDR_FINAL_LEGACY_TRANSPORT_SCHEMA;
   readonly delivery: "streamed";
   readonly frameLane: "gpu";
   readonly frameCount: number;
@@ -218,7 +232,38 @@ export interface LinearSrgbSdrFinalFrameTransportEvidence {
   readonly resources: LocalMotionJobEvidence;
 }
 
-export type AnyStreamingFinalFrameTransportEvidence = StreamingFinalFrameTransportEvidence | LinearSrgbSdrFinalFrameTransportEvidence;
+/** Exact fresh strict linear-light producer-to-delivery proof; generic GPU evidence is intentionally absent. */
+export interface LinearSrgbSdrFinalFrameTransportEvidence {
+  readonly schema: typeof LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA;
+  readonly delivery: "streamed";
+  readonly frameLane: "gpu";
+  readonly frameCount: number;
+  readonly retainedFrameCount: 0;
+  /** The verified private MP4 and Core private stage are exactly the same bounded bytes. */
+  readonly privateOutputAdoption: LinearSrgbSdrFinalPrivateOutputAdoption;
+  readonly producer: {
+    readonly frameLane: "gpu-linear-srgb-sdr";
+    readonly evidence: LinearSrgbSdrFinalExecutionEvidence["producer"];
+  };
+  readonly colorPipeline: {
+    readonly requested: import("@shellx-motion/core").ColorPipelineContract;
+    readonly actual: {
+      readonly routeFingerprint: string;
+      readonly preparationFingerprint: string;
+      readonly ffmpegContractSha256: string;
+      readonly comparisonPolicySha256: string;
+      readonly retainedProducerFrame: LinearSrgbSdrFinalExecutionEvidence["retainedFrame"];
+      readonly commands: LinearSrgbSdrFinalExecutionEvidence["commands"];
+      readonly media: LinearSrgbSdrFinalExecutionEvidence["media"];
+      readonly comparison: LinearSrgbSdrFinalExecutionEvidence["comparison"];
+      readonly cleanup: LinearSrgbSdrFinalExecutionEvidence["cleanup"];
+      readonly fingerprint: string;
+    };
+  };
+  readonly resources: LocalMotionJobEvidence;
+}
+
+export type AnyStreamingFinalFrameTransportEvidence = StreamingFinalFrameTransportEvidence | LegacyLinearSrgbSdrFinalFrameTransportEvidence | LinearSrgbSdrFinalFrameTransportEvidence;
 
 /** Static command-planning result; errors are typed and no execution has begun. */
 export type StreamingFinalCommandPlanResult =

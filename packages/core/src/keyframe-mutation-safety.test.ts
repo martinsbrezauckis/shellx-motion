@@ -1,30 +1,12 @@
 /**
- * The falsifier for keyframe tracks destroyed or overwritten by a MUTATION, kept permanently.
+ * Keep mutation commands from dropping or silently replacing authored keyframe tracks.
  *
- * the keyframe regression gated the READ path: `motion.package.validate`, the CLI `validate` and both render lanes
- * now refuse a document whose keyframes the evaluator cannot read. It did not touch the mutation
- * commands, and the mutation commands turned out to be where the same defect is worst — because a
- * mutation can DELETE the evidence the read gate exists to find:
+ * Split must visit each layer's own targets, including dynamic shader uniforms, and refuse
+ * malformed keyframes before rewriting them. Transition and animation presets must report
+ * replacements. Data-row track patches must be checked at the row that supplies them.
  *
- *   - `motion.timeline.layer.split` visited a static list of keyframe targets, so a
- *     `shader.uniforms.*` track (schema-valid, engine-readable, shipped in
- *     fixtures/packages/restricted-shader) appeared in neither half. Measured on that fixture:
- *     `ok: true`, `warnings: []`, and `keyframes` simply gone from both layers.
- *   - the same split dropped every keyframe whose `atMs` is not a number, because a keyframe is
- *     assigned to a half by comparing `atMs` against the split point and `undefined < n`,
- *     `undefined > n` and `undefined === n` are all false. Measured on the the keyframe regression `{ t, v }`
- *     document: four authored keyframes became one synthesized `{ atMs, value: 0 }` per half, and
- *     the result then VALIDATED CLEAN — the split laundered a document validate would have refused
- *     into one it accepts, with the author's work gone and no trace of it.
- *   - `applyTransitionPresetToLayer` replaced whole existing tracks through a target-level spread
- *     while returning a hard-coded empty warnings array.
- *   - `applyLayerAnimationPreset` threw away each upsert's `inserted` / `replaced` verdict, so an
- *     author overwriting existing keyframes was told only "applied".
- *   - a data row's `layers.<id>.keyframes.<target>` patch replaced a track with an unchecked array,
- *     so a row could author `{ t, v }` into a batch job that no read gate sees until render.
- *
- * Both directions are pinned for every case: the broken input is refused or reported, and a healthy
- * input is byte-for-byte unaffected — no refusal, no new warning, identical output.
+ * Each case asserts the refusal or warning and also checks that healthy input remains
+ * byte-for-byte unaffected.
  */
 import { describe, expect, it } from "vitest";
 import { expandMotionPackageRows, parseMotionDataRows } from "./data";

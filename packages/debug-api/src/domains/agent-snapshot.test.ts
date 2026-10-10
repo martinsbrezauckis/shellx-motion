@@ -134,6 +134,39 @@ describe("motion.agent.snapshot", () => {
     });
   });
 
+  it("projects only the literal committed failure uncertainty into compact jobs", async () => {
+    const committed: MotionJobStatus = { ...job(2), outcome: "failed", state: "failed", committed: true };
+    const succeededWithMarker = { ...job(1), outcome: "succeeded", state: "succeeded", committed: true } as unknown as MotionJobStatus;
+    const pendingWithMarker = { ...job(0), committed: true } as unknown as MotionJobStatus;
+    const result = await buildMotionAgentSnapshot(
+      {},
+      snapshotServices("2026-08-09T00:00:00.000Z", { jobCallerId: "caller-a", jobs: [committed, succeededWithMarker, pendingWithMarker] })
+    );
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error("snapshot fixture unexpectedly failed");
+    const snapshot = result.result as Record<string, any>;
+    expect(snapshot.jobs.recent).toEqual([
+      expect.objectContaining({ id: "job-2", committed: true }),
+      expect.objectContaining({ id: "job-1" }),
+      expect.objectContaining({ id: "job-0" })
+    ]);
+    expect(snapshot.jobs.recent[1]).not.toHaveProperty("committed");
+    expect(snapshot.jobs.recent[2]).not.toHaveProperty("committed");
+    expect(validateAgainstPublishedSchema(AGENT_SNAPSHOT_SCHEMA_DOCUMENT, snapshot)).toEqual([]);
+    expect(validateAgainstPublishedSchema(AGENT_SNAPSHOT_SCHEMA_DOCUMENT, {
+      ...snapshot,
+      jobs: { ...snapshot.jobs, recent: [{ ...snapshot.jobs.recent[0], committed: false }] }
+    })).toContainEqual({ path: "/jobs/recent/0/committed", message: "must equal true" });
+    const succeeded = { ...snapshot.jobs.recent[0], lifecycle: "ended", outcome: "succeeded", state: "succeeded", committed: true };
+    const { outcome: _outcome, ...pending } = { ...snapshot.jobs.recent[0], lifecycle: "pending", state: "pending", committed: true };
+    expect(validateAgainstPublishedSchema(AGENT_SNAPSHOT_SCHEMA_DOCUMENT, {
+      ...snapshot, jobs: { ...snapshot.jobs, recent: [succeeded] }
+    })).not.toEqual([]);
+    expect(validateAgainstPublishedSchema(AGENT_SNAPSHOT_SCHEMA_DOCUMENT, {
+      ...snapshot, jobs: { ...snapshot.jobs, recent: [pending] }
+    })).not.toEqual([]);
+  });
+
   it("derives plan requirements from Debug metadata for a non-hardcoded edit command", async () => {
     const result = await buildMotionAgentSnapshot(
       { request: "make title blue and preview it" },

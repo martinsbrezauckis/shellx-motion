@@ -14,7 +14,7 @@
  * these files come back in reaches receipt listings, so it must not depend on the machine's locale.
  *
  * Extracted from `index.ts` rather than left inline: that file carries a declared non-growth
- * baseline in `scripts/module-size-gate.mjs`, and "how a receipt store is enumerated, and how much
+ * baseline in `scripts/public/module-size-gate.mjs`, and "how a receipt store is enumerated, and how much
  * of it we are willing to look at" is a coherent unit.
  *
  * Primary caller: `index.ts`.

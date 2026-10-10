@@ -3,8 +3,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-// @ts-expect-error This shared JavaScript source-classifier intentionally has no declaration file.
-import { isNonShippingSource } from "../../../scripts/source-modules.mjs";
 import { loadMotionPackage, UntrustedMotionExecutionRefusal } from "@shellx-motion/core";
 import {
   assertEnforcedUntrustedBrowserDefaultLaunch,
@@ -168,7 +166,6 @@ describe("enforced untrusted browser launch planning", () => {
     expect(launcher.isFile()).toBe(true);
     if (process.platform !== "win32") expect(launcher.mode & 0o111).not.toBe(0);
   });
-
 
   it("refuses active content and a Chromium sandbox opt-out before constructing a launcher", async () => {
     const active = prepareEnforcedUntrustedBrowserLaunch({

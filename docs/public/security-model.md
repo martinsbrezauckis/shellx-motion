@@ -31,6 +31,12 @@ with bounded counts; environments run fixed, package-code-free host shaders. A
 construct the contract does not allow is refused — it is never a reason to
 hand-inject code or URLs into package JSON.
 
+Normal browser capture may inline package-local `data-composition-src` HTML. It admits at most
+4,096 references and 64 MiB of expanded UTF-8 HTML, counting the original text, replacement
+wrappers, sibling content, and base element. This derived-output limit is separate from the
+512 MiB package input budget, where a cached sibling is charged once. Approved-agent entry and
+GPU hybrid capture refuse secondary composition inlining.
+
 ### Governed local effect modules are installed authority, not package code
 
 A package may reference one installed `motion.afterimage-stack@1.0.0` by exact id/version plus a
@@ -266,14 +272,18 @@ request body. The bundled MCP bridge does not read or forward that durable key. 
 owner-private per-start listener record, proves the current listener by random challenge and keyed
 HMAC, and sends the per-start credential and MCP body only on that same retained TCP connection.
 The public proof response is streamed under a 4 KiB cap and stdio request frames are bounded to
-1 MB. A stale or rebound listener receives neither credential nor request body.
+1 MB. A port reached through a stale record after shutdown or a crash receives neither credential
+nor request body, including when another process rebinds that port.
 Advanced direct server launches remain able to use an ephemeral private key file or
 `SHELLX_MOTION_DEBUG_TOKEN`. Theft of a high-tier key by another local process would grant that
 process Motion's filesystem/render authority — treat the key like any other local secret.
 
-Workbench provider setup also treats the child boundary explicitly. On POSIX, built-in agent
+Workbench provider setup also treats the child boundary explicitly. On Linux, built-in pinned agent
 providers ignore empty and relative `PATH` entries during health, retain the canonical absolute
 executable's device/inode identity, and execute the prompt through a rechecked retained descriptor.
+Motion's current macOS launcher cannot execute the inherited `/dev/fd` provider descriptor, so
+pinned provider probes and prompts refuse before launching the provider. A macOS provider launcher needs an equivalent retained
+executable identity before this capability can be enabled.
 Windows uses its documented canonical-target and fixed PowerShell-wrapper path.
 Motion passes a filtered environment without Motion's bearer or ambient credential capabilities; the
 provider CLI performs its own normal configuration in place, and Motion neither reads nor copies

@@ -30,7 +30,7 @@ const GRAPH_MUTATION: Record<string, MotionDebugArgPropertySchema> = {
  * and folds each supplied argument into the receipt input, then enforces per-command REQUIREDness
  * afterwards. So each command accepts the whole set and `required` is the real discriminator —
  * declaring less would make `additionalProperties: false` refuse calls the engine accepts.
- * `scripts/debug-arg-coverage.ts` holds the two in agreement.
+ * `scripts/public/debug-arg-coverage.ts` holds the two in agreement.
  */
 const RELATIONSHIP_MUTATION: Record<string, MotionDebugArgPropertySchema> = {
   ...MUTATION,

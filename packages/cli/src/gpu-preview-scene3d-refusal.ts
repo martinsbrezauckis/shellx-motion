@@ -2,10 +2,10 @@ import { activeScriptLayers, motionScene3DAnimationLaneRefusal, type MotionDocum
 import { activeScriptCliRefusal } from "./agent-script-cli-refusal";
 import type { CliResult } from "./main.js";
 
-/** CLI is intentionally outside O6's direct renderer-browser-only preview surface. */
+/** CLI is intentionally outside the direct renderer-browser scene3d animation GPU preview surface. */
 export function cliGpuPreviewScene3dAnimationRefusal(motion: MotionDocument): { code: string; message: string } | undefined {
   const refusal = motionScene3DAnimationLaneRefusal(motion, "gpu-static");
-  return refusal && { code: refusal.code, message: "CLI GPU preview does not admit document scene3dAnimation@1; the strict O6 lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API." };
+  return refusal && { code: refusal.code, message: "CLI GPU preview does not admit document scene3dAnimation@1; the strict scene3d animation GPU preview lowerer is available only through the direct @shellx-motion/renderer-browser renderMotionGpuPreview API." };
 }
 
 /** All preview lanes settle their no-work document refusals before output setup. */

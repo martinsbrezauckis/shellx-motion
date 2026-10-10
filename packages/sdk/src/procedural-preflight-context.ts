@@ -10,7 +10,7 @@
  * for the crime of not carrying the document it was never given.
  *
  * The cost is that the validator can then object to the INVENTED half, and those objections used to
- * reach the caller verbatim. Both were reproduced against the shipped code during cross-host verification:
+ * reach the caller verbatim. Two cases show why synthesized issues need separate attribution:
  *
  *   - a relationship naming 17 audio envelopes (the node budget allows 64) was refused with
  *     "/relationships/audioEnvelopes: must contain at most 16 envelopes" — an array the caller never

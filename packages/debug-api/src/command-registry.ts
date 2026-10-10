@@ -120,8 +120,7 @@ const COMMAND_DEFINITIONS = [
   { command: "motion.prompt.retry", domain: "agent", permission: "draft_motion", mutates: true },
   { command: "motion.packages.browse", domain: "workspace", permission: "read_motion", mutates: false },
   // The cold start. Every other authoring command edits a package that already exists, and every
-  // route that made one was an importer — an agent asked to build something original had no first
-  // step. Found by giving an outside agent only the docs and the tools.
+  // route that made one was an importer. A caller needs a typed first step to build an original package.
   { command: "motion.package.create", domain: "workspace", permission: "write_local", mutates: true },
   { command: "motion.package.asset.import", domain: "workspace", permission: "edit_motion", mutates: true },
   // The CLI leads with `validate`; the Debug API had no equivalent, so an agent had to render to

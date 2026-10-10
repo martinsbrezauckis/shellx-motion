@@ -5,6 +5,7 @@ import {
 } from "@shellx-motion/core";
 import type { FfmpegProcessResult } from "./index";
 import { encoderFailure, StreamingFailure, streamingProducerJobContext, toError, type StreamingEvidenceReporter } from "./streaming-foundation-helpers";
+import { isStreamingFinalLineageRevalidationFailure, revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 import { streamingMaxPngBytes, streamingMaxRgbaBytes } from "./streaming-foundation-validation";
 import type { StreamingEncodeAttempt, StreamingFfmpegFinalInput, StreamingFrameSink } from "./streaming-foundation-types";
 import type { StreamingFfmpegProcess } from "./streaming-process";
@@ -106,6 +107,7 @@ export async function runStreamingAttempt(input: {
   };
   try {
     const producerJob = streamingProducerJobContext(input.job, controller.signal, input.evidenceReporter, input.maxProcessTreeRssBytes);
+    await revalidateStreamingFinalLaunch();
     await input.input.produce(sink, {
       signal: controller.signal,
       attempt: input.attempt,
@@ -135,6 +137,7 @@ export async function runStreamingAttempt(input: {
   } catch (error) {
     await input.process.abort(toError(error));
     const output = await closed;
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
     if (error instanceof StreamingFailure && error.code === "encoder_failed" && !error.process && output.exitCode !== 0) {
       throw encoderFailure(output);
     }

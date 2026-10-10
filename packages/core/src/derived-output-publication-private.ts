@@ -1,6 +1,7 @@
 /** Private identity-bound stage mechanics for derived final-output publication. */
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, link, mkdtemp, open, readdir, rmdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, link, mkdtemp, open, readdir, rmdir, unlink } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import {
   assertExactDirectoryInventoryAt,
@@ -20,7 +21,6 @@ import {
   type OutputPathTopology
 } from "./output-path-topology";
 import { DerivedOutputPublicationError, type DerivedDirectoryPublicationEvidence } from "./derived-output-publication-types";
-import { hashFile } from "./receipts";
 
 export type PrivateFileAnchor = { path: string; identity: OutputPathIdentity };
 export type {
@@ -31,13 +31,23 @@ export type {
 } from "./closed-directory-inventory";
 export { isClosedDirectoryInventoryAmbiguity } from "./closed-directory-inventory";
 
-export async function createPrivateFileStage(root: string, fingerprint: string, extension: string): Promise<{ path: string; identity: OutputPathIdentity }> {
+export async function createPrivateFileStage(root: string, fingerprint: string, extension: string, maximumBytes?: number): Promise<{ path: string; identity: OutputPathIdentity }> {
   const safeExtension = /^\.[a-z0-9]{1,16}$/i.test(extension) ? extension : ".stage";
   const path = join(root, `.shellx-motion-final-${fingerprint}-${randomUUID()}${safeExtension}`);
-  const handle = await open(path, "wx", 0o600);
-  await handle.close();
-  const facts = await stableRegularFile(path, "Final output staging file");
-  return { path, identity: { dev: facts.dev, ino: facts.ino } };
+  let identity: OutputPathIdentity | undefined;
+  try {
+    const handle = await open(path, "wx", 0o600);
+    try {
+      const facts = await handle.stat();
+      if (!facts.isFile() || facts.isSymbolicLink()) throw new DerivedOutputPublicationError("derived_output_stage_invalid", "Final output staging file is not regular.", path);
+      identity = { dev: Number(facts.dev), ino: Number(facts.ino) };
+    } finally { await handle.close(); }
+    const facts = await stableRegularFile(path, "Final output staging file", identity, maximumBytes);
+    return { path, identity: { dev: facts.dev, ino: facts.ino } };
+  } catch (error) {
+    if (identity) await removeExactPrivateFile(path, "Final output staging rollback", identity).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function createPrivateDirectoryStage(root: string, fingerprint: string): Promise<{ path: string; identity: OutputPathIdentity }> {
@@ -49,32 +59,79 @@ export async function createPrivateFileAnchor(
   lockPath: string,
   name: string,
   targetPath: string,
-  expectedIdentity: OutputPathIdentity
+  expectedIdentity: OutputPathIdentity,
+  maximumBytes?: number
 ): Promise<PrivateFileAnchor> {
   const path = join(lockPath, name);
-  const target = await stableRegularFile(targetPath, "Final output identity source", expectedIdentity);
-  await link(targetPath, path);
-  const anchor = await stableRegularFile(path, "Final output private identity anchor", expectedIdentity);
-  if (anchor.dev !== target.dev || anchor.ino !== target.ino) {
-    throw new DerivedOutputPublicationError("derived_output_stage_invalid", "Final output identity anchor did not bind the expected file.", path);
+  let linked = false;
+  try {
+    const target = await stableRegularFile(targetPath, "Final output identity source", expectedIdentity, maximumBytes);
+    await link(targetPath, path);
+    linked = true;
+    const anchor = await stableRegularFile(path, "Final output private identity anchor", expectedIdentity, maximumBytes);
+    if (anchor.dev !== target.dev || anchor.ino !== target.ino) {
+      throw new DerivedOutputPublicationError("derived_output_stage_invalid", "Final output identity anchor did not bind the expected file.", path);
+    }
+    return { path, identity: { dev: anchor.dev, ino: anchor.ino } };
+  } catch (error) {
+    if (linked) await removeExactPrivateFile(path, "Final output anchor rollback", expectedIdentity).catch(() => undefined);
+    throw error;
   }
-  return { path, identity: { dev: anchor.dev, ino: anchor.ino } };
 }
 
-export async function stableRegularFile(path: string, label: string, expected?: OutputPathIdentity): Promise<OutputPathIdentity & { size: number; nlink: number; sha256: string }> {
+export async function stableRegularFile(path: string, label: string, expected?: OutputPathIdentity, maximumBytes = Number.MAX_SAFE_INTEGER): Promise<OutputPathIdentity & { size: number; mtimeMs: number; ctimeMs: number; nlink: number; sha256: string }> {
   const before = await lstat(path);
-  if (!before.isFile() || before.isSymbolicLink()) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || !before.isFile() || before.isSymbolicLink() || !Number.isSafeInteger(before.size) || before.size > maximumBytes) {
     throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} must be a regular non-symlink file.`, path);
   }
   if (expected && (Number(before.dev) !== expected.dev || Number(before.ino) !== expected.ino)) {
     throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} changed after Motion captured its identity.`, path);
   }
-  const sha256 = await hashFile(path);
+  // Do not stream to EOF: a hostile writer can grow a pathname after admission.  This reads
+  // exactly the descriptor-admitted length and rejects any identity or timestamp movement.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let sha256: string;
+  try {
+    const opened = await handle.stat();
+    if (!sameRegularFacts(before, opened)) throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} changed before Motion opened its bounded descriptor.`, path);
+    const digest = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, before.size)));
+    let offset = 0;
+    while (offset < before.size) {
+      const wanted = Math.min(buffer.length, before.size - offset);
+      const read = await handle.read(buffer, 0, wanted, offset);
+      if (read.bytesRead !== wanted) throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} shortened while Motion verified its bounded bytes.`, path);
+      digest.update(buffer.subarray(0, wanted));
+      offset += wanted;
+    }
+    const afterDescriptor = await handle.stat();
+    if (!sameRegularFacts(before, afterDescriptor)) throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} changed while Motion verified its bounded bytes.`, path);
+    sha256 = digest.digest("hex");
+  } finally { await handle.close(); }
   const after = await lstat(path);
-  if (!after.isFile() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size) {
+  if (!sameRegularFacts(before, after)) {
     throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} changed while Motion verified its bytes.`, path);
   }
-  return { dev: Number(after.dev), ino: Number(after.ino), size: after.size, nlink: after.nlink, sha256 };
+  return { dev: Number(after.dev), ino: Number(after.ino), size: after.size, mtimeMs: after.mtimeMs, ctimeMs: after.ctimeMs, nlink: after.nlink, sha256 };
+}
+
+function sameRegularFacts(left: import("node:fs").Stats, right: import("node:fs").Stats): boolean {
+  return right.isFile() && !right.isSymbolicLink()
+    && left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs && left.nlink === right.nlink;
+}
+
+async function removeExactPrivateFile(path: string, label: string, identity: OutputPathIdentity): Promise<void> {
+  await assertRegularFileIdentity(path, label, identity);
+  await unlink(path);
+}
+
+/** Identity-only cleanup guard: never hash an attacker-expanded private stage before preserving/removing it. */
+export async function assertRegularFileIdentity(path: string, label: string, expected: OutputPathIdentity): Promise<void> {
+  const facts = await lstat(path);
+  if (!facts.isFile() || facts.isSymbolicLink() || Number(facts.dev) !== expected.dev || Number(facts.ino) !== expected.ino) {
+    throw new DerivedOutputPublicationError("derived_output_stage_invalid", `${label} changed after Motion captured its identity.`, path);
+  }
 }
 
 export async function verifyDirectoryAt(
@@ -178,9 +235,9 @@ export async function assertCompleteExactDirectoryInventoryWithEmptyDirectoriesS
   return evidence;
 }
 
-export async function removeExactPrivateDirectory(topology: OutputPathTopology, path: string, identity: OutputPathIdentity): Promise<void> {
+export async function removeExactPrivateDirectory(topology: OutputPathTopology, path: string, identity: OutputPathIdentity, heldDirectoryAuthority?: unknown): Promise<void> {
   await topology.assertCurrent();
-  await assertOutputDirectoryIdentity(path, identity, "Final output reservation", { private: true });
+  await assertOutputDirectoryIdentity(path, identity, "Final output reservation", { private: true, heldDirectoryAuthority });
   await rmdir(path);
 }
 

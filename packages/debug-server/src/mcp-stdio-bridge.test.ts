@@ -9,7 +9,12 @@ import { describe, expect, it } from "vitest";
 import { MotionJobCoordinator, MotionJobLeaseDirectory, MotionJobRegistry, MotionJobView } from "@shellx-motion/core";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
 import { startMotionDebugServer } from "./index";
-import { motionUserAccessPaths, readOrCreatePersistentCapabilityFile, writeMotionMcpBridgeDiscovery } from "./user-access";
+import {
+  clearMotionMcpBridgeDiscovery,
+  motionUserAccessPaths,
+  readOrCreatePersistentCapabilityFile,
+  writeMotionMcpBridgeDiscovery
+} from "./user-access";
 
 const BRIDGE = fileURLToPath(new URL("../bin/shellx-motion-mcp.mjs", import.meta.url));
 const RENDER_PACKAGE_ROOT = fileURLToPath(new URL("../../../fixtures/packages/lower-third", import.meta.url));
@@ -47,8 +52,10 @@ describe("installed MCP stdio bridge", () => {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: "before-crash", method: "tools/list", params: {} })}\n`);
       expect(await responses.next()).toMatchObject({ id: "before-crash", result: { tools: expect.any(Array) } });
 
-      // Simulate a process death: the listener stops but its private discovery record is retained.
+      // Normal shutdown deliberately retains the private discovery record. An older server cannot
+      // erase a newer publication, and a stopped record is inert without its listener's HMAC proof.
       await server.close();
+      await clearMotionMcpBridgeDiscovery(paths, { port, credential: firstCredential });
       rebound = createServer((request, response) => {
         sawDurableBearer ||= typeof request.headers.authorization === "string";
         sawPerStartBridgeCredential ||= typeof request.headers["x-shellx-motion-mcp-bridge-credential"] === "string";

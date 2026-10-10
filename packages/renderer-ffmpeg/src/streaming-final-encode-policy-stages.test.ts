@@ -19,6 +19,7 @@ import {
   type StreamingFinalEncodeExecutionEvidence
 } from "./streaming-final-encode-policy";
 import type { StreamingFfmpegProcess, StreamingFfmpegProcessFactory } from "./streaming-process";
+import { withStreamingFinalLaunchRevalidation } from "./streaming-final-lineage-revalidation";
 
 const tempDirs: string[] = [];
 const FRAME = encodeRgbaPng(2, 2, Buffer.from([
@@ -76,6 +77,71 @@ describe("streaming final encode policy stages", () => {
     ]));
     await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
     if (preparation.ok) await releaseStreamingFinalMediaSnapshots(preparation.prepared.mediaSnapshots);
+  });
+
+  it("stops the hardware usability probe after encoder capability launches and before a hardware process can start", async () => {
+    const root = await scratch("lineage-hardware-probe");
+    const outputPath = join(root, "out.mp4");
+    const commands: FfmpegCommand[] = [];
+    let fences = 0;
+    const cache: EncodePolicyCache = { get: () => undefined, set: () => {}, delete: () => {}, clear: () => {} };
+
+    await expect(withStreamingFinalLaunchRevalidation(async () => {
+      fences += 1;
+      if (fences === 2) throw new Error("stable lineage changed before hardware usability probe");
+    }, async () => await runStreamingFinalEncodePolicy({
+      ...baseInput(root, outputPath), forceSoftwareEncode: false, cache,
+      runner: async (command) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: " V..... libx264 H.264 encoder (codec h264)\n V....D h264_nvenc NVIDIA NVENC H.264 encoder (codec h264)", stderr: "" };
+      },
+      produce: async (sink) => await sink.write({ index: 0, atMs: 0, png: FRAME })
+    }))).rejects.toThrow("stable lineage changed before hardware usability probe");
+
+    expect(fences).toBe(2);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.args).toContain("-encoders");
+    expect(commands.some((command) => command.args.includes("h264_nvenc"))).toBe(false);
+  });
+
+  it("stops final media readback and program loudness before either next FFprobe or FFmpeg launch", async () => {
+    for (const stopAt of [4, 5]) {
+      const root = await scratch(`lineage-final-${stopAt}`);
+      const outputPath = join(root, "out.mp4");
+      const audioPath = join(root, "music.wav");
+      await writeFile(audioPath, "audio-bytes");
+      const commands: FfmpegCommand[] = [];
+      let processStarts = 0;
+      let fences = 0;
+      const baseFactory = outputFactory(outputPath, [0]);
+      const runner: FfmpegRunner = async (command) => {
+        commands.push(command);
+        return audioEvidenceRunner(command);
+      };
+
+      await expect(withStreamingFinalLaunchRevalidation(async () => {
+        fences += 1;
+        if (fences === stopAt) throw new Error(`stable lineage changed before final launch ${stopAt}`);
+      }, async () => await runStreamingFinalEncodePolicy({
+        ...baseInput(root, outputPath), audio: { path: audioPath, normalizeLoudness: true }, runner,
+        processFactory: async (input) => {
+          processStarts += 1;
+          return await baseFactory(input);
+        },
+        produce: async (sink) => await sink.write({ index: 0, atMs: 0, png: FRAME })
+      }))).rejects.toThrow(`stable lineage changed before final launch ${stopAt}`);
+
+      expect(fences).toBe(stopAt);
+      expect(processStarts).toBe(1);
+      if (stopAt === 4) {
+        expect(commands).toHaveLength(1);
+        expect(commands[0]?.args).toContain("-af");
+      } else {
+        expect(commands).toHaveLength(2);
+        expect(commands[0]?.args).toContain("-af");
+        expect(commands[1]?.args).toContain("-show_streams");
+      }
+    }
   });
 
   it("accepts a durable complete-hash capacity only when the internal caller supplies it", async () => {
@@ -306,6 +372,30 @@ function evidenceRunner(): FfmpegRunner {
     }
     return { exitCode: 0, stdout: "", stderr: "" };
   };
+}
+
+function audioEvidenceRunner(command: FfmpegCommand): FfmpegProcessResult {
+  if (command.args.includes("-af")) {
+    return {
+      exitCode: 0,
+      stdout: "",
+      stderr: '{"input_i":"-12","input_tp":"-1","input_lra":"4","input_thresh":"-22","target_offset":"0.3"}'
+    };
+  }
+  if (command.args.includes("-show_streams")) {
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        streams: [
+          { codec_type: "video", codec_name: "h264", width: 2, height: 2, avg_frame_rate: "1/1", duration: "1", pix_fmt: "yuv420p", color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709", color_range: "tv" },
+          { codec_type: "audio", codec_name: "aac", sample_rate: "48000", channels: 2, channel_layout: "stereo", duration: "1" }
+        ],
+        format: { duration: "1", format_name: "mov,mp4,m4a,3gp,3g2,mj2" }
+      }),
+      stderr: ""
+    };
+  }
+  return { exitCode: 0, stdout: "", stderr: "" };
 }
 
 function outputFactory(outputPath: string, exitCodes: number[]): StreamingFfmpegProcessFactory {

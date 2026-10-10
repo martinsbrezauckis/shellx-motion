@@ -25,6 +25,7 @@ import type {
 } from "./segmented-final-adapter-types.js";
 import type { SegmentedFinalAdmittedValue } from "./segmented-final-adapter-executor.js";
 import type { FfmpegProcessResult, FfmpegRunner } from "../index.js";
+import { isStreamingFinalLineageRevalidationFailure } from "../streaming-final-lineage-revalidation.js";
 
 export async function finishSegmentedFinalDelivery(input: {
   prepared: PreparedStreamingFinalEncodePolicy;
@@ -77,7 +78,7 @@ export async function finishSegmentedFinalDelivery(input: {
       }
     });
   } catch (error) {
-    if (error instanceof LocalMotionJobError) {
+    if (error instanceof LocalMotionJobError || isStreamingFinalLineageRevalidationFailure(error)) {
       const partial = await partialOutput(input.paths.stagingPath);
       const cleanup = await removeUnpublishedStage(input.paths.stagingPath);
       input.setStagingCleanup(cleanup.outcome);

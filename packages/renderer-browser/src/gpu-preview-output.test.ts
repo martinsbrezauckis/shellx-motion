@@ -1,15 +1,19 @@
 import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "@shellx-motion/core/internal/trusted-host-workspace";
-import { resolveGpuPreviewOutputPath } from "./gpu-preview-output";
+import { isGpuPreviewPathInside, resolveGpuPreviewOutputPath } from "./gpu-preview-output";
 
 const roots: string[] = [];
 
 afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe("GPU preview output admission", () => {
+  it("refuses a Windows cross-volume relative result", () => {
+    expect(isGpuPreviewPathInside("C:\\motion\\out", "C:\\motion\\out\\frame.png", win32)).toBe(true);
+    expect(isGpuPreviewPathInside("C:\\motion\\out", "D:\\elsewhere\\frame.png", win32)).toBe(false);
+  });
   it("admits an ordinary nested output under a private root", async () => {
     const root = await testRoot();
     const outDir = join(root, "out");

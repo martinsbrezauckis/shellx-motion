@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireDerivedOutputPublication, DerivedOutputPublicationError } from "./derived-output-publication";
+import { PairedOutputReceiptPublication } from "./paired-output-receipt-publication";
 import { isCoreDerivedOutputPublication } from "./derived-output-publication-authenticity";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 
@@ -85,6 +86,38 @@ describe("derived renderer private materialization", () => {
       })).rejects.toMatchObject({ code: "derived_output_stage_invalid" });
       expect(await readFile(publication.stagingPath, "utf8")).toBe("competitor bytes");
       await publication.abort();
+    });
+  });
+
+  it("serializes concurrent private chunk-writer acquisition and closes an in-flight writer before abort releases its reservation", async () => {
+    const root = await trustedScratch();
+    await withinTrustedScratch(root, async () => {
+      const publication = await acquireDerivedOutputPublication({ outputPath: join(root, "streamed.mp4"), kind: "file" });
+      const [first, second] = await Promise.allSettled([
+        publication.createPrivateFileChunkWriter({ label: "first", maxBytes: 1024 }),
+        publication.createPrivateFileChunkWriter({ label: "second", maxBytes: 1024 })
+      ]);
+      expect([first, second].filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect([first, second].filter((result) => result.status === "rejected")).toHaveLength(1);
+      await publication.abort();
+      await expect(lstat(publication.stagingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("releases both acquired pair reservations when construction rejects after the second acquisition", async () => {
+    const root = await trustedScratch();
+    await withinTrustedScratch(root, async () => {
+      const outputPath = join(root, "paired.mp4");
+      const receiptPath = `${outputPath}.receipt.json`;
+      await expect(PairedOutputReceiptPublication.acquire({
+        outputPath, receiptPath,
+        outputArtifact: { role: "rendered_media", mediaType: "video/mp4", primary: true },
+        receiptArtifact: { role: "render_receipt", mediaType: "application/json" },
+        durablePublication: { outputMaxBytes: 1, receiptMaxBytes: 1 }
+      })).rejects.toThrow("bounded output and receipt byte ceilings");
+      const retriedOutput = await acquireDerivedOutputPublication({ outputPath, kind: "file" });
+      const retriedReceipt = await acquireDerivedOutputPublication({ outputPath: receiptPath, kind: "file" });
+      await Promise.all([retriedOutput.abort(), retriedReceipt.abort()]);
     });
   });
 

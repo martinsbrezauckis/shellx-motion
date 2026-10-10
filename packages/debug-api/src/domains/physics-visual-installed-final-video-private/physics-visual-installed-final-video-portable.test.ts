@@ -8,7 +8,7 @@ import { readPhysicsVisualPresentationStaticUpload } from "../physics-visual-pre
 const portableRoot = process.env.MOTION_GPU_C7B5_PORTABLE_REOPEN_ROOT?.trim();
 const describePortable = process.env.MOTION_GPU_C7B5_PORTABLE_REOPEN === "1" ? describe : describe.skip;
 
-describePortable("portable C7B5 installed-output reopen only (no GPU/video qualification)", () => {
+describePortable("installed-output reopen", () => {
   it("reopens the Linux-produced Bingo and wall installed identities without rendering or mutation", async () => {
     if (!portableRoot) throw new Error("MOTION_GPU_C7B5_PORTABLE_REOPEN_ROOT is required when MOTION_GPU_C7B5_PORTABLE_REOPEN=1.");
     const root = await realpath(resolve(portableRoot));

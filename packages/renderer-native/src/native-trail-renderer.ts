@@ -14,8 +14,8 @@ export interface NativeTrailTransform {
 }
 
 /**
- * Runs the shared transformed/clipped work admission before drawing the same
- * geometry inside native's existing scale/rotation layer shell. Rotation is
+ * Budgets the scaled/translated geometry painted before the layer's rotation
+ * shell, so offscreen final geometry cannot hide work performed on its raster. Rotation is
  * intentionally not baked into pixels here because the caller's outer shell
  * performs it for every visual primitive together.
  */
@@ -31,7 +31,7 @@ export function drawNativeTrail<Color>(input: {
   const originY = input.transform.originY ?? input.dimensions.height / 2;
   const admitted = planMotionTrailStroke({
     segments: input.segments,
-    transform: { ...input.transform, originX, originY },
+    transform: { ...input.transform, originX, originY, rotation: 0 },
     clip: input.viewport
   });
   for (const segment of input.segments) {

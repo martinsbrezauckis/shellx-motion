@@ -1,10 +1,11 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runTemplateToCutConnector } from "./template-to-cut";
+import { createOwnerPrivateTempRoots } from "./owner-private-temp-roots.test-support";
 
-const roots: string[] = [];
-afterEach(async () => await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+const roots = createOwnerPrivateTempRoots();
+afterEach(async () => await roots.cleanup());
 
 describe("forced connector output ownership", () => {
   it("Template-to-Cut refuses force without following hostile sibling links from a sticky shared root", async ({ skip }) => {
@@ -25,8 +26,7 @@ describe("forced connector output ownership", () => {
 });
 
 async function hostileSiblingLinks(skip: (reason: string) => void) {
-  const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-template-force-"));
-  roots.push(root);
+  const root = await roots.create("template-force");
   const outDir = join(root, "out"), outsideDir = join(root, "outside");
   await mkdir(outDir);
   await mkdir(outsideDir);

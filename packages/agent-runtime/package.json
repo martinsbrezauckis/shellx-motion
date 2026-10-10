@@ -1,6 +1,6 @@
 {
   "name": "@shellx-motion/agent-runtime",
-  "version": "0.2.66",
+  "version": "0.2.67",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -20,7 +20,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build.mjs --package @shellx-motion/agent-runtime",
+    "build": "node ../../scripts/public/build.mjs --package @shellx-motion/agent-runtime",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests --testTimeout=45000"
   },

@@ -1,6 +1,11 @@
 # ShellX Motion changelog
 
-This changelog describes user-facing capability.
+This changelog describes released capabilities and bugfixes.
+
+## 0.2.67 — 2026-10-10
+
+- Added document-ordered `screen` blending to bounded strict linear-sRGB SDR rectangle renders.
+- Bugfixes.
 
 ## 0.2.66 — 2026-08-30
 
@@ -28,9 +33,6 @@ This changelog describes user-facing capability.
   canonical invocations, artifact shapes, receipt shapes and explicit limitations.
 - Added durable receipts, final package-lineage binding, authenticated render-reuse evidence,
   deterministic SBOM generation and fail-closed local process/root boundaries.
-- Hardened caller path-role admission across package discovery, templates, archives, review/support
-  bundles and tracking; strict GPU HTML URL closure; raw-prompt retention admission; and aborted
-  quality-gate receipt evidence.
 - Bugfixes.
 
 ## 0.1.0 — public baseline

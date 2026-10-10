@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 import { loadMotionPackage } from "./package";
+import { createTestTar } from "./package-archive.test-support-tar";
 import {
   extractMotionPackageArchive,
   writeMotionPackageArchive,
@@ -330,7 +331,8 @@ describe("package archive", () => {
     }
   });
 
-  it("refuses an archive whose Motion document names a missing package asset", async () => {
+  // This malformed-package fixture is built through the POSIX-only trusted workspace anchor.
+  it.skipIf(process.platform === "win32")("refuses an archive whose Motion document names a missing package asset", async () => {
     const tempRoot = await testRoot("shellx-motion-package-archive-missing-layer-asset-");
     const archivePath = join(tempRoot, "invalid-asset.shellxmotion");
     const extractedRoot = join(tempRoot, "package");
@@ -457,6 +459,32 @@ describe("package archive", () => {
     }
   });
 
+  it.each([
+    ["changed header", (tar: Buffer) => { tar[0] ^= 1; return tar; }, /checksum mismatch/],
+    ["non-zero entry padding", (tar: Buffer) => { tar[512 + 7] = 1; return tar; }, /non-zero padding/],
+    ["non-zero trailer", (tar: Buffer) => { tar[1024 + 512] = 1; return tar; }, /non-zero data after the tar end marker/],
+    ["missing second end marker", (tar: Buffer) => tar.subarray(0, 1024 + 512), /missing the second tar end marker/],
+    ["missing end markers", (tar: Buffer) => tar.subarray(0, 1024), /missing tar end markers/]
+  ] as Array<[string, (tar: Buffer) => Buffer, RegExp]>)
+  ("refuses %s without publishing a package or receipt", async (_label, corrupt, message) => {
+    const tempRoot = await testRoot("shellx-motion-package-archive-corrupt-tar-");
+    const archivePath = join(tempRoot, "corrupt.shellxmotion");
+    const extractedRoot = join(tempRoot, "package");
+    const receiptPath = join(tempRoot, "extract.receipt.json");
+    try {
+      const archive = createTestTar([{ path: "untrusted.txt", data: Buffer.from("payload") }]);
+      await writeFile(archivePath, corrupt(archive));
+
+      await expect(extractMotionPackageArchive({ archivePath, packageRoot: extractedRoot, receiptPath }))
+        .rejects.toThrow(message);
+      await expect(lstat(extractedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lstat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expectNoPrivateStagingDirectories(tempRoot);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects symlink destinations and receipts placed inside the package root", async () => {
     const tempRoot = await testRoot("shellx-motion-package-archive-destination-policy-");
     const archivePath = join(tempRoot, "package.shellxmotion");
@@ -513,31 +541,6 @@ async function testRoot(prefix: string): Promise<string> {
   return await mkdtemp(join(process.platform === "win32" ? process.cwd() : tmpdir(), prefix));
 }
 
-function createTestTar(entries: Array<{ path: string; data: Buffer; type?: string }>): Buffer {
-  const chunks: Buffer[] = [];
-  for (const entry of entries) {
-    const header = Buffer.alloc(512);
-    writeString(header, 0, 100, entry.path);
-    writeOctal(header, 100, 8, 0o644);
-    writeOctal(header, 108, 8, 0);
-    writeOctal(header, 116, 8, 0);
-    writeOctal(header, 124, 12, entry.data.byteLength);
-    writeOctal(header, 136, 12, 0);
-    header.fill(0x20, 148, 156);
-    writeString(header, 156, 1, entry.type ?? "0");
-    writeString(header, 257, 6, "ustar");
-    writeString(header, 263, 2, "00");
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    writeChecksum(header, checksum);
-    chunks.push(header, entry.data);
-    const padding = entry.data.byteLength % 512 === 0 ? 0 : 512 - (entry.data.byteLength % 512);
-    if (padding > 0) chunks.push(Buffer.alloc(padding));
-  }
-  chunks.push(Buffer.alloc(1024));
-  return Buffer.concat(chunks);
-}
-
 function readTarEntries(buffer: Buffer): Array<{ name: string; data: Buffer; mtime: number }> {
   const entries: Array<{ name: string; data: Buffer; mtime: number }> = [];
   let offset = 0;
@@ -568,18 +571,4 @@ function readNullTerminated(buffer: Buffer): string {
 function readOctal(buffer: Buffer): number {
   const value = readNullTerminated(buffer).trim();
   return value.length === 0 ? 0 : Number.parseInt(value, 8);
-}
-
-function writeString(buffer: Buffer, offset: number, length: number, value: string): void {
-  Buffer.from(value, "utf8").copy(buffer, offset, 0, length);
-}
-
-function writeOctal(buffer: Buffer, offset: number, length: number, value: number): void {
-  buffer.write(value.toString(8).padStart(length - 1, "0"), offset, length - 1, "ascii");
-}
-
-function writeChecksum(buffer: Buffer, value: number): void {
-  buffer.write(value.toString(8).padStart(6, "0"), 148, 6, "ascii");
-  buffer[154] = 0;
-  buffer[155] = 0x20;
 }

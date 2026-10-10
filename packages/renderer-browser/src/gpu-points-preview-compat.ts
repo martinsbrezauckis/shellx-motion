@@ -6,7 +6,7 @@ import type { GpuPreviewOneShotOptions } from "./gpu-preview-one-shot.js";
 
 /**
  * Compatibility aliases retained for callers that adopted the v0.2 points preview API. They
- * retain the legacy general GPU scene contract and do not acquire the direct O6 authority.
+ * retain the legacy general GPU scene contract and do not acquire the direct scene3d animation authority.
  */
 export function renderMotionGpuPointsPreview(pkg: MotionPackage, options: GpuPreviewOneShotOptions): Promise<GpuPreviewResult> {
   const motion = gpuPreviewPackageMotionData(pkg);

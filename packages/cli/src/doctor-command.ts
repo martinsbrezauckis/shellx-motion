@@ -123,8 +123,8 @@ export async function doctorCommand(argv: string[], options: DoctorCommandOption
     gpu,
     ...(gpuProbe ? { gpuProbe } : {}),
     ...(scoped ? { operation: scoped } : {}),
-    // Retained under its historical name so hosts pinned to the pre-the readiness-parity invariant CLI shape keep working;
-    // it is the same array as `requirements.tools`, not a second derivation.
+    // Keep the compatibility field for existing hosts; it is the same array as
+    // `requirements.tools`, not a second derivation.
     checks: requirements.tools
   };
 

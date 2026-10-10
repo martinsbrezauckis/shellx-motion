@@ -11,6 +11,7 @@ import {
 } from "@shellx-motion/core";
 import { publishOtioExportOutputs, publishOtioImportPackage, readOtioInterchangeInput, serializeBoundedOtioTimeline } from "./otio-interchange";
 import { loadOtioExportInput } from "./otio-export-input.js";
+import { assertOtioRepresentableTopology } from "./otio-export-topology";
 import { MAX_OTIO_CHILDREN_PER_TRACK, MAX_OTIO_LOSSINESS_FINDINGS, MAX_OTIO_TIMELINE_CHILDREN, MAX_OTIO_TRACKS, addBoundedOtioTimelineTime, assertBoundedOtioJson, assertBoundedOtioJsonText, assertDistinctOtioLayerId, assertGeneratedOtioPackage, deriveOtioMilliseconds, requireOtioTimeRange, requirePositiveOtioDuration } from "./otio-import-admission.js";
 
 export interface OtioExportOptions {
@@ -69,6 +70,7 @@ const MOTION_PACKAGE_MEDIA_TYPE = "application/vnd.shellx.motion.package";
 export async function exportMotionPackageToOtio(options: OtioExportOptions): Promise<OtioExportResult> {
   const { pkg, inputHashes } = await loadOtioExportInput(options.packageRoot);
   const otioPath = resolve(options.outPath);
+  assertOtioRepresentableTopology(motionTrackGroups(pkg.motion));
   const { timeline, warnings, clipCount, gapCount } = buildOtioTimeline(pkg);
   const { timelineJson, otioSha256 } = serializeBoundedOtioTimeline(timeline);
 
@@ -200,10 +202,7 @@ function buildOtioTimeline(pkg: MotionPackage): {
   const tracks: OtioTrack[] = trackGroups.map((track): OtioTrack => {
     let cursorMs = 0;
     const children: OtioTrackChild[] = [];
-    // Code-unit order, not localeCompare: this tie-break decides clip order INSIDE the emitted
-    // OTIO JSON, so it is written into the file bytes that otioSha256 hashes and that the receipt
-    // id embeds. Layer ids are ASCII by schema, which is not enough — tr-TR collates "I" and "i"
-    // differently from every other locale, and a live probe moved the export hash because of it.
+    // Code-unit order keeps clip ordering and the resulting OTIO hash independent of locale.
     for (const layer of track.layers.sort((left, right) => left.startMs - right.startMs || compareCodeUnits(left.id, right.id))) {
       if (layer.startMs > cursorMs) {
         children.push(otioGap(layer.startMs - cursorMs, rate));
@@ -216,6 +215,9 @@ function buildOtioTimeline(pkg: MotionPackage): {
           feature: `layer.type.${layer.type}`,
           reason: "Motion layer type is not mapped to OTIO yet."
         });
+        // Preserve later clip timing instead of advancing only the internal cursor.
+        children.push(otioGap(layer.durationMs, rate));
+        gapCount += 1;
       } else {
         children.push(clip);
         clipCount += 1;
@@ -272,9 +274,7 @@ function motionTrackGroups(motion: MotionDocument): Array<{ id: string; name: st
   }
   const declared = (motion.tracks ?? [])
     .slice()
-    // Code-unit order, not localeCompare: same contract as the clip sort above, one level up —
-    // this fixes TRACK order in the emitted OTIO. Track ids are not restricted to ASCII, so this
-    // site diverged between en-US and sv-SE on ordinary data (a live probe: 155cf43c… vs ca39d05f…).
+    // Code-unit order keeps track ordering and the resulting OTIO hash independent of locale.
     .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || compareCodeUnits(left.id, right.id))
     .flatMap((track) => {
       const layers = layersForDeclaredTrack(track, motion.layers, byTrackId);

@@ -40,6 +40,7 @@ describe("HTML snippet export adapter", () => {
     expect(html).toContain('data-composition-id="motion_html_export"');
     expect(html).toContain('data-start="0"');
     expect(html).toContain('data-duration="2400"');
+    expect(html).toContain('data-fps="24"');
     expect(html).toContain('data-layer-id="headline"');
     expect(html).toContain('data-start="200"');
     expect(html).toContain('data-duration="1400"');
@@ -56,6 +57,7 @@ describe("HTML snippet export adapter", () => {
       output: {
         htmlPath: result.htmlPath,
         htmlSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        fps: 24,
         layerCount: 4,
         exportedLayerCount: 3,
         lossiness: {
@@ -74,6 +76,22 @@ describe("HTML snippet export adapter", () => {
         { role: "html_snippet_receipt", path: result.receiptPath, status: "available", mediaType: "application/json" }
       ]
     });
+  });
+
+  it.each([24, 60])("preserves %ifps through HTML export and import", async (fps) => {
+    const packageRoot = await writeHtmlExportPackage({ fps });
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-html-snippet-fps-"));
+    const outDir = join(root, "export");
+    const importedPackageDir = join(root, "imported");
+    tempDirs.push(packageRoot, root);
+
+    const exported = await writeHtmlSnippetExport({ packageRoot, outDir });
+    const imported = await importHtmlSnippetToMotionPackage({ htmlPath: exported.htmlPath, packageDir: importedPackageDir });
+    const packageAfterRoundTrip = await loadMotionPackage(imported.packageDir);
+
+    expect(await readFile(exported.htmlPath, "utf8")).toContain(`data-fps="${fps}"`);
+    expect(exported.receipt.output).toMatchObject({ fps });
+    expect(packageAfterRoundTrip.motion.fps).toBe(fps);
   });
 
   it("refuses to write into occupied output directories", async () => {
@@ -595,7 +613,7 @@ function adversarialSnippet(body: string, noise = ""): string {
   ].join("");
 }
 
-async function writeHtmlExportPackage(): Promise<string> {
+async function writeHtmlExportPackage(options: { fps?: number } = {}): Promise<string> {
   const packageRoot = await mkdtemp(join(tmpdir(), "shellx-motion-html-export-package-"));
   await mkdir(join(packageRoot, "assets"), { recursive: true, mode: 0o700 });
   await writeFile(join(packageRoot, "assets", "logo.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"80\"><rect width=\"80\" height=\"80\" fill=\"#22c55e\"/></svg>", "utf8");
@@ -616,7 +634,7 @@ async function writeHtmlExportPackage(): Promise<string> {
     id: "motion_html_export",
     name: "HTML Export",
     durationMs: 2400,
-    fps: 24,
+    fps: options.fps ?? 24,
     width: 1280,
     height: 720,
     background: "#0f172a",

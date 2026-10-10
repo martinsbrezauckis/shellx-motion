@@ -1,7 +1,7 @@
 {
   "schema": "shellx-motion/actions@1",
   "actionSchema": "shellx-motion/action@1",
-  "generatedBy": "scripts/generate-public-contracts.ts",
+  "generatedBy": "scripts/public/generate-public-contracts.ts",
   "actionCount": 174,
   "permissions": [
     "read_motion",
@@ -67,7 +67,7 @@
         "motion.actions.panel"
       ],
       "verify": [
-        "Action panel returns grouped actions, permission counts, prompt commands, and suggested prompt-run follow-ups."
+        "Action panel returns grouped actions, permission counts, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run."
       ],
       "surfaces": [
         "prompt"
@@ -142,7 +142,7 @@
         "motion.agent.panel"
       ],
       "verify": [
-        "Agent panel returns default local CLI selection policy, adapter command shapes, safety guarantees, receipt coverage, and prompt follow-ups without probing or mutating packages."
+        "Agent panel returns explicit prompt-provider selection policy, candidate source, adapter command shapes, safety guarantees, receipt coverage, and readiness/transcript follow-ups without probing or mutating packages."
       ],
       "surfaces": [
         "prompt"

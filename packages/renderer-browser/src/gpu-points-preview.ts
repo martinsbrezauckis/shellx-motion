@@ -32,11 +32,11 @@ import {
 import type { GpuPreviewFrame, GpuPreviewFrameOptions, GpuPreviewResult, GpuPreviewSession, GpuPreviewSessionCleanupEvidence, GpuPreviewSessionOptions } from "./gpu-preview-session-types";
 export type { GpuPreviewFrame, GpuPreviewFrameOptions, GpuPreviewResult, GpuPreviewSession, GpuPreviewSessionCleanupEvidence, GpuPreviewSessionOptions } from "./gpu-preview-session-types";
 const gpuPreviewOneShotAuthority = Symbol("gpuPreviewOneShotAuthority"), gpuCollisionShowcaseAuthority = Symbol("gpuCollisionShowcaseAuthority");
-/** Public reusable sessions intentionally retain their existing non-Scene3DAnimation preview contract. */
+/** Public reusable sessions intentionally retain their existing non-scene3d-animation preview contract. */
 export function createGpuPreviewSession(pkg: MotionPackage, options: GpuPreviewSessionOptions = {}): GpuPreviewSession {
   return createGpuPreviewSessionInternal(pkg, options);
 }
-/** Only the direct one-shot entry point holds this module-private Scene3DAnimation authority. */
+/** Only the direct one-shot entry point holds this module-private scene3d animation authority. */
 function createGpuPreviewOneShotSession(pkg: MotionPackage, options: GpuPreviewSessionOptions = {}): GpuPreviewSession {
   return createGpuPreviewSessionInternal(pkg, options, gpuPreviewOneShotAuthority);
 }
@@ -164,11 +164,11 @@ function createGpuPreviewSessionInternal(pkg: MotionPackage, options: GpuPreview
         if (manifestPbrRefusal) return { ok: false, error: manifestPbrRefusal };
       }
       // F0 stays before package hashing, resource preparation, runtime opening, and output
-      // setup. Scene3DAnimation uses only Core's frozen snapshot here, never raw caller Motion.
+      // setup. The scene3d animation route uses only Core's frozen snapshot here, never raw caller Motion.
       const colorPipelineRefusal = colorPipelinePreallocationRefusal(admittedScene3DAnimationMotion ?? sourceMotion, "gpu-preview");
       if (colorPipelineRefusal) return { ok: false, error: colorPipelineRefusal };
       if (admittedScene3DAnimationMotion) admittedScene3DAnimationPackage = packageWithGpuScene3DAnimationAdmittedMotion(pkg, admittedScene3DAnimationMotion);
-      // Scene3DAnimation's compiler executes synchronously above, so capture its manifest identity before the
+      // The scene3d animation compiler executes synchronously above, so capture its manifest identity before the
       // await below can yield to a mutating caller. Legacy paths retain their previous ordering.
       try { manifestIdentity ??= captureGpuPreviewManifestIdentity(pkg); }
       catch (error) { return { ok: false, error: { code: "gpu_input_hash_refused", message: error instanceof Error ? error.message : "GPU preview manifest identity could not be prepared." } }; }

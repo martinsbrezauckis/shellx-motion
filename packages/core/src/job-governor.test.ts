@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MotionJobLeaseDirectory } from "./job-lease";
+import { MotionHostJob, runInMotionHostJob } from "./host-job";
+import { createTrustedWorkspaceAnchor, withTrustedWorkspaceAnchor } from "./output-path-trusted-workspace";
 import {
   assertLocalMotionFrameBudget,
   assertLocalMotionFrameCountBudget,
@@ -27,7 +29,7 @@ const POLICY: LocalMotionJobPolicy = {
 describe("local Motion job governor", () => {
   const tempRoots: string[] = [];
   // Governors built without explicit stores use the per-user runtime directory, which
-  // scripts/vitest-setup-job-stores.ts redirects into a temp root for the whole run.
+  // scripts/public/vitest-setup-job-stores.ts redirects into a temp root for the whole run.
   afterEach(async () => {
     await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -82,6 +84,33 @@ describe("local Motion job governor", () => {
     });
     expect(ran).toBe(false);
     expect(governor.snapshot().activeJobs).toBe(0);
+  });
+
+  // This host-running fixture uses the POSIX-only trusted workspace anchor.
+  it.skipIf(process.platform === "win32")("releases the acquired in-process slot when the host running transition rejects", async () => {
+    const governor = new LocalMotionJobGovernor(POLICY, { freeScratchBytes: async () => 1_000, leases: null });
+    const root = await mkdtemp(join(tmpdir(), "shellx-motion-governor-host-running-reject-"));
+    tempRoots.push(root);
+    await withTrustedWorkspaceAnchor(await createTrustedWorkspaceAnchor(root), async () => {
+      const host = await MotionHostJob.begin({
+        jobId: "cut:governor-running-reject", callerId: "cut:workspace", lane: "ffmpeg", operation: "render.final",
+        leases: new MotionJobLeaseDirectory({ leaseRoot: join(root, "leases") }), records: null,
+        onRunning: async () => { throw new Error("coordinator running evidence unavailable"); }
+      });
+      let ran = false;
+      try {
+        await expect(runInMotionHostJob(host, async () => await governor.run({
+          lane: "ffmpeg", operation: "render.final", scratchRoot: ".scratch/host-running-reject"
+        }, async () => { ran = true; }))).rejects.toThrow("coordinator running evidence unavailable");
+        expect(ran).toBe(false);
+        expect(governor.snapshot()).toMatchObject({ activeJobs: 0, queuedJobs: 0 });
+        await expect(governor.run({
+          lane: "ffmpeg", operation: "render.after-host-running-reject", scratchRoot: ".scratch/host-running-reject"
+        }, async () => "next")).resolves.toMatchObject({ value: "next" });
+      } finally {
+        await host.releaseCapacityWithoutRecord();
+      }
+    });
   });
 
   it("creates canonical scratch directories without traversing symlink or junction components", async () => {

@@ -13,6 +13,7 @@ import {
   type FfmpegCommand,
   type FfmpegRunner,
 } from "./index.js";
+import { revalidatingStreamingFinalRunner, revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 import { extname } from "node:path";
 
 export const LINEAR_SRGB_SDR_FINAL_FFMPEG_SCHEMA = "shellx-motion/linear-srgb-sdr-final-ffmpeg@1" as const;
@@ -30,7 +31,7 @@ export const LINEAR_SRGB_SDR_FINAL_FFMPEG_CONTRACT = freeze({
   schema: LINEAR_SRGB_SDR_FINAL_FFMPEG_SCHEMA,
   source: { pixelFormat: "rgba", alpha: "straight-opaque", transfer: "iec61966-2-1", primaries: "bt709", matrix: "gbr", range: "full" },
   forward: { filter: LINEAR_SRGB_SDR_FINAL_FORWARD_FILTER, dither: "none" },
-  encode: { codec: "libx264", crf: 18, preset: "medium", pixelFormat: "yuv420p", hardware: "refused" },
+  encode: { codec: "libx264", crf: 16, preset: "slow", pixelFormat: "yuv420p", x264Params: "aq-mode=3:aq-strength=0.8", hardware: "refused" },
   signal: { primaries: "bt709", transfer: "bt709", matrix: "bt709", range: "tv" },
   inverse: { filter: LINEAR_SRGB_SDR_FINAL_INVERSE_FILTER, frameIndex: 0, intermediatePixelFormat: "gbrp", outputPixelFormat: "rgba" },
   delivery: { container: "mp4", fastStart: true, maxOutputBytes: LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES },
@@ -76,11 +77,20 @@ export function linearSrgbSdrFinalFfmpegPreflightCommand(): FfmpegCommand {
  * the optional runner is a relative-module qualification seam only.
  */
 export async function preflightLinearSrgbSdrFinalFfmpeg(input: { readonly runner?: FfmpegRunner } = {}): Promise<LinearSrgbSdrFinalFfmpegPreflightEvidence> {
-  const runner = input.runner ?? createGovernedFfmpegRunner({ operation: "ffmpeg.linear-srgb-sdr-preflight" });
+  const runner = revalidatingStreamingFinalRunner(input.runner ?? createGovernedFfmpegRunner({ operation: "ffmpeg.linear-srgb-sdr-preflight" }));
   const health = await checkFfmpeg({ runner });
   if (!health.ok) throw new Error("The strict linear-sRGB SDR route requires a working FFmpeg installation.");
+  // probeMotionTool intentionally converts runner failures into readiness diagnostics. Keep the
+  // coordinator fence outside that diagnostic conversion so lineage loss stays render_failed.
+  await revalidateStreamingFinalLaunch();
   const ffprobe = await probeMotionTool("ffprobe", runner);
-  if (ffprobe.status !== "ready") throw new Error("The strict linear-sRGB SDR route requires a working FFprobe installation.");
+  if (ffprobe.status !== "ready") {
+    // `probeMotionTool` deliberately converts runner failures into a readiness
+    // diagnostic. Recheck here so a fence rejection from the wrapped runner
+    // remains terminal instead of being misreported as an FFprobe install issue.
+    await revalidateStreamingFinalLaunch();
+    throw new Error("The strict linear-sRGB SDR route requires a working FFprobe installation.");
+  }
   const command = linearSrgbSdrFinalFfmpegPreflightCommand();
   const result = await runner(command);
   if (result.exitCode !== 0) throw new Error("FFmpeg does not support the exact strict linear-sRGB SDR zscale and libx264 contract.");
@@ -135,7 +145,7 @@ export function linearSrgbSdrFinalInverseDecodeCommand(encodedPath: string, deco
 
 function encodeArgs(): string[] {
   return [
-    "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+    "-c:v", "libx264", "-crf", "16", "-preset", "slow", "-pix_fmt", "yuv420p", "-x264-params", "aq-mode=3:aq-strength=0.8",
     "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
   ];
 }
@@ -146,6 +156,9 @@ function assertTimeline(value: LinearSrgbSdrFinalTimeline): void {
     || !Number.isFinite(value.fps) || value.fps <= 0
     || !Number.isSafeInteger(value.frameCount) || value.frameCount < 1) {
     throw new Error("Strict SDR FFmpeg requires bounded positive dimensions, cadence, and frame count.");
+  }
+  if (value.width % 2 !== 0 || value.height % 2 !== 0) {
+    throw new Error("Strict SDR FFmpeg requires even canvas dimensions for yuv420p H.264 output.");
   }
 }
 

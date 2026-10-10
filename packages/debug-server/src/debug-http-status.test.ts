@@ -303,6 +303,10 @@ describe("raw Debug HTTP status policy", () => {
       async () => await coordinator.jobView().get({ jobId, callerId }),
       (answer) => answer.ok && answer.job.state === "succeeded"
     );
+    // A terminal record is written before the coordinator publishes replay state and removes the
+    // live entry. Retry waits that final settlement; use it as the deterministic observation
+    // barrier before exercising the raw HTTP terminal-control status mapping.
+    await expect(coordinator.retry({ jobId, callerId })).resolves.toMatchObject({ ok: false, code: "job_not_retryable" });
     const server = await startMotionDebugServer({
       port: 0,
       capabilityToken: TOKEN,
@@ -337,10 +341,8 @@ describe("raw Debug HTTP status policy", () => {
     const scene3dPackage = await writeFinalPackage(root, { scene3dAnimation: true });
     const audioPackage = await writeFinalPackage(root, { audioMaster: true });
     try {
-      // The actual HTTP listener has no host-workspace-anchor input by design. On managed WSL,
-      // its full POSIX parent walk correctly refuses /home before this handler can see the lane
-      // fixture. Invoke the production Debug Server dispatcher in the same opaque host-anchor
-      // scope instead: this does not relax topology and keeps the real final-render path covered.
+      // The HTTP listener has no host-workspace-anchor input. Invoke the production dispatcher
+      // under a trusted test anchor to cover final-render behavior without relaxing topology.
       const anchor = await createTrustedWorkspaceAnchor(root);
       const lane = await withTrustedWorkspaceAnchor(anchor, async () => await dispatchGuarded(
         "motion.render.final",
@@ -509,13 +511,11 @@ describe("raw Debug HTTP status policy", () => {
       capabilityToken: TOKEN,
       grantedTier: "draft_motion",
       useDefaultTemplateRoots: false,
-      // Keep an absent explicit scratch root: the raw prompt refusal opens no artifacts, while
-      // the Debug Server must not retain the managed-WSL default path for this transport test.
+      // Supply a contained scratch root; the raw prompt refusal opens no artifacts.
       context: { scratchRoot: join(root, "scratch"), promptRuntime: unknownAgentRuntime }
     });
     try {
-      // See the anchor note above: this is the final production dispatch seam, retained as a
-      // direct call only because managed WSL correctly blocks caller-owned /home ancestors.
+      // Use the same trusted test anchor for the production final-render dispatch seam.
       const queueTimeout = await withTrustedWorkspaceAnchor(anchor, async () => await dispatchGuarded(
         "motion.render.final",
         { packageRoot, outputPath: join(root, "queue-timeout.mp4"), preset: "mp4-h264", frameLane: "browser" },

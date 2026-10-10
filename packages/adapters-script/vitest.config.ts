@@ -3,6 +3,6 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    setupFiles: ["../../scripts/vitest-setup-job-stores.ts"]
+    setupFiles: ["../../scripts/public/vitest-setup-job-stores.ts"]
   }
 });

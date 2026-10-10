@@ -11,8 +11,8 @@
  * `Record<Union, true>` so the TypeScript compiler fails the build if the union gains
  * or loses a member — a hand list that cannot silently drift.
  *
- * Primary callers: `command-metadata*.ts` (via `enumRef`), `scripts/generate-public-contracts.ts`
- * (publishes `argEnums` into `schemas/debug.json`), and `scripts/generate-debug-api-reference.mjs`
+ * Primary callers: `command-metadata*.ts` (via `enumRef`), `scripts/public/generate-public-contracts.ts`
+ * (publishes `argEnums` into `schemas/debug.json`), and `scripts/public/generate-debug-api-reference.mjs`
  * (renders the enum tables into `docs/public/DEBUG_API_COMMANDS.md`).
  */
 import type { MotionPermissionTier } from "@shellx-motion/actions";

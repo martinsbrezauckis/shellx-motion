@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   createRenderReceipt,
   defaultLocalMotionJobGovernor,
@@ -8,10 +8,15 @@ import {
   resolveMotionColorPipeline,
   type DerivedOutputPublication,
 } from "@shellx-motion/core";
-import { isCoreDerivedOutputPublication } from "@shellx-motion/core/internal/derived-output-publication-authenticity";
+import {
+  claimCurrentStrictSdrCandidateHeldPairRendererBinding,
+  consumeCurrentStrictSdrCandidateHeldPairRendererBinding,
+  type StrictSdrCandidateHeldPairRendererBinding,
+} from "@shellx-motion/core/internal/strict-sdr-candidate-held-pair";
 import { resolveLinearSrgbSdrFinalRoute, type LinearSrgbSdrFinalRoute } from "@shellx-motion/core/internal/linear-srgb-sdr-final";
 import {
   executeLinearSrgbSdrFinal,
+  executeLinearSrgbSdrFinalHeldMedia,
   prepareLinearSrgbSdrFinal,
   validateLinearSrgbSdrFinalPreparation,
   type LinearSrgbSdrFinalExecutionResult,
@@ -22,14 +27,22 @@ import {
   LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES,
   linearSrgbSdrFinalEncodeCommand,
 } from "./linear-srgb-sdr-final-ffmpeg-contract.js";
-import { assertSafeFfmpegOutputPath } from "./ffmpeg-path-safety.js";
+import { safeLinearSrgbSdrFinalMessage, strictLinearSrgbSdrFinalInputRefusal } from "./linear-srgb-sdr-final-input-refusal.js";
+import { closeHeldMediaAfterPublication, privateHeldMediaOutputAdoption } from "./linear-srgb-sdr-final-held-media-publication.js";
+import { assertLinearSrgbSdrHeldMediaWitness } from "./linear-srgb-sdr-final-held-media.js";
+import { claimStrictSdrCandidateHeldChromium, type StrictSdrCandidateHeldChromiumExecutor } from "./linear-srgb-sdr-final-held-chromium.js";
 import type {
+  LinearSrgbSdrFinalPrivateOutputAdoption,
   LinearSrgbSdrFinalFrameTransportEvidence,
   RenderStreamingFinalInput,
   RenderStreamingFinalResult,
 } from "./streaming-final-adapter-types.js";
+import {
+  LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA,
+} from "./streaming-final-adapter-types.js";
 import type { FinalVideoFrameTransportPlan } from "./final-video-frame-transport.js";
 import type { FfmpegCommand } from "./index.js";
+import { isStreamingFinalLineageRevalidationFailure } from "./streaming-final-lineage-revalidation.js";
 
 export type LinearSrgbSdrFinalRenderPreflight =
   | Readonly<{ readonly kind: "legacy" }>
@@ -43,6 +56,8 @@ export type LinearSrgbSdrFinalRenderPlan =
 
 type ExecutionService = typeof executeLinearSrgbSdrFinal;
 type PreparationService = (motion: unknown) => Promise<LinearSrgbSdrFinalPreparation>;
+type AdoptedLinearSrgbSdrFinalExecutionResult = Exclude<LinearSrgbSdrFinalExecutionResult, { ok: true }>
+  | (Extract<LinearSrgbSdrFinalExecutionResult, { ok: true }> & { readonly privateOutputAdoption: LinearSrgbSdrFinalPrivateOutputAdoption; readonly encodeCommand?: FfmpegCommand });
 
 /**
  * Public route selection and exact output-free tool exercise. A strict result is the only
@@ -67,7 +82,8 @@ async function preflightLinearSrgbSdrFinalRenderWith(input: RenderStreamingFinal
     const validated = preparation ?? await prepare(input.pkg.motion);
     return Object.freeze({ kind: "strict", preparation: validated });
   } catch (error) {
-    return refused(safeMessage(error));
+    if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
+    return refused(safeLinearSrgbSdrFinalMessage(error));
   }
 }
 
@@ -79,7 +95,7 @@ export function planLinearSrgbSdrFinalRender(input: RenderStreamingFinalInput): 
       ? refused("A strict linear-sRGB SDR preparation cannot be attached to a legacy color-pipeline render.")
       : Object.freeze({ kind: "legacy" });
   }
-  const refusal = strictInputRefusal(input);
+  const refusal = strictLinearSrgbSdrFinalInputRefusal(input);
   if (refusal) return refused(refusal);
   const resolution = resolveLinearSrgbSdrFinalRoute(input.pkg.motion, {
     target: "final", frameLane: "gpu", delivery: "streamed", finalLane: "ffmpeg", preset: "mp4-h264",
@@ -112,22 +128,30 @@ export async function renderLinearSrgbSdrFinalUnpublishedForTest(input: Paramete
 
 async function renderLinearSrgbSdrFinalUnpublishedWith(input: Parameters<typeof renderLinearSrgbSdrFinalUnpublished>[0], execute: ExecutionService, authenticatePublication: boolean): Promise<RenderStreamingFinalResult> {
   const transport = strictTransport(input.transport);
-  const refusal = strictInputRefusal(input, authenticatePublication);
+  const refusal = strictLinearSrgbSdrFinalInputRefusal(input, authenticatePublication);
   if (refusal) return failure(transport, "linear_srgb_sdr_final_unsupported", refusal);
   const governor = input.governor ?? defaultLocalMotionJobGovernor;
+  const callerScratchRoot = input.scratchRoot ?? (process.env.SHELLX_MOTION_SCRATCH_ROOT?.trim() || ".scratch");
   try {
+    let heldBinding: StrictSdrCandidateHeldPairRendererBinding | undefined;
+    try {
+      heldBinding = claimCurrentStrictSdrCandidateHeldPairRendererBinding(input.outputPublication, input.linearSrgbSdrFinalPreparation.fingerprint, input.outputPath);
+    } catch (error) {
+      return failure(transport, "linear_srgb_sdr_final_unsupported", safeLinearSrgbSdrFinalMessage(error));
+    }
     const governed = await governor.run({
       lane: "ffmpeg",
       operation: input.operation ?? "ffmpeg.linear-srgb-sdr-final",
-      scratchRoot: input.scratchRoot ?? (process.env.SHELLX_MOTION_SCRATCH_ROOT?.trim() || ".scratch"),
+      scratchRoot: callerScratchRoot,
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.callerId ? { callerId: input.callerId } : {}),
       ...(input.jobId ? { jobId: input.jobId } : {}),
-    }, async (job) => {
+    }, async (job): Promise<AdoptedLinearSrgbSdrFinalExecutionResult> => {
       const privateRoot = await mkdtemp(join(job.scratchRoot, "linear-srgb-sdr-final-"));
+      let heldExecutorOwnsPrivateRoot = false;
       try {
         const verifiedOutputPath = join(privateRoot, "verified.mp4");
-        const result = await execute({
+        const executionInput = {
           preparation: input.linearSrgbSdrFinalPreparation,
           outputPath: verifiedOutputPath,
           decodedPath: join(privateRoot, "decoded.rgba"),
@@ -139,50 +163,96 @@ async function renderLinearSrgbSdrFinalUnpublishedWith(input: Parameters<typeof 
             watchProcess: job.watchProcess,
             reportProcessContainment: job.reportProcessContainment,
           },
-        });
+        } as const;
+        if (heldBinding) {
+          let executor: StrictSdrCandidateHeldChromiumExecutor;
+          try {
+            executor = claimStrictSdrCandidateHeldChromium(heldBinding, input.linearSrgbSdrFinalPreparation.fingerprint, executionInput.job);
+            consumeCurrentStrictSdrCandidateHeldPairRendererBinding(heldBinding);
+          } catch (error) {
+            return { ok: false, code: "linear_srgb_sdr_final_refused", message: safeLinearSrgbSdrFinalMessage(error) } as const;
+          }
+          heldExecutorOwnsPrivateRoot = true;
+          const held = await executeLinearSrgbSdrFinalHeldMedia(executionInput, executor);
+          if (!held.ok) return held;
+          try {
+            if (held.privateOutputPath !== verifiedOutputPath) {
+              throw new Error("Strict linear-sRGB SDR held executor returned an unexpected private artifact identity.");
+            }
+            const adopted = await held.heldMedia.copyToPublication(input.outputPublication, heldBinding);
+            assertLinearSrgbSdrHeldMediaWitness(held.heldMedia, adopted);
+            if (adopted.byteLength !== held.evidence.output.byteLength || adopted.sha256 !== held.evidence.output.sha256) {
+              throw new Error("Strict linear-sRGB SDR held-media publication stage did not preserve the verified source identity.");
+            }
+            const adoptedResult = {
+              ok: true as const,
+              privateOutputPath: held.privateOutputPath,
+              evidence: held.evidence,
+              encodeCommand: held.heldMedia.encodeCommand,
+              privateOutputAdoption: privateHeldMediaOutputAdoption(held.evidence.output, adopted),
+            };
+            if (held.heldMedia.transferThreeSlotLease({ binding: heldBinding, preparation: input.linearSrgbSdrFinalPreparation.fingerprint, governor, scratchRoot: callerScratchRoot, signal: input.signal, callerId: input.callerId })) {
+              return adoptedResult;
+            }
+            if (held.heldMedia.transferF2aLease({ binding: heldBinding, preparation: input.linearSrgbSdrFinalPreparation.fingerprint, governor, scratchRoot: callerScratchRoot, signal: input.signal, callerId: input.callerId })) {
+              return adoptedResult;
+            }
+            return await closeHeldMediaAfterPublication(held.heldMedia, async () => adoptedResult);
+          } catch (error) {
+            return await closeHeldMediaAfterPublication(held.heldMedia, async () => { throw error; });
+          }
+        }
+        const result = await execute(executionInput);
         if (!result.ok) return result;
         if (result.privateOutputPath !== verifiedOutputPath) {
           return { ok: false, code: "linear_srgb_sdr_final_failed", message: "Strict linear-sRGB SDR executor returned an unexpected private artifact identity." } as const;
         }
         const bytes = await readFile(verifiedOutputPath);
-        if (bytes.byteLength !== result.evidence.output.byteLength
-          || bytes.byteLength < 1 || bytes.byteLength > LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES
-          || canonicalBytesSha256(bytes) !== result.evidence.output.sha256) {
+        const verifiedOutput = Object.freeze({ sha256: canonicalBytesSha256(bytes), byteLength: bytes.byteLength });
+        if (verifiedOutput.byteLength !== result.evidence.output.byteLength
+          || verifiedOutput.byteLength < 1 || verifiedOutput.byteLength > LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES
+          || verifiedOutput.sha256 !== result.evidence.output.sha256) {
           return { ok: false, code: "linear_srgb_sdr_final_failed", message: "Strict linear-sRGB SDR verified output changed before private publication adoption." } as const;
         }
         const adopted = await input.outputPublication.writePrivateFile(bytes, {
           label: "Strict linear-sRGB SDR final output",
           maxBytes: LINEAR_SRGB_SDR_FINAL_MAX_OUTPUT_BYTES,
         });
-        if (adopted.sha256 !== result.evidence.output.sha256 || adopted.byteLength !== result.evidence.output.byteLength) {
+        if (adopted.sha256 !== verifiedOutput.sha256 || adopted.byteLength !== verifiedOutput.byteLength) {
           return { ok: false, code: "linear_srgb_sdr_final_failed", message: "Strict linear-sRGB SDR publication stage did not preserve the verified output identity." } as const;
         }
-        return result;
+        return {
+          ...result,
+          privateOutputAdoption: privateHeldMediaOutputAdoption(verifiedOutput, adopted),
+        };
       } finally {
-        await rm(privateRoot, { recursive: true, force: true });
+        if (!heldExecutorOwnsPrivateRoot) await rm(privateRoot, { recursive: true, force: true });
       }
     });
     if (!governed.value.ok) return failure(transport, governed.value.code, governed.value.message, governed.evidence);
     return success(input, governed.value, governed.evidence);
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) return failure(transport, "render_failed", error.message);
     if (error instanceof LocalMotionJobError) return failure(transport, error.code, error.message, error.evidence);
-    return failure(transport, "linear_srgb_sdr_final_failed", safeMessage(error));
+    return failure(transport, "linear_srgb_sdr_final_failed", safeLinearSrgbSdrFinalMessage(error));
   }
 }
 
 function success(
   input: Parameters<typeof renderLinearSrgbSdrFinalUnpublished>[0],
-  result: Extract<LinearSrgbSdrFinalExecutionResult, { ok: true }>,
+  result: Extract<AdoptedLinearSrgbSdrFinalExecutionResult, { ok: true }>,
   resources: import("@shellx-motion/core").LocalMotionJobEvidence,
 ): Extract<RenderStreamingFinalResult, { ok: true }> {
   const { route, ffmpeg } = input.linearSrgbSdrFinalPreparation;
   const evidence = result.evidence;
+  const adoptedOutput = result.privateOutputAdoption.verifiedOutput;
   const frameTransport: LinearSrgbSdrFinalFrameTransportEvidence = {
-    schema: "shellx-motion/linear-srgb-sdr-final-transport@1",
+    schema: LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA,
     delivery: "streamed",
     frameLane: "gpu",
     frameCount: evidence.retainedFrame.repeatedFrames,
     retainedFrameCount: 0,
+    privateOutputAdoption: result.privateOutputAdoption,
     producer: { frameLane: "gpu-linear-srgb-sdr", evidence: evidence.producer },
     colorPipeline: {
       requested: route.contract,
@@ -202,7 +272,7 @@ function success(
     resources,
   };
   const receipt = createRenderReceipt<LinearSrgbSdrFinalFrameTransportEvidence>({
-    id: `linear-srgb-sdr-final-${evidence.output.sha256.slice(0, 16)}`,
+    id: `linear-srgb-sdr-final-${adoptedOutput.sha256.slice(0, 16)}`,
     packageId: input.pkg.manifest.id,
     lane: "ffmpeg",
     status: "passed",
@@ -218,7 +288,8 @@ function success(
     },
     output: {
       path: input.outputPublication.stagingPath,
-      sha256: evidence.output.sha256,
+      sha256: adoptedOutput.sha256,
+      byteLength: adoptedOutput.byteLength,
       width: route.canvas.width,
       height: route.canvas.height,
       durationMs: route.canvas.durationMs,
@@ -243,30 +314,13 @@ function success(
     warnings: [],
   });
   receipt.artifacts = [{ role: "rendered_media", path: input.outputPublication.stagingPath, status: "available", mediaType: "video/mp4", primary: true }];
-  const command = linearSrgbSdrFinalEncodeCommand({
+  const command = result.encodeCommand ?? linearSrgbSdrFinalEncodeCommand({
     width: route.canvas.width,
     height: route.canvas.height,
     fps: route.canvas.fps,
     frameCount: evidence.retainedFrame.repeatedFrames,
   }, input.outputPath);
   return { ok: true, command, receipt, transport: frameTransport };
-}
-
-function strictInputRefusal(input: RenderStreamingFinalInput, authenticatePublication = true): string | undefined {
-  if (input.frameLane !== "gpu" || (input.preset ?? "mp4-h264") !== "mp4-h264") return "linear-srgb-sdr@1 requires the exact streamed GPU to FFmpeg mp4-h264 final route.";
-  if (extname(input.outputPath).toLowerCase() !== ".mp4") return "linear-srgb-sdr@1 requires an .mp4 final output path.";
-  if (input.transport && (input.transport.delivery !== "streamed" || input.transport.reason !== "stream_default")) return "linear-srgb-sdr@1 refuses every materialized frame transport.";
-  if (input.audioPath || input.audio || (input.audioTracks?.length ?? 0) > 0 || input.audioMaster) return "linear-srgb-sdr@1 strict delivery refuses audio and audio muxing.";
-  if (input.keepFrames === true || input.quality || input.qualityManifest) return "linear-srgb-sdr@1 strict delivery refuses frame retention and generic quality policies; it performs its own mandatory decoded comparison.";
-  try {
-    assertSafeFfmpegOutputPath(input.outputPath, input.outputRoots);
-  } catch (error) {
-    return safeMessage(error);
-  }
-  if (authenticatePublication && input.outputPublication && (!isCoreDerivedOutputPublication(input.outputPublication) || input.outputPublication.kind !== "file" || input.outputPublication.outputPath !== resolve(input.outputPath))) return "linear-srgb-sdr@1 requires an identity-bound Motion file publication for the exact requested output.";
-  if (input.toolPolicy) return "linear-srgb-sdr@1 strict delivery uses Motion's fixed governed tools and refuses every generic tool-policy override.";
-  if (input.now) return "linear-srgb-sdr@1 strict delivery refuses generic clock overrides.";
-  return undefined;
 }
 
 function strictTransport(value: FinalVideoFrameTransportPlan | undefined): Extract<FinalVideoFrameTransportPlan, { delivery: "streamed" }> {
@@ -279,11 +333,6 @@ function failure(transport: Extract<FinalVideoFrameTransportPlan, { delivery: "s
 
 function refused(message: string): Extract<LinearSrgbSdrFinalRenderPreflight, { kind: "refused" }> {
   return Object.freeze({ kind: "refused", error: Object.freeze({ code: "linear_srgb_sdr_final_unsupported", message }) });
-}
-
-function safeMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "Strict linear-sRGB SDR final preflight failed.";
-  return message.replace(/(?:[A-Za-z]:)?[\\/][^\s"']+/gu, "<path>").slice(0, 360);
 }
 
 function canonicalBytesSha256(bytes: Buffer): string {

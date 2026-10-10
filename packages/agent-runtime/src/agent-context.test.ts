@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AGENT_CONTEXT_UNBOUNDED_CODE, buildAgentRuntime, createCliAgentAdapters, type AgentAdapter, type AgentCommand, type AgentRunner } from "./index";
+import { AGENT_CONTEXT_UNBOUNDED_CODE, AGENT_SELECTION_REQUIRED_CODE, buildAgentRuntime, createCliAgentAdapters, type AgentAdapter, type AgentCommand, type AgentRunner } from "./index";
 
 const safeAdapter: AgentAdapter = {
   id: "safe", label: "Safe Agent", transport: "local-cli", billing: "cli-subscription", promptContextMode: "prompt-only",
@@ -21,6 +21,42 @@ describe("agent prompt context", () => {
     const runner: AgentRunner = async (command) => { commands.push(command); return { exitCode: 0, stdout: "ok", stderr: "" }; };
     const result = await buildAgentRuntime({ adapters: [{ ...safeAdapter, id, promptContextMode }], runner }).runPrompt({ agentId: id, prompt: "plan", permission: "draft_motion" });
     expect(result).toEqual({ ok: false, error: { code: AGENT_CONTEXT_UNBOUNDED_CODE, message: "The selected agent cannot run because its context is not bounded to the prompt.", detail } });
+    expect(commands).toEqual([]);
+  });
+
+  it("requires a configured prompt-only selection before probing or spawning", async () => {
+    const commands: AgentCommand[] = [];
+    const runner: AgentRunner = async (command) => { commands.push(command); return { exitCode: 0, stdout: "ok", stderr: "" }; };
+
+    const result = await buildAgentRuntime({ adapters: [{ ...safeAdapter }, { ...safeAdapter, id: "unsafe", promptContextMode: "filesystem-read" }], runner })
+      .runPrompt({ prompt: "plan", permission: "draft_motion" });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: AGENT_SELECTION_REQUIRED_CODE,
+        message: "Select a prompt-capable agent explicitly before running a prompt.",
+        detail: "Set agentId to one of: safe."
+      }
+    });
+    expect(commands).toEqual([]);
+  });
+
+  it("explains when no configured adapter can accept a prompt", async () => {
+    const commands: AgentCommand[] = [];
+    const runner: AgentRunner = async (command) => { commands.push(command); return { exitCode: 0, stdout: "ok", stderr: "" }; };
+
+    const result = await buildAgentRuntime({ adapters: [{ ...safeAdapter, promptContextMode: "filesystem-read" }], runner })
+      .runPrompt({ prompt: "plan", permission: "draft_motion" });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: AGENT_SELECTION_REQUIRED_CODE,
+        message: "Select a prompt-capable agent explicitly before running a prompt.",
+        detail: "No prompt-capable adapters are configured. Configure one, then set agentId explicitly."
+      }
+    });
     expect(commands).toEqual([]);
   });
 

@@ -32,6 +32,20 @@ describe("streaming final command planner", () => {
     expect(result.command.args).not.toContain("png");
   });
 
+  it("refuses odd geometry only for the H.264 yuv420 output profile", () => {
+    for (const [width, height] of [[1_919, 1_080], [1_920, 1_079]] as const) {
+      expect(planStreamingFinalCommand({ ...input, width, height })).toMatchObject({
+        ok: false,
+        error: {
+          code: "h264_dimensions_invalid",
+          message: expect.stringContaining("even canvas dimensions")
+        }
+      });
+    }
+    expect(planStreamingFinalCommand({ ...input, width: 1_919, height: 1_079, preset: "mov-prores", outputPath: "/trusted/out.mov" })).toMatchObject({ ok: true });
+    expect(planStreamingFinalCommand({ ...input, width: 1_920, height: 1_080 })).toMatchObject({ ok: true });
+  });
+
   it("does not allow an impossible or stale supplied transport plan to force streaming", () => {
     const impossible = planStreamingFinalCommand({
       ...input,

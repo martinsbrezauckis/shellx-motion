@@ -2,14 +2,13 @@
  * Canonical JSON serialization for every hash, fingerprint, and identity path.
  *
  * Role: turn a JSON-shaped value into ONE byte string that depends only on the value, never on
- * how the value was built or on the machine that built it. `JSON.stringify` fails that contract in
- * two ways that both produced live defects in this repo:
+ * how the value was built or on the machine that built it. `JSON.stringify` does not
+ * guarantee that contract for two reasons:
  *
  *   1. Key ORDER follows insertion order, so `{ a: 1, b: 2 }` and `{ b: 2, a: 1 }` — identical
  *      values — serialize differently and therefore hash differently.
- *   2. Sorting keys with `String.prototype.localeCompare` is LOCALE-SENSITIVE. A live probe on this
- *      machine ordered the same three keys `a, ä, z` under `en-US` and `a, z, ä` under `sv-SE`, so a
- *      "deterministic" fingerprint silently depended on the ambient `LC_ALL` / ICU default locale.
+ *   2. Sorting keys with `String.prototype.localeCompare` is locale-sensitive, so
+ *      a fingerprint would depend on the ambient `LC_ALL` / ICU default locale.
  *
  * The rule enforced here:
  *

@@ -223,13 +223,9 @@ async function openConnectorStagingNoFollow(path: string) {
  * Identity of the connector operation that produced an artifact, stamped into every attested
  * artifact handle.
  *
- * Serialization goes through `canonicalJsonSha256` (core). The local `canonicalJson` this
- * replaced sorted object keys with `String.prototype.localeCompare` and then rebuilt the object
- * with `Object.fromEntries`, which made the stamped identity depend on two things it must not:
- * the host's ambient locale, and JS's insertion re-ordering of integer-like keys. A live probe
- * on one machine, same input, gave `ea2aaf72…` under `LC_ALL=en_US.UTF-8` and `baf8aca2…` under
- * `LC_ALL=sv_SE.UTF-8` — the plan carries `inputHashes` keyed by package-relative FILE NAMES,
- * which are unconstrained and routinely non-ASCII.
+ * Serialization goes through `canonicalJsonSha256` (core) so the stamped identity
+ * is independent of host locale and object insertion order. `inputHashes` can contain
+ * non-ASCII package-relative file names and integer-like keys.
  *
  * `assertPlainJsonOperationValue` keeps the strictness the local copy had: canonical JSON would
  * quietly drop an `undefined` or coerce a `Date`, and an identity must refuse those, not paper

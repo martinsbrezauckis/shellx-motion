@@ -188,7 +188,7 @@ describe("motion debug server CLI", () => {
     }
   });
 
-  it("reuses one private per-user access key and publishes only a live per-start bridge discovery record", async () => {
+  it("reuses one private per-user access key and retains an inert last-published bridge record", async () => {
     const parent = await mkdtemp(join(tmpdir(), "motion-user-access-test-"));
     const paths = motionUserAccessPaths(join(parent, "state"));
     try {
@@ -205,13 +205,19 @@ describe("motion debug server CLI", () => {
       await clearMotionMcpBridgeDiscovery(paths, { ...discovery, port: 11111 });
       expect(JSON.parse(await readFile(paths.mcpBridgeDiscoveryFile, "utf8"))).toMatchObject({ port: 43821 });
       await clearMotionMcpBridgeDiscovery(paths, discovery);
-      await expect(readFile(paths.mcpBridgeDiscoveryFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(JSON.parse(await readFile(paths.mcpBridgeDiscoveryFile, "utf8"))).toEqual(discovery);
+
+      const restarted = { port: 44991, credential: randomBytes(32).toString("base64url") };
+      await writeMotionMcpBridgeDiscovery(paths, restarted);
+      await clearMotionMcpBridgeDiscovery(paths, discovery);
+      expect(JSON.parse(await readFile(paths.mcpBridgeDiscoveryFile, "utf8"))).toEqual(restarted);
 
       if (process.platform !== "win32") {
         const outside = join(parent, "outside-discovery-target");
         await writeFile(outside, "unchanged\n");
+        await rm(paths.mcpBridgeDiscoveryFile, { force: true });
         await symlink(outside, paths.mcpBridgeDiscoveryFile);
-        await expect(writeMotionMcpBridgeDiscovery(paths, { ...discovery, port: 44991 })).rejects.toThrow(/regular file/);
+        await expect(writeMotionMcpBridgeDiscovery(paths, restarted)).rejects.toThrow(/regular file/);
         expect(await readFile(outside, "utf8")).toBe("unchanged\n");
         await rm(paths.mcpBridgeDiscoveryFile, { force: true });
       }

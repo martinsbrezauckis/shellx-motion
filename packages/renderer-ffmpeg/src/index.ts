@@ -115,6 +115,7 @@ import {
   encodePathSafetyError,
   localFileInputArgs
 } from "./ffmpeg-path-safety.js";
+import { parseFfprobeOutput } from "./linear-srgb-sdr-final-ffprobe-output.js";
 
 // Centralized hardware-encode policy and probe cache. Re-exported so all five product render paths
 // (CLI, debug-api, and the four Canvas/Cut connectors) import `encodeImageSequenceWithPolicy` and the
@@ -154,6 +155,11 @@ export { planStreamingFinalCommand } from "./streaming-final-command-plan.js";
 export { renderStreamingFinal } from "./streaming-final-adapter.js";
 export { planLinearSrgbSdrFinalRender, preflightLinearSrgbSdrFinalRender } from "./linear-srgb-sdr-final-public.js";
 export type { LinearSrgbSdrFinalRenderPlan, LinearSrgbSdrFinalRenderPreflight } from "./linear-srgb-sdr-final-public.js";
+export {
+  LINEAR_SRGB_SDR_FINAL_LEGACY_TRANSPORT_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_PRIVATE_OUTPUT_ADOPTION_SCHEMA,
+  LINEAR_SRGB_SDR_FINAL_TRANSPORT_SCHEMA,
+} from "./streaming-final-adapter-types.js";
 /** Recompute strict GPU receipt bindings before a connector projects renderer evidence. */
 export { gpuFinalReceiptInputHashes } from "./gpu-final-receipt-provenance.js";
 export { preliminaryGpuAudio } from "./streaming-final-gpu-audio.js";
@@ -164,7 +170,9 @@ export type {
   StreamingFinalCommandPlanResult,
   StreamingFinalEncoderHandoffEvidence,
   StreamingFinalFrameTransportEvidence,
+  LegacyLinearSrgbSdrFinalFrameTransportEvidence,
   LinearSrgbSdrFinalFrameTransportEvidence,
+  LinearSrgbSdrFinalPrivateOutputAdoption,
   AnyStreamingFinalFrameTransportEvidence,
   StreamingFinalNativeProducerEvidence,
   StreamingFinalProducerEvidence,
@@ -578,10 +586,8 @@ export interface EncodeImageSequenceInput extends RenderResourcePreflightInput {
    *
    * The reason it is default-on rather than an opt-in the product paths remember to set: without it
    * `output.color` is a restatement of the preset's INTENT, never an observation, and an intent is
-   * not evidence. A Windows FFmpeg 8.x build was measured during cross-host verification delivering HEVC and AV1
-   * files with `transfer` and `primaries` absent while the receipt asserted bt709 for both; nothing
-   * in Motion noticed, and it took a second machine and a hand-run ffprobe to find. A check that is
-   * off unless a caller opts in would have stayed off on exactly that machine. See
+   * not evidence. Encoders can omit delivered `transfer` or `primaries` tags even
+   * when the preset declares bt709. Default readback detects that mismatch. See
    * `gradeDeliveredColor` for the failure direction (inert when the readback cannot be trusted).
    */
   verifyDeliveredColor?: boolean;
@@ -860,10 +866,9 @@ function buildHardwareEncoderProbeCommand(encoder: FfmpegHardwareEncoder, vaapiD
     "-loglevel", "error",
     "-nostdin",
     "-f", "lavfi",
-    // 256x256: NVENC (and other fixed-function encoders) reject frames below a hardware minimum with
-    // "Frame Dimension less than the minimum supported value" — a too-small probe frame would report
-    // a working GPU encoder as unusable. 256x256 clears the minimum for h264/hevc/av1 NVENC (verified
-    // on an supported GPU) while staying a tiny single-frame encode. Verified: 128x128 fails, 256x256 passes.
+    // 256x256: fixed-function encoders can reject smaller frames as below their minimum dimensions.
+    // A too-small probe would report a usable GPU encoder as unavailable. Keep the probe small while
+    // clearing common hardware minimums; the actual encoder attempt remains the authority.
     "-i", "color=c=black:s=256x256:r=1:d=1",
     "-frames:v", "1"
   ];
@@ -1631,24 +1636,12 @@ const SDR_BT709_COLOR: FfmpegColorProfile = {
 // `-color*` output options tag the encoder/muxer. All three are kept because they act at different
 // layers and different FFmpeg builds honour different ones.
 //
-// Why `setparams` is not redundant across supported FFmpeg builds:
-//   Linux    ffmpeg 6.1.1                       -> HEVC and AV1 both carry space/transfer/primaries/range.
-//   Windows  ffmpeg N-125773-g7002e01c19 (8.x)  -> HEVC and AV1 carry ONLY color_space and
-//                                                  color_range. transfer and primaries are ABSENT.
-// The surviving pair is exactly the pair the filter chain's colour-negotiation API carries on the
-// frame (matrix + range, which `scale` sets); the missing pair is exactly the pair it does not.
-// Newer FFmpeg takes the encoder's colour properties from the filtergraph OUTPUT FRAME, so on those
-// builds an unset frame primaries/transfer wins over `-color_primaries` / `-color_trc` and the
-// delivered file silently loses two of the four tags Motion's receipt declares.
+// `setparams` is needed because some encoders take primaries and transfer from the
+// filtergraph output frame. `scale` sets matrix and range; output flags alone may leave
+// frame primaries and transfer unset, so the delivered file can omit declared tags.
 //
 // `setparams` sets all four ON THE FRAME, which is the input to both the negotiation and the
-// encoder, so it is version-independent. It is metadata only: verified locally that adding it leaves
-// decoded pixels bit-identical (PSNR inf against the same encode without it) while producing the
-// same four tags on ffmpeg 6.1.1.
-//
-// NOT yet verified on the Windows 8.x build — this is the mechanism-level fix for the AV1 half of
-// the defect and needs a rig re-run to confirm. The HEVC half additionally carries a rig-PROVEN
-// encoder-level fix; see `-x265-params` on the `mp4-hevc` preset.
+// encoder. It changes metadata, and delivered-file readback verifies actual tags.
 const SDR_BT709_OUTPUT_ARGS = [
   "-vf", "scale=in_range=full:out_range=tv:out_color_matrix=bt709,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
   "-colorspace", "bt709",
@@ -1700,9 +1693,8 @@ const SDR_BT709_EXTRACTION_COLOR_FILTER = "scale=in_range=tv:out_range=full";
 //     not the low-latency streaming path. CQ targets are mapped slightly conservatively from each
 //     preset's CRF so quality is not silently degraded; the quality gates + the receipt's size note
 //     are the real guards.
-//   * VideoToolbox / QSV / AMF: reasonable quality-based settings, but NOT rig-verified in this
-//     change (only NVENC was verified on the hardware test host). They are probe-gated, so a wrong arg on
-//     an absent GPU can never be selected, and any real-encode failure auto-falls-back to software.
+//   * VideoToolbox / QSV / AMF: quality-based settings subject to each host's encoder probe.
+//     A wrong argument cannot select an absent GPU, and a real-encode failure falls back to software.
 // ---------------------------------------------------------------------------------------------
 
 /** MP4 container tail shared by hardware MP4 candidates: SDR-BT.709 tagging + faststart. */
@@ -1771,8 +1763,8 @@ const HEVC_HARDWARE_CANDIDATES: FfmpegHardwareEncodeCandidate[] = [
  * VideoToolbox has no AV1 encoder, so it is absent here. av1_nvenc is muxed into WebM to match the
  * software preset's container: FFmpeg's WebM muxer accepts AV1 (libsvtav1 already muxes there in
  * this codebase), and the av1_nvenc bitstream is the same AV1 elementary stream — so no container
- * change is expected. This is VERIFIED on the hardware test host; if a given FFmpeg build's WebM muxer
- * rejected av1_nvenc, the automatic software fallback (libsvtav1) would catch it and record why.
+ * change is expected. If a given FFmpeg build's WebM muxer rejects av1_nvenc, the automatic
+ * software fallback (libsvtav1) records the failure and provides the supported delivery path.
  */
 const AV1_HARDWARE_CANDIDATES: FfmpegHardwareEncodeCandidate[] = [
   {
@@ -1916,7 +1908,7 @@ const EXPORT_PRESETS: Record<FfmpegExportPreset, FfmpegExportPresetSpec> = {
     color: SDR_BT709_COLOR,
     // MOV signals colour through the `colr` atom's nclc triplet — primaries, transfer and matrix
     // only. There is no range field, so a ProRes deliverable never reports `color_range` however it
-    // is encoded (measured on ffmpeg 6.1.1: primaries/transfer/matrix present, range key absent).
+    // is encoded; readback can carry primaries, transfer and matrix without a range key.
     // Declared here so the colour readback does not raise a permanent, unfixable warning on every
     // ProRes render — the exact warning-fatigue failure the routine-stderr classifier exists to stop.
     colorTagsNotSignaled: ["range"]
@@ -2642,69 +2634,7 @@ export async function probeMedia(path: string, options: { runner?: FfmpegRunner;
     throw new Error(summarizeStderr(result.stderr || result.stdout || "ffprobe failed"));
   }
 
-  const parsed = JSON.parse(result.stdout) as {
-    streams?: Array<{
-      codec_type?: string;
-      codec_name?: string;
-      pix_fmt?: string;
-      color_space?: string;
-      color_transfer?: string;
-      color_primaries?: string;
-      color_range?: string;
-      tags?: Record<string, string | number>;
-      width?: number;
-      height?: number;
-      avg_frame_rate?: string;
-      nb_frames?: string | number;
-      channels?: number;
-      channel_layout?: string;
-      sample_rate?: string | number;
-      sample_fmt?: string;
-      bit_rate?: string | number;
-      duration?: string | number;
-    }>;
-    format?: { duration?: string; format_name?: string };
-  };
-  const streams = parsed.streams ?? [];
-  const stream = streams.find((candidate) => candidate.codec_type === "video")
-    ?? streams.find((candidate) => typeof candidate.width === "number" || typeof candidate.height === "number")
-    ?? streams[0]
-    ?? {};
-  const audioStreams = streams
-    .filter((candidate) => candidate.codec_type === "audio" || typeof candidate.channels === "number" || candidate.sample_rate !== undefined)
-    .map((candidate) => ({
-      codec: candidate.codec_name ?? "unknown",
-      channels: typeof candidate.channels === "number" ? candidate.channels : null,
-      channelLayout: typeof candidate.channel_layout === "string" ? candidate.channel_layout : null,
-      sampleRate: parseOptionalNumber(candidate.sample_rate),
-      sampleFormat: typeof candidate.sample_fmt === "string" ? candidate.sample_fmt : null,
-      bitRate: parseOptionalNumber(candidate.bit_rate),
-      durationMs: parseOptionalDurationMs(candidate.duration ?? parsed.format?.duration)
-    }));
-  const durationMs = parseOptionalDurationMs(stream.duration ?? parsed.format?.duration) ?? 0;
-  return {
-    ok: true,
-    path,
-    codec: stream.codec_name ?? "unknown",
-    width: stream.width ?? 0,
-    height: stream.height ?? 0,
-    durationMs,
-    fps: deliveredFps(stream, durationMs),
-    container: parsed.format?.format_name ?? "unknown",
-    color: {
-      pixelFormat: stream.pix_fmt ?? null,
-      space: stream.color_space ?? null,
-      transfer: stream.color_transfer ?? null,
-      primaries: stream.color_primaries ?? null,
-      range: stream.color_range ?? null
-    },
-    alpha: alphaMediaFacts(stream),
-    audio: {
-      present: audioStreams.length > 0,
-      streamCount: audioStreams.length,
-      streams: audioStreams
-    }
-  };
+  return parseFfprobeOutput(path, result.stdout);
 }
 
 export function frameExtractionInputArgs(
@@ -3159,9 +3089,8 @@ export async function probeMotionTool(tool: MotionToolName, runner?: FfmpegRunne
 /**
  * Say which browser caches the trust rule declined, when a Chromium probe has already failed.
  *
- * A silent refusal is a support incident: the CI user HAS a browser, Motion simply will not execute
- * one out of a directory other people can write, and without this line nothing on the machine says
- * so — the install command in the same report would put another copy in the same rejected cache.
+ * Explain when a discovered browser lives in a writable, untrusted cache. Without this
+ * note, the install suggestion could direct the caller back to the rejected location.
  * Only consulted on failure, so a healthy machine pays nothing.
  *
  * The refusal's redaction-safe `label` is used rather than its path: these sentences end up in
@@ -3513,10 +3442,7 @@ const ROUTINE_ENCODE_STDERR = [
   // The same HRD/CPB side-data line under its NEWER spelling. FFmpeg 6.1.1 prints it as
   // "  cpb: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A"; FFmpeg 8.x prints the
   // side-data type's own description instead — "  CPB properties: bitrate max/min/avg: ...".
-  // Real captured output from a Windows ffmpeg N-125773 connector run, where the rename meant a
-  // routine line stopped matching `cpb:` and turned four connector smokes into `warning` on
-  // Windows while the identical package stayed `passed` on Linux. Same block, same encode, one
-  // renamed label — so it is filtered under both spellings.
+  // Both spellings describe routine encoder side data, so neither should become a receipt warning.
   //
   // The captured line keeps its leading indentation (it is nested under "Side data:"), hence the
   // leading `\s*`; the rest is anchored to the exact HRD field sequence so a genuine bitrate or
@@ -3531,13 +3457,11 @@ const ROUTINE_ENCODE_STDERR = [
   // Per-codec statistics blocks, e.g. "[libx264 @ 0x..] frame I:1  Avg QP:25.83".
   /^\[lib[a-z0-9_]+ @ [^\]]+\]\s+(frame [IPB]:|mb [IPB] |8x8 transform|coded y,|i\d+[a-z]* [vhdc,]|Weighted P-Frames:|kb\/s:|using (SAR|cpu capabilities)|profile |\d+ - core |consecutive B-frames:|ref [PB] L\d:|(SSIM|PSNR) Mean)/,
   // The rest of the x264/aac summary that the pattern above does not name, plus the encoder-agnostic
-  // per-encoder average quality line. Same block, same run, printed after the muxing summary.
+  // per-encoder average quality line, which follows the muxing summary.
   /^\[(aac|ac3|libmp3lame|libopus|libvorbis) @ [^\]]+\]\s+Qavg:/,
-  // libvpx's version banner, e.g. "[libvpx-vp9 @ 0x5b15e8932f00] v1.14.0" (VP8 prints the same
+  // libvpx's version banner, e.g. "[libvpx-vp9 @ 0x1234abcd] v1.14.0" (VP8 prints the same
   // line as "[libvpx @ ...]"). ffmpeg's libvpx wrapper logs `vpx_codec_version_str()` at INFO on
-  // every single libvpx encode, so a perfectly clean WebM render was being downgraded to
-  // `warning` by an encoder stating its own version — the success-status invariant. On an agent-first
-  // product that is worse than noise: it makes every other warning less trustworthy.
+  // each libvpx encode; a version banner alone must not mark a clean WebM render as a warning.
   //
   // Anchored across the WHOLE line, not just its prefix, so it cannot swallow a real diagnostic:
   // the tag must be a libvpx encoder instance, and everything after `]` must be exactly one
@@ -3564,16 +3488,12 @@ const ROUTINE_ENCODE_STDERR = [
   /^(Input|Output) (Integrated|True Peak|LRA|Threshold):\s+[-+]?[\d.]+ (LUFS|dBTP|LU)$/,
   /^Normalization Type:\s+\S+$/,
   /^Target Offset:\s+[-+]?[\d.]+ LU$/,
-  // palettegen's palette-size report, e.g. "[Parsed_palettegen_1 @ 0x5a5ce1edee80] 255(+1) colors
-  // generated out of 19505 colors; ratio=0.013074". libavfilter logs it at AV_LOG_INFO on every
-  // single palettegen run — verified empirically, not assumed: re-running the same encode with
-  // `-loglevel warning` drops this line and keeps `Duped color`, so ffmpeg itself grades this one
-  // as routine. Motion's `gif` preset is a two-pass palettegen -> paletteuse filtergraph, so every
-  // GIF render printed it and every GIF receipt carried it as a "warning".
+  // palettegen's palette-size report, e.g. "[Parsed_palettegen_1 @ 0x1234abcd] 255(+1) colors
+  // generated out of 19505 colors; ratio=0.013074". This is an INFO-level status line from
+  // the palettegen pass used by the GIF preset, not a warning.
   //
   // Worse than noise, and the reason it is filtered rather than tolerated: the `@ 0x...` tag is a
-  // heap pointer, so two renders of the SAME package produced different receipt text and no
-  // receipt could be compared byte for byte.
+  // heap pointer, so leaving it in a receipt would prevent stable byte comparison.
   //
   // Anchored across the whole line — the tag must be a palettegen instance, and the body must be
   // exactly ffmpeg's `%d%s colors generated out of %d colors; ratio=%f` format string
@@ -3586,12 +3506,8 @@ const ROUTINE_ENCODE_STDERR = [
   // ALWAYS rewrites the file to move `moov` to the front and always says so. It reports work the
   // caller requested, on a successful encode, and there is nothing to act on.
   //
-  // Why it only leaked on some hosts: FFmpeg 6.1.1 merges this line onto the trailing `frame=`
-  // progress line when stderr is not a TTY, where `/^frame=\s*\d/` already swallowed it. On the
-  // Windows FFmpeg N-125773 build it arrives on its own line — so the SAME package produced a
-  // `passed` receipt on Linux and a `warning` on Windows, failing four connector smokes on nothing
-  // but chatter. It also carries a run-varying instance pointer (printed WITHOUT the `0x` prefix on
-  // Windows, which is why the tag is matched as `[^\]]+` rather than a hex literal).
+  // This line may appear alone or alongside frame progress, and carries a run-varying instance
+  // pointer. Match that pointer without assuming a particular hexadecimal prefix.
   //
   // Scoped to the ISOBMFF muxer family that implements faststart, and anchored across the whole
   // line, so a genuine mp4-muxer diagnostic from the same instance still reaches the receipt.
@@ -3617,11 +3533,8 @@ export function summarizeSuccessfulEncodeStderr(stderr: string): string {
     .filter((line) => line.trim().length > 0)
     .filter((line) => !ROUTINE_ENCODE_STDERR.some((pattern) => pattern.test(line)))
     // FFmpeg prefixes component messages with the instance pointer, e.g.
-    // `[Parsed_palettegen_1 @ 0x641500efbe80] Duped color: FFDCDDE0`. That address changes every run,
-    // so two renders of the SAME package produced receipts that differed only in noise — which
-    // defeats byte-comparison of receipts, and byte-comparison is how a caller proves a re-render is
-    // identical. Filtering the line is not an option here: this one is a genuine AV_LOG_WARNING and
-    // must survive. Normalising the address keeps the warning and removes the only unstable part.
+    // `[Parsed_palettegen_1 @ 0x1234abcd] Duped color: FFDCDDE0`. The instance address varies;
+    // normalizing it keeps the warning while making receipt text stable for byte comparison.
     // Same treatment `summarizeHardwareProbeFailure` already applies for the same reason.
     .map((line) => line.replace(/\b0x[0-9a-f]+\b/gi, "[address]"));
   // Bounded: a pathological encode can emit thousands of identical complaints. Deduplicated AFTER
@@ -3639,46 +3552,6 @@ function summarizeStderr(stderr: string): string {
 
 function firstLine(value: string): string {
   return value.trim().split(/\r?\n/, 1)[0] ?? "";
-}
-
-function parseFps(value: string): number {
-  const parts = value.split("/").map(Number);
-  const fps = parts.length === 2 ? (parts[1] > 0 ? parts[0] / parts[1] : 0) : parts[0];
-  return Number.isFinite(fps) && fps > 0 ? fps : 0;
-}
-
-function deliveredFps(stream: { avg_frame_rate?: string; nb_frames?: string | number }, durationMs: number): number {
-  const frameCount = parseOptionalNumber(stream.nb_frames);
-  if (frameCount !== null && Number.isSafeInteger(frameCount) && frameCount > 0 && durationMs > 0) {
-    return frameCount / (durationMs / 1_000);
-  }
-  return parseFps(stream.avg_frame_rate ?? "0/1");
-}
-
-function parseOptionalNumber(value: string | number | undefined): number | null {
-  if (value === undefined) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function parseOptionalDurationMs(value: string | number | undefined): number | null {
-  const number = parseOptionalNumber(value);
-  return number === null || number < 0 ? null : Math.round(number * 1000);
-}
-
-function alphaMediaFacts(stream: { codec_name?: string; pix_fmt?: string; tags?: Record<string, string | number> }): ProbeMediaResult["alpha"] {
-  const pixelFormat = typeof stream.pix_fmt === "string" ? stream.pix_fmt : null;
-  const rawMode = stream.tags?.alpha_mode;
-  const mode = rawMode === undefined ? null : String(rawMode);
-  const hasAlphaPixelFormat = pixelFormat !== null && /(?:^|[^a-z])(?:yuva|rgba|bgra|argb|abgr)/i.test(pixelFormat);
-  const hasVp9AlphaMode = stream.codec_name === "vp9" && mode === "1";
-  const present = hasAlphaPixelFormat || hasVp9AlphaMode;
-  return {
-    present,
-    mode,
-    pixelFormat,
-    decoder: hasVp9AlphaMode ? "libvpx-vp9" : null
-  };
 }
 
 function formatSeconds(seconds: number): string {
@@ -3705,8 +3578,8 @@ async function hashFrameSequence(input: {
 }): Promise<string> {
   // Bounded rather than `Promise.all(framePaths.map(hashFile))`: this runs AFTER an expensive
   // render, over as many as 36,000 frames (the local render guard's ceiling), and the naive shape
-  // held one descriptor and one 64 KiB read stream per frame at once. Measured on 12,000 frames:
-  // 12,000 concurrent descriptors / 521 MB RSS before, 16 / 148 MB after (the bounded-frame-hash invariant).
+  // would hold one descriptor and one read stream per frame. The bounded hash helper
+  // caps concurrent file descriptors even at the 36,000-frame render ceiling.
   const frameHashes = await hashFramePaths(input.framePaths);
   return hashBuffer(Buffer.from(JSON.stringify({
     framesDir: input.framesDir,

@@ -31,6 +31,7 @@ import { SegmentedFinalStoreAuthority } from "./segmented-final-store-authority.
 import { settleSegmentedFinalAdmittedCleanup } from "./segmented-final-adapter-cleanup.js";
 import type { PreparedSegmentedGpuHost } from "../segmented-final-gpu-host.js";
 import { prepareAdmittedSegmentedGpuInput } from "../segmented-final-gpu-admission.js";
+import { hasStreamingFinalLaunchRevalidation, revalidateStreamingFinalLaunch } from "../streaming-final-lineage-revalidation.js";
 import {
   type RenderSegmentedFinalInput,
   type SegmentedFinalAdapterFailure,
@@ -54,13 +55,30 @@ export async function runSegmentedFinalAdmitted(
   recordResourceFailure: (sidecar: AdmittedResourceFailureSidecar) => void
 ): Promise<SegmentedFinalAdmittedValue> {
   const reporter = createStreamingEvidenceReporter(job);
+  const coordinated = hasStreamingFinalLaunchRevalidation();
   let activeAuthority = authority;
+  const setActiveAuthority = (acquired: SegmentedFinalStoreAuthority) => {
+    activeAuthority = acquired;
+    setAuthority(acquired);
+  };
   const guardedProcessFactory: StreamingFfmpegProcessFactory = async (processInput) => {
     if (!activeAuthority) throw new Error("Segmented final process execution started before durable store authority was acquired.");
     await activeAuthority.assertCurrent();
+    // This is deliberately the last awaited check before the actual process factory invocation.
+    await revalidateStreamingFinalLaunch();
     return await processFactory(processInput);
   };
-  const runner = preAdmittedRunner(job, guardedProcessFactory, reporter);
+  // Coordinated GPU resume acquires its durable store before pre-store probes. Assert it before
+  // the final lineage fence; direct renderers retain their historical supplied runner identity.
+  const preStoreGuardedProcessFactory: StreamingFfmpegProcessFactory = async (processInput) => {
+    if (activeAuthority) await activeAuthority.assertCurrent();
+    // This is deliberately the last awaited check before the actual process factory invocation.
+    await revalidateStreamingFinalLaunch();
+    return await processFactory(processInput);
+  };
+  const coordinatedProcessFactory = coordinated ? guardedProcessFactory : processFactory;
+  const coordinatedPreStoreProcessFactory = coordinated ? preStoreGuardedProcessFactory : processFactory;
+  const runner = preAdmittedRunner(job, coordinatedProcessFactory, reporter);
   let currentPhase: SegmentedFinalFailureEvidence["phase"] = "preflight";
   let verified: VerifiedTransportState | undefined;
   let concat: SegmentedConcatAttemptsResult | undefined;
@@ -110,8 +128,8 @@ export async function runSegmentedFinalAdmitted(
     updatePhase("preflight");
     if (input.frameLane === "gpu") {
       const preparedGpu = await prepareAdmittedSegmentedGpuInput({
-        request: input, paths, authority: activeAuthority, setAuthority, job, maxProcessTreeRssBytes,
-        runner: preAdmittedRunner(job, processFactory, reporter)
+        request: input, paths, authority: activeAuthority, setAuthority: setActiveAuthority, coordinated, job, maxProcessTreeRssBytes,
+        runner: preAdmittedRunner(job, coordinatedPreStoreProcessFactory, reporter)
       });
       activeAuthority = preparedGpu.authority;
       gpuHost = preparedGpu.gpuHost;
@@ -147,7 +165,7 @@ export async function runSegmentedFinalAdmitted(
       delivery,
       ...(admittedInput.store.intent === "resume" ? { resumeRecovery: segmentedResumeRecovery(paths) } : {}),
       createRangeProducer: admittedInput.createRangeProducer,
-      processFactory: guardedProcessFactory,
+      processFactory: coordinatedProcessFactory,
       evidenceReporter: reporter,
       job,
       ...(admittedInput.frameLane === "gpu" ? { maxProcessTreeRssBytes: gpuRangeMaxProcessTreeRssBytes } : {}),
@@ -228,7 +246,7 @@ export async function runSegmentedFinalAdmitted(
       transformed.attempts,
       paths.stagingPath,
       job,
-      guardedProcessFactory,
+      coordinatedProcessFactory,
       reporter,
       ({ attempts, partial, stagingCleanup: cleanupState, cleanupCauses }) => {
         stagingCleanup = cleanupState;

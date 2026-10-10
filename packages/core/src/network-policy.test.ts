@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertPublicNetworkAddress,
   assertPublicNetworkUrl,
+  defaultNetworkAddressResolver,
   isPublicNetworkAddress,
   resolveNetworkTarget,
   resolvePublicNetworkTarget
@@ -86,5 +87,51 @@ describe("shared public network policy", () => {
       hostname: "127.0.0.1",
       pinnedAddress: { address: "127.0.0.1", family: 4 }
     });
+  });
+
+  it("aborts a pending DNS resolution and removes its listener after the resolver settles", async () => {
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    let completeResolution!: (addresses: Array<{ address: string; family: 4 | 6 }>) => void;
+    const resolver = vi.fn(() => new Promise<Array<{ address: string; family: 4 | 6 }>>((resolve) => {
+      completeResolution = resolve;
+    }));
+    const refusal = new Error("caller cancelled DNS lookup");
+
+    const target = resolvePublicNetworkTarget("https://pending.example/path", { resolver, signal: controller.signal });
+    expect(resolver).toHaveBeenCalledWith("pending.example");
+    controller.abort(refusal);
+    await expect(target).rejects.toBe(refusal);
+
+    completeResolution([{ address: "93.184.216.34", family: 4 }]);
+    await vi.waitFor(() => expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function)));
+    expect(removeListener).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up the abort listener after successful DNS resolution", async () => {
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const target = await resolvePublicNetworkTarget("https://resolved.example/", {
+      resolver: async () => [{ address: "93.184.216.34", family: 4 }],
+      signal: controller.signal
+    });
+    expect(target.pinnedAddress.address).toBe("93.184.216.34");
+    await vi.waitFor(() => expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function)));
+    controller.abort(new Error("after resolution"));
+    expect(target.pinnedAddress.address).toBe("93.184.216.34");
+  });
+
+  it("uses the default resolver for trusted localhost targets", async () => {
+    const records = await defaultNetworkAddressResolver("localhost");
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every(({ address, family }) =>
+      (family === 4 && address.startsWith("127.")) || (family === 6 && address === "::1")
+    )).toBe(true);
+
+    const target = await resolveNetworkTarget("http://localhost:7310/", { allowPrivate: true });
+    expect(target.hostname).toBe("localhost");
+    expect(target.addresses.length).toBeGreaterThan(0);
+    expect(target.addresses.every(({ address }) => records.some((record) => record.address === address))).toBe(true);
+    expect(target.addresses).toContainEqual(target.pinnedAddress);
   });
 });

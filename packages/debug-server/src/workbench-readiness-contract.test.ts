@@ -247,10 +247,8 @@ describe("workbench render dialog — readiness row states", () => {
     const response = await dispatch({ operation: "render.final" });
     const row = view(response.result);
 
-    // The exact regression the regression named: the previous binding listed EVERY non-ready tool, so
-    // this said "Final encode is unavailable: ffmpeg is missing, ffprobe is missing." — untrue of
-    // FFprobe, which the scoped operation does not treat as a render.final blocker. Chromium IS one,
-    // so it belongs here and FFprobe still does not: the scoping is by operation, not by count.
+    // Readiness is scoped to the operation. Chromium blocks render.final here,
+    // while FFprobe is reported as a readback fact rather than an encode blocker.
     expect(row.state).toBe("blocked");
     expect(row.blockedBy).toEqual(["ffmpeg", "chromium"]);
     expect(row.label).toBe("Final encode is unavailable: ffmpeg is missing, chromium is missing.");
@@ -507,14 +505,14 @@ describe("workbench About page — external tool readiness states", () => {
     expect(block.note).toBe("Unavailable here: quality.check (needs ffprobe).");
   }, 45_000);
 
-  it("VERIFIED and healthy: says every tool is present", async () => {
+  it("VERIFIED and healthy: reports tool availability", async () => {
     const dispatch = await debugServer(ALL_READY);
     const view = await liftBrowserFunction<(result: unknown) => ToolReadinessView>(ABOUT_JS, "readToolReadinessView");
 
     const block = view((await dispatch({})).result);
 
     expect(block.state).toBe("verified");
-    expect(block.note).toContain("Every external tool Motion needs is present");
+    expect(block.note).toBe("Required tools for preview, final encode and quality checks are available.");
   }, 45_000);
 
   it("UNVERIFIED: a failed probe keeps the block, valued 'could not verify'", async () => {

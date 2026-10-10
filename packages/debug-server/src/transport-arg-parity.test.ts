@@ -7,7 +7,7 @@
  * that — but "does the answer depend on which door you came through", which is the failure an agent
  * cannot debug because it looks like the engine being inconsistent.
  *
- * Two live differentials at the commit this suite was written against, same server, same arguments:
+ * These two requests must receive consistent validation across transports:
  *
  *   motion.export.plan { packageRoot, out: "/tmp/x.mp4" }
  *     motion.debug.dispatch -> ok: true            (the handler honours `out` as outputPath)
@@ -18,7 +18,7 @@
  *     tools/call            -> invalid_args with per-argument violations
  *
  * The first direction is the worse one: a schema that omits an argument its handler reads turns
- * `additionalProperties: false` into a refusal of working calls. `scripts/debug-arg-coverage.ts`
+ * `additionalProperties: false` into a refusal of working calls. `scripts/public/debug-arg-coverage.ts`
  * derives the read set from the handlers and fails the build on any omission; this suite is the
  * end-to-end half of that proof, over the real wire.
  */
@@ -105,7 +105,7 @@ async function transports(grantedTier: "read_motion" | "push_remote" = "push_rem
 /**
  * Calls whose arguments the handlers genuinely read, each one refused by `tools/call` before the
  * schemas were corrected. Every entry is an alias or filter taken from the handler source, not an
- * invention — see `scripts/debug-arg-coverage.ts` for the derivation.
+ * invention — see `scripts/public/debug-arg-coverage.ts` for the derivation.
  */
 const HANDLER_HONOURED_CALLS: Array<{ command: string; args: Record<string, unknown> }> = [
   { command: "motion.export.plan", args: { packageRoot: "fixtures/packages/lower-third", out: "/tmp/motion-parity.mp4" } },
@@ -124,7 +124,48 @@ const HANDLER_HONOURED_CALLS: Array<{ command: string; args: Record<string, unkn
   { command: "motion.source.to_scripted_video", args: { source: "/tmp/motion-parity.md", outDir: "/tmp/motion-parity-script" } }
 ];
 
+/**
+ * `render-plan@2` remains Core history only. These names deliberately cover the complete
+ * nonserializable adoption bundle: a caller must not be able to smuggle in the plan itself or any
+ * companion that could make it executable. They are tested on each actual Debug wire rather than
+ * against a TypeScript type, because JSON callers do not have that type as a boundary.
+ */
+const V2_LIFECYCLE_INJECTION_FIELDS = [
+  // `planV2`, `implementation`, and `toolRunner` are the names of the private preflight seam.
+  // The rest make its possible authority-bearing companions explicit at the JSON boundary.
+  "planV2",
+  "renderPlanV2",
+  "v2Permit",
+  "implementation",
+  "v2Observer",
+  "toolRunner",
+  "v2ToolRunner",
+  "preflightV2CapabilityAuthority",
+  "v2Authority",
+  "v2Execute",
+  "execute",
+] as const;
+
 describe("every transport enforces the same argument contract", () => {
+  it("publishes no V2 lifecycle tool and refuses every V2 lifecycle injection on every Debug transport", async () => {
+    const { mcp, jsonRpc, http, toolsList } = await transports();
+    const toolNames = (await toolsList()).map((tool) => String(tool.name));
+    expect(toolNames.filter((name) => /v2/iu.test(name))).toEqual([]);
+
+    for (const field of V2_LIFECYCLE_INJECTION_FIELDS) {
+      const args = { packageRoot: "fixtures/packages/lower-third", outputPath: "/tmp/v2-transport-refusal.mp4", [field]: { caller: "untrusted" } };
+      const [viaMcp, viaJsonRpc, viaHttp] = await Promise.all([
+        mcp("motion.job.submit", args), jsonRpc("motion.job.submit", args), http("motion.job.submit", args)
+      ]);
+      for (const verdict of [viaMcp, viaJsonRpc, viaHttp]) {
+        expect(verdict.shapeRejected).toBe(true);
+        expect(verdict.violations).toEqual(expect.arrayContaining([
+          expect.objectContaining({ argument: field, kind: "unknown_property" })
+        ]));
+      }
+    }
+  }, 45_000);
+
   it("accepts a handler-honoured argument on all three transports", async () => {
     const { mcp, jsonRpc, http } = await transports();
 

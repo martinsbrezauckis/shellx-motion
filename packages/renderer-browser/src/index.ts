@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Browser, BrowserContext, ConsoleMessage, Page } from "playwright-core";
 import type { DerivedOutputPublication } from "@shellx-motion/core";
@@ -27,7 +27,7 @@ import {
   registerBrowserStreamingFrameRender,
   type InternalBrowserStreamingFrame
 } from "./browser-streaming-session-registry";
-import { browserPackageFingerprint, canonicalPathForBrowserSafety, isPathInsideOrEqual, readBrowserPackageFile } from "./browser-package-safety";
+import { browserPackageFingerprint, readBrowserPackageFile } from "./browser-package-safety";
 import {
   admittedBrowserFulfillmentFingerprint,
   admittedBrowserPackageFulfillment,
@@ -37,8 +37,8 @@ import {
 } from "./browser-package-fulfillment";
 import { admitGpuHybridDataOnlyDocument, type GpuHybridDataOnlyDocumentEvidence } from "./gpu-browser-hybrid-html-policy";
 import { publishBrowserOutput } from "./browser-output-publication";
+import { prepareBrowserCaptureHtml } from "./browser-composition-expansion";
 import { browserOutputPathFor, browserScreenshotOptions } from "./browser-output-path";
-import { injectBrowserCaptureBase, packageRootBaseHref, safeBrowserCaptureFileToken } from "./browser-capture-html-document";
 import {
   attachBrowserRedirectGuard,
   MAX_BROWSER_REMOTE_AGGREGATE_BYTES,
@@ -111,8 +111,6 @@ import {
   colorPipelinePreallocationRefusal,
   compareCodeUnits,
   compileRestrictedFragmentShader,
-  removeFirstMarkupAttribute,
-  scanMarkupAttributeTagPairs,
   defaultLocalMotionJobGovernor,
   ENVIRONMENT_SCHEMA,
   evaluateMotionParticles,
@@ -259,13 +257,6 @@ export interface HtmlComposition {
   startMs: number;
   durationMs: number;
   layers: Array<{ id: string; startMs: number; durationMs: number }>;
-}
-
-interface BrowserCaptureHtmlPreparation {
-  html?: string;
-  artifactPath?: string;
-  artifactSha256?: string;
-  artifacts: ReceiptArtifact[];
 }
 
 export interface BrowserFrameResult {
@@ -831,7 +822,9 @@ async function renderBrowserFrameInSession(
     options.outDir,
     execution.packageFulfillment,
     execution.scriptExecution.activeMode !== APPROVED_AGENT_SCRIPT_MODE && !execution.hybridDataOnly,
-    privateOutputPublication
+    privateOutputPublication,
+    signal,
+    abortReason
   );
   const warnings = [...preflight.warnings];
   if (options.workflow?.networkPolicy === "allow") {
@@ -1736,101 +1729,6 @@ export async function renderMotionBrowserFrame(
 
 export function createHostBoundBrowserFrameRenderer(host: { agentScriptAuthority?: AgentScriptProvenanceAuthority }): (pkg: MotionPackage, options: BrowserFrameOptions) => Promise<BrowserFrameResult> { return browserFrameRendererForSessionFactory(createHostBoundBrowserRenderSessionFactory(host)); }
 export function createHostBoundBrowserRenderSessionFactory(host: { agentScriptAuthority?: AgentScriptProvenanceAuthority }) { return bindHostBrowserSessionFactory(createMotionBrowserRenderSession, host.agentScriptAuthority); }
-
-async function prepareBrowserCaptureHtml(
-  pkg: MotionPackage,
-  source: string,
-  outDir: string,
-  fulfillment: BrowserPackageFulfillment,
-  allowCompositionInlining = true,
-  privateArtifactPublication?: DerivedOutputPublication
-): Promise<BrowserCaptureHtmlPreparation> {
-  const sourcePath = resolvePackageAsset(pkg, source);
-  const html = (await fulfillment.readPath(sourcePath, "Browser capture HTML")).bytes.toString("utf8");
-  if (!allowCompositionInlining && scanMarkupAttributeTagPairs(html, "data-composition-src").length > 0) {
-    throw new AgentScriptProvenanceRefusal("Approved-agent-entry script sources cannot inline secondary package compositions.");
-  }
-  const inlineResult = await inlineBrowserCompositionSources(pkg, sourcePath, html, fulfillment);
-  if (inlineResult.sourceCount === 0) return { artifacts: [] };
-
-  const preparedHtml = injectBrowserCaptureBase(inlineResult.html, packageRootBaseHref(pkg.root));
-  const artifactSha256 = sha256(preparedHtml);
-  const artifactDir = privateArtifactPublication
-    ? await privateBrowserCaptureArtifactDirectory(outDir, privateArtifactPublication)
-    : join(resolve(outDir), "browser-capture-html");
-  const artifactPath = join(artifactDir, `${safeBrowserCaptureFileToken(pkg.manifest.id)}-${artifactSha256.slice(0, 16)}.html`);
-  // Companion HTML follows the same private directory-child policy as the primary PNG. This
-  // must not become a separately writable structural artifact path just because it is evidence.
-  const verifiedArtifactSha256 = await publishBrowserOutput(artifactPath, Buffer.from(preparedHtml), privateArtifactPublication);
-  if (verifiedArtifactSha256 !== artifactSha256) throw new Error("Browser capture HTML changed while its private evidence bytes were verified.");
-  const artifacts: ReceiptArtifact[] = [{
-    role: "browser_capture_html",
-    path: artifactPath,
-    status: "available",
-    mediaType: "text/html",
-    primary: true
-  }];
-  return { html: preparedHtml, artifactPath, artifactSha256, artifacts };
-}
-
-async function privateBrowserCaptureArtifactDirectory(outDir: string, publication: DerivedOutputPublication): Promise<string> {
-  if (publication.kind === "file") return await publication.createPrivateCompanionDirectory("browser-capture-html");
-  const candidate = resolve(outDir);
-  if (!isPathInsideOrEqual(publication.stagingPath, candidate)) {
-    throw new Error("Browser private artifact output must remain below its governed directory stage.");
-  }
-  return join(candidate, "browser-capture-html");
-}
-
-async function inlineBrowserCompositionSources(
-  pkg: MotionPackage,
-  sourcePath: string,
-  html: string,
-  fulfillment: BrowserPackageFulfillment
-): Promise<{ html: string; sourceCount: number }> {
-  // Bounded scan, not a regex. This used
-  // `/<([A-Za-z][\w:-]*)\b([^>]*\bdata-composition-src\s*=\s*(["'])([^"']+)\3[^>]*)>([\s\S]*?)<\/\1>/gi`,
-  // whose lazy body plus `\1` backreference re-scans the document once per candidate opening tag.
-  // Measured on this repository: 36 KB of unclosed `<div data-composition-src="…">` blocked the
-  // event loop for 3.7 ms, 288 KB for 217.7 ms — 4x per doubling, clean quadratic — and a long
-  // attribute run that never reaches a `>` cost 6.1 ms at 25 KB and 390.8 ms at 199 KB. The input is
-  // package-local HTML from an untrusted package and the sibling importer accepts 8 MiB, so the
-  // reachable size is far past those. `scanMarkupAttributeTagPairs` reproduces the regex's match
-  // set exactly (verified by 305 000 differential fuzz documents against the regex as oracle) in a
-  // single forward pass.
-  const matches = scanMarkupAttributeTagPairs(html, "data-composition-src");
-  if (matches.length === 0) return { html, sourceCount: 0 };
-
-  let output = "";
-  let lastIndex = 0;
-  let sourceCount = 0;
-  for (const match of matches) {
-    const compositionSource = match.value;
-    const compositionPath = await resolveBrowserCompositionSource(pkg, sourcePath, compositionSource);
-    const compositionHtml = (await fulfillment.readPath(compositionPath, "Browser composition HTML")).bytes.toString("utf8");
-    const cleanAttrs = removeFirstMarkupAttribute(match.attrText, "data-composition-src");
-    output += html.slice(lastIndex, match.start);
-    output += `<${match.tagName}${cleanAttrs} data-shellx-motion-inlined-composition-src="${escapeAttr(compositionSource)}">${compositionHtml}</${match.tagName}>`;
-    lastIndex = match.end;
-    sourceCount += 1;
-  }
-  output += html.slice(lastIndex);
-  return { html: output, sourceCount };
-}
-
-
-async function resolveBrowserCompositionSource(pkg: MotionPackage, sourcePath: string, compositionSource: string): Promise<string> {
-  if (remoteOrigin(compositionSource)) {
-    throw new Error(`Browser composition source must be package-local: ${compositionSource}`);
-  }
-  const targetPath = resolve(dirname(sourcePath), compositionSource);
-  const packageRootPath = await canonicalPathForBrowserSafety(pkg.root);
-  const canonicalTarget = await canonicalPathForBrowserSafety(targetPath);
-  if (!isPathInsideOrEqual(packageRootPath, canonicalTarget)) {
-    throw new Error(`Browser composition source escapes the Motion package root: ${compositionSource}`);
-  }
-  return targetPath;
-}
 
 async function waitForBrowserCaptureReadiness(page: Page): Promise<BrowserCaptureReadiness> {
   const started = Date.now();

@@ -1,13 +1,12 @@
 /**
- * The falsifier for panels that counted stored keyframes as animation, kept permanently.
+ * Panels must count readable keyframes that animate, rather than every stored target.
  *
- * the keyframe regression fixed the two panels dedicated to keyframes (`motion.timeline.keyframes.panel` and
- * `motion.timeline.easing.panel`). It left the panels an author reaches for FIRST:
+ * The keyframe and easing panels use this distinction. The timeline, preview, and audio panels
+ * must apply it too:
  *
  *   - `motion.timeline.panel` and `motion.preview.panel` counted `keyframedLayers` as "layers with
  *     any keyframe TARGET". That is a statement about the document's shape, not about whether
- *     anything moves: the the keyframe regression package, frozen for ~90% of its duration, was reported as fully
- *     keyframed.
+ *     anything moves: a mostly static package can otherwise appear fully keyframed.
  *   - `motion.audio.panel` reported `volumeAutomationKeyframeCount` as the STORED track length. The
  *     encoder's reader is all-or-nothing — one unreadable entry drops the whole envelope and the
  *     input encodes flat — so the panel said "your fade is set up" about audio that will not fade.
@@ -15,7 +14,7 @@
  * A shipped package can no longer carry unreadable keyframes; an IN-PROGRESS one being authored
  * can, and these panels are exactly what an author opens to find out why nothing moves.
  *
- * Both directions are pinned: the broken package is counted honestly and warned about once, and a
+ * Both directions are pinned: an unreadable-keyframe package is counted honestly and warned about once, and a
  * healthy package produces the identical counts it produced before, with no warning and no new key.
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

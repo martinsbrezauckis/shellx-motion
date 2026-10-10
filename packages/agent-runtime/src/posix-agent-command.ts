@@ -10,6 +10,13 @@ export interface NativePosixAgentExecutableIdentity {
   inode: number;
 }
 
+/** Motion's current macOS spawn('/dev/fd/3') route returns EACCES for inherited providers. */
+export function assertPinnedPosixProviderLaunchSupported(): void {
+  if (process.platform === "darwin") {
+    throw new Error("Pinned agent providers require retained-descriptor execution, which is unavailable on macOS.");
+  }
+}
+
 /**
  * Resolve a provider name without ever letting a relative or empty PATH entry
  * inherit authority from the agent prompt's working directory.
@@ -52,6 +59,7 @@ export async function prepareNativePosixAgentCommand(
   if (!expected || process.platform === "win32") {
     return { command, cleanup: async () => undefined };
   }
+  assertPinnedPosixProviderLaunchSupported();
   const handle = await open(command.executable, "r");
   try {
     const facts = await handle.stat();

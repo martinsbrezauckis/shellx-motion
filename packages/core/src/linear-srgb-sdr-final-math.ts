@@ -20,6 +20,11 @@ export interface LinearSrgbSdrPremultipliedRgba {
   readonly a: number;
 }
 
+/** The F2b blend vocabulary is deliberately closed to the two admitted static operations. */
+export type LinearSrgbSdrBlendMode = "normal" | "screen";
+
+export type LinearSrgbSdrCompositingLayer = LinearSrgbSdrStraightRgba & Readonly<{ readonly blendMode?: LinearSrgbSdrBlendMode }>;
+
 export interface CanonicalSrgbHex {
   readonly hex: string;
   readonly r: number;
@@ -75,6 +80,20 @@ export function linearSourceOver(source: LinearSrgbSdrPremultipliedRgba, destina
   };
 }
 
+/**
+ * Applies W3C screen in premultiplied linear-sRGB. With straight colours
+ * `Cs`/`Cd`, alpha `As`/`Ad`, and screen `B = Cs + Cd - Cs*Cd`, the
+ * Porter-Duff result reduces component-wise to `Sp + Dp - Sp*Dp`.
+ */
+export function linearScreen(source: LinearSrgbSdrPremultipliedRgba, destination: LinearSrgbSdrPremultipliedRgba): LinearSrgbSdrPremultipliedRgba {
+  return {
+    r: source.r + destination.r - source.r * destination.r,
+    g: source.g + destination.g - source.g * destination.g,
+    b: source.b + destination.b - source.b * destination.b,
+    a: source.a + destination.a - source.a * destination.a,
+  };
+}
+
 export function premultipliedLinearToStraightSrgb(value: LinearSrgbSdrPremultipliedRgba): LinearSrgbSdrStraightRgba {
   if (value.a === 0) return { r: 0, g: 0, b: 0, a: 0 };
   return {
@@ -87,8 +106,16 @@ export function premultipliedLinearToStraightSrgb(value: LinearSrgbSdrPremultipl
 
 /** Composes bottom-to-top straight-sRGB layers through the strict route's declared domain. */
 export function composeLinearSrgbSourceOver(layers: readonly LinearSrgbSdrStraightRgba[]): LinearSrgbSdrStraightRgba {
+  return composeLinearSrgbLayers(layers);
+}
+
+/** Composes bottom-to-top normal/source-over and F2b screen layers in linear light. */
+export function composeLinearSrgbLayers(layers: readonly LinearSrgbSdrCompositingLayer[]): LinearSrgbSdrStraightRgba {
   let output: LinearSrgbSdrPremultipliedRgba = { r: 0, g: 0, b: 0, a: 0 };
-  for (const layer of layers) output = linearSourceOver(straightSrgbToPremultipliedLinear(layer), output);
+  for (const layer of layers) {
+    const source = straightSrgbToPremultipliedLinear(layer);
+    output = layer.blendMode === "screen" ? linearScreen(source, output) : linearSourceOver(source, output);
+  }
   return premultipliedLinearToStraightSrgb(output);
 }
 
@@ -97,10 +124,15 @@ export function composeLinearSrgbSourceOver(layers: readonly LinearSrgbSdrStraig
  * control for vectors: any strict linear-SDR implementation matching this result is wrong.
  */
 export function composeGammaWrongEncodedSourceOver(layers: readonly LinearSrgbSdrStraightRgba[]): LinearSrgbSdrStraightRgba {
+  return composeGammaWrongEncodedLayers(layers);
+}
+
+/** Deliberately incorrect encoded-domain normal/screen composition for F2b controls. */
+export function composeGammaWrongEncodedLayers(layers: readonly LinearSrgbSdrCompositingLayer[]): LinearSrgbSdrStraightRgba {
   let output: LinearSrgbSdrPremultipliedRgba = { r: 0, g: 0, b: 0, a: 0 };
   for (const layer of layers) {
     const source = { r: layer.r * layer.a, g: layer.g * layer.a, b: layer.b * layer.a, a: layer.a };
-    output = linearSourceOver(source, output);
+    output = layer.blendMode === "screen" ? linearScreen(source, output) : linearSourceOver(source, output);
   }
   if (output.a === 0) return { r: 0, g: 0, b: 0, a: 0 };
   return { r: output.r / output.a, g: output.g / output.a, b: output.b / output.a, a: output.a };

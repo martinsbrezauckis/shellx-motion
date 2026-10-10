@@ -242,6 +242,9 @@ describe("bounded markup scanners", () => {
       // named "a", not a failure, and its terminator is </a>.
       `<a- ${ATTR}="a.html">body</a>`,
       `<a-b ${ATTR}="a.html">body</a-b>`,
+      `<a-b:c-d ${ATTR}="a.html">body</a-b:c-d>`,
+      `<A-B:C-D ${ATTR}="a.html">body</a-b:c-d>`,
+      `<a-b:c-d ${ATTR}="a.html">body</a-b>`,
       // The greedy `[^>]*` prefers the RIGHTMOST attribute occurrence.
       `<div ${ATTR}=unquoted ${ATTR}="second.html">body</div>`,
       // ...but falls back leftwards when the rightmost one leaves no reachable closer.
@@ -317,5 +320,24 @@ describe("bounded markup scanners", () => {
     const bomb = `${"<a-a-a-a-a-a-a-a ".repeat(3_200)}${`${ATTR}="v" `.repeat(1_600)}>`;
     expect(bomb.length).toBeGreaterThan(92_000);
     expect(expectWithin(ADVERSARIAL_BUDGET_MS, () => scanMarkupAttributeTagPairs(bomb, ATTR))).toEqual([]);
+  });
+
+  it("scans a long hyphen and colon name without allocating every candidate prefix", () => {
+    // Every `-`/`:` after a word character is a legal greedy-name backtrack point. The old
+    // implementation made a growing name and closer string for each point, then cached the miss.
+    const bomb = `<${"a-:".repeat(8_000)}a ${ATTR}="v">body`;
+    expect(bomb.length).toBeGreaterThan(24_000);
+    expect(expectWithin(ADVERSARIAL_BUDGET_MS, () => scanMarkupAttributeTagPairs(bomb, ATTR))).toEqual([]);
+
+    const name = `a${"-b:c".repeat(2_000)}`;
+    const matched = `<${name} ${ATTR}="v">body</${name}>`;
+    expect(expectWithin(ADVERSARIAL_BUDGET_MS, () => scanMarkupAttributeTagPairs(matched, ATTR))).toEqual([{
+      start: 0,
+      end: matched.length,
+      tagName: name,
+      attrText: ` ${ATTR}="v"`,
+      quote: '"',
+      value: "v"
+    }]);
   });
 });

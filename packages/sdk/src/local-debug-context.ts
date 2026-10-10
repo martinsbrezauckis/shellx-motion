@@ -13,7 +13,7 @@
  * `sdk-local-options.ts` in `@shellx-motion/debug-server` for the precise scope of what it buys.
  *
  * Extracted from `local.ts` rather than added to it: that file carries a declared non-growth
- * baseline in `scripts/module-size-gate.mjs`.
+ * baseline in `scripts/public/module-size-gate.mjs`.
  *
  * Primary caller: `./local.ts`.
  */

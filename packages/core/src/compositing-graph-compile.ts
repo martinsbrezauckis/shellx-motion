@@ -2,6 +2,7 @@ import { canonicalJson } from "./canonical-json";
 import type { MotionDocument, MotionEffects, MotionLayer } from "./types";
 import {
   MOTION_COMPOSITING_COMPILE_SCHEMA,
+  MAX_COMPOSITING_DERIVED_LAYERS,
   type CompiledMotionCompositingGraph, type MotionCompositingCompileMetadata,
   type MotionCompositingEdge, type MotionCompositingGraph,
   type MotionCompositingInputPort, type MotionCompositingIssue, type MotionCompositingNode,
@@ -217,7 +218,7 @@ function readCompileMetadata(value: unknown): MotionCompositingCompileMetadata |
     || typeof metadata.graphId !== "string" || !metadata.graphId
     || typeof metadata.fingerprint !== "string" || !/^[a-f0-9]{16}$/.test(metadata.fingerprint)
     || !isIdList(metadata.nodeOrder, 64) || !isIdList(metadata.sourceLayerIds, 64)
-    || !isIdList(metadata.outputLayerIds, 128) || !plainRecord(metadata.estimate)) {
+    || !isIdList(metadata.outputLayerIds, MAX_COMPOSITING_DERIVED_LAYERS) || !plainRecord(metadata.estimate)) {
     throw new Error("Motion compositing compile metadata is invalid.");
   }
   return clone(metadata) as unknown as MotionCompositingCompileMetadata;

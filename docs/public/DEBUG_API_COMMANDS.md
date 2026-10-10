@@ -12,11 +12,20 @@ be classified as mutations even when the source package itself is unchanged. For
 authentication examples, see [`DEBUG_API.md`](DEBUG_API.md).
 
 Arguments below are the exact keys each command reads, and that is checked mechanically:
-`scripts/debug-arg-coverage.ts` reads every debug handler and fails the build if one reads an
+`scripts/public/debug-arg-coverage.ts` reads every debug handler and fails the build if one reads an
 argument this table does not list. `Aliases` are additional accepted names for the same argument.
 Large or shared value sets are named in `Allowed values` and listed once under
 [Argument value enumerations](#argument-value-enumerations). Every allowed-value list here is
 enforced on the wire, not merely advertised.
+
+Closed nested object, array, and union arguments additionally publish a compact descriptive
+shape summary below their existing table. These are not JSON Schema and do not validate requests:
+production normalization (including aliases and defaults) and branch behavior remain authoritative
+only in the linked JSON Pointer. A summary is emitted only after every bounded nested node has
+been checked for supported validation metadata. Unsupported metadata and bounds become an explicit
+non-executable fallback. Per-summary bounds are
+14 levels, 768 nodes, and 8192 UTF-8 bytes; every nested block, fallback, heading, and source link shares a
+global cap of 4096 nodes and 61440 UTF-8 bytes.
 
 ## Debug coverage gate scope
 
@@ -134,7 +143,7 @@ Any other argument is **rejected**: the call fails with `invalid_args` and the c
 
 Tier `read_motion` · mutates: no
 
-**Purpose:** Show grouped actions, permission tiers, prompt commands, and suggested prompt-run follow-ups.
+**Purpose:** Show grouped actions, permission tiers, explicit prompt-provider selection guidance, and health/selection follow-ups without a bare prompt run.
 
 Takes no arguments.
 
@@ -142,7 +151,7 @@ Takes no arguments.
 
 Tier `read_motion` · mutates: no
 
-**Purpose:** Show local CLI agent selection policy, adapter command shapes, safety guarantees, and prompt follow-ups.
+**Purpose:** Show prompt-provider selection policy, adapter command shapes, safety guarantees, and readiness/transcript follow-ups without a default provider or bare prompt run.
 
 Takes no arguments.
 
@@ -214,13 +223,13 @@ Any other argument is **rejected**: the call fails with `invalid_args` and the c
 
 Tier `draft_motion` · mutates: yes
 
-**Purpose:** Run a host-injected agent for a natural-language request and record its prompt receipt; raw-request retention additionally requires Linux's stable receipt purge capability, and proposed commands execute only when explicitly requested within the caller's grant.
+**Purpose:** Run a host-injected agent for a natural-language request and record its prompt receipt; Motion's built-in runtime requires an explicit prompt-capable selection and returns agent_selection_required before a provider is probed or spawned, while an injected host runtime owns its adapter-selection contract. Raw-request retention additionally requires Linux's stable receipt purge capability, and proposed commands execute only when explicitly requested within the caller's grant.
 
 | Argument | Type | Required | Aliases | Allowed values | Description |
 |---|---|---|---|---|---|
 | `request` | `string` | yes | `prompt` |  | Natural-language instruction handed to the host-injected local agent runtime. The command returns capability_unavailable when the host has not injected one. |
 | `packageId` | `string` | no |  |  | Package id recorded in the prompt receipt. Defaults to `unknown`. |
-| `agentId` | `string` | no |  |  | Agent adapter to run; the default adapter when omitted. |
+| `agentId` | `string` | no |  |  | Explicit prompt-capable agent adapter to run. Syntax remains optional for transport compatibility. Motion's built-in runtime returns agent_selection_required when it is omitted, before a provider is probed or spawned; an injected host runtime owns its own adapter-selection contract. |
 | `cwd` | `string` | no |  |  | Working directory for the agent; must be inside a trusted prompt working root. |
 | `receiptsRoot` | `string` | no |  |  | Optional trusted host receipt mirror for the prompt receipt. |
 | `executeAgentCommands` | `boolean` | no |  |  | Execute the debug commands the agent proposes. Without this the run only records proposals and changes nothing. Defaults to `false`. |
@@ -303,6 +312,21 @@ Tier `write_local` · mutates: yes
 | `layer` | `object` | yes |  |  | The command owns source and allowedOrigins: callers cannot provide paths, URLs, external origins, or package claims. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/58/argsSchema](../../schemas/debug.json#/contracts/58/argsSchema) (command "motion.package.script.author").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir"; "html"; "layer"
+  fields: "packageRoot": type "string"; "outDir": type "string"; "html": type "string"; maxLength=262144; "layer": type "object"; closed
+- args.layer: type "object"; closed
+  required: "id"; "type"; "startMs"; "durationMs"
+  fields: "id": type "string"; maxLength=128; "type": type "string"; enum ["web", "html", "canvas"]; "startMs": type "number"; minimum=0; "durationMs": type "number"; exclusiveMinimum=0; "name": type "string"; maxLength=256; "opacity": type "number"; "visible": type "boolean"
+```
 
 ### `motion.analysis.tracking.request`
 
@@ -834,6 +858,28 @@ At least one input shape is required: `templateRoot`; `packageRoot`; `packageRoo
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/292/argsSchema](../../schemas/debug.json#/contracts/292/argsSchema) (command "motion.template.catalog").
+
+```text
+- args: type "object"; closed
+  fields: "templateRoot": type "string"; accepted aliases ["templatesRoot", "root"]; "packageRoot": type "string"; "packageRoots": type "array"; "targetHost": type "string"; accepted aliases ["host"]; "targetLane": type "string"; accepted aliases ["lane"]; "aspectRatio": type "string"; accepted aliases ["targetAspectRatio"]; "durationMs": type "number"; accepted aliases ["targetDurationMs"]; "width": type "number"; accepted aliases ["targetWidth"]
+  "height": type "number"; accepted aliases ["targetHeight"]; "targetCommercialUse": type "boolean"; accepted aliases ["commercialUse"]; "renderCost": type "string"; enum ["low", "medium", "high"]; "outputType": type "string"; "requiresMedia": type "boolean"; "requiresAudio": type "boolean"; "designFamily": type "string"
+  root anyOf: 3 top-level alternative(s); at least one declared input alternative is required.
+- args.anyOf[0]: type "object"; additional properties allowed
+  required: "templateRoot" (accepted aliases "templatesRoot", "root")
+  fields: "templateRoot": type "string"; accepted aliases ["templatesRoot", "root"]
+- args.anyOf[1]: type "object"; additional properties allowed
+  required: "packageRoot"
+  fields: "packageRoot": type "string"
+- args.anyOf[2]: type "object"; additional properties allowed
+  required: "packageRoots"
+  fields: "packageRoots": type "array"
+```
+
 ### `motion.template.plan`
 
 Tier `read_motion` · mutates: no
@@ -864,6 +910,29 @@ Tier `read_motion` · mutates: no
 At least one input shape is required: `templateRoot`; `packageRoot`; `packageRoots`.
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/293/argsSchema](../../schemas/debug.json#/contracts/293/argsSchema) (command "motion.template.plan").
+
+```text
+- args: type "object"; closed
+  required: "request" (also satisfied by production prose alias "prompt")
+  fields: "request": type "string"; "prompt": type "string"; "values": type "object"; "templateRoot": type "string"; accepted aliases ["templatesRoot", "root"]; "packageRoot": type "string"; "packageRoots": type "array"; "targetHost": type "string"; accepted aliases ["host"]; "targetLane": type "string"; accepted aliases ["lane"]; "aspectRatio": type "string"; accepted aliases ["targetAspectRatio"]; "durationMs": type "number"; accepted aliases ["targetDurationMs"]
+  "width": type "number"; accepted aliases ["targetWidth"]; "height": type "number"; accepted aliases ["targetHeight"]; "targetCommercialUse": type "boolean"; accepted aliases ["commercialUse"]; "renderCost": type "string"; enum ["low", "medium", "high"]; "outputType": type "string"; "requiresMedia": type "boolean"; "requiresAudio": type "boolean"; "designFamily": type "string"
+  root anyOf: 3 top-level alternative(s); at least one declared input alternative is required.
+- args.anyOf[0]: type "object"; additional properties allowed
+  required: "templateRoot" (accepted aliases "templatesRoot", "root")
+  fields: "templateRoot": type "string"; accepted aliases ["templatesRoot", "root"]
+- args.anyOf[1]: type "object"; additional properties allowed
+  required: "packageRoot"
+  fields: "packageRoot": type "string"
+- args.anyOf[2]: type "object"; additional properties allowed
+  required: "packageRoots"
+  fields: "packageRoots": type "array"
+```
 
 ### `motion.template.panel`
 
@@ -1086,6 +1155,28 @@ Exactly one input shape is required: `scriptPath`; `script`; `storyboard`.
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/286/argsSchema](../../schemas/debug.json#/contracts/286/argsSchema) (command "motion.connector.script_to_cut").
+
+```text
+- args: type "object"; closed
+  required: "outDir"
+  fields: "scriptPath": type "string"; "script": type "object"; "storyboard": type "object"; "outDir": type "string"; "cutImportMode": type "string"; enum ["rendered_media"]; "startMs": type "number"; minimum=0; "durationMs": type "number"; exclusiveMinimum=0; "track": type "string"
+  root oneOf: 3 top-level alternative(s); exactly one declared input alternative is required (exact input-count semantics).
+- args.oneOf[0]: type "object"; additional properties allowed
+  required: "scriptPath"
+  fields: "scriptPath": type "string"
+- args.oneOf[1]: type "object"; additional properties allowed
+  required: "script"
+  fields: "script": type "object"
+- args.oneOf[2]: type "object"; additional properties allowed
+  required: "storyboard"
+  fields: "storyboard": type "object"
+```
+
 ### `motion.connector.source_to_cut`
 
 Tier `write_local` · mutates: yes
@@ -1124,6 +1215,13 @@ Tier `write_local` · mutates: yes
 Exactly one input shape is required: `scriptPath`; `script`; `storyboard`.
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/288/argsSchema](../../schemas/debug.json#/contracts/288/argsSchema) (command "motion.connector.cut_generate_to_cut").
+Reason: "document_budget_cap".
 
 ### `motion.connector.template_to_cut`
 
@@ -1257,6 +1355,22 @@ Tier `render_motion` · mutates: yes
 
 Other arguments are accepted and passed through unread; this command does not close its argument set.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/8/argsSchema](../../schemas/debug.json#/contracts/8/argsSchema) (command "motion.render.final").
+
+```text
+- args: type "object"; additional properties allowed
+  required: "packageRoot"; "outputPath"
+  fields: "jobId": type "string"; "packageRoot": type "string"; "outputPath": type "string"; "preset": type "string"; enumRef "exportPreset"; "frameLane": type "string"; enum ["browser", "native", "gpu"]; "atMs": type "number"; minimum=0; "framesDir": type "string"; "keepFrames": type "boolean"; "segmented": type "object"; closed; "minUniqueFrameHashes": type "number"; minimum=1; "workflowPath": type "string"; "workflow": type "object"; "qualityManifestPath": type "string"
+  "manifestPath": type "string"; "receiptsRoot": type "string"; "dryRun": type "boolean"; "reuseAttested": type "boolean"
+- args.segmented: type "object"; closed
+  required: "segmentFrames"
+  fields: "segmentFrames": type "number"; maximum=9007199254740991; minimum=1; "resume": type "boolean"
+```
+
 ### `motion.render.cache.plan`
 
 Tier `render_motion` · mutates: no
@@ -1302,6 +1416,21 @@ Tier `render_motion` · mutates: yes
 | `resume` | `boolean` | no |  |  | Reuse completed row outputs only when idempotency and retained authenticated caller ownership match; resume without a host caller principal fails before output writes. |
 
 Other arguments are accepted and passed through unread; this command does not close its argument set.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/10/argsSchema](../../schemas/debug.json#/contracts/10/argsSchema) (command "motion.render.batch").
+
+```text
+- args: type "object"; additional properties allowed
+  required: "packageRoot"; "outDir"
+  fields: "jobId": type "string"; "packageRoot": type "string"; "outDir": type "string"; "rowsPath": type "string"; "rowId": type "string"; maxLength=256; "rowIds": type "array"; maxItems=256; "preset": type "string"; enumRef "exportPreset"; "frameLane": type "string"; enum ["browser", "native", "gpu"]; "keepFrames": type "boolean"; "minUniqueFrameHashes": type "number"; minimum=1; "qualityManifestPath": type "string"; "manifestPath": type "string"; "workflow": type "object"
+  "workflowPath": type "string"; "dryRun": type "boolean"; "resume": type "boolean"
+- args.rowIds: type "array"; maxItems=256
+  items: type "string"; maxLength=256
+```
 
 ### `motion.render.cancel`
 
@@ -1412,6 +1541,21 @@ Tier `render_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/18/argsSchema](../../schemas/debug.json#/contracts/18/argsSchema) (command "motion.job.submit").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outputPath"
+  fields: "jobId": type "string"; maxLength=128; "packageRoot": type "string"; "outputPath": type "string"; "preset": type "string"; "frameLane": type "string"; enum ["browser", "native", "gpu"]; "segmented": type "object"; closed; "receiptsRoot": type "string"
+- args.segmented: type "object"; closed
+  required: "segmentFrames"
+  fields: "segmentFrames": type "number"; maximum=2147483647; minimum=1; "resume": type "boolean"
+```
+
 ### `motion.job.cancel`
 
 Tier `render_motion` · mutates: yes
@@ -1421,7 +1565,7 @@ Tier `render_motion` · mutates: yes
 | Argument | Type | Required | Aliases | Allowed values | Description |
 |---|---|---|---|---|---|
 | `jobId` | `string` | yes |  |  | Active job to stop. |
-| `reason` | `string` | no |  |  | Optional operator explanation recorded with the terminal cancellation. |
+| `reason` | `string` | no |  |  | Optional single-line operator explanation recorded with the terminal cancellation. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
@@ -1983,6 +2127,23 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/39/argsSchema](../../schemas/debug.json#/contracts/39/argsSchema) (command "motion.audio.master.set").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir" (accepted aliases "packageDir")
+  fields: "packageRoot": type "string"; "outDir": type "string"; accepted aliases ["packageDir"]; "receiptsRoot": type "string"; "createdBy": type "string"; "master": type "object"; closed; "clear": type "boolean"
+- args.master: type "object"; closed
+  fields: "volume": type "number"; maximum=4; minimum=0; "fadeInMs": type "number"; minimum=0; "fadeOutMs": type "number"; minimum=0; "fadeCurve": type "string"; enum ["linear", "equal-power"]; "loudness": type "object"; closed
+- args.master.loudness: type "object"; closed
+  required: "integratedLufs"; "toleranceLufs"; "maxTruePeakDbtp"
+  fields: "integratedLufs": type "number"; maximum=-5; minimum=-70; "toleranceLufs": type "number"; maximum=24; minimum=0; "maxTruePeakDbtp": type "number"; maximum=0; minimum=-9; "maxLoudnessRangeLu": type "number"; maximum=50; minimum=1
+```
+
 ### `motion.audio.crossfade.set`
 
 Tier `edit_motion` · mutates: yes
@@ -2253,6 +2414,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/97/argsSchema](../../schemas/debug.json#/contracts/97/argsSchema) (command "motion.timeline.keyframe.upsert").
+Reason: "invalid_pattern".
+
 ### `motion.timeline.keyframe.delete`
 
 Tier `edit_motion` · mutates: yes
@@ -2329,6 +2497,13 @@ Tier `edit_motion` · mutates: yes
 | `endMs` | `number` | no |  |  | Window end in milliseconds; unbounded when omitted. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/101/argsSchema](../../schemas/debug.json#/contracts/101/argsSchema) (command "motion.timeline.keyframe.easing.apply").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.keyframe.shift`
 
@@ -2471,6 +2646,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/108/argsSchema](../../schemas/debug.json#/contracts/108/argsSchema) (command "motion.timeline.spatial.position.upsert").
+Reason: "invalid_pattern".
+
 ### `motion.timeline.spatial.position.move`
 
 Tier `edit_motion` · mutates: yes
@@ -2520,6 +2702,55 @@ Tier `read_motion` · mutates: no
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/111/argsSchema](../../schemas/debug.json#/contracts/111/argsSchema) (command "motion.revision.transaction.plan").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "base"; "steps"
+  fields: "packageRoot": type "string"; maxLength=4096; "base": type "object"; closed; "steps": type "array"; maxItems=32; minItems=1
+- args.base: type "object"; closed
+  required: "packageId"; "motionId"; "manifestSha256"; "motionSha256"
+  fields: "packageId": type "string"; maxLength=96; "motionId": type "string"; maxLength=96; "manifestSha256": type "string"; maxLength=64; "motionSha256": type "string"; maxLength=64
+- args.steps: type "array"; maxItems=32; minItems=1
+  items: type "object"
+- args.steps[]: type "object"
+  nested oneOf: 10 branch(es); production accepts any candidate-success branch.
+- args.steps[].oneOf[0]: type "object"; closed
+  required: "command"; "layerId"; "text"
+  fields: "command": type "string"; enum ["motion.timeline.layer.text.set"]; "layerId": type "string"; maxLength=256; "text": type "string"; maxLength=16384
+- args.steps[].oneOf[1]: type "object"; closed
+  required: "command"; "layerId"; "name"
+  fields: "command": type "string"; enum ["motion.timeline.layer.name.set"]; "layerId": type "string"; maxLength=256; "name": type "string"; maxLength=256
+- args.steps[].oneOf[2]: type "object"; closed
+  required: "command"; "layerId"; "visible"
+  fields: "command": type "string"; enum ["motion.timeline.layer.visibility.set"]; "layerId": type "string"; maxLength=256; "visible": type "boolean"
+- args.steps[].oneOf[3]: type "object"; closed
+  required: "command"; "layerId"; "locked"
+  fields: "command": type "string"; enum ["motion.timeline.layer.lock"]; "layerId": type "string"; maxLength=256; "locked": type "boolean"
+- args.steps[].oneOf[4]: type "object"; closed
+  required: "command"; "layerId"; "target"; "atMs"; "value"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.upsert"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "atMs": type "number"; minimum=0; "value": type "number" | "string"; "easing": type "string"; enumRef "easing"
+- args.steps[].oneOf[5]: type "object"; closed
+  required: "command"; "layerId"; "target"; "atMs"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.delete"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "atMs": type "number"; minimum=0
+- args.steps[].oneOf[6]: type "object"; closed
+  required: "command"; "layerId"; "target"; "fromMs"; "toMs"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.move"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "fromMs": type "number"; minimum=0; "toMs": type "number"; minimum=0
+- args.steps[].oneOf[7]: type "object"; closed
+  required: "command"; "layerId"; "atMs"; "x"; "y"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.upsert"]; "layerId": type "string"; maxLength=256; "atMs": type "number"; minimum=0; "x": type "number"; "y": type "number"; "easing": type "string"; enumRef "easing"
+- args.steps[].oneOf[8]: type "object"; closed
+  required: "command"; "layerId"; "fromMs"; "toMs"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.move"]; "layerId": type "string"; maxLength=256; "fromMs": type "number"; minimum=0; "toMs": type "number"; minimum=0
+- args.steps[].oneOf[9]: type "object"; closed
+  required: "command"; "layerId"; "atMs"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.delete"]; "layerId": type "string"; maxLength=256; "atMs": type "number"; minimum=0
+```
+
 ### `motion.revision.transaction`
 
 Tier `edit_motion` · mutates: yes
@@ -2535,6 +2766,55 @@ Tier `edit_motion` · mutates: yes
 | `createdBy` | `string` | no |  |  | Optional attribution recorded in the one aggregate package receipt. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/112/argsSchema](../../schemas/debug.json#/contracts/112/argsSchema) (command "motion.revision.transaction").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir"; "base"; "steps"
+  fields: "packageRoot": type "string"; maxLength=4096; "outDir": type "string"; maxLength=4096; "base": type "object"; closed; "steps": type "array"; maxItems=32; minItems=1; "createdBy": type "string"; maxLength=256
+- args.base: type "object"; closed
+  required: "packageId"; "motionId"; "manifestSha256"; "motionSha256"
+  fields: "packageId": type "string"; maxLength=96; "motionId": type "string"; maxLength=96; "manifestSha256": type "string"; maxLength=64; "motionSha256": type "string"; maxLength=64
+- args.steps: type "array"; maxItems=32; minItems=1
+  items: type "object"
+- args.steps[]: type "object"
+  nested oneOf: 10 branch(es); production accepts any candidate-success branch.
+- args.steps[].oneOf[0]: type "object"; closed
+  required: "command"; "layerId"; "text"
+  fields: "command": type "string"; enum ["motion.timeline.layer.text.set"]; "layerId": type "string"; maxLength=256; "text": type "string"; maxLength=16384
+- args.steps[].oneOf[1]: type "object"; closed
+  required: "command"; "layerId"; "name"
+  fields: "command": type "string"; enum ["motion.timeline.layer.name.set"]; "layerId": type "string"; maxLength=256; "name": type "string"; maxLength=256
+- args.steps[].oneOf[2]: type "object"; closed
+  required: "command"; "layerId"; "visible"
+  fields: "command": type "string"; enum ["motion.timeline.layer.visibility.set"]; "layerId": type "string"; maxLength=256; "visible": type "boolean"
+- args.steps[].oneOf[3]: type "object"; closed
+  required: "command"; "layerId"; "locked"
+  fields: "command": type "string"; enum ["motion.timeline.layer.lock"]; "layerId": type "string"; maxLength=256; "locked": type "boolean"
+- args.steps[].oneOf[4]: type "object"; closed
+  required: "command"; "layerId"; "target"; "atMs"; "value"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.upsert"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "atMs": type "number"; minimum=0; "value": type "number" | "string"; "easing": type "string"; enumRef "easing"
+- args.steps[].oneOf[5]: type "object"; closed
+  required: "command"; "layerId"; "target"; "atMs"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.delete"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "atMs": type "number"; minimum=0
+- args.steps[].oneOf[6]: type "object"; closed
+  required: "command"; "layerId"; "target"; "fromMs"; "toMs"
+  fields: "command": type "string"; enum ["motion.timeline.keyframe.move"]; "layerId": type "string"; maxLength=256; "target": type "string"; enumRef "keyframeTarget"; "fromMs": type "number"; minimum=0; "toMs": type "number"; minimum=0
+- args.steps[].oneOf[7]: type "object"; closed
+  required: "command"; "layerId"; "atMs"; "x"; "y"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.upsert"]; "layerId": type "string"; maxLength=256; "atMs": type "number"; minimum=0; "x": type "number"; "y": type "number"; "easing": type "string"; enumRef "easing"
+- args.steps[].oneOf[8]: type "object"; closed
+  required: "command"; "layerId"; "fromMs"; "toMs"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.move"]; "layerId": type "string"; maxLength=256; "fromMs": type "number"; minimum=0; "toMs": type "number"; minimum=0
+- args.steps[].oneOf[9]: type "object"; closed
+  required: "command"; "layerId"; "atMs"
+  fields: "command": type "string"; enum ["motion.timeline.spatial.position.delete"]; "layerId": type "string"; maxLength=256; "atMs": type "number"; minimum=0
+```
 
 ### `motion.timeline.keyframes.panel`
 
@@ -2618,6 +2898,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/118/argsSchema](../../schemas/debug.json#/contracts/118/argsSchema) (command "motion.timeline.animation.preset.apply").
+Reason: "invalid_pattern".
+
 ### `motion.timeline.transition.presets`
 
 Tier `read_motion` · mutates: no
@@ -2646,6 +2933,13 @@ Tier `edit_motion` · mutates: yes
 | `easing` | `string` | no |  |  | Named Motion easing or a bounded functional cubic-bezier(...)/steps(...) string (at most 256 UTF-16 code units). |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/120/argsSchema](../../schemas/debug.json#/contracts/120/argsSchema) (command "motion.timeline.transition.preset.apply").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.layer.create`
 
@@ -3017,6 +3311,34 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/140/argsSchema](../../schemas/debug.json#/contracts/140/argsSchema) (command "motion.timeline.checkpoint-storyboard.create").
+
+```text
+- args: type "object"; closed
+  required: "descriptor"
+  fields: "descriptor": type "object"
+- args.descriptor: type "object"
+  nested oneOf: 9 branch(es); production accepts any candidate-success branch.
+- args.descriptor.oneOf[0]: type "object"; closed
+  required: "seed"; "capabilityRequirements"; "objectCatalog"; "checkpoints"; "edges"; "recipes"
+  fields: "seed": type "number"; maximum=4294967295; minimum=0; "capabilityRequirements": type "array"; maxItems=2; minItems=1; "objectCatalog": type "array"; maxItems=64; minItems=1; "checkpoints": type "array"; maxItems=16; minItems=2; "edges": type "array"; maxItems=64; minItems=1; "recipes": type "array"; maxItems=64
+- args.descriptor.oneOf[0].capabilityRequirements: type "array"; maxItems=2; minItems=1
+  items: type "string"; enum ["renderer.browser", "renderer.native"]
+- args.descriptor.oneOf[0].objectCatalog: type "array"; maxItems=64; minItems=1
+  items: type "object"; closed
+- args.descriptor.oneOf[0].objectCatalog[]: type "object"; closed
+  required: "objectId"; "rootShapeKind"; "propertyMask"
+  fields: "objectId": type "string"; pattern "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"; maxLength=64; minLength=1; "rootShapeKind": type "string"; enum ["rect", "ellipse"]; "propertyMask": type "array"; maxItems=5; minItems=1
+- args.descriptor.oneOf[0].objectCatalog[].propertyMask: type "array"; maxItems=5; minItems=1
+  deeper known constraints are omitted from this descriptive summary; inspect the canonical pointer.
+```
+
+Summary bounds were reached; inspect the canonical pointer for the complete contract.
+
 ### `motion.timeline.checkpoint-storyboard.inspect`
 
 Tier `read_motion` · mutates: no
@@ -3028,6 +3350,21 @@ Tier `read_motion` · mutates: no
 | `identity` | `object` | yes |  |  | Closed exact host-sealed checkpoint storyboard record identity; loose ids and names are refused. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/141/argsSchema](../../schemas/debug.json#/contracts/141/argsSchema) (command "motion.timeline.checkpoint-storyboard.inspect").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.revise`
 
@@ -3042,6 +3379,37 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/142/argsSchema](../../schemas/debug.json#/contracts/142/argsSchema) (command "motion.timeline.checkpoint-storyboard.revise").
+
+```text
+- args: type "object"; closed
+  required: "parent"; "descriptor"
+  fields: "parent": type "object"; closed; "descriptor": type "object"
+- args.parent: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+- args.descriptor: type "object"
+  nested oneOf: 9 branch(es); production accepts any candidate-success branch.
+- args.descriptor.oneOf[0]: type "object"; closed
+  required: "seed"; "capabilityRequirements"; "objectCatalog"; "checkpoints"; "edges"; "recipes"
+  fields: "seed": type "number"; maximum=4294967295; minimum=0; "capabilityRequirements": type "array"; maxItems=2; minItems=1; "objectCatalog": type "array"; maxItems=64; minItems=1; "checkpoints": type "array"; maxItems=16; minItems=2; "edges": type "array"; maxItems=64; minItems=1; "recipes": type "array"; maxItems=64
+- args.descriptor.oneOf[0].capabilityRequirements: type "array"; maxItems=2; minItems=1
+  items: type "string"; enum ["renderer.browser", "renderer.native"]
+- args.descriptor.oneOf[0].objectCatalog: type "array"; maxItems=64; minItems=1
+  items: type "object"; closed
+- args.descriptor.oneOf[0].objectCatalog[]: type "object"; closed
+  required: "objectId"; "rootShapeKind"; "propertyMask"
+  fields: "objectId": type "string"; pattern "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"; maxLength=64; minLength=1; "rootShapeKind": type "string"; enum ["rect", "ellipse"]; "propertyMask": type "array"; maxItems=5; minItems=1
+- args.descriptor.oneOf[0].objectCatalog[].propertyMask: type "array"; maxItems=5; minItems=1
+  deeper known constraints are omitted from this descriptive summary; inspect the canonical pointer.
+```
+
+Summary bounds were reached; inspect the canonical pointer for the complete contract.
+
 ### `motion.timeline.checkpoint-storyboard.remove`
 
 Tier `write_local` · mutates: yes
@@ -3053,6 +3421,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Closed exact host-sealed checkpoint storyboard record identity; loose ids and names are refused. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/143/argsSchema](../../schemas/debug.json#/contracts/143/argsSchema) (command "motion.timeline.checkpoint-storyboard.remove").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.archive`
 
@@ -3066,6 +3449,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/144/argsSchema](../../schemas/debug.json#/contracts/144/argsSchema) (command "motion.timeline.checkpoint-storyboard.archive").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.materialize`
 
 Tier `write_local` · mutates: yes
@@ -3077,6 +3475,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact host-sealed storyboard identity. The host alone selects source, workspace, output, and private C6B bindings. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/145/argsSchema](../../schemas/debug.json#/contracts/145/argsSchema) (command "motion.timeline.checkpoint-storyboard.materialize").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.detach`
 
@@ -3090,6 +3503,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/146/argsSchema](../../schemas/debug.json#/contracts/146/argsSchema) (command "motion.timeline.checkpoint-storyboard.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.behavior.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3101,6 +3529,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B2 behavior-record identity. This Debug/MCP-only command accepts no package, workspace, output, receipt, approval, renderer, object, layer, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/147/argsSchema](../../schemas/debug.json#/contracts/147/argsSchema) (command "motion.timeline.checkpoint-storyboard.behavior.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.behavior.detach`
 
@@ -3114,6 +3557,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/148/argsSchema](../../schemas/debug.json#/contracts/148/argsSchema) (command "motion.timeline.checkpoint-storyboard.behavior.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.relation.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3125,6 +3583,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B3 relation-record identity. This Debug/MCP-only command accepts no package, workspace, output, receipt, approval, renderer, object, layer, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/149/argsSchema](../../schemas/debug.json#/contracts/149/argsSchema) (command "motion.timeline.checkpoint-storyboard.relation.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.relation.detach`
 
@@ -3138,6 +3611,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/150/argsSchema](../../schemas/debug.json#/contracts/150/argsSchema) (command "motion.timeline.checkpoint-storyboard.relation.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.relation-action.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3149,6 +3637,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B4 relation-action record identity. This Debug/MCP-only command accepts no package, workspace, output, receipt, approval, renderer, object, layer, action, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/151/argsSchema](../../schemas/debug.json#/contracts/151/argsSchema) (command "motion.timeline.checkpoint-storyboard.relation-action.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.relation-action.detach`
 
@@ -3162,6 +3665,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/152/argsSchema](../../schemas/debug.json#/contracts/152/argsSchema) (command "motion.timeline.checkpoint-storyboard.relation-action.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.lifecycle.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3173,6 +3691,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B5 lifecycle-record identity. This Debug/MCP-only command accepts no package, workspace, output, receipt, approval, renderer, object, layer, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/153/argsSchema](../../schemas/debug.json#/contracts/153/argsSchema) (command "motion.timeline.checkpoint-storyboard.lifecycle.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.lifecycle.detach`
 
@@ -3186,6 +3719,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/154/argsSchema](../../schemas/debug.json#/contracts/154/argsSchema) (command "motion.timeline.checkpoint-storyboard.lifecycle.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.geometry-morph.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3197,6 +3745,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B6 geometry-morph record identity. This Debug/MCP-only command accepts no package, workspace, output, receipt, approval, renderer, object, layer, geometry, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/155/argsSchema](../../schemas/debug.json#/contracts/155/argsSchema) (command "motion.timeline.checkpoint-storyboard.geometry-morph.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.geometry-morph.detach`
 
@@ -3210,6 +3773,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/156/argsSchema](../../schemas/debug.json#/contracts/156/argsSchema) (command "motion.timeline.checkpoint-storyboard.geometry-morph.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.retained-trace.resolve`
 
 Tier `write_local` · mutates: yes
@@ -3221,6 +3799,21 @@ Tier `write_local` · mutates: yes
 | `identity` | `object` | yes |  |  | Exact sealed C6B7 retained-trace record identity. This Debug/MCP-only command accepts no package, workspace, output, sidecar, receipt, approval, renderer, GPU, trace, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/157/argsSchema](../../schemas/debug.json#/contracts/157/argsSchema) (command "motion.timeline.checkpoint-storyboard.retained-trace.resolve").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.retained-trace.detach`
 
@@ -3234,6 +3827,21 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/158/argsSchema](../../schemas/debug.json#/contracts/158/argsSchema) (command "motion.timeline.checkpoint-storyboard.retained-trace.detach").
+
+```text
+- args: type "object"; closed
+  required: "identity"
+  fields: "identity": type "object"; closed
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
+
 ### `motion.timeline.checkpoint-storyboard.retained-trace.preview`
 
 Tier `render_motion` · mutates: yes
@@ -3246,6 +3854,21 @@ Tier `render_motion` · mutates: yes
 | `atUs` | `number` | yes |  |  | Exact integer microsecond in the sealed retained-trace schedule, including the final document sample. This Debug/MCP-only command accepts no path, package, output, sidecar, receipt, plan, trace, lane, renderer, GPU, session, or authority field. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/159/argsSchema](../../schemas/debug.json#/contracts/159/argsSchema) (command "motion.timeline.checkpoint-storyboard.retained-trace.preview").
+
+```text
+- args: type "object"; closed
+  required: "identity"; "atUs"
+  fields: "identity": type "object"; closed; "atUs": type "number"; maximum=3600000000; minimum=0; multipleOf=1
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.retained-trace.review.bind`
 
@@ -3261,6 +3884,24 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/160/argsSchema](../../schemas/debug.json#/contracts/160/argsSchema) (command "motion.timeline.checkpoint-storyboard.retained-trace.review.bind").
+
+```text
+- args: type "object"; closed
+  required: "identity"; "preview"; "reviewHandle"
+  fields: "identity": type "object"; closed; "preview": type "object"; closed; "reviewHandle": type "string"; pattern "^checkpoint_storyboard_retained_trace_review_handle_[a-f0-9]{32}$"
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+- args.preview: type "object"; closed
+  required: "previewHandle"; "receiptHandle"
+  fields: "previewHandle": type "string"; pattern "^checkpoint_storyboard_retained_trace_preview_[a-f0-9]{32}$"; "receiptHandle": type "string"; pattern "^checkpoint_storyboard_retained_trace_preview_receipt_[a-f0-9]{32}$"
+```
+
 ### `motion.timeline.checkpoint-storyboard.preview`
 
 Tier `render_motion` · mutates: yes
@@ -3273,6 +3914,29 @@ Tier `render_motion` · mutates: yes
 | `target` | `object` | yes |  |  | Closed target union. Checkpoint times must seal to whole milliseconds. B1d accepts whole-millisecond checkpoint and time targets in [0, duration]. The exact terminal duration D is a background-only terminal-boundary sample: all layers remain excluded with no hold or final-state claim. This command accepts no package, output, workflow, network, lane, or playhead fields. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/161/argsSchema](../../schemas/debug.json#/contracts/161/argsSchema) (command "motion.timeline.checkpoint-storyboard.preview").
+
+```text
+- args: type "object"; closed
+  required: "identity"; "target"
+  fields: "identity": type "object"; closed; "target": type "object"
+- args.identity: type "object"; closed
+  required: "id"; "sha256"; "revision"
+  fields: "id": type "string"; pattern "^checkpoint_storyboard_[a-f0-9]{32}$"; maxLength=54; minLength=54; "sha256": type "string"; pattern "^[a-f0-9]{64}$"; maxLength=64; minLength=64; "revision": type "number"; maximum=1000000; minimum=1; multipleOf=1
+- args.target: type "object"
+  nested oneOf: 2 branch(es); production accepts any candidate-success branch.
+- args.target.oneOf[0]: type "object"; closed
+  required: "kind"; "checkpointId"
+  fields: "kind": type "string"; enum ["checkpoint"]; "checkpointId": type "string"; pattern "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"; maxLength=64; minLength=1
+- args.target.oneOf[1]: type "object"; closed
+  required: "kind"; "atMs"
+  fields: "kind": type "string"; enum ["time"]; "atMs": type "number"; maximum=9007199254740991; minimum=0; multipleOf=1
+```
 
 ### `motion.timeline.checkpoint-storyboard.creative-review.bind`
 
@@ -3288,6 +3952,13 @@ Tier `write_local` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/162/argsSchema](../../schemas/debug.json#/contracts/162/argsSchema) (command "motion.timeline.checkpoint-storyboard.creative-review.bind").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.checkpoint-storyboard.preview-quality.review`
 
 Tier `write_local` · mutates: yes
@@ -3301,6 +3972,13 @@ Tier `write_local` · mutates: yes
 | `review` | `object` | yes |  |  | Closed quality-association union. `interior` reopens one durable end-exclusive B1c association. `terminal-endpoint` requires a separate host-only witness at exact D and carries no visible-final-state, held-content, human pixel review, final-media, or final-acceptance claim. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/163/argsSchema](../../schemas/debug.json#/contracts/163/argsSchema) (command "motion.timeline.checkpoint-storyboard.preview-quality.review").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.relations.inspect`
 
@@ -3329,6 +4007,53 @@ Tier `edit_motion` · mutates: yes
 | `binding` | `object` | yes |  |  | One exact attach/follow/similarity or aim binding. Core owns target authority, DAG, lock, time, and budget validation. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/165/argsSchema](../../schemas/debug.json#/contracts/165/argsSchema) (command "motion.timeline.relations.upsert").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir" (accepted aliases "packageDir"); "binding"
+  fields: "packageRoot": type "string"; "outDir": type "string"; accepted aliases ["packageDir"]; "createdBy": type "string"; "binding": type "object"
+- args.binding: type "object"
+  nested oneOf: 2 branch(es); production accepts any candidate-success branch.
+- args.binding.oneOf[0]: type "object"; closed
+  required: "id"; "enabled"; "kind"; "source"; "target"; "startUs"; "durationUs"; "mode"; "offset"
+  fields: "id": type "string"; maxLength=64; "enabled": type "boolean"; "source": type "object"; closed; "target": type "object"; closed; "startUs": type "number"; maximum=9007199254740991; minimum=0; "durationUs": type "number"; maximum=3600000000; minimum=1; "kind": type "string"; enum ["attach"]; "mode": type "string"; enum ["follow", "similarity"]; "offset": type "object"; closed
+- args.binding.oneOf[0].source: type "object"; closed
+  required: "layerId"; "anchor"
+  fields: "layerId": type "string"; maxLength=64; "anchor": type "object"; closed
+- args.binding.oneOf[0].source.anchor: type "object"; closed
+  required: "x"; "y"
+  fields: "x": type "number"; maximum=1000000; minimum=-1000000; "y": type "number"; maximum=1000000; minimum=-1000000
+- args.binding.oneOf[0].target: type "object"; closed
+  required: "layerId"; "anchor"
+  fields: "layerId": type "string"; maxLength=64; "anchor": type "object"; closed
+- args.binding.oneOf[0].target.anchor: type "object"; closed
+  required: "x"; "y"
+  fields: "x": type "number"; maximum=1000000; minimum=-1000000; "y": type "number"; maximum=1000000; minimum=-1000000
+- args.binding.oneOf[0].offset: type "object"; closed
+  required: "space"; "x"; "y"; "rotationDeg"; "scale"
+  fields: "space": type "string"; enum ["source", "world"]; "x": type "number"; maximum=1000000; minimum=-1000000; "y": type "number"; maximum=1000000; minimum=-1000000; "rotationDeg": type "number"; maximum=360000; minimum=-360000; "scale": type "number"; maximum=64; minimum=0.001
+- args.binding.oneOf[1]: type "object"; closed
+  required: "id"; "enabled"; "kind"; "source"; "target"; "startUs"; "durationUs"; "rotationOffsetDeg"
+  fields: "id": type "string"; maxLength=64; "enabled": type "boolean"; "source": type "object"; closed; "target": type "object"; closed; "startUs": type "number"; maximum=9007199254740991; minimum=0; "durationUs": type "number"; maximum=3600000000; minimum=1; "kind": type "string"; enum ["aim"]; "rotationOffsetDeg": type "number"; maximum=360000; minimum=-360000
+- args.binding.oneOf[1].source: type "object"; closed
+  required: "layerId"; "anchor"
+  fields: "layerId": type "string"; maxLength=64; "anchor": type "object"; closed
+- args.binding.oneOf[1].source.anchor: type "object"; closed
+  required: "x"; "y"
+  fields: "x": type "number"; maximum=1000000; minimum=-1000000; "y": type "number"; maximum=1000000; minimum=-1000000
+- args.binding.oneOf[1].target: type "object"; closed
+  required: "layerId"; "anchor"
+  fields: "layerId": type "string"; maxLength=64; "anchor": type "object"; closed
+- args.binding.oneOf[1].target.anchor: type "object"; closed
+  required: "x"; "y"
+  fields: "x": type "number"; maximum=1000000; minimum=-1000000; "y": type "number"; maximum=1000000; minimum=-1000000
+```
 
 ### `motion.timeline.relations.enabled.set`
 
@@ -3419,6 +4144,35 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/171/argsSchema](../../schemas/debug.json#/contracts/171/argsSchema) (command "motion.timeline.relation-actions.upsert").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir" (accepted aliases "packageDir"); "definition"
+  fields: "packageRoot": type "string"; "outDir": type "string"; accepted aliases ["packageDir"]; "createdBy": type "string"; "definition": type "object"; closed
+- args.definition: type "object"; closed
+  required: "id"; "roles"; "parameters"; "templateLayers"; "relationTemplates"; "sequence"
+  fields: "id": type "string"; maxLength=64; "roles": type "array"; maxItems=16; "parameters": type "array"; maxItems=16; "templateLayers": type "array"; maxItems=32; "relationTemplates": type "array"; maxItems=16; "sequence": type "array"; maxItems=32
+- args.definition.roles: type "array"; maxItems=16
+  items: type "object"
+- args.definition.roles[]: type "object"
+  nested oneOf: 2 branch(es); production accepts any candidate-success branch.
+- args.definition.roles[].oneOf[0]: type "object"; closed
+  required: "id"; "kind"
+  fields: "id": type "string"; maxLength=64; "kind": type "string"; enum ["group"]
+- args.definition.roles[].oneOf[1]: type "object"; closed
+  required: "id"; "kind"; "layerTypes"
+  fields: "id": type "string"; maxLength=64; "kind": type "string"; enum ["layer"]; "layerTypes": type "array"; maxItems=8; minItems=1
+- args.definition.roles[].oneOf[1].layerTypes: type "array"; maxItems=8; minItems=1
+  deeper known constraints are omitted from this descriptive summary; inspect the canonical pointer.
+```
+
+Summary bounds were reached; inspect the canonical pointer for the complete contract.
+
 ### `motion.timeline.relation-actions.remove`
 
 Tier `edit_motion` · mutates: yes
@@ -3451,6 +4205,22 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/173/argsSchema](../../schemas/debug.json#/contracts/173/argsSchema) (command "motion.timeline.relation-actions.apply").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir" (accepted aliases "packageDir"); "expectedPackageId"; "expectedPackageManifestSha256"; "request"
+  fields: "packageRoot": type "string"; "outDir": type "string"; accepted aliases ["packageDir"]; "createdBy": type "string"; "expectedPackageId": type "string"; maxLength=64; "expectedPackageManifestSha256": type "string"; maxLength=64; "request": type "object"; closed
+- args.request: type "object"; closed
+  required: "definitionId"; "expectedMotionSha256"; "expectedStoreSha256"; "expectedDefinitionSha256"; "instanceId"; "startAtUs"; "roleBindings"
+```
+
+Summary bounds were reached; inspect the canonical pointer for the complete contract.
+
 ### `motion.timeline.scene3d-animation.inspect`
 
 Tier `read_motion` · mutates: no
@@ -3477,6 +4247,13 @@ Tier `edit_motion` · mutates: yes
 | `track` | `object` | yes |  |  | One complete closed scene3d track. Its id can replace only the same immutable locator; a second track for that locator is refused. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/175/argsSchema](../../schemas/debug.json#/contracts/175/argsSchema) (command "motion.timeline.scene3d-animation.track.upsert").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.scene3d-animation.track.remove`
 
@@ -3508,6 +4285,13 @@ Tier `edit_motion` · mutates: yes
 | `keyframe` | `object` | yes |  |  | One complete exact-time typed keyframe. Core resolves value kind/bounds from the stored track locator. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/177/argsSchema](../../schemas/debug.json#/contracts/177/argsSchema) (command "motion.timeline.scene3d-animation.keyframe.upsert").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.scene3d-animation.keyframe.delete`
 
@@ -3569,6 +4353,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/181/argsSchema](../../schemas/debug.json#/contracts/181/argsSchema) (command "motion.timeline.layout-gap-animation.track.upsert").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.layout-gap-animation.track.remove`
 
 Tier `edit_motion` · mutates: yes
@@ -3599,6 +4390,13 @@ Tier `edit_motion` · mutates: yes
 | `keyframe` | `object` | yes |  |  | One exact gap keyframe; terminal state holds and it never becomes a generic keyframe target. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/183/argsSchema](../../schemas/debug.json#/contracts/183/argsSchema) (command "motion.timeline.layout-gap-animation.keyframe.upsert").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.layout-gap-animation.keyframe.delete`
 
@@ -3660,6 +4458,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/187/argsSchema](../../schemas/debug.json#/contracts/187/argsSchema) (command "motion.timeline.behaviors.upsert").
+Reason: "invalid_pattern".
+
 ### `motion.timeline.behaviors.remove`
 
 Tier `edit_motion` · mutates: yes
@@ -3704,6 +4509,13 @@ Tier `edit_motion` · mutates: yes
 | `textRuns` | `object` | yes |  |  | Closed text-runs@1 record. The run fontAssetId is the sole family, weight, and style authority. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/190/argsSchema](../../schemas/debug.json#/contracts/190/argsSchema) (command "motion.timeline.layer.text-runs.replace").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.layer.text-runs.remove`
 
@@ -3831,6 +4643,20 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Descriptive only — not executable and not a request validator.** Production normalization, aliases, defaults, and branch semantics remain authoritative only at the canonical pointer.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/197/argsSchema](../../schemas/debug.json#/contracts/197/argsSchema) (command "motion.timeline.group.wrap").
+
+```text
+- args: type "object"; closed
+  required: "packageRoot"; "outDir" (accepted aliases "packageDir"); "group"; "childLayerIds"
+  fields: "packageRoot": type "string"; "outDir": type "string"; accepted aliases ["packageDir"]; "receiptsRoot": type "string"; "createdBy": type "string"; "group": type "object"; "childLayerIds": type "array"; maxItems=256; minItems=1
+- args.childLayerIds: type "array"; maxItems=256; minItems=1
+  items: type "string"
+```
+
 ### `motion.timeline.group.unwrap`
 
 Tier `edit_motion` · mutates: yes
@@ -3950,6 +4776,13 @@ Tier `read_motion` · mutates: no
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/204/argsSchema](../../schemas/debug.json#/contracts/204/argsSchema) (command "motion.timeline.layout.inspect").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.layout.compile`
 
 Tier `read_motion` · mutates: no
@@ -3964,6 +4797,13 @@ Tier `read_motion` · mutates: no
 | `repeaters` | `array` | yes |  |  | Sorted unique source repeaters; Core checks source ownership, derived bounds, and compile budget. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/205/argsSchema](../../schemas/debug.json#/contracts/205/argsSchema) (command "motion.timeline.layout.compile").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.layout.apply`
 
@@ -3982,6 +4822,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/206/argsSchema](../../schemas/debug.json#/contracts/206/argsSchema) (command "motion.timeline.layout.apply").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.layout.remove`
 
 Tier `edit_motion` · mutates: yes
@@ -3996,6 +4843,13 @@ Tier `edit_motion` · mutates: yes
 | `removal` | `object` | yes |  |  | Exact stable marker for a document-resident layout application. The trusted Debug host verifies immutable apply authority before Core permits removal. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/207/argsSchema](../../schemas/debug.json#/contracts/207/argsSchema) (command "motion.timeline.layout.remove").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.adjustment.fixed.inspect`
 
@@ -4024,6 +4878,13 @@ Tier `edit_motion` · mutates: yes
 | `adjustment` | `object` | yes |  |  | Complete closed adjustment record. Set replaces an existing exact id or appends a new root stack entry; it accepts no index, track, transform, module, or extension fields. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/209/argsSchema](../../schemas/debug.json#/contracts/209/argsSchema) (command "motion.timeline.adjustment.fixed.set").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.adjustment.fixed.remove`
 
@@ -4069,6 +4930,13 @@ Tier `edit_motion` · mutates: yes
 | `snapshot` | `object` | yes |  |  | Exact color snapshot for shellx-motion/gradient-color-keyframes@1; each gradient holds 1..32 ordered snapshots. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/212/argsSchema](../../schemas/debug.json#/contracts/212/argsSchema) (command "motion.timeline.gradient.color-keyframes.upsert").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.gradient.color-keyframes.delete`
 
@@ -4154,6 +5022,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/217/argsSchema](../../schemas/debug.json#/contracts/217/argsSchema) (command "motion.timeline.points.point.upsert").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.points.point.move`
 
 Tier `edit_motion` · mutates: yes
@@ -4238,6 +5113,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/222/argsSchema](../../schemas/debug.json#/contracts/222/argsSchema) (command "motion.timeline.particles.field.source.insert").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.particles.field.source.replace`
 
 Tier `edit_motion` · mutates: yes
@@ -4255,6 +5137,13 @@ Tier `edit_motion` · mutates: yes
 | `source` | `object` | yes |  |  | Complete exact source record. v1 admits radial/vortex only and at most 3; v2 admits all listed kinds and at most 4. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/223/argsSchema](../../schemas/debug.json#/contracts/223/argsSchema) (command "motion.timeline.particles.field.source.replace").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.particles.field.source.move`
 
@@ -4309,6 +5198,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/226/argsSchema](../../schemas/debug.json#/contracts/226/argsSchema) (command "motion.timeline.particles.emitter.origin.insert").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.particles.emitter.origin.replace`
 
 Tier `edit_motion` · mutates: yes
@@ -4326,6 +5222,13 @@ Tier `edit_motion` · mutates: yes
 | `origin` | `object` | yes |  |  | Exact plain-data record; optional fields: directionOffsetDeg, speedScale. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/227/argsSchema](../../schemas/debug.json#/contracts/227/argsSchema) (command "motion.timeline.particles.emitter.origin.replace").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.particles.emitter.origin.move`
 
@@ -4397,6 +5300,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/231/argsSchema](../../schemas/debug.json#/contracts/231/argsSchema) (command "motion.timeline.particles.emitter.trail.add").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.particles.emitter.trail.replace`
 
 Tier `edit_motion` · mutates: yes
@@ -4413,6 +5323,13 @@ Tier `edit_motion` · mutates: yes
 | `trail` | `object` | yes |  |  | Exact plain-data record; optional fields: opacity. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/232/argsSchema](../../schemas/debug.json#/contracts/232/argsSchema) (command "motion.timeline.particles.emitter.trail.replace").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.particles.emitter.trail.remove`
 
@@ -4447,6 +5364,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/234/argsSchema](../../schemas/debug.json#/contracts/234/argsSchema) (command "motion.timeline.particles.emitter.shading.add").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.particles.emitter.shading.replace`
 
 Tier `edit_motion` · mutates: yes
@@ -4463,6 +5387,13 @@ Tier `edit_motion` · mutates: yes
 | `shading` | `object` | yes |  |  | Exact plain-data record; optional fields: sizeJitter, opacityJitter, glow. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/235/argsSchema](../../schemas/debug.json#/contracts/235/argsSchema) (command "motion.timeline.particles.emitter.shading.replace").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.particles.emitter.shading.remove`
 
@@ -4510,6 +5441,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/238/argsSchema](../../schemas/debug.json#/contracts/238/argsSchema) (command "motion.timeline.shape.geometry.replace").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.shape.geometry.point.update`
 
 Tier `edit_motion` · mutates: yes
@@ -4528,6 +5466,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/239/argsSchema](../../schemas/debug.json#/contracts/239/argsSchema) (command "motion.timeline.shape.geometry.point.update").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.shape.geometry.point.insert`
 
 Tier `edit_motion` · mutates: yes
@@ -4545,6 +5490,13 @@ Tier `edit_motion` · mutates: yes
 | `point` | `object` | yes |  |  | Exact finite geometry-space point. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/240/argsSchema](../../schemas/debug.json#/contracts/240/argsSchema) (command "motion.timeline.shape.geometry.point.insert").
+Reason: "document_budget_cap".
 
 ### `motion.timeline.shape.geometry.point.move`
 
@@ -4603,6 +5555,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/243/argsSchema](../../schemas/debug.json#/contracts/243/argsSchema) (command "motion.timeline.shape.geometry.arc.update").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.shape.geometry.path.replace`
 
 Tier `edit_motion` · mutates: yes
@@ -4654,6 +5613,13 @@ Tier `edit_motion` · mutates: yes
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
 
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/246/argsSchema](../../schemas/debug.json#/contracts/246/argsSchema) (command "motion.timeline.shape.geometry.dash.set").
+Reason: "document_budget_cap".
+
 ### `motion.timeline.shape.geometry.dash.remove`
 
 Tier `edit_motion` · mutates: yes
@@ -4698,6 +5664,13 @@ Tier `edit_motion` · mutates: yes
 | `snapshot` | `object` | yes |  |  | One complete fixed-topology shape geometry snapshot. It replaces only an equal exact atUs; partial geometry patches and generic keyframe targets are refused. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/249/argsSchema](../../schemas/debug.json#/contracts/249/argsSchema) (command "motion.timeline.shape.geometry-keyframes.upsert").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.shape.geometry-keyframes.delete`
 
@@ -5038,6 +6011,13 @@ Tier `edit_motion` · mutates: yes
 | `distance` | `number` | no |  |  | Optional travel distance in pixels for slide transitions. |
 
 Any other argument is **rejected**: the call fails with `invalid_args` and the command does not run.
+
+#### Nested contract shape summary
+
+**Not executable — authoritative source required.** A bounded descriptive summary was not emitted.
+
+Canonical JSON Pointer: [schemas/debug.json#/contracts/267/argsSchema](../../schemas/debug.json#/contracts/267/argsSchema) (command "motion.timeline.transition.upsert").
+Reason: "invalid_pattern".
 
 ### `motion.timeline.transition.delete`
 

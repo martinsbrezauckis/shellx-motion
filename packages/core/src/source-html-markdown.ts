@@ -1,23 +1,20 @@
 /**
  * Fetched-HTML → Markdown cleanup for the source importer.
  *
- * Lifted out of `source-import.ts` when the cleanup was rewritten to be bounded. The old version was
- * a chain of `String.replace` calls built on lazy nested regexes (`/<li[^>]*>([\s\S]*?)<\/li>/gi`
- * and friends). On a page that opens list items, headings, anchors, or `<script>` without ever
- * closing them, each opening tag made the engine re-scan the rest of the document, which is
- * quadratic: 815 KB of unclosed `<li>` blocked the event loop for 14.7 s before this rewrite, and
- * the importer accepts 2 MiB. `fetchSourceDocument` pulls that HTML from a URL a prompt supplied, so
- * the input author picked the stall length.
+ * This module uses bounded scans for caller-supplied HTML. Lazy nested regexes over unclosed list
+ * items, headings, anchors, or `<script>` can repeatedly scan the rest of the document, with
+ * quadratic work even within the importer's 2 MiB limit.
  *
- * The passes below use {@link replaceBoundedSpans}, which walks the document once and cannot
- * backtrack. Output is unchanged: each pass reproduces the regex it replaced, quirks included —
- * `<li` matches with no word boundary (so `<link>` is still read as a list item, as before), the
+ * The passes below use {@link replaceBoundedSpans}, which walks the document without
+ * backtracking. The conversion preserves its established quirks: `<li` matches with no word
+ * boundary (so `<link>` is still read as a list item), the
  * opening tag still ends at the first `>` with no quote awareness, and `<a>` still takes the *last*
- * `href="…"` in the tag because the old `[^>]*href=` was greedy.
+ * `href="…"` in the tag because the matching rule is greedy.
  *
  * Called by: `source-import.ts` (`fetchSourceMarkdown`).
  */
 import {
+  ForwardIndex,
   asciiLowerCase,
   boundedTagBodyStart,
   replaceBoundedSpans,
@@ -42,8 +39,8 @@ const CHAR_SINGLE_QUOTE = 0x27;
  * Convert fetched HTML into the bounded Markdown subset the source importer stores.
  *
  * Structural tags become newlines, headings become ATX headings, list items become `-` bullets,
- * anchors become `[text](href)`, and everything else is stripped. Runs in a single pass per rule, so
- * cost is linear in `html.length` for every input shape.
+ * anchors become `[text](href)`, and everything else is stripped. Each rule has bounded work; the
+ * anchor rule uses indexed lookups and is near-linear in `html.length` for every input shape.
  *
  * @param html raw response body; may be arbitrary untrusted markup
  * @returns Markdown with collapsed whitespace and at most one blank line between blocks
@@ -112,28 +109,41 @@ function listItemRule(): BoundedSpanRule {
  * Replica of `/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi`.
  *
  * The old `[^>]*` before `href=` was greedy, so the *last* `href="…"` inside the opening tag won and
- * earlier ones were only retried if it failed; this reproduces that order. The href positions are
- * collected once up front instead of being rediscovered per `<a`, which keeps a document full of
- * `<a` openers linear rather than quadratic.
+ * earlier ones were only retried if it failed; this reproduces that order. Validate each href once
+ * before scanning openers, so many openers sharing a terminator cannot repeatedly scan the same
+ * invalid candidates.
  */
 function anchorRule(html: string): BoundedSpanRule {
   const hrefStarts = quotedHrefStarts(html, asciiLowerCase(html));
+  const validStarts: number[] = [];
+  const validBodyStarts: number[] = [];
+  const validHrefs: string[] = [];
+  const hrefIndex = new ForwardIndex(html);
+  let quoteAt = 0;
+  for (const at of hrefStarts) {
+    const valueStart = at + 6;
+    if (quoteAt < valueStart) quoteAt = valueStart;
+    while (quoteAt < html.length) {
+      const code = html.charCodeAt(quoteAt);
+      if (code === CHAR_DOUBLE_QUOTE || code === CHAR_SINGLE_QUOTE) break;
+      quoteAt += 1;
+    }
+    if (quoteAt >= html.length) break;
+    if (quoteAt === valueStart) continue;
+    const bodyStart = boundedTagBodyStart(hrefIndex, quoteAt + 1);
+    if (bodyStart < 0) continue;
+    validStarts.push(at);
+    validBodyStarts.push(bodyStart);
+    validHrefs.push(html.slice(valueStart, quoteAt));
+  }
   return {
-    match: (text, lower, start, index) => {
+    match: (_text, lower, start, index) => {
       if (lower.charCodeAt(start + 1) !== CHAR_A) return null;
       const tagEnd = index.find(">", start + 2);
       if (tagEnd < 0) return null;
-      for (let slot = lastIndexAtOrBefore(hrefStarts, tagEnd - 6); slot >= 0; slot -= 1) {
-        const at = hrefStarts[slot] as number;
-        if (at < start + 2) break;
-        const valueStart = at + 6;
-        const valueEnd = nextQuoteIndex(text, valueStart);
-        if (valueEnd <= valueStart) continue;
-        const bodyStart = boundedTagBodyStart(index, valueEnd + 1);
-        if (bodyStart < 0) continue;
-        return { closeName: "a", attrText: "", bodyStart, href: text.slice(valueStart, valueEnd) };
-      }
-      return null;
+      const slot = lastIndexAtOrBefore(validStarts, tagEnd - 6);
+      if (slot < 0 || (validStarts[slot] as number) < start + 2) return null;
+      return { closeName: "a", attrText: "", bodyStart: validBodyStarts[slot] as number, href: validHrefs[slot] };
     },
     render: (open, inner) => {
       const text = stripHtml(inlineHtml(inner));
@@ -169,25 +179,6 @@ function lastIndexAtOrBefore(sorted: number[], limit: number): number {
     }
   }
   return best;
-}
-
-/**
- * First `"` or `'` at or after `from`, or -1 — the end of a `([^"']+)` run.
- *
- * One forward scan that stops at whichever quote comes first, rather than two `indexOf` calls
- * minimised afterwards. The two-call form looked linear and was not: `indexOf` for the quote that
- * does not appear scans to the END OF THE DOCUMENT, and this runs once per `href` candidate. On
- * ordinary link-heavy HTML with no apostrophe in it — the common case, not a crafted one — that made
- * the anchor pass quadratic and 38x SLOWER at 1.6 MB than the regex this replaced, which was linear
- * here. A rewrite that removes catastrophic backtracking is not allowed to introduce a quadratic of
- * its own; measured growth is the check, not the shape of the code.
- */
-function nextQuoteIndex(text: string, from: number): number {
-  for (let at = from; at < text.length; at += 1) {
-    const code = text.charCodeAt(at);
-    if (code === CHAR_DOUBLE_QUOTE || code === CHAR_SINGLE_QUOTE) return at;
-  }
-  return -1;
 }
 
 /**

@@ -27,7 +27,7 @@ import {
 
 const TEST_PARENT = join(process.cwd(), `.c7a3f-gltf-object-package-test-${process.pid}`);
 const hardwareRunner = { enabled: process.env.MOTION_GPU_C7A3F_PACKAGE_PREVIEW === "1", platform: process.platform, arch: process.arch, node: Number(process.versions.node.split(".")[0]) };
-const describeQualifiedLinuxGpu = hardwareRunner.enabled && hardwareRunner.platform === "linux" && hardwareRunner.arch === "x64" && hardwareRunner.node === 24 ? describe : describe.skip;
+const describeGpuPreview = hardwareRunner.enabled && hardwareRunner.platform === "linux" && hardwareRunner.arch === "x64" && hardwareRunner.node === 24 ? describe : describe.skip;
 const fault = vi.hoisted(() => ({ output: "", renamed: false, postInstall: false, outputManifestOpens: 0, afterCommitFaulted: false, precommitSource: "", beforeCommitClaimed: false, beforeCommitFaulted: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>(), path = await import("node:path");
@@ -52,7 +52,7 @@ async function fixture(options: { readonly receipts?: boolean } = {}) {
 function invoke(value: Awaited<ReturnType<typeof fixture>>, request: unknown = value.request) { return materializeGltfObjectScenePackage(value.host, value.prepared.approval, request); }
 function outputHost(value: Awaited<ReturnType<typeof fixture>>) { return { outputPackageRoot: value.output, packageWorkspaceRoot: value.workspace, packageWorkspaceAuthority: value.authority }; }
 
-describe.skipIf(process.platform !== "linux")("private C7A3f imported-object recipe package materializer", () => {
+describe.skipIf(process.platform !== "linux")("glTF object scene package materialization", () => {
   it("COW-installs only canonical recipes/receipt, preserves source bytes, and reopens after source deletion", async () => {
     const value = await fixture(); try {
       const before = await snapshotPackageEditTree(value.source), manifest = await readFile(join(value.source, "manifest.json")), motion = await readFile(join(value.source, "motion.json")), gltf = await readFile(join(value.source, value.sourceRef));
@@ -107,14 +107,14 @@ describe.skipIf(process.platform !== "linux")("private C7A3f imported-object rec
   });
 });
 
-describe("private C7A3f static contract", () => {
+describe("glTF object scene materialization static contract", () => {
   it("keeps renderer/GPU imports out of mutation and output-only reopen while Core scene recipes have packed parity", async () => {
     const [writer, output, manifest] = await Promise.all([readFile(new URL("./gltf-object-scene-package-materialize-private.ts", import.meta.url), "utf8"), readFile(new URL("./gltf-object-scene-package-output-private.ts", import.meta.url), "utf8"), readFile(new URL("../../../../core/package.json", import.meta.url), "utf8")]);
     expect(`${writer}\n${output}`).not.toMatch(/renderer-browser|createGpu|WebGPU|GPUBuffer/u); const parsed = JSON.parse(manifest) as { publishConfig: { exports: Record<string, unknown> } }; expect(parsed.publishConfig.exports).toHaveProperty("./internal/scene-recipe");
   });
 });
 
-describeQualifiedLinuxGpu("installed-package retained preview with explicit host fixture", () => {
+describeGpuPreview("Linux GPU installed-package preview", () => {
   it("reopens the installed sidecar, renders one intermediate frame, and terminally releases", async () => {
     expect(hardwareRunner).toEqual({ enabled: true, platform: "linux", arch: "x64", node: 24 });
     const value = await fixture(); try {

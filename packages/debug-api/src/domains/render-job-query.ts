@@ -20,7 +20,7 @@
  * Dependencies: `@shellx-motion/core` (MotionJobView). Primary caller: the render domain router.
  */
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
-import { JOB_STATUS_CONTRACT, type MotionJobCoordinator, type MotionJobCoordinatorResult, type MotionJobStatus, type MotionJobView } from "@shellx-motion/core";
+import { isMotionJobRecordText, JOB_STATUS_CONTRACT, type MotionJobCoordinator, type MotionJobCoordinatorResult, type MotionJobStatus, type MotionJobView } from "@shellx-motion/core";
 import { nonNegativeNumberArg, positiveIntegerArg, stringArg } from "./args.js";
 
 export interface RenderJobQueryServices {
@@ -103,15 +103,19 @@ async function cancelResult(args: unknown, services: RenderJobQueryServices): Pr
   const jobId = stringArg(args, "jobId");
   const reason = stringArg(args, "reason") ?? undefined;
   if (!jobId) return invalidArgs("motion.job.cancel requires jobId.", "Pass the id returned by motion.job.submit.");
+  if (reason !== undefined && !isMotionJobRecordText(reason, 512)) {
+    return invalidArgs("motion.job.cancel reason must be 1..512 non-control characters.", "Pass a short single-line operator explanation, or omit reason.");
+  }
   if (!services.jobCoordinator) return capabilityUnavailable("Live cancellation requires the persistent local Motion job coordinator.");
   const callerId = trustedJobCallerId(services);
   if (!callerId) return ownerPrincipalUnavailable();
   const answer = await services.jobCoordinator.cancel({ jobId, callerId, ...(reason ? { reason } : {}) });
   if (!answer.ok) return coordinatorFailure(answer.code, answer.message);
+  const cancelRequested = answer.value.job.cancelRequested !== null || answer.value.job.cancellation !== undefined;
   return {
     ok: true,
-    visibleState: { panel: "render", operation: "job.cancel", jobId, state: answer.value.job.state, cancelRequested: true },
-    result: { ok: true, job: answer.value.job, cancelRequested: true }, warnings: []
+    visibleState: { panel: "render", operation: "job.cancel", jobId, state: answer.value.job.state, cancelRequested },
+    result: { ok: true, job: answer.value.job, cancelRequested }, warnings: []
   };
 }
 
@@ -133,7 +137,7 @@ async function retryResult(args: unknown, services: RenderJobQueryServices): Pro
 }
 
 function coordinatorFailure(code: string, message: string): MotionDebugResult {
-  return { ok: false, error: { code, message, suggestedAction: code === "job_not_retryable" ? "Retry only a failed job whose error is marked retryable; never restart a cancelled job automatically." : "Re-read the job id and caller identity from the submission response." }, warnings: [] };
+  return { ok: false, error: { code, message, suggestedAction: code === "job_not_retryable" ? "If the failed job reports committed true, stop and reconcile before any retry even if error.retryable is true. Otherwise retry only a failed job whose error is marked retryable; never restart a cancelled job automatically." : "Re-read the job id and caller identity from the submission response." }, warnings: [] };
 }
 
 async function getResult(args: unknown, view: MotionJobView, callerId: string, scope: "own" | "all"): Promise<MotionDebugResult> {

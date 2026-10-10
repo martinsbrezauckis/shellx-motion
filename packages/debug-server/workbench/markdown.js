@@ -24,7 +24,7 @@
  * contract this module exists to guarantee.
  *
  * Source-hygiene note: this file is pure ASCII text and contains NO NUL or other
- * non-printable bytes (enforced by scripts/no-nul-bytes.mjs). The inline-parser's
+ * non-printable bytes (enforced by scripts/public/no-nul-bytes.mjs). The inline-parser's
  * placeholder delimiter is a Unicode Private-Use code point (U+E000) written as an
  * ASCII escape (`PLACEHOLDER`), so it only ever exists as a runtime string value —
  * never as a raw byte in this source — keeping the file auditable by file(1)/rg and

@@ -106,6 +106,8 @@ export interface CompactJob {
   operation: string;
   lane: string;
   outcome?: "succeeded" | "failed" | "cancelled" | "skipped";
+  /** Literal failed-only publication uncertainty; agents must stop and reconcile rather than retry. */
+  committed?: true;
   createdAtMs: number;
   pollAfterMs?: number;
   warningCount: number;

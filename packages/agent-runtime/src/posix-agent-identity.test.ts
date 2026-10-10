@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("POSIX provider identity", () => {
-  it.skipIf(process.platform === "win32")("pins trusted providers past relative and empty PATH shadows in the prompt cwd", async () => {
+  it.skipIf(process.platform !== "linux")("pins trusted providers past relative and empty PATH shadows in the prompt cwd", async () => {
     for (const [name, leadingPathEntry] of [["relative", "."], ["empty", ""]] as const) {
       const outDir = await mkdtemp(join(tmpdir(), `shellx-motion-agent-posix-${name}-`));
       tempDirs.push(outDir);
@@ -50,7 +50,7 @@ describe("POSIX provider identity", () => {
     }
   }, 45_000);
 
-  it.skipIf(process.platform === "win32")("accepts a provider selected from an absolute trusted POSIX PATH entry", async () => {
+  it.skipIf(process.platform !== "linux")("accepts a provider selected from an absolute trusted POSIX PATH entry", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-agent-posix-absolute-"));
     tempDirs.push(outDir);
     const trustedDir = join(outDir, "trusted");
@@ -78,7 +78,7 @@ describe("POSIX provider identity", () => {
     expect(result).toMatchObject({ ok: true, structuredOutput: { provider: "trusted" } });
   }, 45_000);
 
-  it.skipIf(process.platform === "win32")("refuses a provider replaced after successful POSIX health", async () => {
+  it.skipIf(process.platform !== "linux")("refuses a provider replaced after successful POSIX health", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-agent-posix-replacement-"));
     tempDirs.push(outDir);
     const trustedDir = join(outDir, "trusted");
@@ -124,6 +124,31 @@ describe("POSIX provider identity", () => {
     });
     await expect(readFile(providerPath, "utf8")).resolves.toContain('"replacement"');
   }, 45_000);
+
+  it.skipIf(process.platform !== "darwin")("refuses a pinned provider before invoking it on macOS", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "shellx-motion-agent-darwin-refusal-"));
+    tempDirs.push(outDir);
+    const marker = join(outDir, "provider-invoked");
+    const providerPath = join(outDir, "claude");
+    await writeFile(providerPath, `#!/bin/sh\nprintf invoked > '${marker}'\n`, "utf8");
+    await chmod(providerPath, 0o700);
+    const builtIn = createCliAgentAdapters().find((candidate) => candidate.id === "claude-code");
+    if (!builtIn) throw new Error("Missing built-in claude-code adapter.");
+    const adapter: AgentAdapter = {
+      ...builtIn,
+      probeCommand: () => ({ ...builtIn.probeCommand(), env: { PATH: outDir } }),
+      promptCommand: (input) => ({ ...builtIn.promptCommand(input), env: { PATH: outDir } })
+    };
+
+    const result = await buildAgentRuntime({ adapters: [adapter] }).runPrompt({
+      agentId: adapter.id, prompt: "do not invoke", packageId: "lower-third", permission: "draft_motion"
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "agent_unavailable", detail: "Pinned agent providers require retained-descriptor execution, which is unavailable on macOS." }
+    });
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 async function writePosixAgentProvider(path: string, provider: string): Promise<void> {

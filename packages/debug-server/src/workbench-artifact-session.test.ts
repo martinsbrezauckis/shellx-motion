@@ -133,9 +133,8 @@ describe("Workbench artifact session ownership", () => {
 });
 
 describe("Workbench poster session ownership", () => {
-  // Host-parity guard for the defect that shipped: the July 2026 pack replaced the
-  // hand-drawn SVG mockups with real 1920x1080 PNG renders, but the poster endpoint
-  // still allowed only ".svg", so agent consumers could not load the pack posters.
+  // The poster endpoint must serve the formats declared by the shipped pack,
+  // including rendered PNG posters as well as SVG assets.
   it("serves every poster the shipped product pack declares", async () => {
     const workspaceRoot = await mkdtemp(join(TEST_WORKSPACE_ROOT, "node_modules/shellx-motion-product-pack-posters-workspace-"));
     const server = await withTrustedWorkspaceAnchor(

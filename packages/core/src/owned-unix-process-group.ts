@@ -55,11 +55,13 @@ export function createOwnedUnixProcessGroup(
       const boundedTimeoutMs = Number.isSafeInteger(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 0;
       const boundedPollMs = Number.isSafeInteger(pollMs) && pollMs > 0 ? pollMs : 20;
       const deadline = Date.now() + boundedTimeoutMs;
-      while (presence() === "present") {
+      while (true) {
+        // EPERM is an indeterminate group state, including briefly after a Darwin SIGKILL.
+        // Continue bounded observation until ESRCH proves absence or the deadline expires.
+        if (presence() === "gone") return true;
         if (Date.now() >= deadline) return false;
         await delay(Math.min(boundedPollMs, Math.max(1, deadline - Date.now())));
       }
-      return presence() === "gone";
     }
   };
   // Preserve an indeterminate handle so cleanup can still attempt a direct group signal and then

@@ -4,7 +4,7 @@ import type { CapabilityMatch, MotionDocument, RendererCapability, RendererCapab
 
 export const GPU_SCENE3D_ANIMATION_STRICT_PREVIEW_FEATURE = "motion.scene3d-animation@1.strict-browser-gpu-preview" as const;
 
-/** The O6 wrapper is discoverable only when the caller asks for its exact preview artifact. */
+/** The scene3d animation wrapper is discoverable only when the caller asks for its exact preview artifact. */
 export function gpuScene3DAnimationStrictPreviewCapabilityMatch(
   motion: MotionDocument,
   capability: RendererCapability,

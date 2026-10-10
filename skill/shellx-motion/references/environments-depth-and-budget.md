@@ -168,60 +168,24 @@ composite. Scene and effect-mask textures remain immutable inputs. The frame pla
 sample work, retained arena high-water resources, pipeline identity, and cleanup; explicit GPU use
 refuses unsupported temporal layer kinds instead of removing their blur.
 
-That retained WebGPU path is distinct from the WebGL/browser measurements below. Do not use those
-RSS numbers as GPU throughput or memory evidence; only a fresh native GPU receipt supports a host
-claim.
+That retained WebGPU path is distinct from WebGL/browser rendering. Browser process-memory receipts
+do not prove GPU throughput or memory behavior; only a fresh native GPU receipt supports a host claim.
 
-### What it costs in practice — measured, one host
+### Planning browser-render capacity
 
-Measured with `shellx-motion render --lane ffmpeg --frame-lane browser`, 1920×1080, 30 fps, reading
-`resources.peakProcessTreeRssBytes` out of the returned frame receipt. Host: WSL2, Chromium
-151.0.7922.34. **These absolute numbers are this machine's; the shape of the curve is the
-transferable part.**
+A browser render launches Chromium once and reuses a pooled context and page for the sequence
+(`browserLaunches: 1` in the receipt's `renderSession`). Plan for the full frame count, and remember
+that `effects.motionBlur.samples: N` renders each delivered frame N times. Environment layers,
+resolution, other layer kinds, and the host's available capacity also affect resource demand.
 
-| Scene | frames | env layers | `effects.motionBlur` | peak process-tree RSS |
-|---|---|---|---|---|
-| text + shape (`fixtures/packages/lower-third`) | 120 | 0 | none | 1.15 GiB |
-| `environment-rain-cinematic` | 180 | 1 | 3 samples | 2.83 GiB |
-| the same package extended to 15 s | 450 | 1 | 3 samples | **4.40 GiB** |
-| rain + snow, motion blur removed | 450 | 2 | none | 2.65 GiB |
-| rain + snow with motion blur | 450 | 2 | 3 samples | **5.07 GiB** |
-| the 15 s rain package at `quality: "preview"` | 450 | 1 | 3 samples | 4.03 GiB |
+When a piece does not fit:
 
-Three conclusions those rows support:
-
-1. **Peak grows with FRAME COUNT, for an unchanged scene.** The same rain package went from
-   2.83 GiB at 180 frames to 4.40 GiB at 450. A browser render launches Chromium once and reuses a
-   pooled context and page for the whole sequence (`browserLaunches: 1` in the receipt's
-   `renderSession`); nothing is recycled per frame. A frame budget that fits at 6 s can therefore
-   fail at 15 s with no other change.
-2. **Motion-blur samples cost more than an extra environment layer.** One environment with
-   `samples: 3` (4.40 GiB) beat two environments with no blur (2.65 GiB) at identical frame counts.
-   `effects.motionBlur.samples: N` renders each delivered frame N times.
-3. **Lowering `environment.quality` is not the lever that rescues a render.** Dropping the 15 s rain
-   package from `cinematic` to `preview` cut effective depth layers from 4 to 2 — visible in the
-   receipt — and moved peak RSS only 4.40 → 4.03 GiB, about 8%.
-
-**Not verified here**, so plan conservatively rather than quoting a number: `particles`, `shader`,
-`scene3d` and `web` layer memory profiles; 3 or 4 concurrent environment layers; resolutions other
-than 1920×1080; any host other than the one above.
-
-### Planning rule of thumb
-
-At 1920×1080 on a machine like the one measured, a 15 s (450-frame) delivery with **two**
-WebGL environment layers and 3-sample motion blur lands near 5 GiB — about 84% of the default
-ceiling, with no headroom for a third environment, particles, or a longer cut. Design for that
-before authoring 200 layers, not after the render dies.
-
-When a piece does not fit, in the order that actually moves the number:
-
-1. **Cut the frame count per job.** Render the piece as bounded segments and concatenate them; this
-   is the same advice `docs/public/rendering.md` gives for the frame/pixel-frame limits, and it is
-   the only lever measured to scale peak RSS directly.
-2. **Remove or reduce `effects.motionBlur.samples`** on the expensive layers.
-3. **Reduce the number of simultaneous environment layers** — overlap two atmospheres only where the
-   composition genuinely needs both on screen at once.
-4. **Lower `environment.quality`** for a modest saving and a real per-frame cost saving.
+1. **Cut the frame count per job.** Render bounded segments and concatenate them; this also helps
+   with the frame/pixel-frame limits in `docs/public/rendering.md`.
+2. **Remove or reduce `effects.motionBlur.samples`** where the look permits it.
+3. **Reduce overlapping environment layers** where the composition does not need them together.
+4. **Lower `environment.quality`** to reduce shader work; measure its effect on peak memory on the
+   target host rather than assuming a fixed saving.
 5. **Read the adaptive ceiling in `doctor` first.** Motion reserves max(4 GiB, 20% of physical RAM),
    considers current free RAM, and divides the safe pool across concurrent jobs. Raise it with
    `SHELLX_MOTION_MAX_JOB_RSS_BYTES` only as a host-operator decision, never from package/agent data.

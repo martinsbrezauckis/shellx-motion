@@ -11,7 +11,7 @@ const PACKAGE_LAYER_PROPERTIES: Record<string, MotionDebugArgPropertySchema> = {
  * and that handler reads `keying` AND `mask` on every one of them — both are hashed into the
  * receipt's `mutation` input hash regardless of which operation ran. `additionalProperties: false`
  * therefore has to name both, or a call the engine accepts is refused at the MCP transport.
- * `scripts/debug-arg-coverage.ts` proves the two stay in agreement.
+ * `scripts/public/debug-arg-coverage.ts` proves the two stay in agreement.
  */
 const MUTATION_PROPERTIES: Record<string, MotionDebugArgPropertySchema> = {
   ...PACKAGE_LAYER_PROPERTIES,

@@ -26,6 +26,7 @@ import {
   streamingMetadataError
 } from "./streaming-foundation-validation";
 import { runStreamingAttempt } from "./streaming-attempt";
+import { isStreamingFinalLineageRevalidationFailure, revalidateStreamingFinalLaunch } from "./streaming-final-lineage-revalidation.js";
 import type {
   StreamingEncodeAttempt,
   StreamingEncodeAttemptOutcome,
@@ -50,7 +51,6 @@ export type {
   StreamingQualityManifestBoundary
 } from "./streaming-foundation-types";
 export { image2PipeCommandFromImageSequence, rawVideoCommandFromImageSequence } from "./streaming-command-input.js";
-
 /** Explicitly refuses the one current quality-manifest feature that needs retained source frames. */
 export function streamingQualityManifestCapability(): {
   exactSourceComparison: { supported: false; code: "streaming_quality_boundary_unsupported"; message: string };
@@ -63,7 +63,6 @@ export function streamingQualityManifestCapability(): {
     }
   };
 }
-
 /**
  * Starts FFmpeg before production, delivers each PNG or raw RGBA frame with real stdin drain
  * backpressure, and retains no source frame in the encoder handoff after a write resolves. It cannot
@@ -91,7 +90,6 @@ export async function runStreamingFfmpegFinal(input: StreamingFfmpegFinalInput):
     const commandError = input.attempts.map((attempt) => streamingCommandError(attempt.command, input)).find(Boolean);
     if (commandError) return { ok: false, error: commandError };
   }
-
   const governor = input.governor ?? defaultLocalMotionJobGovernor;
   const factory = input.processFactory ?? startStreamingFfmpegProcess;
   const cancellation = normalizedStreamingCancellation(input.signal);
@@ -107,6 +105,7 @@ export async function runStreamingFfmpegFinal(input: StreamingFfmpegFinalInput):
     }, async (job): Promise<StreamingGovernorValue> => {
       const evidenceReporter = createStreamingEvidenceReporter(job);
       const admittedRunner = async (command: StreamingEncodeAttempt["command"]) => {
+        await revalidateStreamingFinalLaunch();
         const process = await factory({
           command,
           signal: job.signal,
@@ -147,13 +146,11 @@ export async function runStreamingFfmpegFinal(input: StreamingFfmpegFinalInput):
       let writes = 0;
       let drainWaits = 0;
       let lastFailure: StreamingFailure | undefined;
-
       for (const [attemptIndex, attempt] of executionInput.attempts.entries()) {
         try {
           let process: StreamingFfmpegProcess;
-          try {
-            process = await startProcess(attempt);
-          } catch (error) {
+          try { await revalidateStreamingFinalLaunch(); process = await startProcess(attempt); } catch (error) {
+            if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
             if (error instanceof LocalMotionJobError || error instanceof StreamingFailure) throw error;
             throw new StreamingFailure("encoder_failed", toError(error).message);
           }
@@ -196,6 +193,7 @@ export async function runStreamingFfmpegFinal(input: StreamingFfmpegFinalInput):
             }
           } };
         } catch (error) {
+          if (isStreamingFinalLineageRevalidationFailure(error)) throw error;
           if (error instanceof LocalMotionJobError) {
             attempts.push({
               source: attempt.source,
@@ -283,6 +281,9 @@ export async function runStreamingFfmpegFinal(input: StreamingFfmpegFinalInput):
       evidence: { ...value.value.evidence, resources: execution.evidence }
     };
   } catch (error) {
+    if (isStreamingFinalLineageRevalidationFailure(error)) {
+      throw error;
+    }
     if (error instanceof LocalMotionJobError) {
       return {
         ok: false,

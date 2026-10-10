@@ -42,13 +42,14 @@ export type {
   StreamingFinalUnboundReceiptEvidence,
   StreamingFinalPolicyAttempt
 } from "./streaming-final-encode-policy-types.js";
+import { revalidatingStreamingFinalRunner } from "./streaming-final-lineage-revalidation.js";
 
 /**
  * Current streamed transport compatibility entry point. It alone selects the default governed
  * runner, executes the image2pipe foundation, and passes actual evidence to finalization.
  */
 export async function runStreamingFinalEncodePolicy(input: StreamingFinalEncodePolicyInput): Promise<StreamingFinalEncodePolicyResult> {
-  const runner = input.runner ?? createGovernedFfmpegRunner();
+  const runner = revalidatingStreamingFinalRunner(input.runner ?? createGovernedFfmpegRunner());
   const {
     runner: _providedRunner,
     produce: _produce,

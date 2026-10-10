@@ -212,24 +212,24 @@ describe("motion.render.final streamed video adoption", () => {
     });
   });
 
-  it("refuses an existing streamed output before FFmpeg or the renderer starts", async () => {
+  it("refuses an existing streamed output after only the FFmpeg version health probe", async () => {
     const root = await mkdtemp(join(tmpdir(), "shellx-motion-debug-streamed-existing-"));
     tempDirs.push(root);
     const outputPath = join(root, "out.mp4");
     await writeFile(outputPath, "existing final cut", "utf8");
-    let ffmpegCalls = 0;
+    const ffmpegCommands: string[][] = [];
     let streamedCalls = 0;
 
     const result = await dispatchDebugCommand("motion.render.final", {
       packageRoot: resolve("../../fixtures/packages/lower-third"), outputPath
     }, {
       tier: "render_motion",
-      ffmpegRunner: async () => { ffmpegCalls += 1; return { exitCode: 0, stdout: "", stderr: "" }; },
+      ffmpegRunner: async (command) => { ffmpegCommands.push(command.args); return { exitCode: 0, stdout: "", stderr: "" }; },
       streamingFinalRenderer: async () => { streamedCalls += 1; throw new Error("must not render"); }
     });
 
     expect(result).toMatchObject({ ok: false, error: { code: "derived_output_exists" } });
-    expect(ffmpegCalls).toBe(0);
+    expect(ffmpegCommands).toEqual([["-version"]]);
     expect(streamedCalls).toBe(0);
     expect(await readFile(outputPath, "utf8")).toBe("existing final cut");
     expect(await readdir(root)).toEqual(["out.mp4"]);

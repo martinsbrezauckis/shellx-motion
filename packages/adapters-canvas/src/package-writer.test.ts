@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { convertCanvasFrameToMotionPackage } from "./index";
@@ -23,6 +23,19 @@ describe("Canvas Motion package writer", () => {
     await expect(writeCanvasMotionPackage(canvasExport, { packageDir: outDir }))
       .rejects.toThrow("Canvas package assets require an explicit host-approved sourceRoot.");
     await expect(readFile(join(outDir, "manifest.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a legacy Canvas export with an invalid Motion document before it creates output", async () => {
+    const fixture = JSON.parse(await readFile(resolve("../../fixtures/canvas/frame-selection.json"), "utf8")) as unknown;
+    const canvasExport = convertCanvasFrameToMotionPackage(fixture);
+    canvasExport.motion.width = 1.5;
+    const root = await mkdtemp(join(process.cwd(), ".tmp-shellx-motion-canvas-invalid-motion-"));
+    const packageDir = join(root, "package");
+    tempDirs.push(root);
+
+    await expect(writeCanvasMotionPackage(canvasExport, { packageDir }))
+      .rejects.toThrow("Canvas package Motion document is invalid at /width: must be a positive integer.");
+    await expect(stat(packageDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   itLinux("copies Canvas image assets into the package when a source root is provided", async () => {

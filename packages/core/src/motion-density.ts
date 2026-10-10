@@ -5,10 +5,7 @@
  * ----
  * A motion package can be structurally perfect — right frame count, right duration, right size,
  * renders clean, `package.validate` says valid — and still be visually frozen for most of its
- * runtime. Every signal an author (especially an agent author) can see says "success", so the
- * defect is invisible: an external agent asked for a "visually dense, continuously moving" 15s
- * piece and shipped one that was static for ~92% of its duration across three rounds, each round
- * worse than the last, because nothing in the engine ever told it.
+ * runtime. Structural validation cannot report how much of the rendered piece actually moves.
  *
  * This module is the missing measurement. It consumes decoded frames, reports how much of the
  * piece is frozen and WHERE, and hands back warning strings. It never fails anything: a static

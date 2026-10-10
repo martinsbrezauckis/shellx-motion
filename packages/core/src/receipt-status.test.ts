@@ -18,15 +18,15 @@ import { createRenderReceipt, previewReceiptStatus } from "./receipts";
 const PROGRESS_CHATTER = "frame=  270 fps=54 q=28.0 size=    1024kB";
 /** The same exact faststart notice after pointer normalization. */
 const NORMALISED_FASTSTART_CHATTER = "[mp4 @ [address]] Starting second pass: moving the moov atom to the beginning of the file";
-/** The same line before normalization, as FFmpeg 6.1.1 prints it on Linux. */
-const RAW_FASTSTART_CHATTER = "[mp4 @ 0x641500efbe80] Starting second pass: moving the moov atom to the beginning of the file";
-/** The Windows spelling: the instance pointer arrives without the `0x` prefix. */
-const WINDOWS_FASTSTART_CHATTER = "[mp4 @ 641500efbe80] Starting second pass: moving the moov atom to the beginning of the file";
-/** A real palettegen warning retained by `summarizeSuccessfulEncodeStderr`. */
+/** Representative FFmpeg component syntax before pointer normalization. */
+const RAW_FASTSTART_CHATTER = "[mp4 @ 0x1234abcd] Starting second pass: moving the moov atom to the beginning of the file";
+/** FFmpeg component syntax with an instance pointer lacking the `0x` prefix. */
+const WINDOWS_FASTSTART_CHATTER = "[mp4 @ 1234abcd] Starting second pass: moving the moov atom to the beginning of the file";
+/** A palettegen warning retained by `summarizeSuccessfulEncodeStderr`. */
 const NORMALISED_PALETTEGEN_WARNING = "[Parsed_palettegen_1 @ [address]] Duped color: FFDCDDE0";
-/** A real muxer warning retained by `summarizeSuccessfulEncodeStderr`. */
+/** A muxer warning retained by `summarizeSuccessfulEncodeStderr`. */
 const NORMALISED_DTS_WARNING = "[mp4 @ [address]] Non-monotonous DTS in output stream 0:0; previous: 1024, current: 512;";
-/** A real Motion advisory that must always escalate. */
+/** A Motion advisory that must always escalate. */
 const MOTION_DENSITY = "Rendered motion is static for 74.4% of its duration (2.233s of 3.000s).";
 /** The colour observation this rule now has to carry. */
 const COLOUR_MISMATCH =

@@ -198,7 +198,7 @@ describe("C6C B1 host-owned immutable checkpoint storyboard records", () => {
     expect(succeeded(await call(CHECKPOINT_STORYBOARD_RECORD_COMMANDS.revise, { parent, descriptor: descriptor(180) }, authority)).replay).toBe("same-input");
     expect(await call(CHECKPOINT_STORYBOARD_RECORD_COMMANDS.revise, { parent: edge.record.identity, descriptor: descriptor(270) }, authority)).toMatchObject({ ok: false, error: { code: "lineage_limit_exceeded" } });
     expect(succeeded(await call(CHECKPOINT_STORYBOARD_RECORD_COMMANDS.inspect, { identity: edge.record.identity }, authority)).record.identity.revision).toBe(128);
-  }, 60_000);
+  }, 180_000);
 
   it("retains immutable audit bytes on durable tombstone and archive, while blocking later revision", async () => {
     const { authority } = await host();

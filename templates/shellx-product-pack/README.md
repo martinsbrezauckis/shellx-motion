@@ -4,10 +4,7 @@ Status: active starter pack for polished ShellX Motion templates.
 
 This pack contains templates intended to pass the quality bar in `docs/public/TEMPLATE_QUALITY_BAR.md` and the design-variety matrix in `docs/public/TEMPLATE_DESIGN_MATRIX.md`. Existing `fixtures/packages/*` remain small deterministic test fixtures.
 
-Implemented starters — this is the published pack. Some families exist in the implementation tree
-and are deliberately withheld from publication; the withholding is recorded and enforced there, and
-the exporter refuses to run when a withholding rule stops matching, so this list cannot silently
-drift from what actually ships:
+The published pack contains these starters:
 
 - `launch-bumper` - shape/text SaaS launch opener.
 - `feature-announcement` - product feature checklist announcement.

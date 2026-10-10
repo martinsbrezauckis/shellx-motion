@@ -19,7 +19,7 @@ That page is the setup surface for people who do not want to edit configuration 
 3. Keep Motion running while the agent uses Motion tools.
 
 The page also shows a copyable stdio command for other MCP clients. Use that command as the MCP
-server command in the client's local configuration. The bridge reads Motion's private live
+server command in the client's local configuration. The bridge reads Motion's private most-recent
 per-start discovery record at call time, so no durable access key is embedded in the agent
 configuration or forwarded to the discovered port. When it first calls a coordinator job tool, the
 bridge opens an authenticated persistent WebSocket and keeps
@@ -58,7 +58,7 @@ owner-private under `~/.shellx-motion/`:
 
 ```text
 ~/.shellx-motion/access.token                 durable key for direct clients
-~/.shellx-motion/mcp-bridge.discovery.json   live port and per-start bridge credential
+~/.shellx-motion/mcp-bridge.discovery.json   most recently published port and per-start bridge credential
 ```
 
 Point any MCP client at the bundled stdio bridge:
@@ -72,7 +72,9 @@ Point any MCP client at the bundled stdio bridge:
 ```
 
 The bridge reads only the per-start discovery record at call time, which is why no durable key
-appears in the configuration above or reaches a stale/rebound listener after a crash. Coordinator
+appears in the configuration above or reaches a stale/rebound listener after shutdown or a crash.
+Motion retains the last record on shutdown so an older server cannot delete a newer listener's
+publication; without that record's matching listener HMAC proof it is inert. Coordinator
 tools open or reuse a persistent connection after that read. Set
 `SHELLX_MOTION_ACCESS_ROOT` if you need that state somewhere other than the home directory — in a
 container, for instance. If Motion is not running, the bridge tells the agent to start it and retry
