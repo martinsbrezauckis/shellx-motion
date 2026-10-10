@@ -11,8 +11,8 @@
  *    query data while `blockedRequests` stayed empty and the receipt reported `passed` with zero
  *    warnings. Silent, which is worse than failing. Attaching a guard from `context.on("page")`
  *    does not fix it — the attach is asynchronous and the popup's first request is already in
- *    flight. The fix suppresses secondary pages at the route layer, which Playwright installs
- *    before the popup runs, and records the popup so a `passed` receipt is impossible.
+ *    flight. Scripted opens are refused before a second target exists; the route and page-event
+ *    guards still refuse other secondary pages and record attempts in the receipt.
  *
  * 2. THE DOWNGRADE INVARIANT ONLY COVERED 3xx. The guard gates on redirect status codes and the
  *    route arm keyed off `redirectedFrom()`. A `Refresh:` response header, a `<meta
@@ -32,10 +32,11 @@ import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BrowserContext, Page } from "playwright-core";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadMotionPackage } from "@shellx-motion/core";
+import { loadMotionPackage, resolveMotionBrowserExecutable } from "@shellx-motion/core";
 import { attachBrowserRedirectGuard } from "./browser-redirect-guard";
+import { installBrowserPopupOpenGuard } from "./browser-popup-open-guard";
 import {
   authorizeBrowserRouteRequest,
   createApprovedAgentScriptProvenanceAuthority,
@@ -95,6 +96,30 @@ function frameOn(documentUrl: string, page: unknown = RENDER_PAGE): { url(): str
 }
 
 describe("secondary-page (popup) egress suppression", () => {
+  it("refuses scripted opens before a second page exists, including on a reused page", async () => {
+    let targetHits = 0;
+    const target = createServer((_req, res) => { targetHits += 1; res.end("unexpected"); });
+    const origin = await listen(target);
+    let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+    try {
+      browser = await chromium.launch({ executablePath: resolveMotionBrowserExecutable().executable, headless: true });
+      const context = await browser.newContext();
+      let state = freshNetworkState();
+      await installBrowserPopupOpenGuard(context, () => state);
+      const page = await context.newPage();
+      for (let frame = 0; frame < 2; frame += 1) {
+        if (frame > 0) state = freshNetworkState();
+        await page.setContent(`<script>window.open(${JSON.stringify(`${origin}/go?secret=NOT-FOR-RECEIPT`)}, "_blank")</script>`);
+        expect(context.pages()).toEqual([page]);
+        expect(state.blockedSecondaryPages).toEqual(["scripted-open"]);
+        expect(targetHits).toBe(0);
+      }
+    } finally {
+      await browser?.close();
+      await closeServer(target);
+    }
+  }, 45_000);
+
   it("refuses a request issued by a page that is not the captured page", async () => {
     // The finding's shape reduced to its decision: the origin is host-approved, so an origin-only
     // check continues it. What makes it inadmissible is that it came from a popup.

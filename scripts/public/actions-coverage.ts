@@ -68,8 +68,8 @@ export interface ActionCoverageReport {
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const fixturePath = resolve(moduleDir, "../fixtures/debug/coverage.expected.json");
-const debugSchemaPath = resolve(moduleDir, "../schemas/debug.json");
+const fixturePath = resolve(moduleDir, "../../fixtures/debug/coverage.expected.json");
+const debugSchemaPath = resolve(moduleDir, "../../schemas/debug.json");
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const fixture = readCoverageFixture(JSON.parse(readFileSync(fixturePath, "utf8")));

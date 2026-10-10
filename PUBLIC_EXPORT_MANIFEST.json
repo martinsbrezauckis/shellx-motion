@@ -1,5 +1,9 @@
 {
-  "schemaVersion": "shellx-motion.historical-export-identity-withdrawn@1",
+  "schemaVersion": "release-studio.public-export-identity.v2",
   "project": "shellx-motion",
-  "status": "Published snapshot was rewritten; original payload and source attestation withdrawn"
+  "sourceCommit": "8156ed934e31395549bf379b2cb524ec5213b639",
+  "sourceTree": "5b9b0b65a8476e6f891df301b683582044f11ff3",
+  "payloadSha256": "03075827d191222b6d68b9fbf0761a39b6d23a05abcbb8d97ba33c7fdc1b919b",
+  "payloadFileCount": 3317,
+  "payloadBytes": 97449698
 }

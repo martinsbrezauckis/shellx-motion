@@ -81,6 +81,7 @@ import { collectBrowserTextFitEvidence, type BrowserTextFitEvidence } from "./ge
 import { boundedBrowserFrameTimeout, resolveBrowserFrameTimeoutMs } from "./browser-frame-timeout";
 import { ENFORCED_UNTRUSTED_BROWSER_EXECUTION } from "./enforced-untrusted-browser";
 import { launchOwnedBrowserSession } from "./browser-owned-session-launch";
+import { assertBrowserPopupOpenGuard, installBrowserPopupOpenGuard } from "./browser-popup-open-guard";
 import { resolveChromiumLaunchArgs } from "./browser-launch-args";
 import {
   createCheckpointStoryboardTerminalBoundarySession,
@@ -1290,6 +1291,7 @@ export async function createMotionBrowserRenderSession(
       contextPool.push(worker);
       metrics.contextsCreated += 1;
       try {
+        await installBrowserPopupOpenGuard(context, () => worker!.networkState);
         await context.routeWebSocket("**/*", async (webSocket) => {
           worker!.networkState?.blockedWebSocketRequests.push(blockedWebSocketAuthority(webSocket.url()));
           await webSocket.close({ code: 1008, reason: "Browser WebSocket egress is disabled." });
@@ -1344,6 +1346,7 @@ export async function createMotionBrowserRenderSession(
           }
         });
         worker.page = await context.newPage();
+        await assertBrowserPopupOpenGuard(worker.page);
         // Registered AFTER the render page exists, so the render page's own "page" event has
         // already fired and everything this listener sees is a popup or new window. A frame render
         // captures exactly one page: a second page can contribute no pixels but can egress, so it
