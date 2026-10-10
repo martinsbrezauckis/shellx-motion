@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "shellx-motion",
-  "version": "0.2.67",
+  "version": "0.2.68",
   "description": "Local-first motion graphics and video rendering engine built to be driven by AI agents",
   "license": "MIT",
   "repository": {

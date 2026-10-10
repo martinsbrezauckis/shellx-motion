@@ -92,6 +92,13 @@ export async function activeTrustedWorkspaceAnchorForTarget(path: string): Promi
   return anchor;
 }
 
+/** Select scratch from the embedding host's active scope, without consulting request paths. */
+export async function activeTrustedWorkspaceScratchRoot(): Promise<string | undefined> {
+  const anchor = trustedWorkspaceAnchorScope.getStore();
+  await anchor?.assertCurrent();
+  return anchor?.path;
+}
+
 async function captureAnchorIdentity(path: string): Promise<TrustedWorkspaceAnchorIdentity> {
   if (process.platform === "win32" || typeof process.getuid !== "function") {
     throw new OutputPathTopologyError("Trusted workspace anchors are available only to POSIX hosts.", path);

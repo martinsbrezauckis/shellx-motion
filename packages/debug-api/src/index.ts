@@ -1,5 +1,6 @@
 import { tierRefusal, type MotionPermissionTier } from "@shellx-motion/actions";
 import { analyzeTrackingMedia } from "@shellx-motion/analysis-tracking";
+import { assertQualityPanelBaselineRoots } from "./domains/render-quality-panel.js";
 import { importHtmlSnippetToMotionPackage, writeHtmlSnippetExport } from "@shellx-motion/adapters-html";
 import { exportMotionPackageToOtio, importOtioTimelineToMotionPackage } from "@shellx-motion/adapters-otio";
 import { convertScriptedFramesToMotionPackage, writeScriptedMotionPackage } from "@shellx-motion/adapters-script";
@@ -826,6 +827,7 @@ async function dispatchDebugCommandUnsafe(command: MotionDebugCommand, args: unk
           maxMeanDiff: 0
         }
       );
+      await assertQualityPanelBaselineRoots(manifest.samples, input.trustedRoots, isPathInsideTrustedRoot);
       const pkg = input.packageRoot ? await loadMotionPackage(input.packageRoot) : undefined;
       return {
         panel: buildDebugQualityPanel({

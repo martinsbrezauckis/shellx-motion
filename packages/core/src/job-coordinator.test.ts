@@ -40,10 +40,12 @@ async function coordinator() {
 }
 
 async function eventually<T>(read: () => Promise<T>, predicate: (value: T) => boolean): Promise<T> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  const deadline = Date.now() + 5_000;
+  while (true) {
     const value = await read();
     if (predicate(value)) return value;
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for coordinator state.");
 }

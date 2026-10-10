@@ -32,6 +32,7 @@ import {
 } from "@shellx-motion/renderer-ffmpeg";
 import { createMotionSdk } from "./client";
 import { localDebugContext, localRenderOptions } from "./local-debug-context";
+import { withLocalTrackingScratch } from "./local-tracking-scratch";
 import { localPackageIdentity as packageIdentity } from "./local-package-identity";
 import { renderPackageAttestedReuse, type LocalAttestedReuseRenderInput } from "./local-attested-render-reuse";
 import { renderLocalCachePlan } from "./local-render-cache-plan";
@@ -460,10 +461,8 @@ async function trackingRequestPackage(input: MotionSdkTrackingRequestRequest, op
   const receiptsRoot = optionalBoundedString(request, "receiptsRoot", 4096);
   const createdAt = optionalBoundedString(request, "createdAt", 128);
   if (createdAt && !Number.isFinite(Date.parse(createdAt))) throw new Error("Tracking request createdAt must be an ISO timestamp.");
-  const scratchRoot = join(dirname(outDir), ".shellx-motion-sdk", "tracking-scratch", analysisId);
-  let debug: MotionDebugResult;
-  try {
-    debug = await dispatchDebugCommand("motion.analysis.tracking.request", {
+  const debug = await withLocalTrackingScratch(options.scratchRoot, async (scratchRoot) =>
+    await dispatchDebugCommand("motion.analysis.tracking.request", {
       packageRoot,
       outDir,
       analysisId,
@@ -474,10 +473,7 @@ async function trackingRequestPackage(input: MotionSdkTrackingRequestRequest, op
       settings,
       ...(receiptsRoot ? { receiptsRoot: resolve(receiptsRoot) } : {}),
       ...(createdAt ? { createdAt } : {}),
-    }, localDebugContext("write_local", options, scratchRoot));
-  } finally {
-    await rm(scratchRoot, { recursive: true, force: true });
-  }
+    }, localDebugContext("write_local", options, scratchRoot)));
   const result = trackingDebugResult(debug, "tracking request");
   const resultPackageRoot = resolve(stringField(result, "packageRoot"));
   if (resultPackageRoot !== outDir) throw new Error("Tracking request output package does not match the requested outDir.");

@@ -1,6 +1,14 @@
 # ShellX Motion changelog
 
-This changelog describes released capabilities and bugfixes.
+Released entries describe published capabilities and bugfixes. An unreleased entry describes the
+next source candidate until publication.
+
+## 0.2.68 — unreleased
+
+- Keep SDK tracking temporary work directories within an admitted work root instead of deriving
+  them from a caller's output sibling.
+- Admit quality-panel baseline paths before reporting whether they exist.
+- Refresh the resolved `tsx` patch version and the SHA-pinned CodeQL action.
 
 ## 0.2.67 — 2026-10-10
 

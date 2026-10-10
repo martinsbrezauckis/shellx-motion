@@ -21,4 +21,4 @@
  * Releasing: bump the root `package.json` version, run `pnpm run version:sync`, commit the
  * regenerated manifests and this file together.
  */
-export const MOTION_ENGINE_VERSION = "0.2.67";
+export const MOTION_ENGINE_VERSION = "0.2.68";

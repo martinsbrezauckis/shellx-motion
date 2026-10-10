@@ -1,5 +1,7 @@
 /** Quality policy inspection behind a bounded manifest-analysis capability. */
 import { hashBuffer } from "@shellx-motion/core";
+import { lstat, readlink } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import type { MotionDebugCommand, MotionDebugResult } from "../command-registry.js";
 import { stringArg } from "./args.js";
 
@@ -22,6 +24,7 @@ export interface RenderQualityPanelServices {
   isPathInsideTrustedRoot?: (root: string, path: string) => Promise<boolean>;
   readQualityPanel?: (input: {
     manifestPath: string;
+    trustedRoots: readonly string[];
     inputPath?: string;
     packageRoot?: string;
     preset?: string;
@@ -56,6 +59,7 @@ export async function dispatchRenderQualityPanelCommand(
   try {
     const loaded = await services.readQualityPanel({
       manifestPath,
+      trustedRoots,
       ...(inputPath ? { inputPath } : {}), ...(packageRoot ? { packageRoot } : {}), ...(preset ? { preset } : {})
     });
     const receiptId = `quality-panel-${hashBuffer(Buffer.from(JSON.stringify({
@@ -77,6 +81,44 @@ export async function dispatchRenderQualityPanelCommand(
   } catch (error) {
     return invalidArgs(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** Admit every resolved baseline before a panel performs its first existence probe. */
+export async function assertQualityPanelBaselineRoots(
+  samples: readonly { baselinePath?: string }[],
+  trustedRoots: readonly string[],
+  isPathInsideTrustedRoot: (root: string, path: string) => Promise<boolean>,
+): Promise<void> {
+  for (const sample of samples) {
+    if (!sample.baselinePath) continue;
+    let trusted = false;
+    try {
+      const candidate = await resolveQualityPanelBaseline(sample.baselinePath);
+      for (const root of trustedRoots) {
+        if (await isPathInsideTrustedRoot(root, candidate)) {
+          trusted = true;
+          break;
+        }
+      }
+    } catch { /* Inaccessible paths and symlink loops receive the same bounded refusal. */ }
+    if (!trusted) throw new Error("motion.quality.panel baseline must be inside packageRoot or a trusted debug input root.");
+  }
+}
+
+/** Follow symlinks lexically even when their target is absent; realpath alone loses that boundary. */
+async function resolveQualityPanelBaseline(path: string, remainingLinks = 40): Promise<string> {
+  const absolute = resolve(path);
+  const parent = dirname(absolute);
+  if (parent === absolute) return absolute;
+  const canonicalParent = await resolveQualityPanelBaseline(parent, remainingLinks);
+  const candidate = join(canonicalParent, basename(absolute));
+  const facts = await lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!facts?.isSymbolicLink()) return candidate;
+  if (remainingLinks <= 0) throw new Error("Baseline symlink traversal limit exceeded.");
+  return await resolveQualityPanelBaseline(resolve(canonicalParent, await readlink(candidate)), remainingLinks - 1);
 }
 
 function invalidArgs(message: string): MotionDebugResult {
