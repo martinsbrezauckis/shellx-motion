@@ -8435,7 +8435,7 @@ describe("shellx-motion CLI", () => {
       copiedArtifacts: [
         expect.objectContaining({
           role: "rendered_media",
-          relativePath: expect.stringMatching(/^artifacts\/rendered_media-[a-f0-9]{12}-rendered\.mp4$/)
+          relativePath: expect.stringMatching(/^artifacts\/rendered_media-[a-f0-9]{64}-rendered\.mp4$/)
         })
       ]
     });
