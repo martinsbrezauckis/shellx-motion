@@ -21,8 +21,8 @@ const expectedActionPins = new Map([
   ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"],
   ["actions/upload-artifact", "b7c566a772e6b6bfb58ed0dc250532a479d7789f"],
   ["actions/dependency-review-action", "a1d282b36b6f3519aa1f3fc636f609c47dddb294"],
-  ["github/codeql-action/init", "d1ba80a13dd99fba24a470575428917156a28b43"],
-  ["github/codeql-action/analyze", "d1ba80a13dd99fba24a470575428917156a28b43"]
+  ["github/codeql-action/init", "37f2634a92ba38a0926ef79a0748ac8ae7d95ab2"],
+  ["github/codeql-action/analyze", "37f2634a92ba38a0926ef79a0748ac8ae7d95ab2"]
 ]);
 
 const failures = [];

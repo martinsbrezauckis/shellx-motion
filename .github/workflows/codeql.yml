@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # v4.37.5 release commit, resolved from the official GitHub release. JavaScript/TypeScript
+      # v4.37.8 release commit, resolved from the official GitHub release. JavaScript/TypeScript
       # needs no project build for CodeQL extraction, so avoiding an install also avoids executing
       # package lifecycle scripts while analysing an untrusted fork pull request.
       - name: Initialize CodeQL
